@@ -17,8 +17,10 @@
  *    painted on <html>/<body> would appear as a rectangle of fog around the bar.
  *  - NO backdrop-filter. In a transparent Electron window it samples this page and nothing else.
  *    The sidecar applies DWM acrylic (blur + light tint) to the whole window; this file draws the
- *    white tint on top of that frost and nothing more. --lg-fill is deliberately .55, below the
- *    Northwind pill's .68, because the DWM tint is already contributing the difference.
+ *    white tint on top of that frost and nothing more. --lg-fill is .20, far below the Northwind
+ *    pill's .68: the DWM tint contributes its own white, and Owen's verdict on the live bar was
+ *    that it had to "show the background behind it better". The pane's shape is carried by the
+ *    two hairlines and the shadow, not by opacity — do not trade them for a thicker fill.
  *  - NO text-shadow. On light glass the ink carries itself; a shadow under dark text on a
  *    near-white pane just reads as a printing fault.
  *  - Nothing moves at rest. The only animation is the reveal/hide slide — one GPU transform on
@@ -249,6 +251,8 @@ body.pre .bar, body.pre .left, body.pre .dock, body.pre .right { transition: non
   height: 4px;
   border-radius: 50%;
   background: var(--lg-ink-2);
+  /* the ring is a box-shadow, not a border: it must not change the 4px the layout reserves */
+  box-shadow: 0 0 0 1px var(--lg-dot-ring);
   visibility: hidden;
 }
 .cell.run .dot { visibility: visible; }
@@ -401,3 +405,10 @@ body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
   transition: background-color 120ms steps(2), color 120ms steps(2);
 }
 .pop .x:hover { background: var(--lg-warn-soft); color: var(--lg-warn); }
+
+/* Pill mode: the island has no room for sentences. A chip is a pip; its label and reason live in
+   its tooltip and in the overflow menu, so nothing is silent and nothing widens the right cluster
+   that the centred dock measures against. */
+body.pill .chip .lbl { display: none; }
+body.pill .chip { padding: 0 5px; }
+.chips { max-width: 30%; min-width: 0; overflow: hidden; }

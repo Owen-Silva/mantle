@@ -577,6 +577,54 @@ async function main() {
     } catch (e) { check('corners refuses the Windows taskbar', false, e.message); }
   }
 
+  // ---- edgeclip ---------------------------------------------------------
+  // The command that confines the POINTER, so passive refuses it outright and
+  // the only thing a test run may exercise is the arithmetic: dryRun answers
+  // with the rect it WOULD set and touches nothing.
+  for (const extra of [{ on: true, inset: 2 }, { on: false }]) {
+    try {
+      const r = await s.send('edgeclip', extra);
+      check(`edgeclip ${JSON.stringify(extra)} is refused in passive, with a reason`,
+        r.ok === false && typeof r.error === 'string' &&
+        r.error.includes('passive') && r.error.includes('cursor'),
+        JSON.stringify(r));
+    } catch (e) { check(`edgeclip ${JSON.stringify(extra)} refused in passive`, false, e.message); }
+  }
+
+  try {
+    const r = await s.send('edgeclip', { dryRun: true, inset: 2 });
+    const d = r.ok ? r.result : null;
+    check('edgeclip dryRun answers without applying anything',
+      r.ok === true && d && d.dryRun === true && d.applied === false &&
+      Array.isArray(d.rect) && d.rect.length === 4 && Array.isArray(d.monitor) &&
+      typeof d.monitors === 'number' && d.monitors >= 1,
+      JSON.stringify(r).slice(0, 220));
+    // THE GEOMETRY, checked as pure arithmetic: the clip is the monitor rect
+    // with ONLY the bottom pulled in, by exactly the inset.
+    check('edgeclip takes the inset off the bottom edge and nothing else',
+      d && d.inset === 2 &&
+      d.rect[0] === d.monitor[0] && d.rect[1] === d.monitor[1] && d.rect[2] === d.monitor[2] &&
+      d.rect[3] === d.monitor[3] - 2,
+      JSON.stringify(d));
+  } catch (e) { check('edgeclip dryRun', false, e.message); }
+
+  // The clamp, at both ends: an inset of 0 would not keep the taskbar down and
+  // one of 99 would fence the cursor a long way up the screen.
+  for (const [asked, want] of [[0, 1], [-5, 1], [99, 8], [8, 8], [1, 1]]) {
+    try {
+      const r = await s.send('edgeclip', { dryRun: true, inset: asked });
+      const d = r.ok ? r.result : null;
+      check(`edgeclip clamps inset ${asked} to ${want}`,
+        d && d.inset === want && d.rect[3] === d.monitor[3] - want, JSON.stringify(d));
+    } catch (e) { check(`edgeclip clamps inset ${asked}`, false, e.message); }
+  }
+
+  try {
+    const r = await s.send('edgeclip', {});
+    check('edgeclip without on: says what it needs',
+      r.ok === false && typeof r.error === 'string' && r.error.includes('on:true'), JSON.stringify(r));
+  } catch (e) { check('edgeclip without on: says what it needs', false, e.message); }
+
   // ---- morph + region ---------------------------------------------------
   // Driven against the sidecar's own hidden window, which is never visible and
   // never in the window list: the animation is real, the desktop sees nothing.
@@ -687,7 +735,7 @@ async function main() {
     const cmds = r.ok && r.result ? r.result.commands : null;
     check('ping lists the commands it serves',
       Array.isArray(cmds) && ['lnk', 'keys', 'foreground', 'traywatch', 'corners', 'morph', 'region',
-                              'windows', 'glass', 'place']
+                              'edgeclip', 'windows', 'glass', 'place']
         .every((c) => cmds.indexOf(c) >= 0),
       JSON.stringify(cmds));
   } catch (e) { check('ping lists the commands it serves', false, e.message); }

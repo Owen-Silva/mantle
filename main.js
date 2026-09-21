@@ -25,6 +25,12 @@ const { createBar, createLauncher, createDesktop, hwndOf, BAR_H } = require('./l
  */
 let pinnedModule = null;
 let pinnedModuleReason = null;
+// The pins themselves (a reg.exe spawn + IShellLink over every .lnk) are read once and kept until the
+// pins folder changes or five minutes pass. Before this cache every running-windows event rebuilt
+// them, i.e. one reg.exe per second forever: 42% of a core at rest (profiled live 2026-09-21).
+let pinsCache = null;
+let pinsCacheAt = 0;
+const PINS_CACHE_MS = 5 * 60 * 1000;
 try {
   pinnedModule = require('./lib/pinned');
   if (!pinnedModule || typeof pinnedModule.listPinned !== 'function') {
@@ -131,8 +137,27 @@ const BAR_MODE = flags.dock ? 'dock' : 'hover';
  * pill, in the 14-DIP gap and beside it. Pill mode is for a machine whose taskbar
  * lives on another edge. It works either way; it just looks doubled if not.
  */
-flags.pill = process.argv.slice(1).some((a) => a === '--pill');
-const BAR_SHAPE = flags.pill ? 'pill' : 'edge';
+const ARGV = process.argv.slice(1);
+flags.pill = ARGV.some((a) => a === '--pill');       // still accepted; it is the default now
+flags.flush = ARGV.some((a) => a === '--flush');     // the old full-width edge strip
+const BAR_SHAPE = flags.flush && !flags.pill ? 'edge' : 'pill';
+
+/*
+ * --no-edgeclip: do not confine the cursor 2 px short of the bottom edge.
+ *
+ * THE ISLAND ONLY WORKS BECAUSE OF THIS. Owen's Windows taskbar is on auto-hide
+ * on the same bottom edge, so the moment the cursor reaches the last row Windows
+ * slides its taskbar up -- straight through the 14 DIP of air under the island
+ * and out both sides of it, which is exactly the gap the glass is there to show.
+ * A live probe settled it: with the cursor stopped 2 px short, the taskbar never
+ * pops, and the gaps stay clean.
+ *
+ * It is a ClipCursor by 2 px, held by the SIDECAR, which drops it when it dies --
+ * so the worst case is a mouse that can reach the bottom row again, never a mouse
+ * trapped in a rectangle by a process that is gone. traywatch stays armed anyway:
+ * an app flashing its taskbar button can still force the taskbar up on its own.
+ */
+flags.edgeclip = !ARGV.some((a) => a === '--no-edgeclip');
 
 // A test instance gets its own userData directory, which is ALSO what keys
 // Electron's single-instance lock -- that is the whole reason the profile name
@@ -382,7 +407,10 @@ let restoreChain = Promise.resolve();
 // Windows parks the cursor ON the last row, but a display whose scale factor is
 // not 1 rounds, and a one-pixel target that misses one time in five reads as
 // "the bar is broken".
-const REVEAL_BAND_DIP = 2;
+// Four, not two: the edge clip stops the cursor 2 px short of the bottom row, so
+// a 2 DIP band would be a target the mouse can never land in. The band is the
+// bottom 4 DIP of the display, full width, and the reachable half of it is real.
+const REVEAL_BAND_DIP = 4;
 const POLL_HIDDEN_MS = 80;     // cheap: one cursor read, no Win32 call
 const POLL_SHOWN_MS = 120;
 const HIDE_GRACE_MS = 500;     // cursor outside the bar this long before it goes
@@ -409,7 +437,11 @@ const REVEAL_EASE = [0.22, 0.68, 0.30, 1];
 const PILL_MAX_W_DIP = 1120;
 const PILL_SIDE_GAP_DIP = 28;   // total, both sides: the least air beside the pill
 const PILL_LIFT_DIP = 14;       // how far it floats above the screen edge
-const PILL_RADIUS_DIP = 24;     // 30 physical at 125%
+const PILL_RADIUS_DIP = 0;      // was 24 (30 physical). A window REGION on a transparent Electron window
+                                // (WS_EX_NOREDIRECTIONBITMAP, DirectComposition) blanks it: measured live
+                                // 2026-09-21, the island drew NOTHING with its rounded region set and drew
+                                // fine the instant the region was cleared. So the pill is rounded by DWM
+                                // (roundBarCorners) and the CSS radius matches DWM, not this constant.
 const PILL_START_W = 0.62;      // it grows out from 62 % of its width as it rises
 let hoverTimer = null;
 let barRevealed = false;
@@ -629,6 +661,34 @@ function pointIn(rect, pt) {
     && pt.y >= rect.y && pt.y < rect.y + rect.height;
 }
 
+/**
+ * Is the cursor somewhere that counts as "still using the bar"?
+ *
+ * In pill mode this is a UNION, not the window rect, because the island floats 14
+ * DIP above the screen edge: the cursor arrives in the band at the very bottom,
+ * and the trip up into the island crosses a strip of bare wallpaper. Treating
+ * that strip as outside would hide the bar in the 500 ms it takes to reach it --
+ * the bar would run away from the pointer coming for it.
+ *
+ *   the bar's own window rect
+ *   + the reveal band (the bottom 4 DIP, full width)
+ *   + in pill mode, the column under the island, from its bottom edge down to the
+ *     screen's, no wider than the island itself.
+ *
+ * In flush mode the bar IS the edge, so the first two are the whole of it.
+ */
+function inHotZone(pt, rect, inBand) {
+  if (inBand) return true;
+  if (pointIn(rect, pt)) return true;
+  if (BAR_SHAPE !== 'pill') return false;
+  const b = screen.getPrimaryDisplay().bounds;
+  const rest = barGeometry().rest.dip;
+  const column = flags.barEdge === 'top'
+    ? { x: rest.x, y: b.y, width: rest.width, height: rest.y - b.y }
+    : { x: rest.x, y: rest.y + rest.height, width: rest.width, height: (b.y + b.height) - (rest.y + rest.height) };
+  return column.height > 0 && pointIn(column, pt);
+}
+
 /*
  * Is something fullscreen in front of us? Asked of the sidecar, because Electron
  * cannot see another process's window state.
@@ -840,8 +900,7 @@ async function hoverTick() {
   }
 
   // Shown. Anything that counts as "Owen is still using it" resets the clock.
-  const rect = barRect();
-  const inside = pointIn(rect, pt) || inBand;
+  const inside = inHotZone(pt, barRect(), inBand);
   const rendererSaysInside = Date.now() - rendererHoverAt < HIDE_GRACE_MS;
   if (inside || barPopover || rendererSaysInside) {
     barLeftAt = null;
@@ -1015,7 +1074,12 @@ async function buildPinned() {
     problems.push(pinnedModuleReason || 'lib/pinned.js is not loaded and did not say why');
   } else {
     try {
-      const r = await pinnedModule.listPinned({ sidecarCall: (cmd, args, timeoutMs) => sidecar.call(cmd, args, timeoutMs) });
+      let r = (pinsCache && Date.now() - pinsCacheAt < PINS_CACHE_MS) ? pinsCache : null;
+      if (!r) {
+        r = await pinnedModule.listPinned({ sidecarCall: (cmd, args, timeoutMs) => sidecar.call(cmd, args, timeoutMs) });
+        // cache only a clean read: a fallback read (sidecar not ready yet) must be retried
+        if (r && r.ok === true && !/sidecar/i.test(String(r.reason || ''))) { pinsCache = r; pinsCacheAt = Date.now(); }
+      }
       if (r && Array.isArray(r.items)) pins = r.items;
       if (!r || r.ok !== true) problems.push(`the pinned list is incomplete: ${(r && r.reason) || 'lib/pinned.js did not say why'}`);
       // ok:true WITH a reason is lane C's notes channel ("nothing is pinned",
@@ -1130,7 +1194,7 @@ function startPinWatch() {
     return;
   }
   try {
-    unwatchPins = pinnedModule.watchPins(() => schedulePinnedPush('the pinned shortcuts changed'));
+    unwatchPins = pinnedModule.watchPins(() => { pinsCache = null; schedulePinnedPush('the pinned shortcuts changed'); });
   } catch (err) {
     process.stderr.write(`mantle: the pinned shortcuts could not be watched, so a new pin only appears when the window list changes: ${err.message}\n`);
   }
@@ -1428,6 +1492,9 @@ function sidecarUnavailable(reason) {
       : '--no-desktop: the desktop layer was not created',
   });
   state.set('hotkey', { winTap: false, reason: `the Win key still opens the Windows Start menu: ${reason}` });
+  if (state.get().edgeclip.on) {
+    state.set('edgeclip', { applied: false, reason: `the cursor is not confined, so the Windows taskbar can slide up through the island's gaps: ${reason}` });
+  }
 }
 
 /**
@@ -1453,11 +1520,22 @@ function testShellBaseline() {
       : '--no-desktop: the desktop layer was not created',
   });
   state.set('hotkey', { winTap: false, reason: 'test mode: the Win key hook was not installed' });
+  state.set('edgeclip', {
+    on: false,
+    applied: false,
+    // A test run must never take the bottom row of the screen away from whoever
+    // is at the machine, so this is one more thing test mode deliberately does
+    // not do -- and the island's gaps are therefore unprotected in a test run.
+    reason: 'test mode: the cursor was not confined, so the real Windows taskbar can still pop up at the bottom edge',
+  });
 }
 
 sidecar.on('ready', () => {
   // The shell changes are applied only once the sidecar has actually said hello;
   // firing them at spawn time would race its startup.
+  // The first pinned build usually runs before this and fails on 'windows'; without a
+  // change in the window set it would never be retried on a quiet desktop (seen live).
+  schedulePinnedPush('the sidecar is ready');
   applyMode().catch((err) => {
     state.set('sidecar', { status: 'down', reason: `Mantle could not set itself up: ${err.message}` });
   });
@@ -1489,6 +1567,25 @@ function onTrayWatchEvent(msg) {
   process.stdout.write(`mantle: the Windows taskbar is ${visible ? 'up' : 'away'}${rect}; Mantle's bar was re-raised above it (the Windows taskbar itself is untouched)\n`);
 }
 sidecar.on('tray', onTrayWatchEvent);
+
+/*
+ * The sidecar volunteering that the 2 px cursor clip went away under it -- a
+ * fullscreen app took the screen, or another process claimed the cursor. Windows
+ * does that on its own; the sidecar is reporting, not failing. It goes straight
+ * into State so the bar can show a chip the moment the island's gaps stop being
+ * protected, instead of Owen finding out when a taskbar slides through them.
+ */
+sidecar.on('edgeclip', (msg) => {
+  const applied = !!(msg && msg.applied);
+  const said = (msg && msg.reason) || (applied ? 'the sidecar re-applied it' : 'the sidecar did not say why');
+  state.set('edgeclip', {
+    applied,
+    reason: applied
+      ? `the cursor stops 2 px short of the bottom row (${said})`
+      : `the 2 px edge clip is not in force, so the Windows taskbar can slide up through the island's gaps: ${said}`,
+  });
+  process.stdout.write(`mantle: edge clip ${applied ? 'back on' : 'yielded'}: ${said}\n`);
+});
 
 sidecar.on('hotkey', (msg) => {
   if (msg && msg.name === 'win') showLauncher();
@@ -1650,7 +1747,13 @@ async function applyMode() {
 // tint is 40 % WHITE and the renderer paints a ~55 % white fill on top of it; the
 // two together are the ~68 % white the design calls for, with the blur still
 // carrying the colour of whatever is behind the bar.
-const GLASS_TINT = '#FFFFFF66';
+// ...and 40 % white was "more glass ui like and less white" away from what he
+// wanted -- the wallpaper behind the island has to READ through it. 35 %, with
+// lane B's CSS fill down to .20: the blur still does the work, the colour behind
+// it still comes through.
+const GLASS_TINT = '#1C1E2259';   // 35% neutral dark grey (dark glass, light ink; a white tint just went muddy over the dark desktop). Mode 'blur' (ACCENT_ENABLE_BLURBEHIND), not 'acrylic': measured live 2026-09-21,
+                                    // acrylic renders its tint nearly opaque on this build and frosts the whole window rect;
+                                    // blur-behind honours the alpha and follows the page's own alpha, so the CSS pill IS the glass shape.
 // Whether the running sidecar reports rectangles in physical pixels (set once
 // applyLive has asked it); the popover resize needs it to pick its placement path.
 let sidecarDpiAware = null;
@@ -1688,7 +1791,7 @@ async function applyGlass() {
       continue;
     }
     try {
-      const r = await sidecar.call('glass', { hwnd: hwndOf(win), mode: 'acrylic', tint: GLASS_TINT });
+      const r = await sidecar.call('glass', { hwnd: hwndOf(win), mode: 'blur', tint: GLASS_TINT });
       if (r && r.applied) applied.push(`${label} (${(r && r.mode) || 'mode not reported'})`);
       else problems.push(`${label}: the sidecar ran the glass command and reported it was not applied`);
     } catch (err) {
@@ -1729,14 +1832,6 @@ async function applyGlass() {
  * look, not a failure, but it is never a MYSTERY: it says which command to build.
  */
 async function roundBarCorners() {
-  if (!barWin || barWin.isDestroyed()) return 'its corners were not rounded: there is no bar window.';
-  if (BAR_SHAPE === 'pill') {
-    // The pill's roundness is the window REGION the morph cuts (24 DIP), which is
-    // both bigger than DWM's 8px and the only kind that clips the glass. Asking
-    // DWM for corners on top of it would do nothing visible and would be one more
-    // thing to explain when it changed.
-    return 'its corners come from the pill\'s own window region (24 DIP), not from DWM.';
-  }
   try {
     const r = await sidecar.call('corners', { hwnd: hwndOf(barWin), mode: 'round' }, 4000);
     if (r && r.ok === false) return `the bar's corners are square: the sidecar refused "corners" (${r.reason || 'it did not say why'}).`;
@@ -1758,7 +1853,7 @@ function reapplyGlass(label, win) {
   if (!glassPassDone) return;            // first load: applyGlass() has this
   if (sidecar.blockedReason()) return;
   if (!win || win.isDestroyed()) return;
-  sidecar.call('glass', { hwnd: hwndOf(win), mode: 'acrylic', tint: GLASS_TINT }).then((r) => {
+  sidecar.call('glass', { hwnd: hwndOf(win), mode: 'blur', tint: GLASS_TINT }).then((r) => {
     if (!(r && r.applied)) {
       state.set('glass', { material: 'none', reason: `${label} reloaded and the sidecar did not put its glass back` });
     }
@@ -1939,6 +2034,62 @@ async function placeBottomStrip(why, dpiAware) {
  * Failure here is cosmetic (the taskbar may cover the bar) and so is recorded as
  * a reason rather than treated as a shell problem.
  */
+/**
+ * Confine the cursor 2 px short of the bottom row, so Windows' auto-hide taskbar
+ * never slides up through the island's gaps.
+ *
+ * SAFE BY CONSTRUCTION: the clip is a ClipCursor held by the SIDECAR, which drops
+ * it on every exit road it has, and Windows drops it anyway when another process
+ * claims the cursor or a fullscreen app takes over. The failure mode is "the
+ * mouse can reach the bottom row again", never "the mouse is stuck". That is the
+ * whole reason it lives there and not here.
+ *
+ * In flush mode it is a nicety (the strip covers the edge itself), so a failure
+ * is narrated and nothing more; in island mode it is what keeps the gaps clean,
+ * so it goes in State with its reason.
+ */
+async function applyEdgeClip() {
+  const optional = BAR_SHAPE !== 'pill';
+  if (!flags.edgeclip) {
+    state.set('edgeclip', { on: false, applied: false, reason: '--no-edgeclip: the cursor can reach the bottom row, so the Windows taskbar may slide up through the island\'s gaps' });
+    return;
+  }
+  try {
+    const r = await sidecar.call('edgeclip', { on: true, inset: 2 }, 4000);
+    const applied = !!(r && r.applied);
+    state.set('edgeclip', {
+      on: true,
+      applied,
+      reason: applied
+        ? 'the cursor stops 2 px short of the bottom row, so the auto-hide Windows taskbar stays down and the air around the island stays clean'
+        : `Mantle asked for the 2 px edge clip and it is not in force, so the Windows taskbar can slide up through the island's gaps: ${(r && r.reason) || 'the sidecar did not say why'}`,
+    });
+  } catch (err) {
+    const why = Sidecar.isOldExeError(err)
+      ? 'the sidecar exe has no "edgeclip" command yet: run npm run build:sidecar'
+      : err.message;
+    if (optional) {
+      state.set('edgeclip', { on: false, applied: false, reason: `not used: the full-width bar covers the bottom edge itself, and the clip was unavailable anyway (${why})` });
+      process.stdout.write(`mantle: the 2 px edge clip was not applied, which only matters for the island shape: ${why}\n`);
+      return;
+    }
+    state.set('edgeclip', { on: true, applied: false, reason: `the Windows taskbar can slide up through the island's gaps: ${why}` });
+  }
+}
+
+/** Give the cursor the bottom row back. Called on the way out, before the sidecar goes. */
+function releaseEdgeClip(why) {
+  if (!flags.edgeclip || flags.test || flags.dock) return Promise.resolve();
+  if (sidecar.blockedReason()) return Promise.resolve();
+  return sidecar.call('edgeclip', { on: false }, 3000).then(() => {
+    state.set('edgeclip', { on: false, applied: false, reason: `the cursor can reach the bottom row again: ${why}` });
+  }).catch((err) => {
+    // Not an emergency: the sidecar drops the clip when it dies, which is the
+    // very next thing that happens. Said out loud anyway.
+    process.stdout.write(`mantle: the edge clip was not released by hand (${err.message}); the sidecar drops it as it exits\n`);
+  });
+}
+
 async function armTrayWatch() {
   if (!barWin || barWin.isDestroyed()) {
     state.set('tray', { watch: 'off', watchReason: 'there is no bar window to keep above the Windows taskbar' });
@@ -2038,6 +2189,9 @@ async function applyLive() {
     }
     rePlaceBar = (why) => placeBottomStrip(why, age.dpiAware).catch(() => {});
     await armTrayWatch();
+    // traywatch STAYS armed alongside the clip: an app flashing its taskbar
+    // button can still force the Windows taskbar up whatever the cursor does.
+    await applyEdgeClip();
   } else {
     try {
       const hwnd = hwndOf(barWin);
@@ -2236,6 +2390,11 @@ function restoreShell(why) {
 
     const done = [];
     const failures = [];
+
+    // 0. Give the cursor the bottom row back FIRST. It is the only thing Mantle
+    //    does that a person can feel in their hand, so it is the first thing
+    //    undone -- and the sidecar is still alive to be asked at this point.
+    await releaseEdgeClip(why);
 
     // 1. Give the strip of screen back.
     if (appbarHwnd) {

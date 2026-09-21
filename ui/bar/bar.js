@@ -152,7 +152,7 @@
       var n = document.createElement('div');
       // the bridge chip carries a message, not a label, so it gets more room before the ellipsis
       n.className = 'chip' + (c.tone ? ' ' + c.tone : '') + (c.key === 'bridge' ? ' wide' : '');
-      n.title = c.reason;
+      n.title = c.label + ' — ' + c.reason;   // pill mode hides the label (pip only): the tooltip carries it
       var pip = document.createElement('span'); pip.className = 'pip';
       var lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = c.label;
       n.appendChild(pip); n.appendChild(lbl);
@@ -308,15 +308,25 @@
       fail('pinned', 'apps off', 'bar.pinned replied ' + (res === null ? 'null' : typeof res) + ' instead of {ok, reason, items}', 'warn');
       return;
     }
-    if (res.ok === false) {
+    if (!Array.isArray(res.items)) {
+      fail('pinned', 'apps off', (res.ok === false ? (res.reason || 'bar.pinned replied ok:false and gave no reason')
+        : 'bar.pinned replied without an items array (got ' + typeof res.items + ')'), 'warn');
+      return;
+    }
+    /* PARTIAL IS NOT OFF. At startup the sidecar is still coming up, so the first reply is
+       ok:false — "the running apps could not be read: … waiting for its ready line" — while
+       already carrying the pinned items. Throwing those away and showing "apps off" was wrong
+       twice over: it hid icons the reply had handed us, and it put a chip in the right cluster
+       that ate the space the dock measures against. So render whatever arrived, and say only
+       that it is incomplete; the next complete reply clears it. */
+    if (res.ok === false && res.items.length) {
+      fail('pinned', 'apps partial', res.reason || 'bar.pinned replied ok:false and gave no reason — showing what it did send');
+    } else if (res.ok === false) {
       fail('pinned', 'apps off', res.reason || 'bar.pinned replied ok:false and gave no reason', 'warn');
       return;
+    } else {
+      clearFail('pinned');
     }
-    if (!Array.isArray(res.items)) {
-      fail('pinned', 'apps off', 'bar.pinned replied without an items array (got ' + typeof res.items + ')', 'warn');
-      return;
-    }
-    clearFail('pinned');
     items = res.items;
 
     var seen = Object.create(null), prev = null, divPlaced = false;
@@ -363,39 +373,91 @@
       });
   }
 
-  /* The dock is centred on the WINDOW, not between the clusters, so it has to be told how much
-     room actually exists on the tighter side — otherwise a long state strip would end up printed
-     over the last icons. If the icons genuinely do not fit, that is said out loud. */
-  var clipTimer = 0;
-  function layoutDock() {
-    var barW = el.bar.clientWidth;
-    if (!barW) return;
-    var centre = barW / 2;
-    var leftEnd = el.left ? el.left.getBoundingClientRect().right : 8;
-    var rightStart = el.right ? el.right.getBoundingClientRect().left : barW - 8;
-    var room = 2 * Math.max(0, Math.min(centre - leftEnd - 8, rightStart - centre - 8));
-    el.dock.style.setProperty('--dock-max', Math.round(room) + 'px');
+  /* ---------------------------------------------------------------- dock sizing
 
-    /* CELL/GAP/DIV must match --cell, --cell-gap and .dock .div in bar.css. They are duplicated
-       here rather than read back with getComputedStyle because this runs on every resize frame. */
-    var CELL = 40, GAP = 6, DIV = 7;
+     The dock is centred on the WINDOW, so the space it may use is the SYMMETRIC space: twice the
+     distance from the centre to whichever cluster is nearer. It has to be told that number,
+     because an absolutely centred row has no idea the clock exists.
+
+     This is the code that emptied the bar live (2026-09-21): during a pill morph the sidecar
+     resizes the window every ~16ms for 560ms, and a frame measured while the window was still
+     narrow put the right cluster LEFT of the centre, which makes the symmetric room 0 — and a
+     0px cap on an overflow:hidden row is a dock with nothing in it. Worse, raising the "apps
+     clipped" chip to explain it made the right cluster wider, which made the room smaller, which
+     changed the numbers, which re-rendered the chip: 136px → 0px → 355px → 0px, for ever.
+
+     So: measure on every resize (the dock must track the window), measure ONCE MORE 50ms after
+     the last one (that is the only measurement allowed to decide anything), never cap below one
+     cell, and never cap at all while the icons fit. The decision is keyed to window width + how
+     much the icons need, so the chip the decision produces cannot feed back into the decision. */
+
+  /* CELL/GAP/DIV must match --cell, --cell-gap and .dock .div in bar.css. They are duplicated
+     here rather than read back with getComputedStyle because this runs on every resize frame. */
+  var CELL = 40, GAP = 6, DIV = 7;
+  var settleTimer = 0, lastKey = '', frozenMax = 'none';
+
+  function measure() {
+    /* VIEWPORT coordinates, off the bar's own rect. Nothing here may assume the bar spans the
+       screen: in pill mode the window IS the island, inset from the edges and far narrower than
+       the display, and the centre of the icons is the centre of THAT window. */
+    var r = el.bar.getBoundingClientRect();
+    if (!r.width) return null;
+    var centre = r.left + r.width / 2;
+    var leftEnd = el.left ? el.left.getBoundingClientRect().right : r.left + 8;
+    /* The chip strip is NOT part of the wall the dock measures against: chips are the bar talking
+       about problems, and the "apps clipped" chip was widening the very cluster it measured
+       (a 136 -> 0 -> 355 px loop, live 2026-09-21). The wall is the first real control. */
+    var tray = $('tray'), vol = $('volume');
+    var anchor = (tray && tray.getBoundingClientRect().width > 0) ? tray : (vol || el.right);
+    var rightStart = anchor ? anchor.getBoundingClientRect().left : r.right - 8;
+    return {
+      w: Math.round(r.width),
+      room: Math.round(2 * Math.max(0, Math.min(centre - leftEnd - 8, rightStart - centre - 8)))
+    };
+  }
+
+  function needWidth() {
     var n = items.length;
-    if (!n) { clearFail('dockclip'); return; }
-    var need = n * CELL + (n - 1) * GAP + (divEl.parentNode ? DIV : 0);
+    return n ? n * CELL + (n - 1) * GAP + (divEl.parentNode ? DIV : 0) : 0;
+  }
 
-    /* THE REPORT IS DEFERRED, the max-width above is not. Main resizes this page on every frame
-       of a pill morph, so the width is briefly wrong dozens of times in a row; raising the chip
-       from inside that would rebuild the strip on every one of those frames (each with different
-       numbers, so the identical-failure guard would not catch it). The clip is only true if it is
-       still true once the resizing stops. */
-    if (clipTimer) clearTimeout(clipTimer);
-    clipTimer = setTimeout(function () {
-      clipTimer = 0;
-      if (need > room + 0.5)
-        fail('dockclip', 'apps clipped', n + ' app icons need ' + Math.round(need) + 'px but only ' +
-          Math.round(room) + 'px is free between the launcher and the clock — some are not shown');
+  /* No cap when they fit: then no stale or mid-morph measurement can clip a dock that was going
+     to be fine. A cap when they do not — but never below one cell, because an empty dock is the
+     one outcome that is always wrong. */
+  function capFor(need, room) {
+    if (!need || need <= room) return 'none';
+    return Math.max(room, CELL) + 'px';
+  }
+
+  function layoutDock() {
+    var m = measure();
+    if (!m) return;
+    var need = needWidth();
+    var key = m.w + ':' + need;
+    /* Already settled at this width with this many icons? Then this resize is something INSIDE
+       the bar changing width — our own chip, a new tray icon — and the settled answer stands. */
+    el.dock.style.setProperty('--dock-max', key === lastKey ? frozenMax : capFor(need, m.room));
+    if (settleTimer) clearTimeout(settleTimer);
+    settleTimer = setTimeout(settleDock, 50);
+  }
+
+  function settleDock() {
+    settleTimer = 0;
+    var m = measure();
+    if (!m) return;
+    var need = needWidth();
+    var key = m.w + ':' + need;
+    if (key !== lastKey) {
+      lastKey = key;
+      frozenMax = capFor(need, m.room);
+      // Only while the bar is up: parked (hidden) the window sits at its narrow start width, and a
+      // report from there is a false alarm (seen live as "507px in a 695px bar" on every hide).
+      if (revealed && need > m.room + 0.5)
+        fail('dockclip', 'apps clipped', items.length + ' app icons need ' + need + 'px but only ' +
+          m.room + 'px is free either side of centre in a ' + m.w + 'px bar — some are not shown');
       else clearFail('dockclip');
-    }, 250);
+    }
+    el.dock.style.setProperty('--dock-max', frozenMax);
   }
 
   /* act(): fire a bridge call for a click and, if it fails, put the reason in the bar.
@@ -796,6 +858,12 @@
       trayNote.textContent = 'notification area: ' + ((state && state.tray && state.tray.reason) || trayThrew || 'unavailable, and no reason was given');
       pop.appendChild(trayNote);
     }
+    /* every chip, in words: in pill mode the strip shows pips only */
+    chipData().forEach(function (c) {
+      var line = document.createElement('div'); line.className = 'sub'; line.style.margin = '-2px 0 8px';
+      line.textContent = c.label + ': ' + c.reason;
+      pop.appendChild(line);
+    });
 
     var restore = document.createElement('button');
     restore.type = 'button'; restore.className = 'item';

@@ -57,6 +57,10 @@ namespace Mantle {
     public const uint SPIF_SENDCHANGE = 0x0002;
     public const int SM_CXSCREEN = 0;
     public const int SM_CYSCREEN = 1;
+    /// The number of display monitors. 1 is the only case EdgeClip will touch:
+    /// a cursor clip is a SINGLE rectangle across the whole virtual desktop, so
+    /// a second screen would be walled off by it.
+    public const int SM_CMONITORS = 80;
 
     // ------------------------------------------------------------- app bars
     // SHAppBarMessage is the OS-SANCTIONED way to (a) put the Windows taskbar
@@ -349,6 +353,14 @@ namespace Mantle {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool GetMonitorInfoW(IntPtr monitor, ref MONITORINFO info);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+    /// Confines the cursor to a rectangle. THE SYSTEM DROPS THIS ON EVERY
+    /// FOREGROUND CHANGE (and on lock, UAC, Ctrl+Alt+Del), which is why
+    /// EdgeClip re-applies from a hook instead of setting it once.
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool ClipCursor(ref RECT rect);
+    /// The same export with a NULL rect: releases the cursor. Declared twice so
+    /// neither call site has to marshal by hand.
+    [DllImport("user32.dll", SetLastError = true, EntryPoint = "ClipCursor")] public static extern bool ClipCursorRelease(IntPtr nullRect);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool GetClipCursor(out RECT rect);
     [DllImport("user32.dll", SetLastError = true)] static extern IntPtr GetWindowLongPtrW(IntPtr hwnd, int index);
     [DllImport("user32.dll", SetLastError = true)] static extern int GetWindowLongW(IntPtr hwnd, int index);
     [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SetWindowLongPtrW(IntPtr hwnd, int index, IntPtr val);

@@ -92,6 +92,29 @@ public static class MantleRestore {
   static extern int GetSystemMetrics(int nIndex);
 
   [DllImport("user32.dll", SetLastError = true)]
+  static extern bool ClipCursor(IntPtr lpRect);
+
+  [DllImport("user32.dll", SetLastError = true)]
+  static extern bool GetClipCursor(out RECT lpRect);
+
+  /// <summary>A dead Mantle can leave its cursor reserve behind: while it runs it
+  /// confines the cursor to stop 2 px short of the bottom edge (that is what keeps
+  /// the auto-hide taskbar from popping under the island), and a ClipCursor
+  /// confinement SURVIVES its owner (measured 2026-09-21). With it stuck, the
+  /// taskbar never pops for the mouse. Release it only when it is Mantle-shaped:
+  /// the full screen minus 1..8 px at the bottom and nothing else.</summary>
+  public static string ReleaseCursorClip() {
+    RECT c;
+    if (!GetClipCursor(out c)) return "GetClipCursor failed (" + Marshal.GetLastWin32Error() + ")";
+    int w = GetSystemMetrics(0), h = GetSystemMetrics(1);   // SM_CXSCREEN, SM_CYSCREEN (physical: we are DPI-aware)
+    if (c.left == 0 && c.top == 0 && c.right == w && c.bottom == h) return "no cursor clip was set";
+    bool mantleShaped = c.left == 0 && c.top == 0 && c.right == w && c.bottom < h && c.bottom >= h - 8;
+    if (!mantleShaped) return "a cursor clip is set but it is not Mantle's (" + c.left + "," + c.top + "," + c.right + "," + c.bottom + "), left alone";
+    if (!ClipCursor(IntPtr.Zero)) return "ClipCursor(NULL) failed (" + Marshal.GetLastWin32Error() + ")";
+    return "released Mantle's cursor reserve (the clip stopped at " + c.bottom + " of " + h + ")";
+  }
+
+  [DllImport("user32.dll", SetLastError = true)]
   static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 
   /// <summary>Become per-monitor DPI-aware v2 ((HANDLE)-4) BEFORE any other
@@ -453,6 +476,15 @@ if ($check.Bad) {
     Problem "taskbar still not right: rerun with -RestartExplorer, or Ctrl+Shift+Esc -> restart Windows Explorer"
   }
 }
+
+# -----------------------------------------------------------------------------
+# (f2) Release the cursor reserve a dead Mantle can leave at the bottom edge
+# (see ReleaseCursorClip above): with it stuck, the auto-hide taskbar never pops
+# for the mouse, which is exactly the "no taskbar" state this script exists to undo.
+# -----------------------------------------------------------------------------
+$clipNote = [MantleRestore]::ReleaseCursorClip()
+Say "  cursor clip: $clipNote"
+if ($clipNote -like '*failed*') { Problem "cursor clip: $clipNote" }
 
 # -----------------------------------------------------------------------------
 # (g) Mark the state file restored, so the next Mantle does not think a run died

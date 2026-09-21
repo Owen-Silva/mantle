@@ -58,6 +58,21 @@ namespace Mantle {
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
+    /// The same question EdgeClip has to ask before it confines the cursor:
+    /// is the thing in front of the user covering its whole monitor? Shares
+    /// ONE definition of full-screen with the `foreground` command, because two
+    /// definitions would eventually disagree and the bar would hide itself
+    /// while the cursor stayed clipped (or the other way round).
+    public static bool ForegroundIsFullScreen() {
+      IntPtr hwnd = Win32.GetForegroundWindow();
+      if (hwnd == IntPtr.Zero || !Win32.IsWindow(hwnd)) return false;
+      var r = new Win32.RECT();
+      Win32.GetWindowRect(hwnd, out r);
+      int pid;
+      Win32.GetWindowThreadProcessId(hwnd, out pid);
+      return IsFullScreen(hwnd, r, pid);
+    }
+
     static bool IsFullScreen(IntPtr hwnd, Win32.RECT r, int pid) {
       // A maximised window overhangs its monitor by the invisible resize border, so its rect
       // "covers" rcMonitor too; it is not fullscreen (Owen's maximised browser must not hide the bar).

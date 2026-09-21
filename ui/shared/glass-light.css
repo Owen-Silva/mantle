@@ -1,102 +1,119 @@
-/* glass-light.css — the LIGHT frosted glass, lifted from the Northwind site's detached nav pill.
+/* glass-light.css — the bar's glass, as ONE token set the bar resolves every colour through.
  *
- * WHY this file exists, and why it is not in tokens.css: tokens.css is Mantle's dark instrument
- * glass, and the launcher, the desktop layer and the chamber are all still built from it. On
- * 2026-09-21 Owen pointed at the Northwind nav pill and said THAT is the glass he wants for the bar —
- * light, frosted, nearly white. So the bar (and anything else that later adopts the light look)
- * resolves its colour through --lg-* from here, and tokens.css is left untouched for everyone
- * else. Every value below is the Northwind original or a direct consequence of it; the source is
- * northwind-site/css/shell.css, .nav.is-detached (line ~509) and the :root ink ramp.
+ * THE NAME IS NOW HISTORICAL, and kept on purpose. This file started (2026-09-21) as the Northwind
+ * site's LIGHT frosted nav pill, because that is the glass Owen pointed at. Measuring it live
+ * changed the answer twice in one afternoon and the file followed, while every --lg-* name stayed
+ * put so ui/bar/bar.css never had to be touched for a repaint:
  *
- * THE ONE THING THAT DOES NOT TRANSFER: backdrop-filter. Northwind blurs the page behind the pill
- * with blur(20px) saturate(180%). In Electron the bar window is TRANSPARENT, and a CSS
- * backdrop-filter there samples only this page — there is nothing behind it to blur, so it would
- * cost GPU time and blur nothing. The sidecar applies DWM acrylic (blur + a light tint) to the
- * whole window instead, and the CSS only draws the tint ON TOP of that. That is why --lg-fill is
- * .55 and not Northwind's .68: the DWM tint is already contributing the rest, and .68 over it would
- * come out milky and kill the frost.
+ *   1. light pane over DWM ACRYLIC → acrylic rendered a near-opaque white slab, so the "glass"
+ *      was a white strip. Owen: "it needs to be more glass ui like and less white so i think it
+ *      needs to show the background behind it better".
+ *   2. the sidecar moved to DWM's classic BLUR-BEHIND, whose tint is subtle — so over Owen's dark
+ *      desktop the island is now a DARK translucent glass. That is exactly the see-through he
+ *      asked for, and it makes dark ink invisible, so the whole set below is flipped to dark.
+ *
+ * THE RULES THAT SURVIVED ALL OF IT:
+ *  - NO CSS backdrop-filter. In a transparent Electron window it samples this page and nothing
+ *    else. DWM does the real blur, behind the window; blur-behind follows the page's alpha, so
+ *    the CSS shape (the 24px pill, the 8px docked corners) IS the visible glass shape.
+ *  - The fill is a breath, not a pane: the desktop and the windows behind it have to read
+ *    through. What carries the pane's shape is the two hairlines and the shadow, never opacity.
+ *  - Neutral dark grey (tokens.css's own ink, 28,30,34) — not purple, no neon, glow nowhere.
+ *  - NO text-shadow: the ink is light on dark glass and carries itself.
+ *  - Northwind's motion is untouched, because the feel was never the problem: 560ms on
+ *    cubic-bezier(.22,.68,.30,1) (shell.css lines 118-121).
  */
 :root {
   /* ---- the pane ------------------------------------------------------- */
-  --lg-fill:        rgba(255,255,255,.55);   /* Northwind .68 minus what the DWM tint already gives */
-  --lg-fill-strong: rgba(255,255,255,.72);   /* popovers: they must stay readable over anything */
+  /* .16 over the blur: enough to read as a surface, far too little to hide anything behind it */
+  --lg-fill:        rgba(28,30,34,.16);
+  --lg-fill-strong: rgba(28,30,34,.62);      /* popovers carry LISTS: they get a real surface */
 
-  /* the two hairlines. INNER is the white lip just inside the edge (Northwind's border colour);
-     OUTER is the dark hairline that separates the pane from the screen. */
-  --lg-edge-in:  rgba(255,255,255,.62);
-  --lg-edge-out: rgba(11,14,26,.08);
+  /* the two hairlines. INNER is the lit lip just inside the top edge; OUTER is the dark hairline
+     that cuts the pane out of whatever is behind it. On dark glass the light one lifts the edge
+     and the dark one anchors it — a light-on-light pair would have vanished. */
+  --lg-edge-in:  rgba(255,255,255,.14);
+  --lg-edge-out: rgba(0,0,0,.35);
 
-  /* Northwind's shadow stack. The bar is docked at the BOTTOM of the screen, so its shadow has to be
-     thrown UPWARD — the same three layers with the y offsets negated. --lg-shadow is the original
-     (downward) one, for popovers, which float above the bar exactly like the pill floats above
-     the page. */
+  /* Northwind's shadow stack, unchanged. The bar is docked at the BOTTOM of the screen, so its shadow
+     is thrown UPWARD — the same three layers with the y offsets negated. --lg-shadow is the
+     original (downward) one, for popovers, which float above the bar exactly like the Northwind pill
+     floats above the page. */
   --lg-shadow:    0 1px 1px rgba(14,18,38,.05), 0 10px 28px -12px rgba(14,18,38,.22), 0 26px 56px -28px rgba(14,18,38,.30);
   --lg-shadow-up: 0 -1px 1px rgba(14,18,38,.05), 0 -10px 28px -12px rgba(14,18,38,.22), 0 -26px 56px -28px rgba(14,18,38,.30);
 
   /* ---- the pane as ONE animatable value --------------------------------
-     The bar's white lip and its drop shadow have to interpolate together, so they are one
-     box-shadow list rather than a shadow plus a separate inset rule. Every -0 variant below
-     repeats its stack LAYER FOR LAYER at zero alpha, in the same order and with the same
-     inset-ness: a box-shadow only interpolates against a list of the same shape, and a mismatch
-     does not warn — it just snaps, which is precisely the ugly frame this is here to prevent.
-     -up is the bottom-docked bar (shadow thrown up, lip on top); -dn is the docked-top case. */
-  --lg-pane-up:   inset 0 1px 0 rgba(255,255,255,.62), 0 -1px 1px rgba(14,18,38,.05), 0 -10px 28px -12px rgba(14,18,38,.22), 0 -26px 56px -28px rgba(14,18,38,.30);
+     The lit lip and the drop shadow have to interpolate together, so they are one box-shadow list
+     rather than a shadow plus a separate inset rule. Every -0 variant repeats its stack LAYER FOR
+     LAYER at zero alpha, in the same order and with the same inset-ness: a box-shadow only
+     interpolates against a list of the same shape, and a mismatch does not warn — it snaps, which
+     is precisely the ugly frame this is here to prevent. -up is the bottom-docked bar (shadow
+     thrown up, lip on top); -dn is the docked-top case. */
+  --lg-pane-up:   inset 0 1px 0 rgba(255,255,255,.14), 0 -1px 1px rgba(14,18,38,.05), 0 -10px 28px -12px rgba(14,18,38,.22), 0 -26px 56px -28px rgba(14,18,38,.30);
   --lg-pane-up-0: inset 0 1px 0 rgba(255,255,255,0),   0 -1px 1px rgba(14,18,38,0),   0 -10px 28px -12px rgba(14,18,38,0),   0 -26px 56px -28px rgba(14,18,38,0);
-  --lg-pane-dn:   inset 0 -1px 0 rgba(255,255,255,.62), 0 1px 1px rgba(14,18,38,.05), 0 10px 28px -12px rgba(14,18,38,.22), 0 26px 56px -28px rgba(14,18,38,.30);
+  --lg-pane-dn:   inset 0 -1px 0 rgba(255,255,255,.14), 0 1px 1px rgba(14,18,38,.05), 0 10px 28px -12px rgba(14,18,38,.22), 0 26px 56px -28px rgba(14,18,38,.30);
   --lg-pane-dn-0: inset 0 -1px 0 rgba(255,255,255,0),   0 1px 1px rgba(14,18,38,0),   0 10px 28px -12px rgba(14,18,38,0),   0 26px 56px -28px rgba(14,18,38,0);
 
-  /* the FLUSH state: the pane before it detaches. Northwind fades its island in from a fully
-     transparent white fill and a transparent white border, not from a grey — so the glass
-     appears rather than lightening. The ink fades with it. */
-  --lg-fill-0: rgba(255,255,255,0);
-  --lg-edge-0: rgba(255,255,255,0);
-  --lg-ink-0:  rgba(11,14,26,0);
+  /* the FLUSH state: the pane before it detaches. Each one is alpha 0 of the SAME colour it
+     animates to — fading up from a transparent version of itself, never from a different hue,
+     which would show as a tint sweeping across the glass mid-reveal. */
+  --lg-fill-0: rgba(28,30,34,0);
+  --lg-edge-0: rgba(0,0,0,0);
+  --lg-ink-0:  rgba(201,204,211,0);
 
   /* ---- ink ------------------------------------------------------------ */
-  --lg-ink:   #0B0E1A;                       /* the readout: the clock, an active label */
-  --lg-ink-2: #333A4E;                       /* secondary readouts, glyphs, the running dot */
-  --lg-ink-3: #5B6478;                       /* quiet detail; never the only carrier of meaning */
+  --lg-ink:   #F5F5F7;                       /* the readout: the clock, an app's letter tile */
+  --lg-ink-2: #C9CCD3;                       /* secondary readouts, glyphs, the running dot */
+  --lg-ink-3: #9AA0AA;                       /* quiet detail; never the only carrier of meaning */
 
-  /* ---- accent --------------------------------------------------------- */
-  --lg-acc:      #4436E8;                    /* the active window, focus. White on it is 7.2:1 */
-  --lg-acc-on:   #FFFFFF;
-  --lg-acc-soft: rgba(68,54,232,.12);
+  /* ---- accent ----------------------------------------------------------
+     tokens.css's --ion, which is already a light blue built for dark surfaces (~7:1 over this
+     glass). Resolved through var() so a palette change in tokens relights the bar with everything
+     else, with the literal as the fallback if this file is ever used without tokens.css. */
+  --lg-acc:      var(--ion, #72ADCA);        /* the active window, focus */
+  --lg-acc-on:   #0B0E1A;                    /* ink ON the accent: dark, because the accent is light */
+  --lg-acc-soft: rgba(114,173,202,.22);
 
-  /* ---- states on light glass ------------------------------------------ */
-  /* Ink at low alpha, never white: a white wash on near-white glass is invisible, and a hover
-     nobody can see is a control that looks dead. */
-  --lg-hover: rgba(11,14,26,.06);
-  --lg-press: rgba(11,14,26,.10);
-  --lg-tile:  rgba(11,14,26,.08);            /* the letter tile behind an app with no icon */
-  --lg-sunk:  rgba(11,14,26,.05);            /* a chip: a recess in the pane, Northwind's quiet-button fill */
+  /* ---- states on dark glass -------------------------------------------
+     White at low alpha now, not ink: on a dark translucent pane an ink wash is invisible, and a
+     hover nobody can see is a control that looks dead. */
+  --lg-hover: rgba(255,255,255,.08);
+  --lg-press: rgba(255,255,255,.14);
+  --lg-tile:  rgba(255,255,255,.10);         /* the letter tile behind an app with no icon */
+  --lg-sunk:  rgba(0,0,0,.25);               /* a chip: a recess, darker than the pane it sits in */
 
-  /* ---- warning -------------------------------------------------------- */
-  /* Mantle's --amber (#e0a059) is a dark-theme colour and sits at ~2:1 on white glass. This is
-     the same hue taken down to a burnt orange that clears 4.5:1 on the pane. */
-  --lg-warn:      #8A4B00;
-  --lg-warn-soft: rgba(138,75,0,.10);
+  /* The running dot sits on a pane you can see straight through, so whatever is behind it may be
+     light or dark from one minute to the next. A 1px ring separates it from both; on dark glass
+     that ring is black, the mirror of the white one the light set used. */
+  --lg-dot-ring: rgba(0,0,0,.6);
+
+  /* ---- warning ---------------------------------------------------------
+     Amber, at the lightness that reads on dark glass (tokens' --amber #e0a059 is tuned for an
+     opaque pane and goes muddy at .16 fill). */
+  --lg-warn:      #F4B860;
+  --lg-warn-soft: rgba(244,184,96,.16);
 
   /* ---- geometry ------------------------------------------------------- */
-  /* 8px, because the sidecar rounds the WINDOW's corners to 8px through DWM: a CSS radius that
-     disagrees would show as a light sliver or a clipped corner. The bottom edge is flush with
-     the screen, so only the top two corners are rounded (the bar flips this when docked top). */
+  /* Blur-behind follows the page's alpha, so these radii ARE the shape of the glass on screen:
+     24px all round when main floats the window as an island, 8px on the two top corners when it
+     is docked flush to the bottom of the screen. */
   --lg-r:      8px;
-  --lg-r-pill: 24px;                         /* pill mode: main floats the window off the edge */
+  --lg-r-pill: 24px;
   --lg-r-ctl:  6px;                          /* buttons, chips, icon cells */
   --lg-r-pop:  14px;                         /* popovers */
 
   /* ---- motion ----------------------------------------------------------
-     Northwind's nav detach, verbatim: --dur-nav 560ms on --ease-nav
-     cubic-bezier(.22,.68,.30,1) (shell.css lines 118-121). Owen asked for the reveal to feel
-     like exactly that, so the number lives here rather than being retyped per rule.
-     --lg-dur is overwritten per event by bar.js, because main sends the duration it is actually
-     animating the WINDOW with: the page's paint and the window's geometry must not disagree.
-     --lg-dur-out is the hide (main drops the window at 340ms, so the fade has to be done by
-     320ms) — the same curve, so it reads as the same object leaving. */
+     Northwind's nav detach, verbatim: --dur-nav 560ms on --ease-nav cubic-bezier(.22,.68,.30,1)
+     (shell.css lines 118-121). Owen asked for the reveal to feel like exactly that, so the number
+     lives here rather than being retyped per rule. --lg-dur is overwritten per event by bar.js,
+     because main sends the duration it is actually animating the WINDOW with: the page's paint
+     and the window's geometry must not disagree. --lg-dur-out is the hide (main drops the window
+     at 340ms, so the fade has to be done by 320ms) — the same curve, so it reads as the same
+     object leaving. */
   --lg-dur:     560ms;
   --lg-dur-out: 320ms;
   --lg-ease:    cubic-bezier(.22,.68,.30,1);
 
-  --lg-ground: #F4F6FA;                      /* Northwind's page ground — what the bar expects behind it */
-  --lg-blur:   blur(20px) saturate(180%);    /* recorded for the sidecar; NOT used as a CSS filter here */
+  --lg-ground: #141619;                      /* what is behind the glass: Owen's dark desktop */
+  --lg-blur:   blur(20px) saturate(180%);    /* recorded for the sidecar; NOT used as a CSS filter */
 }

@@ -83,7 +83,7 @@ namespace Mantle {
     /// a feature.
     public static readonly string[] Commands = new string[] {
       "ping", "windows", "foreground", "focus", "minimize", "close", "toggle",
-      "taskbar", "appbar", "traywatch", "glass", "corners", "place", "morph", "region",
+      "taskbar", "appbar", "traywatch", "edgeclip", "glass", "corners", "place", "morph", "region",
       "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "tray", "trayClick", "quit"
     };
 
@@ -163,6 +163,26 @@ namespace Mantle {
       // After `ready` so that line is always first: both of these report their
       // own failures on the wire.
       ReportDpi();
+
+      // A CURSOR CLIP SURVIVES THE PROCESS THAT SET IT (measured 2026-09-21).
+      // So a Mantle-shaped clip that is already in place before this process
+      // has done anything means an earlier Mantle died without its safety path
+      // and the pointer has been fenced ever since - possibly across a logout.
+      // Clear it at the door, and say so on BOTH channels: stderr because a
+      // human running the exe by hand must see it, and the log event because
+      // nothing in this sidecar is allowed to fix something silently.
+      if (!Passive) {
+        try {
+          string stale = EdgeClip.ClearStaleAtStartup();
+          if (stale != null) {
+            try { Console.Error.WriteLine("mantle-sidecar: " + stale); Console.Error.Flush(); } catch (Exception) { }
+            EmitLog("warn", "edgeclip: " + stale);
+          }
+        } catch (Exception ex) {
+          EmitLog("warn", "edgeclip: the startup check for a stale cursor clip failed (" + ex.Message + ")");
+        }
+      }
+
       if (ShellState.Enabled) ShellState.Write();
       else EmitLog("warn", "no --state-file: a recovery script cannot know the original shell state");
 
@@ -574,6 +594,52 @@ namespace Mantle {
           return null;
         }
 
+        case "edgeclip": {
+          int inset = Json.GetInt(req, "inset", 2);
+
+          // dryRun is PURE ARITHMETIC - monitor rect in, clip rect out, no
+          // Win32 state touched - so it answers in passive too. It is how the
+          // test suite proves the geometry without confining anyone's cursor.
+          if (Json.GetBool(req, "dryRun", false)) {
+            Win32.RECT mon;
+            int monitors;
+            string perr = EdgeClip.PrimaryRect(out mon, out monitors);
+            if (perr != null) return perr;
+            int used;
+            Win32.RECT want = EdgeClip.Compute(mon, inset, out used);
+            result = Json.Obj("ok", true, "dryRun", true, "applied", false,
+                              "inset", used, "monitors", monitors,
+                              "monitor", new object[] { mon.left, mon.top, mon.right, mon.bottom },
+                              "rect", new object[] { want.left, want.top, want.right, want.bottom },
+                              "reason", monitors > 1 ? EdgeClip.MultiMonitorReason
+                                                     : "dry run: this is the rect that would be clipped");
+            return null;
+          }
+
+          if (!Json.HasKey(req, "on"))
+            return "edgeclip needs on:true or on:false (or dryRun:true to see the rect it would set)";
+          // THE ONLY COMMAND IN THIS PROTOCOL THAT CONFINES THE POINTER. A test
+          // run may never do that to the person at the machine.
+          if (Passive)
+            return PassiveRefusal + ": edgeclip would confine the live cursor";
+
+          bool wantOn = Json.GetBool(req, "on", false);
+          if (!wantOn) {
+            string offReason;
+            bool released = EdgeClip.TurnOff(out offReason);
+            result = Json.Obj("ok", true, "applied", false, "released", released, "reason", offReason);
+            return null;
+          }
+          bool applied;
+          string why;
+          string ecerr = EdgeClip.TurnOn(inset, out applied, out why);
+          if (ecerr != null) return ecerr;
+          result = Json.Obj("ok", true, "applied", applied, "inset", inset < EdgeClip.MinInset ? EdgeClip.MinInset :
+                                        (inset > EdgeClip.MaxInset ? EdgeClip.MaxInset : inset),
+                            "reason", why);
+          return null;
+        }
+
         case "morph": {
           // Same footing as `place`: it moves a window Mantle owns, holds no
           // shell state and dies with the window, so passive has nothing to
@@ -838,6 +904,12 @@ namespace Mantle {
 
       try { detail.Add(Taskbar.RestoreForExit()); }
       catch (Exception ex) { done = false; detail.Add("taskbar: restore failed (" + ex.Message + ")"); }
+
+      // The cursor first: a pointer the user cannot move to the bottom of their
+      // own screen is the most visible way this process could leave Windows
+      // looking broken, and it costs one Win32 call.
+      try { detail.Add(EdgeClip.ReleaseForExit() ? "cursor clip: released" : "cursor clip: none was held"); }
+      catch (Exception ex) { done = false; detail.Add("cursor clip: release failed (" + ex.Message + "); it dies with the process"); }
 
       // Animation threads first: they are the only thing left that still calls
       // SetWindowPos, and a frame landing mid-restore is pure confusion.
