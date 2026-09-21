@@ -84,6 +84,26 @@ namespace Mantle {
     /// notification is harmless: we register for the OS's sake, not to listen.
     public const uint WM_APPBAR_CALLBACK = WM_USER + 0x2A5;
 
+    // ------------------------------------------------------------------- DPI
+    // MEASURED 2026-09-21, and it cost a wrong app bar on the first live run:
+    // SHAppBarMessage IS NOT DPI-VIRTUALISED. From a DPI-unaware process on
+    // this 1920x1080 @ 125% machine, ABM_GETTASKBARPOS answered
+    // 0,1020,1920,1080 (PHYSICAL) while GetWindowRect on Shell_TrayWnd answered
+    // 0,816,1536,864 (virtualised). So a rect built from GetMonitorInfo in a
+    // DPI-unaware process (1536x864) and handed to ABM_QUERYPOS/ABM_SETPOS is
+    // read as physical: the bar landed 200 px too high and 80% wide, and
+    // Explorer reserved that wrong strip.
+    //
+    // The cure is to stop being DPI-unaware at all: Program.InitDpi calls
+    // SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2) as the very first
+    // thing in Main, so GetMonitorInfo, SPI_GETWORKAREA and SHAppBarMessage all
+    // speak the SAME physical pixels. Every rect this process reports is
+    // physical, and `ping` says dpiAware:true so the caller knows.
+    //
+    // A DPI_AWARENESS_CONTEXT is a HANDLE, not an enum: the value really is -4.
+    public static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new IntPtr(-4);
+    public static readonly IntPtr DPI_AWARENESS_CONTEXT_SYSTEM_AWARE = new IntPtr(-2);
+
     public const uint MONITOR_DEFAULTTONULL = 0;
     public const uint MONITOR_DEFAULTTOPRIMARY = 1;
     public const uint MONITOR_DEFAULTTONEAREST = 2;
@@ -262,6 +282,12 @@ namespace Mantle {
     [DllImport("user32.dll", SetLastError = true)] static extern int SetWindowLongW(IntPtr hwnd, int index, int val);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SystemParametersInfoW(uint action, uint uiParam, ref RECT pvParam, uint winIni);
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
+    /// Windows 10 1703+. Missing on older builds, so the call site catches
+    /// EntryPointNotFoundException and falls back to SetProcessDPIAware.
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+    /// Vista+. System-wide awareness: right on a single-monitor box, stale if
+    /// the user drags to a monitor with a different scale factor.
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr hmodWinEventProc, WinEventProc cb, uint pid, uint tid, uint flags);
     [DllImport("user32.dll")] public static extern bool UnhookWinEvent(IntPtr hook);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern IntPtr SetWindowsHookExW(int idHook, LowLevelKeyboardProc cb, IntPtr hMod, uint threadId);

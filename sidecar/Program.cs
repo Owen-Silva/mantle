@@ -36,6 +36,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -77,6 +78,13 @@ namespace Mantle {
     public static int ParentPid;       // --parent-pid=N: whose windows to hide, whose death to follow
     public static string StateFilePath; // --state-file=PATH: where to leave the recovery note
     public static int OwnPid;
+
+    // DPI, decided in InitDpi before anything else happens. See the comment
+    // there: getting this wrong put the app bar 200 px off on the first live
+    // run, because SHAppBarMessage is not DPI-virtualised.
+    public static bool DpiAware;
+    public static string DpiMode;      // "per-monitor-v2" | "system" | "unaware"
+    public static string DpiReason;    // only when something did not go to plan
     public static IntPtr LoopHandle;   // the hidden window, for PostMessage from hooks
 
     const string PassiveRefusal = "refused: sidecar is passive (test mode)";
@@ -89,6 +97,11 @@ namespace Mantle {
 
     [STAThread]
     static int Main(string[] args) {
+      // FIRST LINE OF THE PROCESS, and it has to stay first: DPI awareness can
+      // only be set before any window exists and before anything has cached a
+      // coordinate. See InitDpi for why it matters.
+      InitDpi();
+
       foreach (string a in args) {
         if (a == "--passive") Passive = true;
         else if (a.StartsWith("--parent-pid=", StringComparison.Ordinal))
@@ -134,8 +147,9 @@ namespace Mantle {
 
       Emit(Json.Obj("ev", "ready", "pid", OwnPid, "passive", Passive, "version", Version));
 
-      // After `ready` so that line is always first: ShellState.Write reports
-      // its own failures on the wire.
+      // After `ready` so that line is always first: both of these report their
+      // own failures on the wire.
+      ReportDpi();
       if (ShellState.Enabled) ShellState.Write();
       else EmitLog("warn", "no --state-file: a recovery script cannot know the original shell state");
 
@@ -144,6 +158,70 @@ namespace Mantle {
 
       Application.Run(new ApplicationContext());
       return 0;
+    }
+
+    // --------------------------------------------------------------------- DPI
+
+    /// Make this process DPI-AWARE before it does anything else.
+    ///
+    /// WHY (measured 2026-09-21, after the first live run put Mantle's bar
+    /// 200 px too high and 80% wide, with Explorer reserving that wrong strip):
+    /// SHAppBarMessage is NOT DPI-virtualised. On this 1920x1080 @ 125% box, a
+    /// DPI-UNAWARE process gets 0,1020,1920,1080 from ABM_GETTASKBARPOS
+    /// (physical) but 0,816,1536,864 from GetWindowRect on Shell_TrayWnd
+    /// (virtualised). So the app bar rect, built from GetMonitorInfo's
+    /// virtualised 1536x864 and handed to ABM_QUERYPOS/ABM_SETPOS, was read as
+    /// physical - a rect for a screen that does not exist.
+    ///
+    /// Being DPI-aware makes GetMonitorInfo, SPI_GETWORKAREA and
+    /// SHAppBarMessage agree on one coordinate system: physical pixels. The
+    /// cost is pushed to the caller, which is the right place for it - Electron
+    /// is DPI-aware already and positions windows in DIPs, so it divides by the
+    /// display's scale factor. `ping` tells it which world it is talking to.
+    ///
+    /// The only window this process owns is invisible and never painted, so
+    /// WinForms' shaky per-monitor support costs us nothing.
+    static void InitDpi() {
+      try {
+        if (Win32.SetProcessDpiAwarenessContext(Win32.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
+          DpiAware = true;
+          DpiMode = "per-monitor-v2";
+          return;
+        }
+        DpiReason = "SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2) was refused (Win32 error " +
+                    Marshal.GetLastWin32Error() + ")";
+      } catch (Exception ex) {
+        // EntryPointNotFoundException on anything older than Windows 10 1703.
+        DpiReason = "SetProcessDpiAwarenessContext is not available on this Windows (" + ex.Message + ")";
+      }
+
+      try {
+        if (Win32.SetProcessDPIAware()) {
+          DpiAware = true;
+          DpiMode = "system";
+          DpiReason += "; fell back to SetProcessDPIAware: system-wide awareness, which is correct on one " +
+                       "monitor but goes stale if a second monitor has a different scale factor";
+          return;
+        }
+        DpiReason += "; SetProcessDPIAware was refused too (Win32 error " + Marshal.GetLastWin32Error() + ")";
+      } catch (Exception ex) {
+        DpiReason += "; SetProcessDPIAware threw (" + ex.Message + ")";
+      }
+
+      DpiAware = false;
+      DpiMode = "unaware";
+    }
+
+    /// Said on the wire once the output stream exists: a fallback or a failure
+    /// here changes what every rect in the protocol MEANS, so it can never be
+    /// something a caller has to guess at.
+    static void ReportDpi() {
+      if (!DpiAware) {
+        EmitLog("error", "this sidecar could not become DPI-aware, so every rect it reports is " +
+                         "virtualised and the app bar will land in the wrong place: " + DpiReason);
+        return;
+      }
+      if (DpiMode != "per-monitor-v2") EmitLog("warn", "DPI awareness: " + DpiReason);
     }
 
     // ------------------------------------------------------------------ output
@@ -271,15 +349,19 @@ namespace Mantle {
     /// Returns null on success (with `result` filled), or a plain-words error.
     static string Run(string cmd, Dictionary<string, object> req, ref object result) {
       switch (cmd) {
-        case "ping":
-          // dpiAware:false is not trivia. This exe has no DPI manifest, so
-          // every rect it reports (appbar, workarea, window bounds) is in the
-          // virtualised coordinates Windows hands a DPI-unaware process. A
-          // DPI-aware caller - Electron is one - must divide by the display's
-          // scale factor before using them. Saying so here means the caller
-          // never has to guess.
-          result = Json.Obj("pid", OwnPid, "passive", Passive, "version", Version, "dpiAware", false);
+        case "ping": {
+          // dpiAware is not trivia: it says what UNIT every rect in this
+          // protocol is in. true (the normal answer since 2026-09-21) means
+          // PHYSICAL pixels, so a caller positioning a window in DIPs - Electron
+          // does - divides by the display's scale factor. false means the calls
+          // below failed and the rects are virtualised, which would put the app
+          // bar in the wrong place; dpiReason then says exactly why.
+          var ping = Json.Obj("pid", OwnPid, "passive", Passive, "version", Version,
+                              "dpiAware", DpiAware, "dpiMode", DpiMode);
+          if (!DpiAware || DpiReason != null) ping["dpiReason"] = DpiReason;
+          result = ping;
           return null;
+        }
 
         case "windows":
           result = WindowList.Build();

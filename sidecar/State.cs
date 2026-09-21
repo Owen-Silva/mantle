@@ -22,7 +22,7 @@
 // and never fatal: a sidecar that cannot write its notes still works.
 //
 // Shape (lane B's recovery script reads exactly this):
-//   { "writtenAt": "<ISO>", "pid": <n>,
+//   { "writtenAt": "<ISO>", "pid": <n>, "units": "physical",
 //     "original": { "abmState": <n>, "workarea": [l,t,r,b] },
 //     "changed":  { "autohide": <bool>, "appbars": ["<hwnd>", ...] },
 //     "restored": <bool> }
@@ -98,6 +98,12 @@ namespace Mantle {
         json = Json.Write(Json.Obj(
           "writtenAt", DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture),
           "pid", Program.OwnPid,
+          // What the numbers below MEAN. The sidecar makes itself DPI-aware in
+          // Program.InitDpi, so they are physical pixels - a recovery script
+          // feeding `workarea` back to SPI_SETWORKAREA from a DPI-unaware
+          // process would otherwise set an area 80% of the right size. If
+          // awareness could not be turned on, this says so instead of lying.
+          "units", Program.DpiAware ? "physical" : "virtualised",
           "original", Json.Obj(
             "abmState", _origAbmState,
             "workarea", new object[] { _origWorkArea.left, _origWorkArea.top, _origWorkArea.right, _origWorkArea.bottom }),

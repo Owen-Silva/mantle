@@ -40,6 +40,25 @@ function readState() {
   try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch (e) { return null; }
 }
 
+/**
+ * The primary screen's width as a DPI-UNAWARE process sees it. powershell.exe
+ * has no DPI manifest, so this is the virtualised number (1536 on this
+ * 1920x1080 @ 125% machine) - the yardstick for proving the sidecar is not
+ * virtualised any more. Returns null, with the reason printed, if the probe
+ * cannot run: a check that cannot be made must fail out loud, not vanish.
+ */
+function virtualisedScreenWidth() {
+  try {
+    const r = spawnSync('powershell', ['-NoProfile', '-Command',
+      'Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width'],
+      { encoding: 'utf8' });
+    const n = parseInt((r.stdout || '').trim(), 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 /** The sidecar writes the file just after `ready`, so poll rather than sleep. */
 async function waitForState(predicate, timeoutMs) {
   const until = Date.now() + timeoutMs;
@@ -173,8 +192,9 @@ async function main() {
       r.ok && r.result && r.result.passive === true &&
       typeof r.result.pid === 'number' && typeof r.result.version === 'string',
       JSON.stringify(r.result));
-    // The caller is DPI-aware and we are not; it has to know to convert.
-    check('ping reports dpiAware:false', r.ok && r.result && r.result.dpiAware === false,
+    // Physical pixels, because SHAppBarMessage is not DPI-virtualised (see
+    // Program.InitDpi). If this ever goes false the app bar lands 200 px off.
+    check('ping reports dpiAware:true', r.ok && r.result && r.result.dpiAware === true,
       JSON.stringify(r.result));
   } catch (e) { check('ping', false, e.message); }
 
@@ -194,6 +214,17 @@ async function main() {
         st.original.workarea.every((n) => typeof n === 'number'),
         JSON.stringify(st.original));
       check('state file starts with restored:false', st.restored === false, JSON.stringify(st));
+      check('state file says its numbers are physical pixels', st.units === 'physical', JSON.stringify(st));
+      // The real proof that DPI awareness took: a DPI-UNAWARE process on this
+      // machine sees a 1536-wide screen, an aware one sees 1920. Equal is fine
+      // (100% scale); smaller means we are virtualised again and the app bar
+      // would land 200 px off, exactly as it did on 2026-09-21.
+      const vw = virtualisedScreenWidth();
+      check('state file reads PHYSICAL pixels, not virtualised',
+        typeof vw === 'number' && st.original && Array.isArray(st.original.workarea) &&
+        st.original.workarea[2] >= vw,
+        'workarea right edge ' + (st.original && st.original.workarea ? st.original.workarea[2] : '?') +
+        ' vs DPI-unaware screen width ' + vw);
       check('a passive run reports changing nothing',
         st.changed && st.changed.autohide === false &&
         Array.isArray(st.changed.appbars) && st.changed.appbars.length === 0,

@@ -702,14 +702,22 @@ function oldExeBaseline(reason) {
 /**
  * Put the bar window exactly where the app bar was accepted.
  *
- * The sidecar is DPI-unaware (its ping says so) and answers in PHYSICAL pixels;
- * Electron's setBounds wants DIPs. On Owen's 125% display those differ by 25%, so
- * skipping the conversion would leave a visible strip of wallpaper under the bar
- * -- or the bar hanging off the bottom of the screen. Returns how it was placed,
- * for the reason string, because "the bar is in the wrong place" with no
- * explanation is a bug report nobody can act on.
+ * WHICH UNITS, and why it matters (measured on the first live run, 2026-09-21):
+ * SHAppBarMessage deals in PHYSICAL pixels even when the caller is DPI-unaware,
+ * but everything ELSE Windows hands an unaware process is virtualised. On Owen's
+ * 125% display that is a 25% error in both directions -- the bar came out 200px
+ * tall at 80% of the screen width. So:
+ *
+ *   dpiAware true  -> the rectangle is physical pixels; convert to DIP.
+ *   dpiAware false -> the sidecar's numbers are already DIP on the primary
+ *                     display; converting again would repeat the mistake.
+ *   dpiAware null  -> the sidecar is too old to say, and applyLive never gets
+ *                     this far, but the reason says so rather than guessing.
+ *
+ * Returns how it was placed, for the reason string: "the bar is in the wrong
+ * place" with no explanation is a bug report nobody can act on.
  */
-function placeBar(rect) {
+function placeBar(rect, dpiAware) {
   if (!barWin || barWin.isDestroyed()) return { ok: false, how: 'the bar window went away before it could be moved' };
   if (!Array.isArray(rect) || rect.length !== 4 || !rect.every((n) => Number.isFinite(Number(n)))) {
     return { ok: false, how: `the sidecar did not send back a usable rectangle (${JSON.stringify(rect)}), so the bar is where Electron first put it` };
@@ -720,11 +728,20 @@ function placeBar(rect) {
     return { ok: false, how: `the app-bar rectangle came back empty (${l},${t},${r},${b}), so the bar is where Electron first put it` };
   }
 
+  if (dpiAware === false) {
+    try {
+      barWin.setBounds(phys);
+    } catch (err) {
+      return { ok: false, how: `the app bar was accepted but the bar window would not move to it: ${err.message}` };
+    }
+    return { ok: true, how: 'placed from the app bar\'s rectangle as-is: the sidecar reports dpiAware:false, so Windows already virtualised its numbers into DIP for the primary display' };
+  }
+
   let dip = null;
   let how = '';
   try {
     dip = screen.screenToDipRect(null, phys);
-    how = 'placed from the app bar\'s rectangle with screen.screenToDipRect';
+    how = `placed from the app bar's physical-pixel rectangle with screen.screenToDipRect${dpiAware === true ? '' : ' (the sidecar did not say whether it is DPI-aware, so physical was assumed)'}`;
   } catch (err) {
     how = `screen.screenToDipRect would not run (${err.message}), so `;
   }
@@ -788,7 +805,7 @@ async function applyLive() {
       const hwnd = hwndOf(barWin);
       const r = await sidecar.call('appbar', { hwnd, edge: flags.barEdge, size: BAR_H });
       appbarHwnd = hwnd;
-      const placed = placeBar(r && r.rect);
+      const placed = placeBar(r && r.rect, age.dpiAware);
       state.set('workarea', {
         reserved: true,
         reason: `Mantle's bar is registered as an app bar; Explorer keeps maximised windows off it and drops the reservation by itself if Mantle dies (${placed.how})`,
@@ -954,17 +971,25 @@ function restoreShell(why) {
     let taskbarLine = null;
     try {
       const r = await sidecar.call('taskbar', { restore: true }, 4000);
-      const changedByUs = r && r.changedByUs;
       const original = r && r.state !== undefined && r.state !== null
         ? (Number(r.state) & 1 ? 'auto-hide' : 'always visible')
         : (state.get().taskbar.wasAutohide ? 'auto-hide' : 'always visible');
-      if (r && r.restored === false) {
+
+      // `restored:false` on its own is NOT a failure, and reading it as one cried
+      // wolf on the first live run (2026-09-21): Owen's taskbar is already
+      // auto-hide, so Mantle never changed it, and the sidecar correctly answered
+      // {restored:false, changedByUs:false, verified:true} -- "there was nothing
+      // to put back". The log shouted RESTORE INCOMPLETE at a perfectly healthy
+      // desktop. A restore only fails when there was something to undo AND it did
+      // not get undone.
+      const neverChanged = r && r.changedByUs === false;
+      if (!neverChanged && r && r.restored === false) {
         failures.push(`the taskbar's auto-hide flag is NOT back to ${original}`);
       } else if (r && r.verified === false) {
         failures.push(`the taskbar's auto-hide flag was set back to ${original} but the sidecar could not read it back to confirm`);
       } else {
-        taskbarLine = changedByUs === false
-          ? `taskbar auto-hide back to ${original} (Mantle had never changed it)`
+        taskbarLine = neverChanged
+          ? 'taskbar auto-hide left as it was (Mantle never changed it)'
           : `taskbar auto-hide back to ${original}`;
         done.push(taskbarLine);
         done.push('verified');

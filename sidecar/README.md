@@ -2,7 +2,7 @@
 
 Electron cannot call Win32. This is the one process that can.
 
-`Mantle.Sidecar.exe` is a ~57 KB .NET Framework 4 executable that owns **every**
+`Mantle.Sidecar.exe` is a ~58 KB .NET Framework 4 executable that owns **every**
 Win32 call in Mantle: the window list, the taskbar's auto-hide state, the app
 bar that reserves screen space for Mantle's own bar, the desktop reparent, the
 solo-Win gesture, volume, icons and the tray. Electron starts it,
@@ -63,11 +63,16 @@ Written atomically (content goes to `<path>.tmp`, which is then copied over the
 target), UTF-8, no BOM, one object:
 
 ```json
-{ "writtenAt": "2026-09-21T20:12:40.991Z", "pid": 6744,
-  "original": { "abmState": 1, "workarea": [0,0,1536,864] },
+{ "writtenAt": "2026-09-21T20:37:57.804Z", "pid": 7400, "units": "physical",
+  "original": { "abmState": 1, "workarea": [0,0,1920,1080] },
   "changed":  { "autohide": false, "appbars": ["131862"] },
   "restored": false }
 ```
+
+`units` says what the numbers mean — `"physical"` normally, `"virtualised"` in
+the unhappy case where DPI awareness could not be set (see **DPI**), because a
+recovery script feeding a virtualised `workarea` back to `SPI_SETWORKAREA` would
+set an area 80% of the right size.
 
 `original.abmState` is what `ABM_GETSTATE` answered before Mantle touched
 anything — bit `1` is `ABS_AUTOHIDE`, bit `2` is `ABS_ALWAYSONTOP`. `changed` is
@@ -104,7 +109,7 @@ through a JavaScript number.
 
 | cmd | args | result |
 | --- | --- | --- |
-| `ping` | — | `{pid, passive, version, dpiAware}` — `dpiAware` is always `false`: see **DPI** below |
+| `ping` | — | `{pid, passive, version, dpiAware, dpiMode}`, plus `dpiReason` when awareness was not set cleanly — see **DPI** below. `dpiAware` is the protocol handshake: an exe that does not report it predates the auto-hide and app-bar commands |
 | `windows` | — | `[{hwnd, title, exe, pid, minimized, foreground, icon}]` |
 | `focus` | `{hwnd}` | `{}` — raise it |
 | `minimize` | `{hwnd}` | `{}` |
@@ -113,7 +118,7 @@ through a JavaScript number.
 | `taskbar` | `{mode:"autohide"}` | `{autohide:true, wasAutohide:bool, verified:bool}` — `ABM_SETSTATE`, read back with `ABM_GETSTATE`. `verified:false` means Windows did not take it, and then `ok` is `false` and **nothing** was changed |
 | `taskbar` | `{restore:true}` | `{restored:bool, changedByUs:bool, state:n, verified:bool}` — puts the state back **only if we changed it**; a taskbar the user already had on auto-hide is left alone |
 | `taskbar` | anything else | `ok:false` — `taskbar: unknown form; SW_HIDE was removed on 2026-09-21 after it left the taskbar stuck` |
-| `appbar` | `{hwnd, edge:"bottom"\|"top", size:px}` | `{rect:[l,t,r,b]}` — the rect the caller must move its window to. `ABM_NEW` once per hwnd, then `ABM_QUERYPOS` + `ABM_SETPOS`; a second call for the same hwnd is a re-position. Moving the window is the **caller's** job |
+| `appbar` | `{hwnd, edge:"bottom"\|"top", size:px}` | `{rect:[l,t,r,b]}` in **physical pixels** — the rect the caller must move its window to, after dividing by the display's scale factor. `ABM_NEW` once per hwnd, then `ABM_QUERYPOS` + `ABM_SETPOS`; a second call for the same hwnd is a re-position. Moving the window is the **caller's** job |
 | `appbar` | `{hwnd, remove:true}` | `{removed:bool}` — `ABM_REMOVE` |
 | `workarea` | `{reset:true}` | `{rect:[l,t,r,b]}` — belt and braces: put the work area back to the one captured at startup |
 | `workarea` | `{bottom}` \| `{top}` | `ok:false` — `workarea: setting the work area was removed on 2026-09-21; use appbar` |
@@ -185,14 +190,41 @@ Each step is wrapped so that one failure never skips the next.
 
 An error inside a command never kills the process; it answers `ok:false`.
 
-### DPI
+### DPI — and the app bar that landed 200 px too high
 
-The sidecar has **no DPI manifest**, so it is DPI-unaware and every rect it
-reports (`appbar`, `workarea`, window bounds) is in the virtualised coordinates
-Windows hands a DPI-unaware process — on this machine `[0,0,1536,864]` for a
-1920×1080 screen at 125%. `ping` reports `dpiAware:false` so the caller, which
-*is* DPI-aware (Electron), knows to divide by the display's scale factor before
-using any of them.
+The first live run of the app bar put Mantle's bar **200 px too high and 80%
+wide**, and Explorer dutifully reserved that wrong strip. The measurement, from
+a DPI-**unaware** probe on this 1920×1080 @ 125% machine:
+
+| call | answer | coordinate system |
+| --- | --- | --- |
+| `ABM_GETTASKBARPOS` | `0,1020,1920,1080` | **physical** |
+| `GetWindowRect(Shell_TrayWnd)` | `0,816,1536,864` | virtualised |
+
+**`SHAppBarMessage` is not DPI-virtualised.** The sidecar was building the rect
+from `GetMonitorInfo` (virtualised, 1536×864) and handing it to `ABM_QUERYPOS` /
+`ABM_SETPOS`, which read it as physical — a rect for a screen that does not
+exist.
+
+So the sidecar is no longer DPI-unaware. `Program.InitDpi` runs as the **first
+statement in `Main`** (awareness can only be set before any window exists):
+`SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`,
+falling back to `SetProcessDPIAware()` (system-wide) if that is refused or
+missing — pre-1703 Windows has no such entry point. Either fallback or a total
+failure is announced on the wire, because it changes what every rect *means*.
+
+Consequences:
+
+- `GetMonitorInfo`, `SPI_GETWORKAREA` and `SHAppBarMessage` now agree: **every
+  rect in this protocol is physical pixels.** `SPI_GETWORKAREA` reads
+  `[0,0,1920,1080]` here, where a DPI-unaware process saw `[0,0,1536,864]`.
+- `ping` reports `dpiAware:true` and `dpiMode:"per-monitor-v2"` (plus
+  `dpiReason` if anything was not ideal).
+- **The caller converts.** Electron positions windows in DIPs, so it must
+  divide the `appbar` rect by `screen.getPrimaryDisplay().scaleFactor` before
+  `setBounds`. The sidecar never positions a window it does not own.
+- The only window this process owns is invisible and never painted, so
+  WinForms' shaky per-monitor support costs nothing.
 
 ## How each piece works, and what it costs
 
@@ -219,9 +251,10 @@ using any of them.
 - **App bars.** `ABM_NEW` once per window, then `ABM_QUERYPOS` (explorer pushes
   the rect clear of bars already there) and `ABM_SETPOS`, on the primary monitor
   only. The callback message is `WM_USER+0x2A5`, a value Chromium does not
-  interpret: we register for the OS's sake, not to listen. The returned rect is
-  the caller's to move its window to — the sidecar never positions a window it
-  does not own.
+  interpret: we register for the OS's sake, not to listen. Rects are **physical
+  pixels** — `SHAppBarMessage` is not DPI-virtualised, which is the whole story
+  under **DPI**. The returned rect is the caller's to move its window to, scaled
+  to DIPs — the sidecar never positions a window it does not own.
 - **Desktop.** The wallpaper trick: `SendMessageTimeout(Progman, 0x052C, 0xD)`
   spawns a `WorkerW`, and our window becomes its child, so Windows itself keeps
   it at the bottom of the z-order. Where that WorkerW lives changed between
@@ -283,7 +316,7 @@ Builds the exe if it is missing, then runs the whole protocol against a
 `--passive` instance and prints one line:
 
 ```
-SIDECAR TEST: 34 passed, 0 failed
+SIDECAR TEST: 36 passed, 0 failed
 ```
 
 It is safe to run while someone is using the machine: passive mode is what makes
@@ -294,5 +327,9 @@ It also proves both self-exit paths (`quit` → 0, stdin EOF → gone in well un
 It holds the line on the incident too: `taskbar {show:false}` and
 `workarea {bottom:44}` must answer **"removed"**, the state file must exist with
 the original state from the first moment of a run and say `restored:true` after
-`quit`, and a run without `--state-file` must warn. The state file goes to the
-OS temp directory and is deleted afterwards — a test run leaves nothing behind.
+`quit`, and a run without `--state-file` must warn. It holds the line on the DPI
+bug too: `ping` must say `dpiAware:true`, and the captured work area must be at
+least as wide as what a DPI-unaware process sees (1920 vs 1536 here) — if that
+ever regresses, the app bar is landing 200 px off again. The state file goes to
+the OS temp directory and is deleted afterwards: a test run leaves nothing
+behind.

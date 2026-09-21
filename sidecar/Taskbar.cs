@@ -228,9 +228,14 @@ namespace Mantle {
     /// its window to. Positioning the window is NOT done here - that belongs to
     /// the process that owns the window.
     ///
-    /// DPI: this process is DPI-unaware (no manifest), so every rect here is in
-    /// the virtualised coordinates Windows hands a DPI-unaware process. A
-    /// DPI-aware caller (Electron is) must divide by the display scale factor.
+    /// DPI: PHYSICAL PIXELS, and that is load-bearing. SHAppBarMessage is not
+    /// DPI-virtualised (measured: ABM_GETTASKBARPOS answers physical even to a
+    /// DPI-unaware process), so feeding it a virtualised rect put Mantle's bar
+    /// 200 px too high and 80% wide on the first live run. Program.InitDpi
+    /// makes this process DPI-aware so GetMonitorInfo and SHAppBarMessage agree.
+    /// The caller positions its window in DIPs and must therefore DIVIDE this
+    /// rect by the display's scale factor; `ping` reports dpiAware:true so it
+    /// knows to.
     public static string Reserve(IntPtr hwnd, string edge, int size, out Win32.RECT rc, out bool isNew) {
       rc = new Win32.RECT();
       isNew = false;

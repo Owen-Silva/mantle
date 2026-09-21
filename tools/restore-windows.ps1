@@ -91,6 +91,27 @@ public static class MantleRestore {
   [DllImport("user32.dll")]
   static extern int GetSystemMetrics(int nIndex);
 
+  [DllImport("user32.dll", SetLastError = true)]
+  static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+
+  /// <summary>Become per-monitor DPI-aware v2 ((HANDLE)-4) BEFORE any other
+  /// Win32 call. powershell.exe is DPI-unaware, so Windows virtualises the
+  /// numbers it hands us: on a 125% display SPI_GETWORKAREA answers 1536x864 for
+  /// a 1920x1080 screen. The state file records PHYSICAL pixels, so writing them
+  /// back from an unaware process would have Windows scale them UP by another
+  /// 25% and leave the desktop with a work area bigger than the screen.
+  /// Must run first: the awareness of a process is latched by the first call
+  /// that depends on it.</summary>
+  public static bool BecomeDpiAware() {
+    try {
+      return SetProcessDpiAwarenessContext(new IntPtr(-4));
+    } catch (EntryPointNotFoundException) {
+      return false;   // pre-1703 Windows: the entry point is simply not there
+    } catch (Exception) {
+      return false;
+    }
+  }
+
   const uint ABM_GETSTATE       = 4;
   const uint ABM_GETTASKBARPOS  = 5;
   const uint ABM_SETSTATE       = 10;
@@ -163,8 +184,17 @@ try {
   exit 1
 }
 
+# FIRST Win32 call of the process, before anything reads a coordinate. See
+# BecomeDpiAware above for why the order is not negotiable.
+$dpiAware = [MantleRestore]::BecomeDpiAware()
+
 Say "mantle restore-windows"
 Say "  state file: $StateFile"
+if ($dpiAware) {
+  Say "  this process is per-monitor DPI-aware, so pixel numbers mean physical pixels"
+} else {
+  Say "  could not make this process DPI-aware, so pixel numbers here are virtualised"
+}
 
 # -----------------------------------------------------------------------------
 # (a) Stop Mantle, and ONLY Mantle.
@@ -231,6 +261,7 @@ if (Test-Path -LiteralPath $StateFile) {
   }
 }
 
+$units = $null
 if ($stateJson -ne $null -and $stateJson.original -ne $null) {
   if ($stateJson.original.PSObject.Properties.Name -contains 'abmState') {
     $originalState = [int]$stateJson.original.abmState
@@ -238,6 +269,14 @@ if ($stateJson -ne $null -and $stateJson.original -ne $null) {
   if ($stateJson.original.PSObject.Properties.Name -contains 'workarea' -and $stateJson.original.workarea -ne $null) {
     $originalWorkArea = @($stateJson.original.workarea)
   }
+  # 'units' may sit beside the rectangle or at the top level; accept either
+  # rather than make the caller guess which one this script wanted.
+  if ($stateJson.original.PSObject.Properties.Name -contains 'units') {
+    $units = [string]$stateJson.original.units
+  }
+}
+if ($units -eq $null -and $stateJson -ne $null -and $stateJson.PSObject.Properties.Name -contains 'units') {
+  $units = [string]$stateJson.units
 }
 
 if ($originalState -eq $null) {
@@ -273,32 +312,52 @@ if ($before -eq $originalState) {
 # Explorer drops that by itself. But an OLD Mantle did, with SPI_SETWORKAREA,
 # and that DOES survive the process that set it. So this is the step that cleans
 # up after the version of Mantle that caused all this.
+#
+# It is also the one step where being wrong makes things WORSE rather than
+# leaving them alone: a work area written in the wrong units scales the desktop.
+# So it runs only when both facts are certain -- this process is DPI-aware, and
+# the state file says its numbers are physical pixels. Otherwise it is skipped
+# OUT LOUD and Explorer is left to work the work area out, which it does by
+# itself for real app bars anyway.
 # -----------------------------------------------------------------------------
-$target = $null
-if ($originalWorkArea -ne $null -and $originalWorkArea.Count -eq 4) {
-  $target = @([int]$originalWorkArea[0], [int]$originalWorkArea[1], [int]$originalWorkArea[2], [int]$originalWorkArea[3])
-  $targetWhy = "the original from the state file"
-} else {
-  $screen = [MantleRestore]::PrimaryScreen()
-  $target = @(0, 0, [int]$screen[0], [int]$screen[1])
-  $targetWhy = "the whole primary monitor (no original recorded)"
+$skipWorkArea = $null
+if (-not $dpiAware) {
+  $skipWorkArea = "work area left to Explorer (this process could not become DPI-aware)"
+} elseif ($units -ne 'physical') {
+  $shownUnits = 'not recorded'
+  if ($units -ne $null -and $units -ne '') { $shownUnits = $units }
+  $skipWorkArea = "work area left to Explorer (the state file's units are '$shownUnits', not 'physical', so setting it could scale the desktop wrongly)"
 }
 
-$nowWa = [MantleRestore]::GetWorkArea()
-if ($nowWa -ne $null -and $nowWa[0] -eq $target[0] -and $nowWa[1] -eq $target[1] -and $nowWa[2] -eq $target[2] -and $nowWa[3] -eq $target[3]) {
-  Say "  work area already [$($target -join ', ')] ($targetWhy)"
+if ($skipWorkArea -ne $null) {
+  Say "  $skipWorkArea"
 } else {
-  $ok = [MantleRestore]::SetWorkArea($target[0], $target[1], $target[2], $target[3])
-  Start-Sleep -Milliseconds 150
-  $check = [MantleRestore]::GetWorkArea()
-  if ($ok -and $check -ne $null -and $check[2] -eq $target[2] -and $check[3] -eq $target[3]) {
-    Say "  work area set to [$($target -join ', ')] ($targetWhy)"
+  $target = $null
+  if ($originalWorkArea -ne $null -and $originalWorkArea.Count -eq 4) {
+    $target = @([int]$originalWorkArea[0], [int]$originalWorkArea[1], [int]$originalWorkArea[2], [int]$originalWorkArea[3])
+    $targetWhy = "the original from the state file"
   } else {
-    $shown = 'unreadable'
-    if ($check -ne $null) { $shown = ($check -join ', ') }
-    # Explorer recomputes the work area for its own app bars, so a value that
-    # differs is not automatically wrong -- but it is worth naming.
-    Say "  work area asked for [$($target -join ', ')], Windows reports [$shown] (Explorer recomputes this for real app bars, which is normal)"
+    $screen = [MantleRestore]::PrimaryScreen()
+    $target = @(0, 0, [int]$screen[0], [int]$screen[1])
+    $targetWhy = "the whole primary monitor (no original recorded)"
+  }
+
+  $nowWa = [MantleRestore]::GetWorkArea()
+  if ($nowWa -ne $null -and $nowWa[0] -eq $target[0] -and $nowWa[1] -eq $target[1] -and $nowWa[2] -eq $target[2] -and $nowWa[3] -eq $target[3]) {
+    Say "  work area already [$($target -join ', ')] ($targetWhy)"
+  } else {
+    $ok = [MantleRestore]::SetWorkArea($target[0], $target[1], $target[2], $target[3])
+    Start-Sleep -Milliseconds 150
+    $check = [MantleRestore]::GetWorkArea()
+    if ($ok -and $check -ne $null -and $check[2] -eq $target[2] -and $check[3] -eq $target[3]) {
+      Say "  work area set to [$($target -join ', ')] ($targetWhy)"
+    } else {
+      $shown = 'unreadable'
+      if ($check -ne $null) { $shown = ($check -join ', ') }
+      # Explorer recomputes the work area for its own app bars, so a value that
+      # differs is not automatically wrong -- but it is worth naming.
+      Say "  work area asked for [$($target -join ', ')], Windows reports [$shown] (Explorer recomputes this for real app bars, which is normal)"
+    }
   }
 }
 
