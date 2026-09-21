@@ -61,13 +61,43 @@ namespace Mantle {
       if (!_originalStyle.ContainsKey(hwnd.ToInt64())) _originalStyle[hwnd.ToInt64()] = before;
 
       Win32.SetParent(hwnd, target);
+      // Read the error code IMMEDIATELY: the very next P/Invoke overwrites it.
+      int lastErr = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+
       // SetParent's RETURN VALUE cannot be trusted as a success flag: it hands
       // back the OLD parent, and IntPtr.Zero is the normal answer for a window
-      // that had none. Ask Windows what the parent is now instead.
-      if (Win32.GetParent(hwnd) != target)
-        return "SetParent did not take (Win32 error " +
-               System.Runtime.InteropServices.Marshal.GetLastWin32Error() +
-               "); the window is not part of the desktop, mode would have been " + mode;
+      // that had none. Ask Windows what the parent is now instead - and ask it
+      // three ways, because ONE IS NOT ENOUGH:
+      //
+      // The 2026-09-21 live run reported "SetParent did not take (Win32 error
+      // 0)" while the window had in fact LEFT the top-level window list, i.e.
+      // the reparent had worked. GetParent() alone lies in both directions: it
+      // returns the OWNER for an owned top-level window, and Chromium/Electron
+      // windows are owned. So: success if ANY of GetParent, GA_PARENT or
+      // IsChild says we are under the target, and failure ONLY when the window
+      // is demonstrably still top-level (its GA_PARENT is the desktop itself).
+      IntPtr parent = Win32.GetParent(hwnd);
+      IntPtr ancestor = Win32.GetAncestor(hwnd, Win32.GA_PARENT);
+      IntPtr desktopRoot = Win32.GetDesktopWindow();
+      bool took = parent == target || ancestor == target || Win32.IsChild(target, hwnd);
+
+      if (!took) {
+        // Every number a human would need at 2am, in the answer itself.
+        string numbers = "GetParent=" + parent.ToInt64() +
+                         ", GetAncestor(GA_PARENT)=" + ancestor.ToInt64() +
+                         ", target=" + target.ToInt64() +
+                         ", GetDesktopWindow=" + desktopRoot.ToInt64() +
+                         ", mode=" + mode + ", Win32 error " + lastErr;
+        if (ancestor == desktopRoot || ancestor == IntPtr.Zero)
+          return "SetParent did not take: the window is still top-level (" + numbers +
+                 "). It is not part of the desktop.";
+        // Reparented, but under something we did not ask for (an explorer
+        // restart can swap the WorkerW mid-call). Behind every app is still
+        // behind every app, so take it - and SAY what happened.
+        Program.EmitLog("warn", "the desktop layer ended up under a different window than the one " +
+                                "we asked for, so it is behind every app but not under the one we picked (" +
+                                numbers + ")");
+      }
 
       // A child window needs WS_CHILD, or Windows keeps treating it as
       // top-level and it will not clip to the desktop.

@@ -160,11 +160,20 @@
   // ---------------------------------------------------------------------
   const PIECES = [
     ['sidecar', 'Sidecar', (p) => p.status === 'ok'],
-    ['taskbar', 'Windows taskbar', (p) => p.hidden === true],
-    ['workarea', 'Work area', (p) => p.reserved === true],
+    // 'taskbar' is healthy when Windows' own taskbar is on AUTO-HIDE -- Mantle
+    // never hides that window any more; hiding it is what cost Owen a reboot on
+    // 2026-09-21. 'workarea' is healthy when Mantle's bar is registered as a real
+    // app bar, which is a reservation Explorer drops by itself if Mantle dies.
+    ['taskbar', 'Windows taskbar', (p) => p.autohide === true],
+    ['workarea', 'Screen space for the bar', (p) => p.reserved === true],
     ['desktop', 'Desktop layer', (p) => p.attached === true],
     ['hotkey', 'Win key', (p) => p.winTap === true],
     ['tray', 'Notification area', (p) => p.status === 'ok'],
+    // 'acrylic' is real Windows 11 frosted glass, which blurs the actual desktop
+    // behind the bar and launcher. 'css' means lane C's painted-on glass is
+    // standing in -- either because --no-acrylic asked for it, or because Windows
+    // would not give it, and the reason says which.
+    ['glass', 'Window glass', (p) => p.material === 'acrylic'],
     ['shortcuts', 'Shortcuts', (p) => p.killSwitch === true && p.launcher === true],
   ];
 

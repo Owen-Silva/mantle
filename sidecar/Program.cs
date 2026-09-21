@@ -19,10 +19,17 @@
 //                 the same stream, so a half-written line would desync the
 //                 reader forever.
 //
-// SAFETY: the sidecar can hide the taskbar and shrink the work area. If it died
-// holding those, the machine would look broken to a user who has no idea Mantle
-// exists. So EVERY exit path - clean quit, stdin EOF, parent death, Ctrl+C,
-// console close, unhandled exception - funnels through SafetyRestore first.
+// SAFETY, rewritten on 2026-09-21 after Mantle left the taskbar stuck hidden
+// and cost a reboot (the story is at the top of Taskbar.cs). Two rules now:
+//
+//   1. The sidecar may not hold shell state that needs a LIVING process to
+//      undo. Auto-hide (an OS setting) and app bars (tied to a window Windows
+//      itself watches) both survive our death harmlessly. ShowWindow on the
+//      taskbar and SPI_SETWORKAREA did not, and are gone.
+//   2. EVERY exit path - clean quit, stdin EOF, parent death, Ctrl+C, console
+//      close, unhandled exception - still funnels through SafetyRestore, and
+//      --state-file leaves a note on disk so a recovery script can finish the
+//      job even when no Mantle process is left to run it.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -68,6 +75,7 @@ namespace Mantle {
 
     public static bool Passive;        // --passive: never touch the live shell
     public static int ParentPid;       // --parent-pid=N: whose windows to hide, whose death to follow
+    public static string StateFilePath; // --state-file=PATH: where to leave the recovery note
     public static int OwnPid;
     public static IntPtr LoopHandle;   // the hidden window, for PostMessage from hooks
 
@@ -85,6 +93,8 @@ namespace Mantle {
         if (a == "--passive") Passive = true;
         else if (a.StartsWith("--parent-pid=", StringComparison.Ordinal))
           int.TryParse(a.Substring("--parent-pid=".Length), NumberStyles.Integer, CultureInfo.InvariantCulture, out ParentPid);
+        else if (a.StartsWith("--state-file=", StringComparison.Ordinal))
+          StateFilePath = a.Substring("--state-file=".Length).Trim('"');
       }
       OwnPid = Process.GetCurrentProcess().Id;
 
@@ -115,10 +125,19 @@ namespace Mantle {
       _loop = new MsgForm();
       LoopHandle = _loop.Handle;        // forces HWND creation; BeginInvoke needs it
 
-      WorkArea.CaptureOriginal();
+      // Write down what the shell looked like BEFORE anything can change it.
+      // Both reads (ABM_GETSTATE, SPI_GETWORKAREA) change nothing, so this runs
+      // in --passive too: a passive run still leaves a usable recovery note.
+      ShellState.Configure(StateFilePath);
+      ShellState.CaptureOriginal();
       WindowList.Start();               // read-only, so it runs in passive too
 
       Emit(Json.Obj("ev", "ready", "pid", OwnPid, "passive", Passive, "version", Version));
+
+      // After `ready` so that line is always first: ShellState.Write reports
+      // its own failures on the wire.
+      if (ShellState.Enabled) ShellState.Write();
+      else EmitLog("warn", "no --state-file: a recovery script cannot know the original shell state");
 
       StartStdinReader();
       WatchParent();
@@ -253,7 +272,13 @@ namespace Mantle {
     static string Run(string cmd, Dictionary<string, object> req, ref object result) {
       switch (cmd) {
         case "ping":
-          result = Json.Obj("pid", OwnPid, "passive", Passive, "version", Version);
+          // dpiAware:false is not trivia. This exe has no DPI manifest, so
+          // every rect it reports (appbar, workarea, window bounds) is in the
+          // virtualised coordinates Windows hands a DPI-unaware process. A
+          // DPI-aware caller - Electron is one - must divide by the display's
+          // scale factor before using them. Saying so here means the caller
+          // never has to guess.
+          result = Json.Obj("pid", OwnPid, "passive", Passive, "version", Version, "dpiAware", false);
           return null;
 
         case "windows":
@@ -278,21 +303,61 @@ namespace Mantle {
         }
 
         case "taskbar": {
+          // FORM IS CHECKED BEFORE PASSIVE, deliberately. `taskbar {show:...}`
+          // is not something passive mode is protecting the machine from - it
+          // does not exist any more, in any mode, and a caller that still sends
+          // it needs to hear that rather than "refused".
+          if (Json.GetBool(req, "restore", false)) {
+            if (Passive) return PassiveRefusal;
+            bool restored, changedByUs, tbVerified;
+            int tbState;
+            string rerr = Taskbar.Restore(out restored, out changedByUs, out tbState, out tbVerified);
+            if (rerr != null) return rerr;
+            result = Json.Obj("restored", restored, "changedByUs", changedByUs,
+                              "state", tbState, "verified", tbVerified);
+            return null;
+          }
+          if (Json.GetString(req, "mode") == "autohide") {
+            if (Passive) return PassiveRefusal;
+            bool wasAutohide, ahVerified;
+            string reason;
+            string serr = Taskbar.SetAutohide(out wasAutohide, out ahVerified, out reason);
+            if (serr != null) return serr;
+            result = Json.Obj("autohide", true, "wasAutohide", wasAutohide, "verified", ahVerified);
+            return null;
+          }
+          return "taskbar: unknown form; SW_HIDE was removed on 2026-09-21 after it left the taskbar stuck";
+        }
+
+        case "appbar": {
           if (Passive) return PassiveRefusal;
-          if (!Json.HasKey(req, "show")) return "taskbar needs show:true or show:false";
-          bool hidden = Taskbar.Set(Json.GetBool(req, "show", true));
-          result = Json.Obj("hidden", hidden);
+          IntPtr abHwnd = Json.GetHwnd(req, "hwnd");
+          if (Json.GetBool(req, "remove", false)) {
+            bool removed;
+            string xerr = AppBars.Remove(abHwnd, out removed);
+            if (xerr != null) return xerr;
+            result = Json.Obj("removed", removed);
+            return null;
+          }
+          Win32.RECT bar;
+          bool isNew;
+          string berr = AppBars.Reserve(abHwnd, Json.GetString(req, "edge"),
+                                        Json.GetInt(req, "size", 0), out bar, out isNew);
+          if (berr != null) return berr;
+          // Physical pixels as a DPI-UNAWARE process sees them; see ping.
+          result = Json.Obj("rect", new object[] { bar.left, bar.top, bar.right, bar.bottom });
           return null;
         }
 
         case "workarea": {
+          // Same reasoning as taskbar: the removed forms answer with what
+          // happened to them, whatever mode we are in.
+          if (Json.HasKey(req, "bottom") || Json.HasKey(req, "top"))
+            return "workarea: setting the work area was removed on 2026-09-21; use appbar";
+          if (!Json.GetBool(req, "reset", false))
+            return "workarea needs reset:true - setting the work area was removed on 2026-09-21; use appbar";
           if (Passive) return PassiveRefusal;
-          bool reset = Json.GetBool(req, "reset", false);
-          int bottom = Json.GetInt(req, "bottom", 0);
-          int top = Json.GetInt(req, "top", 0);
-          if (!reset && bottom <= 0 && top <= 0)
-            return "workarea needs bottom:<px>, top:<px> or reset:true";
-          Win32.RECT r = WorkArea.Apply(bottom, top, reset);
+          Win32.RECT r = WorkArea.Reset();
           result = Json.Obj("rect", new object[] { r.left, r.top, r.right, r.bottom });
           return null;
         }
@@ -381,13 +446,43 @@ namespace Mantle {
     }
 
     /// Everything the sidecar could be holding that would make Windows look
-    /// broken. Each step is independently guarded: one failure must not stop
-    /// the others.
+    /// broken. Each step is independently guarded: ONE FAILURE MUST NEVER SKIP
+    /// THE NEXT - that is what turned a bad taskbar call into a reboot on
+    /// 2026-09-21. The order is deliberate: give the screen space back first,
+    /// then the taskbar, then the input hook, then the bookkeeping.
+    ///
+    /// stdout may already be gone by the time this runs, so the closing
+    /// `restore` event is genuinely best-effort; the state file is the record
+    /// that survives.
     static void SafetyRestore() {
-      try { Taskbar.RestoreForExit(); } catch (Exception) { }
-      try { WorkArea.ResetForExit(); } catch (Exception) { }
-      try { Hotkey.Uninstall(); } catch (Exception) { }
-      try { WindowList.Stop(); } catch (Exception) { }
+      var detail = new List<string>();
+      bool done = true;
+
+      try { detail.Add(AppBars.RemoveAllForExit()); }
+      catch (Exception ex) { done = false; detail.Add("app bars: cleanup failed (" + ex.Message + ")"); }
+
+      try { detail.Add(Taskbar.RestoreForExit()); }
+      catch (Exception ex) { done = false; detail.Add("taskbar: restore failed (" + ex.Message + ")"); }
+
+      try { Hotkey.Uninstall(); detail.Add("keyboard hook: uninstalled"); }
+      catch (Exception ex) { done = false; detail.Add("keyboard hook: uninstall failed (" + ex.Message + "); it dies with the process anyway"); }
+
+      try { WindowList.Stop(); }
+      catch (Exception) { detail.Add("window watcher: would not stop; it dies with the process"); }
+
+      // The state file records that the restore ran. A failure to write it is
+      // bookkeeping, not shell state, so it is reported but does not make the
+      // restore itself "not done".
+      try {
+        if (ShellState.Enabled) {
+          string werr = ShellState.MarkRestored(true);
+          detail.Add(werr == null ? "state file: restored:true written" : "state file: " + werr);
+        }
+      } catch (Exception ex) { detail.Add("state file: could not be updated (" + ex.Message + ")"); }
+
+      try {
+        Emit(Json.Obj("ev", "restore", "done", done, "detail", string.Join("; ", detail.ToArray())));
+      } catch (Exception) { }
     }
   }
 }

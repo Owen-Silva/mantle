@@ -2,9 +2,10 @@
 
 Electron cannot call Win32. This is the one process that can.
 
-`Mantle.Sidecar.exe` is a ~46 KB .NET Framework 4 executable that owns **every**
-Win32 call in Mantle: the window list, the taskbar, the work area, the desktop
-reparent, the solo-Win gesture, volume, icons and the tray. Electron starts it,
+`Mantle.Sidecar.exe` is a ~57 KB .NET Framework 4 executable that owns **every**
+Win32 call in Mantle: the window list, the taskbar's auto-hide state, the app
+bar that reserves screen space for Mantle's own bar, the desktop reparent, the
+solo-Win gesture, volume, icons and the tray. Electron starts it,
 talks to it over stdin/stdout in JSON lines, and kills it by closing the pipe.
 
 One process, one protocol, one place to audit anything that touches the live
@@ -47,13 +48,34 @@ reader assumes 64-bit struct layouts inside a 64-bit explorer.
 ## Run
 
 ```
-sidecar/bin/Mantle.Sidecar.exe [--passive] [--parent-pid=<pid>]
+sidecar/bin/Mantle.Sidecar.exe [--passive] [--parent-pid=<pid>] [--state-file=<path>]
 ```
 
 | flag | meaning |
 | --- | --- |
-| `--passive` | Test mode. Nothing on the live desktop may move. Exactly these commands are refused with `{"ok":false,"error":"refused: sidecar is passive (test mode)"}` — `focus`, `minimize`, `close`, `toggle`, `taskbar`, `workarea`, `desktop`, `hotkey`, `trayClick`. Everything read-only (`ping`, `windows`, `icon`, `volume`, `tray`, `quit`) and every event still works. |
+| `--passive` | Test mode. Nothing on the live desktop may move. Exactly these commands are refused with `{"ok":false,"error":"refused: sidecar is passive (test mode)"}` — `focus`, `minimize`, `close`, `toggle`, `taskbar`, `appbar`, `workarea`, `desktop`, `hotkey`, `trayClick`. Everything read-only (`ping`, `windows`, `icon`, `volume`, `tray`, `quit`) and every event still works. A **removed** form (`taskbar {show}`, `workarea {bottom|top}`) answers with *why it was removed* instead, in every mode: that is more useful to a caller than "refused". |
 | `--parent-pid=<pid>` | Exclude that process's windows from the list (so Mantle's own bar and launcher never show up in Mantle's own taskbar), and exit — after restoring the shell — when that process dies. |
+| `--state-file=<path>` | Where to leave the recovery note (see **Safety**). Written at startup with the **original** shell state before anything is touched, after every change, and again at the end of the restore path. Absent is legal and says so: `{"ev":"log","level":"warn","message":"no --state-file: a recovery script cannot know the original shell state"}`. |
+
+### The state file
+
+Written atomically (content goes to `<path>.tmp`, which is then copied over the
+target), UTF-8, no BOM, one object:
+
+```json
+{ "writtenAt": "2026-09-21T20:12:40.991Z", "pid": 6744,
+  "original": { "abmState": 1, "workarea": [0,0,1536,864] },
+  "changed":  { "autohide": false, "appbars": ["131862"] },
+  "restored": false }
+```
+
+`original.abmState` is what `ABM_GETSTATE` answered before Mantle touched
+anything — bit `1` is `ABS_AUTOHIDE`, bit `2` is `ABS_ALWAYSONTOP`. `changed` is
+what **we** did, and is therefore the entire list of things a recovery script
+has to undo. Both originals are read with passive calls, so a `--passive` run
+leaves a usable note too. (The example above is this machine: `abmState: 1` —
+Owen's taskbar is *already* auto-hide, so live Mantle changes nothing about it
+and holds no taskbar state at all.)
 
 ## Protocol
 
@@ -82,14 +104,19 @@ through a JavaScript number.
 
 | cmd | args | result |
 | --- | --- | --- |
-| `ping` | — | `{pid, passive, version}` |
+| `ping` | — | `{pid, passive, version, dpiAware}` — `dpiAware` is always `false`: see **DPI** below |
 | `windows` | — | `[{hwnd, title, exe, pid, minimized, foreground, icon}]` |
 | `focus` | `{hwnd}` | `{}` — raise it |
 | `minimize` | `{hwnd}` | `{}` |
 | `close` | `{hwnd}` | `{}` — WM_CLOSE, so the app can still prompt to save |
 | `toggle` | `{hwnd}` | `{}` — minimize if it is already foreground, else focus |
-| `taskbar` | `{show:bool}` | `{hidden:bool}` |
-| `workarea` | `{bottom:px}` \| `{top:px}` \| `{reset:true}` | `{rect:[l,t,r,b]}` |
+| `taskbar` | `{mode:"autohide"}` | `{autohide:true, wasAutohide:bool, verified:bool}` — `ABM_SETSTATE`, read back with `ABM_GETSTATE`. `verified:false` means Windows did not take it, and then `ok` is `false` and **nothing** was changed |
+| `taskbar` | `{restore:true}` | `{restored:bool, changedByUs:bool, state:n, verified:bool}` — puts the state back **only if we changed it**; a taskbar the user already had on auto-hide is left alone |
+| `taskbar` | anything else | `ok:false` — `taskbar: unknown form; SW_HIDE was removed on 2026-09-21 after it left the taskbar stuck` |
+| `appbar` | `{hwnd, edge:"bottom"\|"top", size:px}` | `{rect:[l,t,r,b]}` — the rect the caller must move its window to. `ABM_NEW` once per hwnd, then `ABM_QUERYPOS` + `ABM_SETPOS`; a second call for the same hwnd is a re-position. Moving the window is the **caller's** job |
+| `appbar` | `{hwnd, remove:true}` | `{removed:bool}` — `ABM_REMOVE` |
+| `workarea` | `{reset:true}` | `{rect:[l,t,r,b]}` — belt and braces: put the work area back to the one captured at startup |
+| `workarea` | `{bottom}` \| `{top}` | `ok:false` — `workarea: setting the work area was removed on 2026-09-21; use appbar` |
 | `desktop` | `{hwnd}` | `{mode:"workerw-sibling"\|"workerw-child"\|"progman"}` |
 | `desktop` | `{hwnd, detach:true}` | `{}` |
 | `hotkey` | `{winTap:bool}` | `{installed:bool}` |
@@ -108,19 +135,64 @@ Unsolicited lines, distinguished by having `ev` instead of `id`:
 | `{"ev":"ready","pid":..,"passive":..,"version":".."}` | first line, always |
 | `{"ev":"windows","list":[...]}` | the list changed. Coalesced to at most one per 250 ms, with a 2 s poll as a safety net, and one unconditional emit within the first 2 s so the UI never starts empty |
 | `{"ev":"hotkey","name":"win"}` | a solo Win tap |
-| `{"ev":"taskbar","hidden":bool,"reason":".."}` | the hidden state changed, **including** re-hides by the watcher (`reason: "re-hidden: explorer showed it"`) |
+| `{"ev":"taskbar","autohide":bool,"reason":".."}` | the taskbar's auto-hide state was set, restored, or found to be set already (`reason: "was already auto-hide"`) |
+| `{"ev":"restore","done":bool,"detail":".."}` | the restore path ran, on any exit. `detail` is plain words, one clause per step (`"app bars: 1 removed; taskbar: untouched by Mantle, left alone; keyboard hook: uninstalled; state file: restored:true written"`). Best-effort: on a killed parent, stdout may already be gone — the state file is the record that survives |
 | `{"ev":"log","level":"warn"\|"error","message":".."}` | anything a human should know: a missing icon, a hook that would not install, a fallback that kicked in |
 
 ## Safety
 
-The sidecar can hide the taskbar and shrink the work area. A sidecar that died
-holding those would look, to a user who has never heard of Mantle, exactly like
-a broken Windows install. So **every** exit path — `quit`, stdin EOF, parent
-death, Ctrl+C, console close, unhandled exception — runs the same restore first:
-show the taskbar, reset the work area, remove the keyboard hook, unhook the
-window watchers, *then* exit.
+### The incident, and the rule that came out of it
+
+On **2026-09-21**, the first live run, this sidecar hid the taskbar with
+`ShowWindow(Shell_TrayWnd, SW_HIDE)`. Owen's taskbar is set to **auto-hide**.
+Mantle was killed, so the `SW_SHOW` never ran — and even when it did, `SW_SHOW`
+means nothing to an auto-hide taskbar: explorer's auto-hide state machine had
+been left mid-flight and stayed stuck hidden. Hovering the screen edge did
+nothing. He had to **reboot**, in the middle of his work.
+
+> **Never call `ShowWindow` or `SetWindowPos` on `Shell_TrayWnd` or
+> `Shell_SecondaryTrayWnd`.** Not to hide it, not to show it, not to fix it.
+
+And the principle behind it:
+
+> **Mantle may not hold shell state that needs a living process to undo.** A
+> killed Mantle — any process, any moment, any means — must leave Windows
+> exactly as usable as it found it.
+
+So both jobs are now done through the OS's own app bar protocol, and both are
+safe to die holding:
+
+- **Taskbar** — `SHAppBarMessage(ABM_SETSTATE, ABS_AUTOHIDE)`, the same switch
+  as *Settings ▸ Personalisation ▸ Taskbar ▸ Automatically hide the taskbar*. A
+  dead Mantle leaves an auto-hide taskbar: an ordinary Windows that reveals its
+  bar on a hover. The other state bits are preserved (the call replaces the
+  whole state, so it is always an `OR`), the bit is read back to verify, and the
+  restore path only unsets it **if we were the ones who set it**.
+- **Screen space** — the bar window is registered as a **real app bar**
+  (`ABM_NEW` / `ABM_QUERYPOS` / `ABM_SETPOS`). Explorer drops the reservation by
+  itself the moment the window dies. `SPI_SETWORKAREA` is gone: it is a global
+  setting that outlives the process that made it.
+- **Desktop layer and keyboard hook** — a `SetParent` child and a `WH_KEYBOARD_LL`
+  hook both die with the process. Nothing to undo.
+
+### Exits
+
+**Every** exit path — `quit`, stdin EOF, parent death, Ctrl+C, console close,
+unhandled exception — runs the same restore first: remove every app bar, restore
+the taskbar state, uninstall the keyboard hook, unhook the window watchers,
+write `restored:true` to the state file, emit `{"ev":"restore",…}`, *then* exit.
+Each step is wrapped so that one failure never skips the next.
 
 An error inside a command never kills the process; it answers `ok:false`.
+
+### DPI
+
+The sidecar has **no DPI manifest**, so it is DPI-unaware and every rect it
+reports (`appbar`, `workarea`, window bounds) is in the virtualised coordinates
+Windows hands a DPI-unaware process — on this machine `[0,0,1536,864]` for a
+1920×1080 screen at 125%. `ping` reports `dpiAware:false` so the caller, which
+*is* DPI-aware (Electron), knows to divide by the display's scale factor before
+using any of them.
 
 ## How each piece works, and what it costs
 
@@ -138,11 +210,18 @@ An error inside a command never kills the process; it answers `ok:false`.
   `Icon.ExtractAssociatedIcon`, scaled to 32×32 PNG, base64. Cached per exe
   path, **including failures**, so a path that cannot yield an icon is tried
   once and logged once rather than 30 times a minute forever.
-- **Taskbar.** `ShowWindow(SW_HIDE)` on `Shell_TrayWnd` and every
-  `Shell_SecondaryTrayWnd`. explorer keeps running; only the bar goes away, and
-  one call puts it back. A 1 s watcher re-hides it when explorer shows it again
-  and **says so** in a `taskbar` event. The bars are re-found on every tick, so
-  an explorer restart heals itself.
+- **Taskbar.** `SHAppBarMessage`, never a window call — see **Safety** for the
+  reboot that made that non-negotiable. `ABM_GETSTATE` at startup (passive, so
+  it always runs), `ABM_SETSTATE` with `original | ABS_AUTOHIDE` only if the bit
+  is not already there, then `ABM_GETSTATE` again to verify. There is no watcher
+  any more and nothing to re-hide: explorer owns the state, and if it changes it
+  back that is explorer's business, not a fight for us to pick.
+- **App bars.** `ABM_NEW` once per window, then `ABM_QUERYPOS` (explorer pushes
+  the rect clear of bars already there) and `ABM_SETPOS`, on the primary monitor
+  only. The callback message is `WM_USER+0x2A5`, a value Chromium does not
+  interpret: we register for the OS's sake, not to listen. The returned rect is
+  the caller's to move its window to — the sidecar never positions a window it
+  does not own.
 - **Desktop.** The wallpaper trick: `SendMessageTimeout(Progman, 0x052C, 0xD)`
   spawns a `WorkerW`, and our window becomes its child, so Windows itself keeps
   it at the bottom of the z-order. Where that WorkerW lives changed between
@@ -179,9 +258,13 @@ An error inside a command never kills the process; it answers `ok:false`.
   on this one a real tray needs a different approach entirely (UI Automation
   over the XAML tree). Plan the UI so a missing tray is a stated absence, not an
   empty strip.
-- `workarea` reserves space on the **primary monitor only**. Multi-monitor
-  reservation needs per-monitor work areas, which `SPI_SETWORKAREA` does not
-  offer directly.
+- `appbar` reserves space on the **primary monitor only**
+  (`MonitorFromPoint(0,0)`), and only along the **top** or **bottom** edge.
+- The desktop reparent (`desktop`) reports success if **any** of `GetParent`,
+  `GetAncestor(GA_PARENT)` or `IsChild` puts the window under the target, and
+  failure only when the window is demonstrably still top-level. `GetParent`
+  alone is not enough: it returns the *owner* for an owned top-level window, and
+  on 2026-09-21 it made a reparent that had worked report as a failure.
 - `focus` can still legitimately fail: Windows' foreground lock lets the current
   app refuse. The escalation ladder (restore → `AttachThreadInput` → Alt nudge)
   handles the normal cases, and the command answers `ok:false` with the reason
@@ -200,10 +283,16 @@ Builds the exe if it is missing, then runs the whole protocol against a
 `--passive` instance and prints one line:
 
 ```
-SIDECAR TEST: 20 passed, 0 failed
+SIDECAR TEST: 34 passed, 0 failed
 ```
 
 It is safe to run while someone is using the machine: passive mode is what makes
-that a guarantee rather than a hope, and the test asserts the refusals. It also
-proves both self-exit paths (`quit` → 0, stdin EOF → gone in well under 2 s), so
-a test run can never leave an orphaned sidecar behind.
+that a guarantee rather than a hope, and the test asserts the refusals verbatim.
+It also proves both self-exit paths (`quit` → 0, stdin EOF → gone in well under
+2 s), so a test run can never leave an orphaned sidecar behind.
+
+It holds the line on the incident too: `taskbar {show:false}` and
+`workarea {bottom:44}` must answer **"removed"**, the state file must exist with
+the original state from the first moment of a run and say `restored:true` after
+`quit`, and a run without `--state-file` must warn. The state file goes to the
+OS temp directory and is deleted afterwards — a test run leaves nothing behind.

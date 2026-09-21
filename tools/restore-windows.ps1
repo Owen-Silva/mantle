@@ -1,0 +1,439 @@
+# restore-windows.ps1 - put the Windows shell back, with no Node, no Electron and
+# no Mantle running.
+#
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\restore-windows.ps1
+#   ... -StateFile <path>     read the original state from somewhere else
+#   ... -NoKill               do not stop any Mantle process (use when Mantle is
+#                             the thing that is running this)
+#   ... -RestartExplorer      last resort: bounce explorer.exe if the taskbar is
+#                             still not right after everything else
+#
+# -----------------------------------------------------------------------------
+# WHY THIS FILE EXISTS
+# -----------------------------------------------------------------------------
+# 2026-09-21. Mantle's first live run hid the Shell_TrayWnd window with
+# ShowWindow(SW_HIDE). Owen's Windows taskbar is set to AUTO-HIDE, and hiding the
+# window of an auto-hiding taskbar wedges explorer's own show/hide state machine:
+# when Mantle was killed, the sidecar's SW_SHOW ran and the taskbar still did not
+# come back. He had to REBOOT, in the middle of his work.
+#
+# Every line below follows from one rule: PUTTING WINDOWS BACK MUST NOT NEED
+# MANTLE. Not Electron, not Node, not the C# sidecar, not a tray icon, not a
+# keystroke that something else might have swallowed. Windows PowerShell 5.1 and
+# Add-Type are on every Windows box that has ever existed in this decade, so that
+# is all this uses. If Owen can open a terminal, he can get his taskbar back.
+#
+# It is also SAFE TO RUN WHEN NOTHING IS WRONG. Every step reads the current state
+# first and only writes when it differs, so a run with no state file and a healthy
+# desktop is a sequence of no-ops that prints "verified" and exits 0.
+#
+# PowerShell 5.1 only: no ternary, no '&&', no '?.'. Do not "modernise" it --
+# pwsh 7 is not guaranteed to be installed, and this is the file that has to work
+# on the worst day.
+# -----------------------------------------------------------------------------
+
+[CmdletBinding()]
+param(
+  [string]$StateFile = (Join-Path $env:APPDATA 'mantle\shell-state.json'),
+  [switch]$NoKill,
+  [switch]$RestartExplorer
+)
+
+$ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$problems = New-Object System.Collections.ArrayList
+
+function Say([string]$text) { Write-Output $text }
+function Problem([string]$text) {
+  [void]$problems.Add($text)
+  Write-Output "  PROBLEM  $text"
+}
+
+# -----------------------------------------------------------------------------
+# The Win32 surface. Four calls and two structs; nothing else is needed.
+#
+# APPBARDATA on x64: uint cbSize(0), 4 bytes of padding, IntPtr hWnd(8),
+# uint uCallbackMessage(16), uint uEdge(20), RECT rc(24..40), IntPtr lParam(40)
+# => 48 bytes. Marshal.SizeOf works that out; cbSize must agree with it or
+# SHAppBarMessage silently does nothing, which would be the worst possible bug in
+# this particular file.
+# -----------------------------------------------------------------------------
+$src = @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class MantleRestore {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct RECT { public int left; public int top; public int right; public int bottom; }
+
+  [StructLayout(LayoutKind.Sequential)]
+  public struct APPBARDATA {
+    public uint cbSize;
+    public IntPtr hWnd;
+    public uint uCallbackMessage;
+    public uint uEdge;
+    public RECT rc;
+    public IntPtr lParam;
+  }
+
+  [DllImport("shell32.dll", SetLastError = true)]
+  static extern IntPtr SHAppBarMessage(uint dwMessage, ref APPBARDATA pData);
+
+  [DllImport("user32.dll", SetLastError = true)]
+  static extern bool SystemParametersInfoW(uint uiAction, uint uiParam, ref RECT pvParam, uint fWinIni);
+
+  [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern IntPtr FindWindowW(string lpClassName, string lpWindowName);
+
+  [DllImport("user32.dll")]
+  static extern bool IsWindowVisible(IntPtr hWnd);
+
+  [DllImport("user32.dll")]
+  static extern int GetSystemMetrics(int nIndex);
+
+  const uint ABM_GETSTATE       = 4;
+  const uint ABM_GETTASKBARPOS  = 5;
+  const uint ABM_SETSTATE       = 10;
+  const uint SPI_GETWORKAREA    = 0x30;
+  const uint SPI_SETWORKAREA    = 0x2F;
+  const uint SPIF_SENDCHANGE    = 2;
+
+  static APPBARDATA Fresh() {
+    APPBARDATA d = new APPBARDATA();
+    d.cbSize = (uint)Marshal.SizeOf(typeof(APPBARDATA));
+    return d;
+  }
+
+  /// <summary>ABM_GETSTATE: bit 1 = ABS_AUTOHIDE, bit 2 = ABS_ALWAYSONTOP.</summary>
+  public static int GetState() {
+    APPBARDATA d = Fresh();
+    return (int)SHAppBarMessage(ABM_GETSTATE, ref d).ToInt64();
+  }
+
+  /// <summary>ABM_SETSTATE. The OS owns this flag, which is the entire point:
+  /// nothing has to stay alive to hold it, and nothing has to stay alive to
+  /// undo it.</summary>
+  public static void SetState(int state) {
+    APPBARDATA d = Fresh();
+    d.lParam = new IntPtr(state);
+    SHAppBarMessage(ABM_SETSTATE, ref d);
+  }
+
+  /// <summary>ABM_GETTASKBARPOS. An empty rectangle means explorer has lost
+  /// track of its own taskbar -- the wedged state from the incident.</summary>
+  public static int[] TaskbarPos() {
+    APPBARDATA d = Fresh();
+    IntPtr ok = SHAppBarMessage(ABM_GETTASKBARPOS, ref d);
+    if (ok == IntPtr.Zero) return new int[] { 0, 0, 0, 0 };
+    return new int[] { d.rc.left, d.rc.top, d.rc.right, d.rc.bottom };
+  }
+
+  public static int[] GetWorkArea() {
+    RECT r = new RECT();
+    if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, ref r, 0)) return null;
+    return new int[] { r.left, r.top, r.right, r.bottom };
+  }
+
+  public static bool SetWorkArea(int l, int t, int rr, int b) {
+    RECT r = new RECT();
+    r.left = l; r.top = t; r.right = rr; r.bottom = b;
+    return SystemParametersInfoW(SPI_SETWORKAREA, 0, ref r, SPIF_SENDCHANGE);
+  }
+
+  public static bool TaskbarWindowExists() { return FindWindowW("Shell_TrayWnd", null) != IntPtr.Zero; }
+
+  public static bool TaskbarWindowVisible() {
+    IntPtr h = FindWindowW("Shell_TrayWnd", null);
+    if (h == IntPtr.Zero) return false;
+    return IsWindowVisible(h);
+  }
+
+  /// <summary>The primary monitor, in the same (DPI-virtualised) coordinates
+  /// SPI_GETWORKAREA answers in for this process. Read and write from the same
+  /// process and they agree; that is why both live here.</summary>
+  public static int[] PrimaryScreen() { return new int[] { GetSystemMetrics(0), GetSystemMetrics(1) }; }
+}
+'@
+
+try {
+  Add-Type -TypeDefinition $src -Language CSharp -ErrorAction Stop
+} catch {
+  Write-Output "could not declare the Win32 calls: $($_.Exception.Message)"
+  Write-Output "LAST RESORT: press Ctrl+Shift+Esc, find 'Windows Explorer', and choose Restart."
+  exit 1
+}
+
+Say "mantle restore-windows"
+Say "  state file: $StateFile"
+
+# -----------------------------------------------------------------------------
+# (a) Stop Mantle, and ONLY Mantle.
+#
+# Owen's own browser is an Electron app. `taskkill /im electron.exe` would take
+# his browser, his tabs and anything else Electron-shaped with it, so the match is
+# on this repo's folder path inside the process's command line -- which every
+# Mantle electron.exe has (it is in its own exe path) and no other Electron app
+# does. Each one is stopped by pid.
+# -----------------------------------------------------------------------------
+if ($NoKill) {
+  Say "  skipped stopping Mantle (-NoKill)"
+} else {
+  $needle = $repoRoot.ToLowerInvariant()
+  $stopped = 0
+  try {
+    $electrons = @(Get-CimInstance Win32_Process -Filter "Name='electron.exe'" -ErrorAction Stop |
+      Where-Object { $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($needle) })
+  } catch {
+    $electrons = @()
+    Problem "could not list electron.exe processes: $($_.Exception.Message)"
+  }
+  foreach ($p in $electrons) {
+    try {
+      Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop
+      $stopped++
+    } catch {
+      Problem "could not stop Mantle pid $($p.ProcessId): $($_.Exception.Message)"
+    }
+  }
+  try {
+    $sidecars = @(Get-Process -Name 'Mantle.Sidecar' -ErrorAction SilentlyContinue)
+  } catch {
+    $sidecars = @()
+  }
+  foreach ($s in $sidecars) {
+    try {
+      Stop-Process -Id $s.Id -Force -ErrorAction Stop
+      $stopped++
+    } catch {
+      Problem "could not stop Mantle.Sidecar pid $($s.Id): $($_.Exception.Message)"
+    }
+  }
+  Say "  stopped $stopped Mantle process(es); no other electron.exe was touched"
+}
+
+# -----------------------------------------------------------------------------
+# (b) Read the state file. A missing one is NOT a failure: whatever the taskbar is
+# doing right now becomes the thing we aim at, every set turns into a no-op, and
+# the checks in (e) still run. Being able to help without it is the difference
+# between a recovery tool and one more thing that needs setting up first.
+# -----------------------------------------------------------------------------
+$originalState = $null
+$originalWorkArea = $null
+$stateJson = $null
+
+if (Test-Path -LiteralPath $StateFile) {
+  try {
+    $raw = Get-Content -LiteralPath $StateFile -Raw -ErrorAction Stop
+    $raw = $raw -replace "^﻿", ""
+    $stateJson = $raw | ConvertFrom-Json
+  } catch {
+    Problem "state file is there but could not be read: $($_.Exception.Message)"
+  }
+}
+
+if ($stateJson -ne $null -and $stateJson.original -ne $null) {
+  if ($stateJson.original.PSObject.Properties.Name -contains 'abmState') {
+    $originalState = [int]$stateJson.original.abmState
+  }
+  if ($stateJson.original.PSObject.Properties.Name -contains 'workarea' -and $stateJson.original.workarea -ne $null) {
+    $originalWorkArea = @($stateJson.original.workarea)
+  }
+}
+
+if ($originalState -eq $null) {
+  $originalState = [MantleRestore]::GetState()
+  Say "  no usable original in the state file: assuming the current taskbar state is the original (abmState $originalState)"
+} else {
+  Say "  original taskbar state from the file: abmState $originalState"
+}
+
+$wantAutohide = (($originalState -band 1) -ne 0)
+
+# -----------------------------------------------------------------------------
+# (c) The taskbar's auto-hide flag, back to the original.
+# -----------------------------------------------------------------------------
+$before = [MantleRestore]::GetState()
+if ($before -eq $originalState) {
+  Say "  taskbar auto-hide flag already correct (abmState $before)"
+} else {
+  [MantleRestore]::SetState($originalState)
+  Start-Sleep -Milliseconds 150
+  $after = [MantleRestore]::GetState()
+  if ($after -eq $originalState) {
+    Say "  taskbar auto-hide flag set back to abmState $originalState (was $before)"
+  } else {
+    Problem "asked for abmState $originalState and Windows still reports $after"
+  }
+}
+
+# -----------------------------------------------------------------------------
+# (d) The work area.
+#
+# Mantle does not shrink the work area any more -- its bar is a real app bar, and
+# Explorer drops that by itself. But an OLD Mantle did, with SPI_SETWORKAREA,
+# and that DOES survive the process that set it. So this is the step that cleans
+# up after the version of Mantle that caused all this.
+# -----------------------------------------------------------------------------
+$target = $null
+if ($originalWorkArea -ne $null -and $originalWorkArea.Count -eq 4) {
+  $target = @([int]$originalWorkArea[0], [int]$originalWorkArea[1], [int]$originalWorkArea[2], [int]$originalWorkArea[3])
+  $targetWhy = "the original from the state file"
+} else {
+  $screen = [MantleRestore]::PrimaryScreen()
+  $target = @(0, 0, [int]$screen[0], [int]$screen[1])
+  $targetWhy = "the whole primary monitor (no original recorded)"
+}
+
+$nowWa = [MantleRestore]::GetWorkArea()
+if ($nowWa -ne $null -and $nowWa[0] -eq $target[0] -and $nowWa[1] -eq $target[1] -and $nowWa[2] -eq $target[2] -and $nowWa[3] -eq $target[3]) {
+  Say "  work area already [$($target -join ', ')] ($targetWhy)"
+} else {
+  $ok = [MantleRestore]::SetWorkArea($target[0], $target[1], $target[2], $target[3])
+  Start-Sleep -Milliseconds 150
+  $check = [MantleRestore]::GetWorkArea()
+  if ($ok -and $check -ne $null -and $check[2] -eq $target[2] -and $check[3] -eq $target[3]) {
+    Say "  work area set to [$($target -join ', ')] ($targetWhy)"
+  } else {
+    $shown = 'unreadable'
+    if ($check -ne $null) { $shown = ($check -join ', ') }
+    # Explorer recomputes the work area for its own app bars, so a value that
+    # differs is not automatically wrong -- but it is worth naming.
+    Say "  work area asked for [$($target -join ', ')], Windows reports [$shown] (Explorer recomputes this for real app bars, which is normal)"
+  }
+}
+
+# -----------------------------------------------------------------------------
+# (e) Is the taskbar ACTUALLY there?
+#
+# This is the check the incident was missing. Two symptoms mean explorer has lost
+# the plot: ABM_GETTASKBARPOS answering with an empty rectangle, and a
+# Shell_TrayWnd that is not visible when the original state was NOT auto-hide.
+# (When the original IS auto-hide, invisible is the correct resting state and
+# treating it as a fault would "fix" a working desktop.)
+#
+# The nudge: toggle ABS_AUTOHIDE on and straight back to the original. That makes
+# explorer recompute its layout from scratch, which is exactly what the wedged
+# state needs and what showing the window again never did.
+# -----------------------------------------------------------------------------
+function Test-Taskbar {
+  $pos = [MantleRestore]::TaskbarPos()
+  $empty = (($pos[2] - $pos[0]) -le 0 -or ($pos[3] - $pos[1]) -le 0)
+  $exists = [MantleRestore]::TaskbarWindowExists()
+  $visible = [MantleRestore]::TaskbarWindowVisible()
+  $bad = $false
+  $why = ''
+  if (-not $exists) {
+    $bad = $true
+    $why = 'there is no Shell_TrayWnd window at all (explorer.exe is not running)'
+  } elseif ($empty) {
+    $bad = $true
+    $why = "explorer reports an empty taskbar rectangle [$($pos -join ', ')]"
+  } elseif ((-not $visible) -and (-not $wantAutohide)) {
+    $bad = $true
+    $why = 'the taskbar window is hidden although the original state was "always visible"'
+  }
+  return @{ Bad = $bad; Why = $why; Pos = $pos; Visible = $visible }
+}
+
+$check = Test-Taskbar
+if ($check.Bad) {
+  Say "  taskbar looks wrong: $($check.Why)"
+  Say "  nudging explorer: auto-hide on, then back to abmState $originalState"
+  [MantleRestore]::SetState(($originalState -bor 1))
+  Start-Sleep -Milliseconds 400
+  [MantleRestore]::SetState($originalState)
+  Start-Sleep -Milliseconds 600
+  $check = Test-Taskbar
+  if ($check.Bad) {
+    Say "  still wrong after the nudge: $($check.Why)"
+  } else {
+    Say "  taskbar is back after the nudge (rectangle [$($check.Pos -join ', ')])"
+  }
+} else {
+  Say "  taskbar is where it should be (rectangle [$($check.Pos -join ', ')], window visible: $($check.Visible))"
+}
+
+# -----------------------------------------------------------------------------
+# (f) Last resort: restart explorer. Only on the switch. Restarting explorer
+# closes every File Explorer window someone has open, so it is never done without
+# being asked -- the printed alternative costs one keystroke and no windows.
+# -----------------------------------------------------------------------------
+if ($check.Bad) {
+  if ($RestartExplorer) {
+    Say "  restarting explorer.exe (-RestartExplorer)"
+    try {
+      Stop-Process -Name explorer -Force -ErrorAction Stop
+    } catch {
+      Problem "could not stop explorer.exe: $($_.Exception.Message)"
+    }
+    Start-Sleep -Seconds 3
+    $back = @(Get-Process -Name explorer -ErrorAction SilentlyContinue)
+    if ($back.Count -eq 0) {
+      # Windows usually relaunches the shell by itself; when it does not, this does.
+      try {
+        Start-Process explorer.exe -ErrorAction Stop
+        Start-Sleep -Seconds 2
+        Say "  explorer.exe was not coming back on its own, so it was started"
+      } catch {
+        Problem "explorer.exe did not restart and could not be started: $($_.Exception.Message)"
+      }
+    } else {
+      Say "  explorer.exe came back on its own"
+    }
+    # Setting the flag again after a restart: the fresh explorer reads it at
+    # startup, and on some builds it comes up with the default instead.
+    [MantleRestore]::SetState($originalState)
+    Start-Sleep -Milliseconds 600
+    $check = Test-Taskbar
+    if ($check.Bad) {
+      Problem "taskbar still not right after restarting explorer: $($check.Why)"
+    } else {
+      Say "  taskbar is back after restarting explorer (rectangle [$($check.Pos -join ', ')])"
+    }
+  } else {
+    Problem "taskbar still not right: rerun with -RestartExplorer, or Ctrl+Shift+Esc -> restart Windows Explorer"
+  }
+}
+
+# -----------------------------------------------------------------------------
+# (g) Mark the state file restored, so the next Mantle does not think a run died
+# dirty and recover over the top of a desktop that is already fine.
+#
+# Written with UTF8Encoding($false): Out-File -Encoding utf8 on PowerShell 5.1
+# writes a BOM, and JSON.parse on the Electron side chokes on one.
+# -----------------------------------------------------------------------------
+if ($stateJson -ne $null) {
+  try {
+    if ($stateJson.PSObject.Properties.Name -contains 'restored') {
+      $stateJson.restored = $true
+    } else {
+      $stateJson | Add-Member -NotePropertyName 'restored' -NotePropertyValue $true -Force
+    }
+    $json = $stateJson | ConvertTo-Json -Depth 8
+    [System.IO.File]::WriteAllText($StateFile, $json, (New-Object System.Text.UTF8Encoding($false)))
+    Say "  marked $StateFile restored:true"
+  } catch {
+    Problem "could not mark the state file restored: $($_.Exception.Message)"
+  }
+} else {
+  Say "  no state file to mark (nothing was read from one)"
+}
+
+# -----------------------------------------------------------------------------
+# Verdict. Exit 0 ONLY when everything checked out: a recovery script that exits
+# 0 on a half-fixed desktop is worse than one that fails loudly, because
+# something upstream will believe it.
+# -----------------------------------------------------------------------------
+if ($problems.Count -eq 0) {
+  Say "verified: Windows is back the way it was"
+  exit 0
+}
+
+Say ""
+Say "NOT VERIFIED - $($problems.Count) thing(s) did not check out:"
+foreach ($p in $problems) { Say "  - $p" }
+Say ""
+Say "Try, in order:"
+Say "  1. powershell -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -RestartExplorer"
+Say "  2. Ctrl+Shift+Esc -> find 'Windows Explorer' -> Restart"
+exit 1

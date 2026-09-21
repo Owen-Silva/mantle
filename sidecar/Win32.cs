@@ -54,6 +54,48 @@ namespace Mantle {
     public const int SM_CXSCREEN = 0;
     public const int SM_CYSCREEN = 1;
 
+    // ------------------------------------------------------------- app bars
+    // SHAppBarMessage is the OS-SANCTIONED way to (a) put the Windows taskbar
+    // into auto-hide and (b) reserve screen space for a bar of our own. Both
+    // states are owned by Explorer, not by us, which is exactly the point: if
+    // Mantle dies, Windows is still a working Windows. See Taskbar.cs for the
+    // incident that made this non-negotiable.
+    public const uint ABM_NEW = 0x00000000;
+    public const uint ABM_REMOVE = 0x00000001;
+    public const uint ABM_QUERYPOS = 0x00000002;
+    public const uint ABM_SETPOS = 0x00000003;
+    public const uint ABM_GETSTATE = 0x00000004;
+    public const uint ABM_GETTASKBARPOS = 0x00000005;
+    public const uint ABM_SETSTATE = 0x0000000A;
+
+    /// State bits as ABM_GETSTATE returns them and ABM_SETSTATE takes them
+    /// (in lParam, NOT in a field of its own).
+    public const int ABS_AUTOHIDE = 0x0000001;
+    public const int ABS_ALWAYSONTOP = 0x0000002;
+
+    public const uint ABE_LEFT = 0;
+    public const uint ABE_TOP = 1;
+    public const uint ABE_RIGHT = 2;
+    public const uint ABE_BOTTOM = 3;
+
+    /// The message Explorer posts to an app bar (full-screen app appeared, the
+    /// taskbar state changed, ...). WM_USER+0x2A5 is deliberately a value the
+    /// Electron/Chromium window procedure does not interpret, so an unhandled
+    /// notification is harmless: we register for the OS's sake, not to listen.
+    public const uint WM_APPBAR_CALLBACK = WM_USER + 0x2A5;
+
+    public const uint MONITOR_DEFAULTTONULL = 0;
+    public const uint MONITOR_DEFAULTTOPRIMARY = 1;
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    /// GetAncestor(hwnd, GA_PARENT) answers "who owns this window's client
+    /// area", and returns the DESKTOP window for a real top-level window -
+    /// which is how we tell "reparented" from "still top-level". GetParent()
+    /// alone cannot: it returns the OWNER for an owned top-level window.
+    public const uint GA_PARENT = 1;
+    public const uint GA_ROOT = 2;
+    public const uint GA_ROOTOWNER = 3;
+
     // ---------------------------------------------------------------- DWM
     /// DWMWA_CLOAKED: non-zero for windows Windows is hiding from the user,
     /// e.g. UWP apps parked on another virtual desktop. They look perfectly
@@ -108,6 +150,32 @@ namespace Mantle {
     // ------------------------------------------------------------------ structs
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int left, top, right, bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int x, y; }
+
+    /// 48 bytes on x64: cbSize(4) + 4 padding + hWnd(8) + uCallbackMessage(4) +
+    /// uEdge(4) + rc(16) + lParam(8). cbSize MUST be Marshal.SizeOf of this
+    /// struct or SHAppBarMessage rejects the call without telling you why.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct APPBARDATA {
+      public uint cbSize;
+      public IntPtr hWnd;
+      public uint uCallbackMessage;
+      public uint uEdge;
+      public RECT rc;
+      public IntPtr lParam;
+    }
+
+    /// cbSize is load-bearing here too: GetMonitorInfoW returns false if it is
+    /// not set, and the rect comes back as zeroes.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO {
+      public uint cbSize;
+      public RECT rcMonitor;
+      public RECT rcWork;
+      public uint dwFlags;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct KBDLLHOOKSTRUCT {
@@ -181,7 +249,12 @@ namespace Mantle {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowW(string cls, string title);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowExW(IntPtr parent, IntPtr after, string cls, string title);
     [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr SetParent(IntPtr child, IntPtr newParent);
-    [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr GetParent(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")] public static extern bool IsChild(IntPtr parent, IntPtr child);
+    [DllImport("user32.dll")] public static extern IntPtr GetDesktopWindow();
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool GetMonitorInfoW(IntPtr monitor, ref MONITORINFO info);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll", SetLastError = true)] static extern IntPtr GetWindowLongPtrW(IntPtr hwnd, int index);
     [DllImport("user32.dll", SetLastError = true)] static extern int GetWindowLongW(IntPtr hwnd, int index);
@@ -222,6 +295,11 @@ namespace Mantle {
     // -------------------------------------------------------------------- other
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int val, int size);
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SHGetFileInfoW(string path, uint fileAttrs, ref SHFILEINFO info, uint cb, uint flags);
+    /// Returns a UINT_PTR whose meaning depends on dwMessage: non-zero = the
+    /// call was accepted for ABM_NEW/REMOVE/SETPOS, and the STATE BITS for
+    /// ABM_GETSTATE (so "0" there means a normal, always-visible taskbar, not
+    /// an error - never test it for failure).
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SHAppBarMessage(uint dwMessage, ref APPBARDATA pData);
 
     // ------------------------------------------------------------------ helpers
     public static string GetWindowText(IntPtr hwnd) {

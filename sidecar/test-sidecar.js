@@ -11,7 +11,12 @@
 //
 // The harness also proves the two ways the sidecar must die on its own: `quit`
 // (exit 0) and stdin EOF (gone within 2 s). Those are what stop an orphaned
-// sidecar from sitting on the machine holding a hidden taskbar.
+// sidecar from sitting on the machine holding shell state.
+//
+// It also holds the line on the 2026-09-21 incident (see Taskbar.cs): the two
+// commands that caused it - `taskbar {show:...}` and `workarea {bottom:...}` -
+// must answer "removed", in every mode, forever; and the state file the
+// recovery script depends on must exist from the first moment of a run.
 //
 // Prints exactly one summary line and exits non-zero if anything failed.
 
@@ -20,10 +25,32 @@
 const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const HERE = __dirname;
 const EXE = path.join(HERE, 'bin', 'Mantle.Sidecar.exe');
 const BUILD = path.join(HERE, 'build.ps1');
+// Scratch, not the repo: the state file is a runtime artefact and a test run
+// must not leave one lying next to the source.
+const STATE = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '.state.json');
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function readState() {
+  try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch (e) { return null; }
+}
+
+/** The sidecar writes the file just after `ready`, so poll rather than sleep. */
+async function waitForState(predicate, timeoutMs) {
+  const until = Date.now() + timeoutMs;
+  let last = null;
+  for (;;) {
+    const s = readState();
+    if (s) { last = s; if (predicate(s)) return s; }
+    if (Date.now() >= until) return last;
+    await sleep(50);
+  }
+}
 
 let passed = 0;
 const failures = [];
@@ -122,7 +149,8 @@ async function main() {
     }
   }
 
-  const s = start(['--passive', '--parent-pid=' + process.pid]);
+  try { fs.unlinkSync(STATE); } catch (e) { /* not there: that is the point */ }
+  const s = start(['--passive', '--parent-pid=' + process.pid, '--state-file=' + STATE]);
 
   // ---- ready ------------------------------------------------------------
   let ready = null;
@@ -145,7 +173,48 @@ async function main() {
       r.ok && r.result && r.result.passive === true &&
       typeof r.result.pid === 'number' && typeof r.result.version === 'string',
       JSON.stringify(r.result));
+    // The caller is DPI-aware and we are not; it has to know to convert.
+    check('ping reports dpiAware:false', r.ok && r.result && r.result.dpiAware === false,
+      JSON.stringify(r.result));
   } catch (e) { check('ping', false, e.message); }
+
+  // ---- state file (the recovery note) -----------------------------------
+  // Written before anything could have been changed, so a recovery script has
+  // the ORIGINAL shell state even if this process is killed a second later.
+  {
+    const st = await waitForState((v) => v && v.original, 3000);
+    check('state file is written at startup', st !== null, 'no file at ' + STATE);
+    if (st) {
+      check('state file records the original taskbar state',
+        st.original && typeof st.original.abmState === 'number',
+        JSON.stringify(st.original));
+      check('state file records the original work area as four numbers',
+        st.original && Array.isArray(st.original.workarea) &&
+        st.original.workarea.length === 4 &&
+        st.original.workarea.every((n) => typeof n === 'number'),
+        JSON.stringify(st.original));
+      check('state file starts with restored:false', st.restored === false, JSON.stringify(st));
+      check('a passive run reports changing nothing',
+        st.changed && st.changed.autohide === false &&
+        Array.isArray(st.changed.appbars) && st.changed.appbars.length === 0,
+        JSON.stringify(st.changed));
+    }
+  }
+
+  // ---- the forms that caused the 2026-09-21 incident --------------------
+  // These are gone from the protocol entirely: the answer says "removed" in
+  // every mode, so a caller still sending them cannot mistake it for passive.
+  for (const [cmd, extra, what] of [
+    ['taskbar', { show: false }, 'taskbar {show:false}'],
+    ['workarea', { bottom: 44 }, 'workarea {bottom:44}']
+  ]) {
+    try {
+      const r = await s.send(cmd, extra);
+      check(`${what} answers "removed"`,
+        r.ok === false && typeof r.error === 'string' && r.error.includes('removed'),
+        JSON.stringify(r));
+    } catch (e) { check(`${what} answers "removed"`, false, e.message); }
+  }
 
   // ---- windows ----------------------------------------------------------
   try {
@@ -191,19 +260,22 @@ async function main() {
 
   // ---- passive refusals -------------------------------------------------
   const refusals = [
-    ['taskbar', { show: false }],
-    ['workarea', { bottom: 48 }],
+    ['taskbar', { mode: 'autohide' }],
+    ['taskbar', { restore: true }],
+    ['appbar', { hwnd: '1', edge: 'bottom', size: 44 }],
+    ['appbar', { hwnd: '1', remove: true }],
+    ['workarea', { reset: true }],
     ['desktop', { hwnd: '1' }],
     ['hotkey', { winTap: true }],
     ['focus', { hwnd: '1' }]
   ];
+  const REFUSAL = 'refused: sidecar is passive (test mode)';
   for (const [cmd, extra] of refusals) {
+    const what = `${cmd} ${JSON.stringify(extra)}`;
     try {
       const r = await s.send(cmd, extra);
-      check(`${cmd} refused in passive`,
-        r.ok === false && typeof r.error === 'string' && r.error.includes('passive'),
-        JSON.stringify(r));
-    } catch (e) { check(`${cmd} refused in passive`, false, e.message); }
+      check(`${what} refused in passive`, r.ok === false && r.error === REFUSAL, JSON.stringify(r));
+    } catch (e) { check(`${what} refused in passive`, false, e.message); }
   }
 
   // ---- unknown command --------------------------------------------------
@@ -237,14 +309,32 @@ async function main() {
   try {
     const r = await s.send('quit');
     check('quit is acknowledged', r.ok === true, JSON.stringify(r));
+    // The restore path says out loud what it put back, in plain words.
+    const rev = await s.waitEvent('restore', 4000);
+    check('quit emits a restore event with a spoken detail',
+      typeof rev.done === 'boolean' && typeof rev.detail === 'string' && rev.detail.length > 0,
+      JSON.stringify(rev));
     const ex = await s.waitExit(4000);
     check('quit exits with code 0', ex.code === 0, 'exit code ' + ex.code);
   } catch (e) { check('quit', false, e.message); try { s.proc.kill(); } catch (_) {} }
 
-  // ---- stdin EOF --------------------------------------------------------
+  // The note a recovery script would read AFTER Mantle is gone must say the
+  // shell was handed back.
+  {
+    const st = await waitForState((v) => v && v.restored === true, 3000);
+    check('state file ends with restored:true', st !== null && st.restored === true,
+      st ? JSON.stringify(st) : 'no file at ' + STATE);
+  }
+
+  // ---- stdin EOF, and a run with NO state file --------------------------
+  // No --state-file is legal, but it must SAY so: nothing fails silently.
   const s2 = start(['--passive', '--parent-pid=' + process.pid]);
   try {
     await s2.waitEvent('ready', 6000);
+    const warn = await s2.waitEvent('log', 3000);
+    check('a run without --state-file warns that recovery cannot know the original state',
+      warn.level === 'warn' && typeof warn.message === 'string' && warn.message.includes('--state-file'),
+      JSON.stringify(warn));
     const t0 = Date.now();
     s2.proc.stdin.end();
     const ex = await s2.waitExit(2000);
@@ -253,6 +343,8 @@ async function main() {
     check('stdin EOF exits within 2s', false, e.message);
     try { s2.proc.kill(); } catch (_) {}
   }
+
+  try { fs.unlinkSync(STATE); } catch (e) { /* already gone */ }
 
   for (const f of failures) console.log('  FAIL: ' + f);
   if (trayNote) console.log('  note: ' + trayNote);
