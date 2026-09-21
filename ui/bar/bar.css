@@ -33,8 +33,8 @@
 
 :root {
   --bar-h: 48px;         /* the contract with lane A: 48 dip, full width, bottom edge */
-  --cell: 40px;          /* one app cell */
-  --cell-icon: 32px;     /* the icon inside it */
+  --cell: 36px;          /* one app cell (was 40: Owen wanted the app icons smaller, 2026-09-21) */
+  --cell-icon: 24px;     /* the icon inside it (was 32; 24 dip = the Windows taskbar's own icon size) */
   --cell-gap: 6px;
   --gap: 4px;
 }

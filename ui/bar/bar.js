@@ -433,7 +433,7 @@
 
   /* CELL/GAP/DIV must match --cell, --cell-gap and .dock .div in bar.css. They are duplicated
      here rather than read back with getComputedStyle because this runs on every resize frame. */
-  var CELL = 40, GAP = 6, DIV = 7;
+  var CELL = 36, GAP = 6, DIV = 7;
   var settleTimer = 0, lastKey = '', frozenMax = 'none';
 
   function measure() {
