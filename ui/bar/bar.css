@@ -1,0 +1,291 @@
+/* bar.css — Mantle's replacement for the Windows taskbar.
+ *
+ * Rules this file is built to, because they are easy to break by accident:
+ *  - Colour ONLY through tokens.css. There is not one literal colour below; a palette change
+ *    there must relight the bar without touching this file.
+ *  - The page background stays transparent. Electron's bar window is transparent, so anything
+ *    painted on <html>/<body> would appear as a rectangle of fog around the bar. The glass is
+ *    painted on .bar itself.
+ *  - Nothing moves at rest. No keyframes, no transform loops, no gradient animation. Hover and
+ *    active transitions are 120ms steps(2): two discrete frames, so the compositor does two
+ *    paints instead of eight, and the bar costs ~0% CPU while Owen works.
+ *  - Neutral dark grey instrument glass, plain 1px hairlines. --ion appears on the foreground
+ *    window and on focus, nowhere else; glow only as an active/focus cue, never as decoration.
+ */
+
+:root {
+  --bar-h: 44px;
+  --win-max: 180px;      /* widest a labelled window button gets */
+  --win-min: 112px;      /* narrowest a labelled button may be before the strip goes icon-only */
+  --win-icon: 32px;      /* icon-only width */
+  --gap: 4px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: transparent;   /* see header: the transparent Electron window must show NOTHING here */
+}
+
+body {
+  /* Segoe UI Variable is the Windows 11 face; system-ui keeps it sane anywhere else. */
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px;
+  line-height: 1;
+  color: var(--fg-2);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+  /* The bar hugs one edge of whatever window it is given, so the same page works whether the
+     window is exactly 44px tall (production) or taller (popover room / screenshots). */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+body[data-edge="top"] { justify-content: flex-start; }
+
+/* ---------------------------------------------------------------- the bar itself */
+.bar {
+  position: relative;
+  flex: 0 0 var(--bar-h);
+  height: var(--bar-h);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  background: var(--panel-bg);
+  /* One static blur. No moving layer underneath it: a drifting gradient under backdrop-filter
+     costs a quarter of a core all day (learned the hard way in the browser chrome). */
+  backdrop-filter: blur(18px) saturate(115%);
+  -webkit-backdrop-filter: blur(18px) saturate(115%);
+  /* the single hairline that separates Mantle from the desktop, on the inward-facing edge */
+  border-top: 1px solid var(--edge);
+}
+body[data-edge="top"] .bar {
+  border-top: 0;
+  border-bottom: 1px solid var(--edge);
+}
+
+/* ---------------------------------------------------------------- shared button chrome */
+.btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  margin: 0;
+  background: transparent;
+  color: var(--fg-2);
+  font: inherit;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: var(--radius-ctl);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  cursor: default;
+  /* steps(2): two paints per transition, not a smooth ramp. */
+  transition: background-color 120ms steps(2), color 120ms steps(2);
+}
+.btn:hover { background: var(--glass); color: var(--fg); }
+.btn:active { background: var(--glass-2); }
+/* The bar window is focusable:false, so :focus-visible almost never fires — but when the page
+   is opened in a normal browser it must still show where the keyboard is. */
+.btn:focus-visible { outline: 1px solid var(--ion); outline-offset: -1px; box-shadow: 0 0 0 2px var(--ion-soft); }
+
+.glyph { width: 34px; justify-content: center; padding: 0; }
+
+.start { width: 38px; justify-content: center; padding: 0; }
+.start svg { display: block; }
+.start:hover, .start:active { color: var(--ion); }
+
+.sep { flex: 0 0 1px; width: 1px; height: 20px; background: var(--edge); }
+
+/* ---------------------------------------------------------------- window strip */
+.windows {
+  flex: 1 1 auto;
+  min-width: 0;             /* without this a long title would push the right cluster off screen */
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  overflow: hidden;
+  height: var(--bar-h);
+  padding: 0 2px;
+}
+
+.win {
+  position: relative;
+  flex: 1 1 var(--win-max);
+  max-width: var(--win-max);
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px 0 5px;
+  overflow: hidden;
+}
+.win .t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the app icon, or a letter tile when the sidecar had no icon to give */
+.win .ico {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--fg-2);
+  background: var(--glass-2);
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+.win .ico img { width: 24px; height: 24px; display: block; }
+.win .ico.has-img { background: transparent; box-shadow: none; }
+
+/* foreground window: the one place --ion is allowed to sit at rest */
+.win.active { background: var(--glass-2); color: var(--fg); }
+.win.active::after {
+  content: '';
+  position: absolute;
+  left: 7px; right: 7px; bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ion);
+  box-shadow: 0 0 6px var(--ion-glow);   /* glow ONLY as the active cue */
+}
+body[data-edge="top"] .win.active::after { bottom: auto; top: 0; }
+
+/* minimized: present but asleep */
+.win.min { color: var(--fg-3); }
+.win.min .ico { opacity: .6; }
+
+/* Overflow: labels go before anything is ever clipped. JS adds .icons after measuring. */
+.windows.icons .win {
+  flex: 0 1 var(--win-icon);
+  max-width: var(--win-icon);
+  min-width: 24px;          /* the icon's own width: it can compress this far and no further */
+  padding: 0;
+  justify-content: center;
+}
+.windows.icons .win .t { display: none; }
+.windows.icons .win.active::after { left: 3px; right: 3px; }
+
+/* ---------------------------------------------------------------- right cluster */
+.right {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  height: var(--bar-h);
+}
+
+.tray { display: flex; align-items: center; gap: 2px; }
+.tray:empty { display: none; }
+.tray .ti { width: 26px; height: 26px; padding: 0; justify-content: center; border-radius: var(--radius-ctl); }
+.tray .ti img { width: 16px; height: 16px; display: block; }
+
+/* status chips: one per thing that is not ok, label short, reason in the tooltip */
+.chips { display: flex; align-items: center; gap: var(--gap); }
+.chips:empty { display: none; }
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  max-width: 190px;
+  padding: 0 9px;
+  border-radius: var(--radius-ctl);
+  background: var(--glass);
+  color: var(--fg-3);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+.chip.wide { max-width: 300px; }
+/* the label is its own element so ellipsis works: text-overflow does not apply to a flex box's
+   own anonymous text runs, and a long "bridge missing: …" would otherwise be hard-clipped */
+.chip .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip .pip {
+  flex: 0 0 5px;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.chip.warn { color: var(--amber); }
+.chip.warn .pip { box-shadow: var(--pip-amber); }
+button.chip { border: 0; font-family: inherit; cursor: default; transition: background-color 120ms steps(2); }
+button.chip:hover { background: var(--glass-2); }
+
+.clock {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  padding: 0 9px;
+  min-width: 56px;
+  justify-content: center;
+}
+.battery .pct { font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.battery { width: auto; padding: 0 7px; gap: 5px; }
+
+/* ---------------------------------------------------------------- popovers */
+.pop {
+  position: absolute;
+  bottom: calc(100% + 7px);      /* bar at the bottom: popovers open UPWARD */
+  left: 8px;
+  z-index: 10;
+  min-width: 210px;
+  max-width: 340px;
+  padding: 11px 12px;
+  background: var(--panel-bg);
+  border: 1px solid var(--edge);
+  border-radius: var(--bevel);
+  corner-shape: round bevel round bevel;   /* the Mantle container signature; ignored where unsupported */
+  box-shadow: 0 10px 30px var(--shade-drop);
+  color: var(--fg-2);
+  font-size: 12.5px;
+}
+body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
+.pop[hidden] { display: none; }
+
+.pop h3 { margin: 0 0 8px; font-size: 11.5px; font-weight: 600; color: var(--fg-3); letter-spacing: .04em; text-transform: uppercase; }
+.pop .row { display: flex; align-items: center; gap: 10px; }
+.pop .big { font-size: 15px; color: var(--fg); margin-bottom: 4px; }
+.pop .sub { color: var(--fg-3); line-height: 1.45; }
+.pop .note { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--edge); color: var(--amber); line-height: 1.45; }
+
+.pop input[type="range"] {
+  flex: 1 1 auto;
+  width: 100%;
+  accent-color: var(--ion);      /* the only accent in a popover */
+  background: transparent;
+}
+.pop .item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--fg-2);
+  font: inherit;
+  padding: 7px 8px;
+  border-radius: var(--radius-ctl);
+  cursor: default;
+  transition: background-color 120ms steps(2), color 120ms steps(2);
+}
+.pop .item:hover { background: var(--glass-2); color: var(--fg); }
+.pop .item.danger:hover { color: var(--amber); }
+.pop .item.armed { color: var(--amber); background: var(--glass-2); }
+.pop .mute { flex: 0 0 auto; padding: 5px 9px; border-radius: var(--radius-ctl); border: 0; background: var(--glass-2); color: var(--fg-2); font: inherit; }
+.pop .mute[aria-pressed="true"] { color: var(--ion); box-shadow: inset 0 0 0 1px var(--ion-line); }

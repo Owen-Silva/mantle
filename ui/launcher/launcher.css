@@ -1,0 +1,241 @@
+/* launcher.css — the pane that replaces the Start menu.
+ *
+ * Rules this file is built under, so a later edit does not quietly break them:
+ *  - Every colour comes from ../shared/tokens.css. No hex, no rgba() here.
+ *  - Nothing animates at rest. The launcher appearing and disappearing is
+ *    Electron show/hide, not a CSS transition, so idle CPU is zero: there is
+ *    no transform, no filter animation, no looping keyframe in this file.
+ *  - Hover feedback is stepped and short (<=150ms) so it reads as a switch
+ *    rather than a fade, and never produces a long tail of compositing work.
+ *  - Accent (--ion) appears in exactly two places: the selected row's left bar
+ *    and the focused input's underline. Everything else is grey glass and
+ *    1px hairlines. Glow is not a decoration here.
+ */
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  /* transparent: the Electron window is transparent, so the desktop (or
+     whatever is behind the launcher) shows around the panel's shadow */
+  background: transparent;
+  overflow: hidden;
+  font-family: var(--ui-font);
+  color: var(--fg);
+  /* the launcher is a keyboard surface; a stray text selection from a
+     double-click only ever looks like a glitch */
+  user-select: none;
+  cursor: default;
+}
+
+/* ---- the pane ---------------------------------------------------------- */
+
+.panel {
+  position: absolute;
+  inset: 10px;                      /* room for the drop shadow to fall */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+
+  background: var(--panel-bg);
+  border: 1px solid var(--edge);    /* the plain 1px hairline, not a lit rim */
+  border-radius: var(--bevel-lg);
+  box-shadow: 0 10px 30px var(--shade-drop);
+  overflow: hidden;
+}
+
+/* ---- the input --------------------------------------------------------- */
+
+.slot {
+  flex: none;
+  position: relative;
+  padding: 0 16px;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--edge);
+}
+
+/* The focused underline: one hairline of accent, drawn over the divider so the
+   pane does not change height when focus arrives. :focus-within rather than a
+   class the script toggles — the input's focus is the whole truth here, and a
+   CSS-only rule cannot drift out of step with it. */
+.slot::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 1px;
+  background: var(--ion);
+  opacity: 0;
+}
+.slot:focus-within::after { opacity: 1; }
+
+#q {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 18px;
+  font-stretch: var(--readout-stretch);
+  line-height: 1.2;
+  padding: 0;
+  user-select: text;
+  cursor: text;
+}
+#q::placeholder { color: var(--placeholder); }
+
+/* ---- results ----------------------------------------------------------- */
+
+.results {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  outline: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+.results::-webkit-scrollbar { width: 8px; }
+.results::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 4px;
+}
+.results::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+
+.row {
+  border-radius: var(--radius-ctl);
+  /* stepped, short: a switch, not a fade */
+  transition: background-color 120ms steps(2, end);
+}
+.row + .row { margin-top: 1px; }
+
+.row-main {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  padding: 0 12px 0 10px;
+}
+
+.row.is-sel { background: var(--glass-2); }
+
+/* the 2px accent bar on the selected row */
+.row.is-sel .row-main::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 7px; bottom: 7px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--ion);
+}
+
+/* the icon cell: a real 32px bitmap when the sidecar gave us one, otherwise a
+   letter tile (apps) or a drawn glyph (command / setting / url) */
+.ico {
+  flex: none;
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  background: var(--glass-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-2);
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+}
+.ico img { width: 28px; height: 28px; object-fit: contain; display: block; }
+.ico svg { width: 16px; height: 16px; display: block; }
+.ico.is-letter { text-transform: uppercase; }
+
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sub {
+  flex: 0 1 auto;
+  max-width: 44%;
+  font-size: 12.5px;
+  color: var(--fg-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+/* why a launch did not happen, printed under the row it belongs to: a failed
+   Enter must never look like nothing happened */
+.why {
+  padding: 0 12px 9px 50px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--amber);
+}
+.why.is-ok { color: var(--fg-2); }
+
+.empty {
+  padding: 16px 12px;
+  font-size: 13px;
+  color: var(--fg-3);
+}
+.empty.is-bad { color: var(--amber); }
+
+/* ---- footer ------------------------------------------------------------ */
+
+.foot {
+  flex: none;
+  border-top: 1px solid var(--edge);
+  padding: 7px 14px 8px;
+  font-size: 12px;
+  color: var(--fg-3);
+  background: var(--glass-thin);
+}
+.foot-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.counts, .hint {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.counts { font-stretch: var(--readout-stretch); }
+
+.src-errors:not(:empty) { margin-bottom: 5px; }
+.src-error {
+  color: var(--amber);
+  line-height: 1.35;
+}
+.src-note { color: var(--fg-3); line-height: 1.35; }   /* a source that works but has something to say */
+
+/* ---- the sidecar notice ------------------------------------------------ */
+
+.notice {
+  flex: none;
+  border-top: 1px solid var(--edge);
+  padding: 7px 14px 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--amber);
+  background: var(--glass-thin);
+}
+.notice[hidden] { display: none; }
+
+/* A pointer is optional here, but when there is one, hovering picks the row.
+   Kept inside a hover query so a touch device never gets a stuck hover. */
+@media (hover: hover) {
+  .row:not(.is-sel):hover { background: var(--glass); }
+}

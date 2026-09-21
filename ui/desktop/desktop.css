@@ -1,0 +1,229 @@
+/*
+  The desktop layer.
+
+  Rules this file lives by:
+  - The body NEVER paints. In live mode this window is reparented under the
+    wallpaper, and a full-screen background would cover Owen's wallpaper with a
+    grey rectangle. Only the tiles have a surface.
+  - No animation at all. No transitions, no keyframes, no gradients that move.
+    This window is on screen every waking hour; at rest it must cost nothing.
+  - Colour comes from ui/shared/tokens.css only.
+*/
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;        /* the wallpaper, in live mode */
+  overflow: hidden;
+  color: var(--fg);
+  font-family: var(--ui-font);
+  -webkit-font-smoothing: antialiased;
+  cursor: default;
+  user-select: none;
+}
+
+.cluster {
+  /* Top-left, clear of the screen edges. The bar owns the bottom 44px, so the
+     cluster is kept well above it even on a short window. */
+  position: absolute;
+  top: 38px;
+  left: 44px;
+  width: 420px;
+  max-height: calc(100% - 76px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/*
+  A short window (test mode is 960x540; the live one is a whole screen) has to
+  show the same things, smaller. Nothing is dropped: the clock shrinks, the
+  Mission Control view shortens, and the strip becomes the part that scrolls --
+  with its item count in the heading, so a scrolled-off row is never a row that
+  silently was not there.
+*/
+@media (max-height: 760px) {
+  .cluster { top: 22px; left: 30px; gap: 11px; }
+  .clock { font-size: 48px; }
+  .date { margin-top: 3px; font-size: 13px; }
+  .tile, .strip { padding: 11px 13px 12px; }
+  .mc-frame { height: 132px; }
+}
+
+/* --- the time ------------------------------------------------------------ */
+
+.time { padding-left: 2px; }
+
+.clock {
+  font-size: 76px;
+  line-height: 1;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  /* A readable clock over an unknown wallpaper needs a shadow, not a glow:
+     it is legibility, not decoration. */
+  text-shadow: 0 2px 6px rgba(0, 0, 0, .55);
+}
+
+.date {
+  margin-top: 6px;
+  font-size: 14px;
+  color: var(--fg-2);
+  font-stretch: var(--readout-stretch);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, .5);
+}
+
+/* --- tiles --------------------------------------------------------------- */
+
+.tile,
+.strip {
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: var(--bevel);
+  /* TL round, TR cut, BR round, BL cut: the container signature from the tokens.
+     Browsers without corner-shape simply get the rounded corners. */
+  corner-shape: round bevel round bevel;
+  padding: 14px 16px 15px;
+  backdrop-filter: blur(14px) saturate(120%);
+  box-shadow: 0 1px 0 var(--shade-in) inset, 0 2px 10px var(--shade-drop);
+}
+
+.tile-head {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+  font-stretch: var(--readout-stretch);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.head-note {
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 11px;
+  color: var(--fg-3);
+}
+
+.rows { margin: 0; }
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.row + .row { border-top: 1px solid var(--edge); }
+
+dt {
+  font-size: 12px;
+  color: var(--fg-2);
+  font-stretch: var(--readout-stretch);
+}
+
+dd {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.note {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg-3);
+}
+
+/* --- Mission Control ----------------------------------------------------- */
+
+.mc-frame {
+  /* A half-scale window onto the real dashboard: 840x480 of page drawn into
+     420x240 of tile. No animation of ours - whatever the dashboard itself does
+     is the dashboard's business. */
+  position: relative;
+  width: 100%;
+  height: 240px;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid var(--edge);
+  background: var(--ink-0);
+}
+
+.mc-frame iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 840px;
+  height: 480px;
+  border: 0;
+  transform: scale(.5);
+  transform-origin: top left;
+}
+
+/* --- the state strip ----------------------------------------------------- */
+
+.strip {
+  /* Amber, because this is the one tile that means "look at me". It is a border
+     and a pip, never a glow: a lit rectangle would read as decoration. */
+  border-color: rgba(224, 160, 89, .38);
+  /* The strip is the one thing that can be arbitrarily long, so it is the one
+     thing that gives way in a short window. min-height:0 is what lets a flex
+     child shrink below its content at all. */
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.strip::-webkit-scrollbar { width: 6px; }
+.strip::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
+.strip::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+.strip::-webkit-scrollbar-track { background: transparent; }
+
+.strip-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.strip-list li {
+  display: grid;
+  grid-template-columns: 7px 1fr;
+  gap: 9px;
+  align-items: start;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-2);
+}
+
+.strip-list .pip {
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: var(--pip-amber);
+}
+
+.strip-list b {
+  color: var(--fg);
+  font-weight: 500;
+  font-stretch: var(--readout-stretch);
+}
+
+/* The one state that is not amber: the bridge itself being gone means this page
+   cannot ask anything at all, so it says so in the accent and stays put. */
+.fatal {
+  color: var(--fg);
+  border-color: var(--ion-line);
+}

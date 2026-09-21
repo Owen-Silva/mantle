@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<!-- file:// documents are opaque origins, so 'self' would match nothing here; scheme
+     sources are what Electron accepts without logging its insecure-CSP warning. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file: 'unsafe-inline'; script-src file:; img-src file: data:">
+<title>Mantle bar</title>
+<!-- tokens.css FIRST: it is the single :root palette every Mantle surface resolves through.
+     bar.css may only use var(--…) from it, never a literal colour. -->
+<link rel="stylesheet" href="../shared/tokens.css">
+<link rel="stylesheet" href="bar.css">
+</head>
+<!-- data-edge says which screen edge the bar is docked to. bar.js overwrites it from State.edge;
+     the default here keeps the page correct before the bridge answers. -->
+<body data-edge="bottom">
+
+<div id="bar" class="bar" role="toolbar" aria-label="Mantle bar">
+
+  <!-- 1. Start: the Mantle mark. Inline SVG so it inherits currentColor and needs no asset. -->
+  <button id="start" class="btn start" type="button" title="Open the Mantle launcher" aria-label="Open the Mantle launcher">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+      <!-- one path, fill-rule evenodd: the M is a hole CUT out of the rounded square -->
+      <path fill="currentColor" fill-rule="evenodd" d="M7.2 3h9.6A4.2 4.2 0 0 1 21 7.2v9.6a4.2 4.2 0 0 1-4.2 4.2H7.2A4.2 4.2 0 0 1 3 16.8V7.2A4.2 4.2 0 0 1 7.2 3Zm1.05 4.6a.6.6 0 0 0-.6.6v7.6a.6.6 0 0 0 .6.6h1.3a.6.6 0 0 0 .6-.6v-3.63l1.33 2.06a.6.6 0 0 0 1.01 0l1.33-2.06v3.63a.6.6 0 0 0 .6.6h1.3a.6.6 0 0 0 .6-.6V8.2a.6.6 0 0 0-.6-.6h-1.2a.6.6 0 0 0-.51.29L12 11.3 9.96 7.89a.6.6 0 0 0-.51-.29h-1.2Z"/>
+    </svg>
+  </button>
+
+  <!-- 2. Window buttons. bar.js diffs this list by hwnd, so children are reused, never rebuilt. -->
+  <div id="windows" class="windows" role="group" aria-label="Open windows"></div>
+
+  <!-- 3. Right cluster: tray, status chips, the instruments, the clock, the overflow menu. -->
+  <div class="right">
+    <div id="chips" class="chips" role="status" aria-live="polite"></div>
+    <div id="tray" class="tray" role="group" aria-label="Notification area"></div>
+    <div class="sep" aria-hidden="true"></div>
+
+    <button id="volume" class="btn glyph" type="button" title="Volume"></button>
+    <button id="network" class="btn glyph" type="button" title="Network settings">
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+        <g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+          <path d="M1.6 5.6a9.5 9.5 0 0 1 12.8 0"/>
+          <path d="M4 8.2a6 6 0 0 1 8 0"/>
+          <path d="M6.3 10.8a2.6 2.6 0 0 1 3.4 0"/>
+        </g>
+        <circle cx="8" cy="13.2" r="1" fill="currentColor"/>
+      </svg>
+    </button>
+    <button id="battery" class="btn glyph battery" type="button" title="Battery" hidden></button>
+
+    <button id="clock" class="btn clock" type="button" title="Date and time">--:--</button>
+
+    <button id="more" class="btn glyph more" type="button" title="More" aria-label="More">
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+        <g fill="currentColor"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></g>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Single popover host: only one popover is ever open, so one element is reused.
+       It lives inside .bar so it is positioned against the bar and flips with data-edge. -->
+  <div id="pop" class="pop" hidden></div>
+</div>
+
+<!-- mock FIRST so that, outside Electron, window.mantle exists before bar.js looks for it.
+     Inside Electron the preload has already installed the real bridge and the mock stands down. -->
+<script src="mock-mantle.js"></script>
+<script src="bar.js"></script>
+</body>
+</html>

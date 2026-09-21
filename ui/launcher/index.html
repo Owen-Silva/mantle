@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'">
+<title>Mantle launcher</title>
+<!-- tokens.css first: it is the :root block every Mantle surface shares, and
+     launcher.css only ever reads from it, never redefines a colour. -->
+<link rel="stylesheet" href="../shared/tokens.css">
+<link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+  <!-- One pane. The window itself is transparent and sized 680x460 by the main
+       process; this panel is the only thing that paints. -->
+  <main class="panel" id="panel">
+
+    <div class="slot">
+      <input id="q" type="text" autocomplete="off" autocorrect="off" spellcheck="false"
+             placeholder="Apps, commands, settings, or a URL"
+             aria-label="Search apps, commands, settings, or a URL"
+             aria-controls="results" aria-autocomplete="list">
+    </div>
+
+    <div class="results" id="results" role="listbox" aria-label="Results" tabindex="-1"></div>
+
+    <footer class="foot">
+      <!-- a source that failed prints its reason here, in amber, in words -->
+      <div class="src-errors" id="srcErrors"></div>
+      <div class="foot-row">
+        <span class="counts" id="counts">indexing…</span>
+        <span class="hint">Enter opens &middot; Esc closes</span>
+      </div>
+    </footer>
+
+    <!-- the sidecar's state, when it is not ok; hidden otherwise -->
+    <div class="notice" id="notice" hidden></div>
+  </main>
+
+  <script src="mock-mantle.js"></script>
+  <script src="launcher.js"></script>
+</body>
+</html>

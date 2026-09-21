@@ -6,7 +6,10 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "electron . --test --profile-name=dev --screenshot=shots",
+    "test": "electron . --test --profile-name=dev",
+    "shots": "electron . --test --profile-name=dev --screenshot=shots",
+    "check": "node tools/check.js",
+    "kill:test": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/kill-test.ps1 -Match dev",
     "build:sidecar": "powershell -NoProfile -ExecutionPolicy Bypass -File sidecar/build.ps1"
   },
   "dependencies": {
