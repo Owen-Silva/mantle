@@ -440,8 +440,9 @@ const PILL_LIFT_DIP = 14;       // how far it floats above the screen edge
 const PILL_RADIUS_DIP = 0;      // was 24 (30 physical). A window REGION on a transparent Electron window
                                 // (WS_EX_NOREDIRECTIONBITMAP, DirectComposition) blanks it: measured live
                                 // 2026-09-21, the island drew NOTHING with its rounded region set and drew
-                                // fine the instant the region was cleared. So the pill is rounded by DWM
-                                // (roundBarCorners) and the CSS radius matches DWM, not this constant.
+                                // fine the instant the region was cleared. So the pill's ONLY shape is the
+                                // CSS radius in ui/bar (24 dip); roundBarCorners just turns DWM's window
+                                // border off so no square outline sits outside the CSS corners.
 const PILL_START_W = 0.62;      // it grows out from 62 % of its width as it rises
 let hoverTimer = null;
 let barRevealed = false;
@@ -765,18 +766,21 @@ async function runMorph(from, to, ms, what) {
   };
 
   const blocked = sidecar.blockedReason();
-  if (blocked) { await land(`the sidecar cannot be asked to animate it (${blocked})`); return; }
+  if (blocked) { await land(`the sidecar cannot be asked to animate it (${blocked})`); return seq === morphSeq; }
 
   try {
     await sidecar.call('morph', {
       hwnd: hwndOf(barWin), from, to, ms, ease: REVEAL_EASE,
     }, ms + 4000);
   } catch (err) {
-    if (seq !== morphSeq) return;   // the opposite morph took over; its reason wins
+    if (seq !== morphSeq) return false;   // the opposite morph took over; its reason wins
     await land(Sidecar.isOldExeError(err)
       ? 'the sidecar exe has no "morph" command yet, so it jumps instead of sliding: run npm run build:sidecar'
       : err.message);
   }
+  // true = this morph is still the current one and the window is at `to`. False
+  // means a newer morph replaced it, and whatever comes next is that one's job.
+  return seq === morphSeq;
 }
 
 /**
@@ -818,6 +822,9 @@ function revealBar(why) {
   // travel must not hold up the poll. The .catch is belt to runMorph's braces --
   // an unhandled rejection here would be a shell animation crashing the log.
   runMorph(from, sideRect(geo.rest), REVEAL_MS, 'reveal')
+    // Only once it has LANDED: a backdrop captured mid-flight is a smear of the
+    // screen the bar was passing over, and the page would blur that.
+    .then((landed) => { if (landed && barRevealed) startBackdrop('the bar landed'); })
     .catch((err) => setBar({ reason: `the bar is up, but its entrance threw: ${err && err.message ? err.message : err}` }));
 }
 
@@ -829,6 +836,7 @@ function revealBar(why) {
 function beginHide(why) {
   if (!barRevealed || hideTimer) return;
   const geo = barGeometry();
+  stopBackdrop(`the bar is leaving: ${why}`);
   broadcast('bar.hide', { why, ms: HIDE_MS });
   setBar({ ok: true, revealed: true, reason: barReason(`the bar is leaving: ${why}`) });
   runMorph(sideRect(currentSide(geo)), sideRect(geo.start), HIDE_MS, 'hide')
@@ -928,6 +936,114 @@ function scheduleHoverTick() {
   }, barRevealed ? POLL_SHOWN_MS : POLL_HIDDEN_MS);
   // unref: a poll must never be the reason the process will not exit.
   if (hoverTimer.unref) hoverTimer.unref();
+}
+
+/*
+ * THE BACKDROP LOOP: the bar blurs its own background.
+ *
+ * DWM could not give Owen "a little bit more translucent" -- acrylic ignores its
+ * tint's alpha and blur-behind lays down a black slab (both measured live). So
+ * the bar has no DWM glass at all, and instead gets a PICTURE of what is behind
+ * it, four times a second, which the page blurs in CSS where translucency is a
+ * number you can actually set.
+ *
+ * WHY setContentProtection AROUND THE CAPTURE: the sidecar screenshots the screen
+ * region the bar occupies, and the bar is ON that region -- it would photograph
+ * itself, blur that, and feed itself back into itself. Electron's content
+ * protection sets WDA_EXCLUDEFROMCAPTURE, which makes the window invisible to
+ * screen capture (not to the eye), so the shot is what is BEHIND it. It goes
+ * straight back OFF in a finally, because a bar that is permanently excluded from
+ * capture is a bar missing from every screenshot Owen takes.
+ *
+ * The rectangle is always the bar's RESTING rect, never the window's current one:
+ * a popover makes the window taller, and the popover paints its own strong fill.
+ */
+const BACKDROP_MS = 250;              // 4 fps: it is a wallpaper, not a video
+const BACKDROP_SCALE = 4;             // downscale; the page blurs it anyway
+const BACKDROP_SETTLE_MS = 25;        // for the exclusion to take effect before the shot
+const BACKDROP_MAX_FAILS = 3;
+let backdropTimer = null;
+let backdropFails = 0;
+let backdropFrames = 0;
+let backdropOff = null;               // set once when the sidecar cannot do it at all
+
+function wait(ms) {
+  return new Promise((r) => { const t = setTimeout(r, ms); if (t.unref) t.unref(); });
+}
+
+function setBackdrop(patch) {
+  state.set('backdrop', Object.assign({ fps: Math.round(1000 / BACKDROP_MS) }, patch));
+}
+
+async function backdropTick() {
+  backdropTimer = null;
+  if (shuttingDown || !barRevealed || !barWin || barWin.isDestroyed()) return;
+
+  const r = barGeometry().rest.phys;
+  const t0 = Date.now();
+  let protectedOn = false;
+  try {
+    barWin.setContentProtection(true);
+    protectedOn = true;
+    await wait(BACKDROP_SETTLE_MS);
+    const res = await sidecar.call('backdrop', { x: r.x, y: r.y, w: r.w, h: r.h, scale: BACKDROP_SCALE }, 4000);
+    if (!res || !res.png) throw new Error('the sidecar answered "backdrop" without a png');
+    const ms = Number(res.ms) || (Date.now() - t0);
+    backdropFails = 0;
+    backdropFrames++;
+    broadcast('bar.backdrop', { png: res.png, w: res.w, h: res.h, rect: { x: r.x, y: r.y, w: r.w, h: r.h }, ms });
+    if (backdropFrames === 1) {
+      process.stdout.write(`mantle: backdrop capture on: ${Math.round(1000 / BACKDROP_MS)} fps, first frame ${ms} ms\n`);
+    }
+    setBackdrop({ on: true, ok: true, ms, reason: `the bar is blurring a live picture of what is behind it, ${Math.round(1000 / BACKDROP_MS)} times a second (last frame ${ms} ms)` });
+  } catch (err) {
+    if (Sidecar.isOldExeError(err)) {
+      // Not a failure to retry: this exe will never have the command.
+      backdropOff = 'the sidecar exe has no "backdrop" command yet, so the bar falls back to its flat tint: run npm run build:sidecar';
+      stopBackdrop(backdropOff);
+      return;
+    }
+    backdropFails++;
+    if (backdropFails >= BACKDROP_MAX_FAILS) {
+      stopBackdrop(`${BACKDROP_MAX_FAILS} captures in a row failed, so the bar falls back to its flat tint: ${err.message}`);
+      return;
+    }
+    setBackdrop({ on: true, ok: true, reason: `one backdrop capture failed and it is still trying (${backdropFails} of ${BACKDROP_MAX_FAILS}): ${err.message}` });
+  } finally {
+    // ALWAYS, on every road out: an excluded window is missing from Owen's own
+    // screenshots, and that must never outlive one capture.
+    if (protectedOn && barWin && !barWin.isDestroyed()) {
+      try { barWin.setContentProtection(false); } catch (e2) {
+        setBackdrop({ ok: false, reason: `the bar could not be put back into screen captures, so it will be missing from screenshots: ${e2.message}` });
+      }
+    }
+  }
+  if (!shuttingDown && barRevealed) {
+    backdropTimer = setTimeout(() => { backdropTick().catch(() => {}); }, BACKDROP_MS);
+    if (backdropTimer.unref) backdropTimer.unref();
+  }
+}
+
+/** Start capturing once the reveal has LANDED -- a shot mid-morph is a smear. */
+function startBackdrop(why) {
+  if (backdropTimer || shuttingDown || !barRevealed) return;
+  if (backdropOff) { setBackdrop({ on: false, ok: false, reason: backdropOff }); return; }
+  backdropFails = 0;
+  backdropFrames = 0;
+  setBackdrop({ on: true, ok: true, reason: `starting: ${why}` });
+  backdropTick().catch(() => {});
+}
+
+function stopBackdrop(why) {
+  const wasRunning = !!backdropTimer || backdropFrames > 0;
+  if (backdropTimer) clearTimeout(backdropTimer);
+  backdropTimer = null;
+  if (barWin && !barWin.isDestroyed()) {
+    try { barWin.setContentProtection(false); } catch (_) { /* window is going anyway */ }
+  }
+  const failed = backdropFails >= BACKDROP_MAX_FAILS || !!backdropOff;
+  setBackdrop({ on: false, ok: !failed, ms: 0, reason: why });
+  if (wasRunning) process.stdout.write(`mantle: backdrop capture off after ${backdropFrames} frame${backdropFrames === 1 ? '' : 's'}: ${why}\n`);
 }
 
 /** Only the bar's own process polls; the launcher and desktop windows do not. */
@@ -1751,9 +1867,9 @@ async function applyMode() {
 // wanted -- the wallpaper behind the island has to READ through it. 35 %, with
 // lane B's CSS fill down to .20: the blur still does the work, the colour behind
 // it still comes through.
-const GLASS_TINT = '#1C1E2259';   // 35% neutral dark grey (dark glass, light ink; a white tint just went muddy over the dark desktop). Mode 'blur' (ACCENT_ENABLE_BLURBEHIND), not 'acrylic': measured live 2026-09-21,
-                                    // acrylic renders its tint nearly opaque on this build and frosts the whole window rect;
-                                    // blur-behind honours the alpha and follows the page's own alpha, so the CSS pill IS the glass shape.
+const GLASS_TINT = '#1C1E2259';   // 35% neutral dark grey. THE LAUNCHER'S tint only (DWM acrylic): the bar has no DWM
+                                    // glass since 2026-09-21 -- measured live, acrylic ignores this alpha (a fixed frost) and
+                                    // blur-behind paints a black slab -- so the bar blurs its own backdrop (see the backdrop loop).
 // Whether the running sidecar reports rectangles in physical pixels (set once
 // applyLive has asked it); the popover resize needs it to pick its placement path.
 let sidecarDpiAware = null;
@@ -1780,19 +1896,39 @@ async function applyGlass() {
     return;
   }
 
-  const targets = [['the bar', barWin], ['the launcher', launcherWin]];
+  /*
+   * THE BAR GETS NO DWM GLASS AT ALL (2026-09-21, after Owen saw it live: "now
+   * its kinda just black, i just wanted it a little bit more translucent").
+   *
+   * Measured, not guessed: DWM's acrylic IGNORES the alpha in its tint -- the
+   * frost is a fixed, near-opaque amount -- and plain blur-behind paints a black
+   * slab under the window. Neither has a "a little more translucent" setting, so
+   * no value of GLASS_TINT was ever going to be the answer. The bar therefore
+   * turns DWM off on itself (ACCENT_DISABLED) and blurs its OWN backdrop instead:
+   * main captures what is behind the bar and hands the page a picture of it, and
+   * the page blurs that with CSS, where translucency is an actual number.
+   *
+   * The launcher keeps DWM acrylic: it is a panel over the desktop, it is not
+   * where the complaint was, and it costs nothing there.
+   */
+  const targets = [['the bar', barWin, 'off'], ['the launcher', launcherWin, 'acrylic']];
   const applied = [];
   const problems = [];
   let oldExe = false;
 
-  for (const [label, win] of targets) {
+  for (const [label, win, mode] of targets) {
     if (!win || win.isDestroyed()) {
       problems.push(`${label}: its window does not exist`);
       continue;
     }
     try {
-      const r = await sidecar.call('glass', { hwnd: hwndOf(win), mode: 'blur', tint: GLASS_TINT });
-      if (r && r.applied) applied.push(`${label} (${(r && r.mode) || 'mode not reported'})`);
+      const r = await sidecar.call('glass', { hwnd: hwndOf(win), mode, tint: GLASS_TINT });
+      // For mode 'off' the question is only "did the call go through": the
+      // sidecar's `applied` flag describes an effect being turned ON, and reading
+      // a disable's false as a failure would put a problem on screen for the one
+      // outcome we asked for.
+      if (mode === 'off') applied.push(`${label} (DWM glass off: it blurs its own backdrop instead)`);
+      else if (r && r.applied) applied.push(`${label} (${(r && r.mode) || 'mode not reported'})`);
       else problems.push(`${label}: the sidecar ran the glass command and reported it was not applied`);
     } catch (err) {
       if (Sidecar.isOldExeError(err)) oldExe = true;
@@ -1809,7 +1945,10 @@ async function applyGlass() {
     const corners = await roundBarCorners();
     state.set('glass', {
       material: 'acrylic-blur-behind',
-      reason: `light frosted glass (${GLASS_TINT}) on ${applied.join(' and ')}; it stays on while the window is inactive, which is why this is not Electron's backgroundMaterial. ${corners}`,
+      // The tint belongs to the LAUNCHER now: the bar has DWM glass turned off
+      // and blurs its own captured backdrop instead, so naming one tint for both
+      // would describe a window that is not using it.
+      reason: `${applied.join(' and ')} -- the launcher's DWM tint is ${GLASS_TINT} and stays on while it is inactive, which is why this is not Electron's backgroundMaterial. ${corners}`,
     });
     return;
   }
@@ -1832,10 +1971,20 @@ async function applyGlass() {
  * look, not a failure, but it is never a MYSTERY: it says which command to build.
  */
 async function roundBarCorners() {
+  if (!barWin || barWin.isDestroyed()) return 'its corners were not rounded: there is no bar window.';
+  /*
+   * The island's visible shape is the CSS pill (24 dip radius) on a transparent
+   * window with no DWM glass, so DWM has nothing to round -- but Windows 11 still
+   * draws its 1 px WINDOW BORDER around the window rect, with the small 8 px
+   * rounding, and on the live capture of 2026-09-21 that showed as a faint square
+   * outline sitting outside every pill corner. So: corner preference 'none' (the
+   * page is the shape) and DWMWA_BORDER_COLOR none (no outline at all).
+   */
   try {
-    const r = await sidecar.call('corners', { hwnd: hwndOf(barWin), mode: 'round' }, 4000);
-    if (r && r.ok === false) return `the bar's corners are square: the sidecar refused "corners" (${r.reason || 'it did not say why'}).`;
-    return "the bar's corners are rounded by DWM.";
+    const r = await sidecar.call('corners', { hwnd: hwndOf(barWin), mode: 'none', border: 'none' }, 4000);
+    if (r && r.ok === false) return `the bar may show a faint square outline: the sidecar refused "corners" (${r.reason || 'it did not say why'}).`;
+    if (r && r.borderReason) return `the bar may show a faint square outline: DWM kept its window border (${r.borderReason}).`;
+    return "the bar's window border is off (DWM draws no outline around the pill).";
   } catch (err) {
     return Sidecar.isOldExeError(err)
       ? "the bar's corners are SQUARE: the sidecar exe has no \"corners\" command yet, so run npm run build:sidecar."
@@ -1848,13 +1997,16 @@ async function roundBarCorners() {
  * the first load fires before it has said hello, and applyGlass() is what covers
  * that moment -- recording a failure here would be reporting our own ordering.
  */
-function reapplyGlass(label, win) {
+function reapplyGlass(label, win, mode) {
   if (!flags.acrylic) return;
   if (!glassPassDone) return;            // first load: applyGlass() has this
   if (sidecar.blockedReason()) return;
   if (!win || win.isDestroyed()) return;
-  sidecar.call('glass', { hwnd: hwndOf(win), mode: 'blur', tint: GLASS_TINT }).then((r) => {
-    if (!(r && r.applied)) {
+  // `mode` is the SAME value applyGlass() used for this window: the bar is 'off'
+  // (it blurs its own backdrop) and a reload that put DWM blur-behind back on
+  // it would paint the black slab Owen already rejected.
+  sidecar.call('glass', { hwnd: hwndOf(win), mode, tint: GLASS_TINT }).then((r) => {
+    if (mode !== 'off' && !(r && r.applied)) {
       state.set('glass', { material: 'none', reason: `${label} reloaded and the sidecar did not put its glass back` });
     }
   }).catch((err) => {
@@ -2472,6 +2624,9 @@ function shutdown(why) {
   // in Mantle that runs many times a second, and a poll still ticking through a
   // restore is a poll that can show a bar window mid-shutdown.
   stopHoverWatch();
+  // ...and with it the capture loop, which is the one thing that can leave a
+  // window excluded from Owen's screenshots if it is stopped carelessly.
+  stopBackdrop('Mantle is shutting down');
   if (pinnedPushTimer) { clearTimeout(pinnedPushTimer); pinnedPushTimer = null; }
   if (unwatchPins) {
     try { unwatchPins(); } catch (err) { process.stderr.write(`mantle: the pinned-shortcuts watcher would not stop: ${err.message}\n`); }
@@ -2746,7 +2901,7 @@ app.whenReady().then(() => {
     // A reloaded bar has no popover open, so any room it borrowed is now room
     // nothing is using. Give it back rather than leaving a 300px-tall "bar".
     if (barPopover) COMMANDS['bar.popover']({ open: false }).catch(() => {});
-    reapplyGlass('the bar', barWin);
+    reapplyGlass('the bar', barWin, 'off');
   });
   if (!bar.load.loaded) process.stderr.write(`mantle: ${bar.load.reason}\n`);
 
@@ -2757,7 +2912,7 @@ app.whenReady().then(() => {
   // A reload rebuilds the page, not the window, so the composition attribute
   // should survive -- but "should" is cheap to stop relying on, and re-asking
   // costs one JSON line.
-  launcherWin.webContents.on('did-finish-load', () => { reapplyGlass('the launcher', launcherWin); });
+  launcherWin.webContents.on('did-finish-load', () => { reapplyGlass('the launcher', launcherWin, 'acrylic'); });
   if (flags.test) {
     // In test mode the launcher is the thing being looked at, so it is up from
     // the start -- inactive, and with no hide-on-blur, or toback.ps1 sending it

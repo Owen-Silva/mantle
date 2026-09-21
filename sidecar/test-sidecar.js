@@ -546,14 +546,44 @@ async function main() {
   // window's frame and the attribute dies with the window, so there is nothing
   // for passive mode to protect.
   if (selfHwnd) {
-    for (const mode of ['round', 'roundsmall', 'default']) {
+    for (const mode of ['round', 'roundsmall', 'none', 'default']) {
       try {
         const r = await s.send('corners', { hwnd: selfHwnd, mode });
         check(`corners ${mode} applies to the sidecar's own window`,
-          r.ok === true && r.result && r.result.ok === true && r.result.mode === mode,
+          r.ok === true && r.result && r.result.ok === true &&
+          r.result.used === mode && r.result.mode === mode,
           JSON.stringify(r));
       } catch (e) { check(`corners ${mode}`, false, e.message); }
     }
+
+    // The Windows 11 window border: a 1 px outline OUTSIDE the client area,
+    // rounded by DWM rather than by the page, which is why it showed up around
+    // the 24 px CSS pill. Removing it is a separate attribute from the corner
+    // preference, and the two do not share a fate.
+    try {
+      const r = await s.send('corners', { hwnd: selfHwnd, mode: 'none', border: 'none' });
+      check('corners can remove the Windows 11 window border',
+        r.ok === true && r.result && r.result.used === 'none' && r.result.border === 'none',
+        JSON.stringify(r));
+      if (r.ok && r.result && r.result.borderReason) {
+        cornersNote = 'corners border: ' + r.result.borderReason;
+      }
+    } catch (e) { check('corners can remove the Windows 11 window border', false, e.message); }
+
+    try {
+      const r = await s.send('corners', { hwnd: selfHwnd, mode: 'round' });
+      check('corners leaves the border alone when border is omitted',
+        r.ok === true && r.result && r.result.border === null, JSON.stringify(r));
+    } catch (e) { check('corners leaves the border alone when border is omitted', false, e.message); }
+
+    try {
+      const r = await s.send('corners', { hwnd: selfHwnd, mode: 'round', border: 'invisible' });
+      check('corners refuses an unknown border value',
+        r.ok === false && typeof r.error === 'string' && r.error.includes('border'), JSON.stringify(r));
+    } catch (e) { check('corners refuses an unknown border value', false, e.message); }
+
+    // Put the sidecar's own window back the way Windows had it.
+    try { await s.send('corners', { hwnd: selfHwnd, mode: 'default', border: 'default' }); } catch (e) { /* best effort */ }
   }
 
   try {
@@ -575,6 +605,57 @@ async function main() {
       check('corners refuses the Windows taskbar',
         r.ok === false && typeof r.error === 'string' && r.error.includes('taskbar'), JSON.stringify(r));
     } catch (e) { check('corners refuses the Windows taskbar', false, e.message); }
+  }
+
+  // ---- backdrop ---------------------------------------------------------
+  // Read-only, so it runs in passive: a 64x16 grab of the very top-left corner
+  // is the cheapest thing on the screen and tells us nothing about anyone.
+  let cornersNote = '';
+  let backdropNote = '';
+  try {
+    const r = await s.send('backdrop', { x: 0, y: 0, w: 64, h: 16, scale: 1 });
+    const d = r.ok ? r.result : null;
+    const b64 = d && typeof d.png === 'string' ? d.png.replace('data:image/png;base64,', '') : '';
+    // Decoded, not just prefix-matched: a truncated or mislabelled blob would
+    // pass a header check and fail in the browser.
+    let magic = '';
+    try { magic = Buffer.from(b64, 'base64').slice(0, 8).toString('hex'); } catch (e) { magic = 'undecodable'; }
+    check('backdrop returns a png that actually decodes',
+      r.ok === true && d && typeof d.png === 'string' &&
+      d.png.startsWith('data:image/png;base64,') && b64.length > 100 &&
+      magic === '89504e470d0a1a0a',
+      'magic=' + magic + ' len=' + b64.length + ' ' + JSON.stringify(r).slice(0, 120));
+    check('backdrop at scale 1 keeps the asked-for size',
+      d && d.w === 64 && d.h === 16 && d.scale === 1 && typeof d.ms === 'number' && d.ms >= 0,
+      JSON.stringify(d && { w: d.w, h: d.h, scale: d.scale, ms: d.ms }));
+    if (d) backdropNote = 'backdrop: 64x16 at scale 1 took ' + d.ms + 'ms, ' + b64.length + ' base64 chars';
+  } catch (e) { check('backdrop', false, e.message); }
+
+  try {
+    const r = await s.send('backdrop', { x: 0, y: 0, w: 64, h: 16, scale: 4 });
+    const d = r.ok ? r.result : null;
+    check('backdrop at scale 4 downscales by exactly 4',
+      r.ok === true && d && d.w === 16 && d.h === 4 && d.scale === 4 &&
+      typeof d.png === 'string' && d.png.startsWith('data:image/png;base64,'),
+      JSON.stringify(d && { w: d.w, h: d.h, scale: d.scale }));
+  } catch (e) { check('backdrop at scale 4', false, e.message); }
+
+  try {
+    const r = await s.send('backdrop', { x: 0, y: 0, w: 64, h: 16, scale: 99 });
+    check('backdrop clamps scale to 8',
+      r.ok === true && r.result && r.result.scale === 8 && r.result.w === 8 && r.result.h === 2,
+      JSON.stringify(r.result && { w: r.result.w, h: r.result.h, scale: r.result.scale }));
+  } catch (e) { check('backdrop clamps scale to 8', false, e.message); }
+
+  for (const [rect, what] of [
+    [{ x: 200000, y: 200000, w: 64, h: 16 }, 'a rect past the edge of the desktop'],
+    [{ x: 0, y: 0, w: 0, h: 16 }, 'a zero width']
+  ]) {
+    try {
+      const r = await s.send('backdrop', rect);
+      check(`backdrop refuses ${what}`,
+        r.ok === false && typeof r.error === 'string' && r.error.includes('backdrop'), JSON.stringify(r));
+    } catch (e) { check(`backdrop refuses ${what}`, false, e.message); }
   }
 
   // ---- edgeclip ---------------------------------------------------------
@@ -735,7 +816,7 @@ async function main() {
     const cmds = r.ok && r.result ? r.result.commands : null;
     check('ping lists the commands it serves',
       Array.isArray(cmds) && ['lnk', 'keys', 'foreground', 'traywatch', 'corners', 'morph', 'region',
-                              'edgeclip', 'windows', 'glass', 'place']
+                              'edgeclip', 'backdrop', 'windows', 'glass', 'place']
         .every((c) => cmds.indexOf(c) >= 0),
       JSON.stringify(cmds));
   } catch (e) { check('ping lists the commands it serves', false, e.message); }
@@ -944,6 +1025,8 @@ async function main() {
   try { fs.unlinkSync(LNK_SHELL); } catch (e) { /* already gone */ }
 
   for (const f of failures) console.log('  FAIL: ' + f);
+  if (backdropNote) console.log('  note: ' + backdropNote);
+  if (cornersNote) console.log('  note: ' + cornersNote);
   if (trayNote) console.log('  note: ' + trayNote);
   if (shellLnkNote) console.log('  note: ' + shellLnkNote);
   if (explorerPinNote) console.log('  note: ' + explorerPinNote);

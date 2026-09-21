@@ -15,17 +15,19 @@
  *  - Colour ONLY through var(--lg-*). There is not one literal colour below.
  *  - The page background stays transparent. Electron's bar window is transparent, so anything
  *    painted on <html>/<body> would appear as a rectangle of fog around the bar.
- *  - NO backdrop-filter. In a transparent Electron window it samples this page and nothing else.
- *    The sidecar applies DWM acrylic (blur + light tint) to the whole window; this file draws the
- *    white tint on top of that frost and nothing more. --lg-fill is .20, far below the Northwind
- *    pill's .68: the DWM tint contributes its own white, and Owen's verdict on the live bar was
- *    that it had to "show the background behind it better". The pane's shape is carried by the
- *    two hairlines and the shadow, not by opacity — do not trade them for a thicker fill.
+ *  - NO CSS backdrop-filter, and no DWM mode either. Both were tried live and both failed: in a
+ *    transparent Electron window backdrop-filter samples this page and nothing else, DWM acrylic
+ *    renders a near-opaque white slab, and DWM blur-behind over a dark desktop renders a black
+ *    one ("now its kinda just black"). So THE BAR BLURS ITS OWN BACKDROP: main sends a PNG of the
+ *    screen strip behind the bar ~4x a second, .bdrop shows it blurred, and the tint sits on top.
+ *  - THE LAYER ORDER, which the whole file depends on: .bdrop (z0, the blurred screen) →
+ *    .bar::after (z1, the tint + the two hairlines) → .left/.dock/.right (z2, the content).
+ *    The tint CANNOT be .bar's own background-color, because a child <img> paints above its
+ *    parent's background — that is why the fill lives on a pseudo-element.
  *  - NO text-shadow. On light glass the ink carries itself; a shadow under dark text on a
  *    near-white pane just reads as a printing fault.
- *  - Nothing moves at rest. The only animation is the reveal/hide slide — one GPU transform on
- *    .bar, 120ms, started by an event from main. Hover/active transitions are steps(2): two
- *    discrete paints, not an eight-frame ramp.
+ *  - Nothing moves at rest. The reveal is paint only (main moves the window); hover/active
+ *    transitions are steps(2): two discrete paints, not an eight-frame ramp.
  *  - --lg-acc marks the active window and focus, nowhere else.
  */
 
@@ -87,60 +89,114 @@ body[data-edge="top"] { justify-content: flex-start; }
   /* --- the FLUSH set: what the bar is before main reveals it --- */
   --pane-fill: var(--lg-fill-0);
   --pane-edge: var(--lg-edge-0);
-  --pane-sh:   var(--lg-pane-up-0);
+  --pane-lip:  var(--lg-lip-up-0);
+  --pane-drop: var(--lg-drop-up-0);
   --pane-ink:  var(--lg-ink-0);
   --pane-on:   0;                 /* the content's opacity */
 
-  background-color: var(--pane-fill);
-  border: 1px solid var(--pane-edge);
-  box-shadow: var(--pane-sh);
+  /* .bar itself paints NOTHING but the drop shadow: the fill and the hairlines are on ::after,
+     above the backdrop image. A background-color here would be buried under that image. */
+  background: transparent;
+  box-shadow: var(--pane-drop);
   color: var(--pane-ink);
 
   /* Paint only. border-radius is NOT here on purpose: main rounds the window itself, so the CSS
      radius has to match the window on the very frame the mode changes, not ease toward it. */
   transition:
+    box-shadow var(--lg-dur, 560ms) var(--lg-ease),
+    color      var(--lg-dur, 560ms) var(--lg-ease);
+}
+
+/* THE TINT, and the only place the two hairlines live. It sits inside the same radius, so the
+   1px border is drawn once, on top of the blurred backdrop, with background-clip:padding-box
+   keeping the fill strictly inside it — a fill under a translucent hairline would double it and
+   read as a 2px edge at the corners. */
+.bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border: 1px solid var(--pane-edge);
+  border-radius: inherit;
+  background-color: var(--pane-fill);
+  background-clip: padding-box;
+  box-shadow: var(--pane-lip);
+  transition:
     background-color var(--lg-dur, 560ms) var(--lg-ease),
     border-color     var(--lg-dur, 560ms) var(--lg-ease),
-    box-shadow       var(--lg-dur, 560ms) var(--lg-ease),
-    color            var(--lg-dur, 560ms) var(--lg-ease);
+    box-shadow       var(--lg-dur, 560ms) var(--lg-ease);
 }
 
 /* --- the DETACHED set --- */
 body.up .bar {
   --pane-fill: var(--lg-fill);
   --pane-edge: var(--lg-edge-out);
-  --pane-sh:   var(--lg-pane-up);
+  --pane-lip:  var(--lg-lip-up);
+  --pane-drop: var(--lg-drop-up);
   --pane-ink:  var(--lg-ink-2);
   --pane-on:   1;
 }
+/* No backdrop has arrived yet (or it was just cleared): there is nothing blurred under the tint,
+   so the tint has to carry the pane on its own and goes up to the fallback fill. */
+body.no-backdrop.up .bar { --pane-fill: var(--lg-fill-fb); }
 
 /* --- the two shapes. Geometry only, applied on the frame the mode arrives. --- */
-body.edge .bar {                                  /* docked: flush with the screen's bottom lip */
-  border-width: 1px 1px 0;
-  border-radius: var(--lg-r) var(--lg-r) 0 0;     /* must match the 8px DWM window rounding */
-}
-body.pill .bar {                                  /* floating: main has grown the window inward */
-  border-width: 1px;
-  border-radius: var(--lg-r-pill);
-}
+body.edge .bar { border-radius: var(--lg-r) var(--lg-r) 0 0; }   /* docked: flush bottom lip */
+body.edge .bar::after { border-width: 1px 1px 0; }
+body.pill .bar { border-radius: var(--lg-r-pill); }              /* the island: main floated it */
+body.pill .bar::after { border-width: 1px; }
 
 /* docked at the top instead: the lip and the shadow flip, nothing else changes */
-body[data-edge="top"] .bar { --pane-sh: var(--lg-pane-dn-0); }
-body[data-edge="top"].up .bar { --pane-sh: var(--lg-pane-dn); }
-body[data-edge="top"].edge .bar {
-  border-width: 0 1px 1px;
-  border-radius: 0 0 var(--lg-r) var(--lg-r);
+body[data-edge="top"] .bar { --pane-lip: var(--lg-lip-dn-0); --pane-drop: var(--lg-drop-dn-0); }
+body[data-edge="top"].up .bar { --pane-lip: var(--lg-lip-dn); --pane-drop: var(--lg-drop-dn); }
+body[data-edge="top"].edge .bar { border-radius: 0 0 var(--lg-r) var(--lg-r); }
+body[data-edge="top"].edge .bar::after { border-width: 0 1px 1px; }
+
+/* ---------------------------------------------------------------- the backdrop
+   Main sends a PNG of the screen strip behind the bar about four times a second while the bar is
+   up — never during the morph, never while hidden. .bdrop is the clip; the image inside it is
+   deliberately 14px LARGER on every side than the box, because a 12px blur pulls transparency in
+   from an image's own edges and that fringe would show as a pale rim all round the glass. The
+   overscan puts the fringe outside the clip. translateZ(0) keeps the blur on one composited
+   layer, so a src swap repaints that layer and touches no layout. */
+.bdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms var(--lg-ease);
+}
+.bdrop.on { opacity: 1; }
+.bdrop img {
+  position: absolute;
+  left: -14px;
+  top: -14px;
+  width: calc(100% + 28px);
+  height: calc(100% + 28px);
+  display: block;
+  object-fit: fill;              /* the strip is a 4x downscale of the bar's rect: stretch it back */
+  filter: blur(12px) saturate(150%);
+  transform: translateZ(0);
 }
 
 /* Before the first event the bar paints in the flush state with NO transition, so the very first
    reveal is a detach and not a half-drawn bar fading out of nowhere. */
-body.pre .bar, body.pre .left, body.pre .dock, body.pre .right { transition: none; }
+body.pre .bar, body.pre .bar::after, body.pre .bdrop,
+body.pre .left, body.pre .dock, body.pre .right { transition: none; }
 
 /* The content fades with the pane, on the same curve. It carries its own constant ink so the
    fade is a single opacity ramp: if it inherited the pane's interpolating colour as well, the
    glyphs would come in at opacity squared while the clock — which sets its own colour — came in
    linearly, and the cluster would look out of step with itself. */
 .left, .dock, .right {
+  /* z-index needs a positioned box: .left and .right get relative just below, and .dock is
+     already absolute (it is centred on the window). Deliberately NOT setting position here, so
+     this rule can never fight .dock's own position further down the file. */
+  z-index: 2;                    /* above the tint layer, which is above the blurred backdrop */
   color: var(--lg-ink-2);
   opacity: var(--pane-on);
   transition: opacity var(--lg-dur, 560ms) var(--lg-ease);
@@ -174,7 +230,7 @@ body.pre .bar, body.pre .left, body.pre .dock, body.pre .right { transition: non
 .glyph { width: 36px; justify-content: center; padding: 0; }
 
 /* ---------------------------------------------------------------- left: the launcher glyph */
-.left { flex: 0 0 auto; display: flex; align-items: center; gap: var(--gap); }
+.left { position: relative; flex: 0 0 auto; display: flex; align-items: center; gap: var(--gap); }
 .start { width: 38px; justify-content: center; padding: 0; }
 .start svg { display: block; }
 .start:hover, .start:active { color: var(--lg-acc); }
@@ -269,6 +325,7 @@ body.pre .bar, body.pre .left, body.pre .dock, body.pre .right { transition: non
 
 /* ---------------------------------------------------------------- right: the regular stuff */
 .right {
+  position: relative;
   flex: 0 0 auto;
   margin-left: auto;
   display: flex;

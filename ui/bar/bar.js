@@ -34,6 +34,7 @@
   var el = {
     body: document.body,
     bar: $('bar'), start: $('start'), dock: $('dock'),
+    backdrop: $('backdrop'), bdrop: document.querySelector('.bdrop'),
     left: document.querySelector('.left'), right: document.querySelector('.right'),
     chips: $('chips'), tray: $('tray'),
     volume: $('volume'), network: $('network'), battery: $('battery'), clock: $('clock'),
@@ -198,9 +199,48 @@
     if (revealed === on) return;
     revealed = on;
     el.body.classList.toggle('up', on);
-    if (!on) closePop();
+    if (!on) { closePop(); clearBackdrop(); }   // the strip is a photograph of a screen about to change
     else refreshPinned();             // the icons are only ever looked at while the bar is up
     console.log('[bar]', on ? 'reveal' : 'hide', barMode, d + 'ms', '—', (why || 'no reason given'));
+  }
+
+  /* ================================================================= the backdrop
+
+     The bar blurs its own backdrop, because nothing else could: DWM acrylic renders a near-opaque
+     white slab and DWM blur-behind a black one, and neither is tunable. Main photographs the
+     screen strip behind the bar (downscaled 4x) about four times a second while the bar is up —
+     never during the morph, never while hidden — and this swaps the <img> src. That is the whole
+     update: no layout, no reflow, one composited layer repainted.
+
+     body.no-backdrop is the honest fallback state: it thickens the tint so the bar is still a
+     readable pane when there is nothing blurred underneath. It is on at boot, off from the first
+     strip, and back on the moment the bar hides (the strip is of a screen that is about to be
+     wrong; showing it again on the next reveal would flash a stale photograph of the desktop). */
+  var haveBackdrop = false;
+
+  function setBackdrop(p) {
+    if (!p || typeof p.png !== 'string' || p.png.slice(0, 5) !== 'data:') {
+      fail('backdrop', 'no blur', 'bar.backdrop arrived without a png data URL, so the bar cannot' +
+        ' blur what is behind it and is showing a thicker tint instead' +
+        (p && p.reason ? ': ' + p.reason : ''));
+      return;
+    }
+    clearFail('backdrop');
+    el.backdrop.src = p.png;                 // the ONLY per-frame work: a src swap
+    if (!haveBackdrop) {
+      haveBackdrop = true;
+      el.body.classList.remove('no-backdrop');
+      el.bdrop.classList.add('on');          // 150ms fade, once, on the first strip after a reveal
+    }
+  }
+
+  function clearBackdrop() {
+    haveBackdrop = false;
+    el.bdrop.classList.remove('on');
+    /* removeAttribute, never src='': an empty src re-requests the PAGE in some engines. With no
+       src at all the <img> draws nothing, which is what a hidden bar should hold. */
+    el.backdrop.removeAttribute('src');
+    el.body.classList.add('no-backdrop');
   }
 
   /* Hover is the signal main hides on: it cannot see the pointer inside this window. */
@@ -938,6 +978,7 @@
     on('bar.reveal', function (p) { slide(true, p && p.why, p && p.mode, p && p.ms); });
     on('bar.hide', function (p) { slide(false, p && p.why, null, p && p.ms); });
     on('bar.pinned', renderDock);
+    on('bar.backdrop', setBackdrop);
     on('windows', renderWindows);
     on('tray', function (list) { lastTray = list || []; renderTray(lastTray); },
       function (reason) { trayThrew = reason; renderTray(lastTray); });   // the tray says it in its own chip

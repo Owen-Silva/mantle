@@ -205,6 +205,7 @@
     on: function (channel, cb) {
       (listeners[channel] || (listeners[channel] = [])).push(cb);
       setTimeout(function () {
+        if (channel === 'bar.backdrop') return;       // pushed only while the bar is up, never replayed
         if (channel === 'windows') cb(flatWindows());
         else if (channel === 'bar.pinned') cb({ ok: true, reason: '', items: items });
         else if (channel === 'tray') cb([]);          // tray unavailable on this build
@@ -233,6 +234,43 @@
     revealed = true;
     emit('bar.reveal', { why: 'mock: pointer at the bottom edge', mode: MODE, ms: DUR_IN });
   }, 300);
+
+  /* THE BACKDROP main would photograph. There is no screen behind a file:// page, so the mock
+     paints one: a deliberately loud gradient with hard-edged blocks in it, at the size main would
+     send (the bar's rect downscaled 4x). If the blur, the clip and the tint are all working, that
+     strip comes out as soft colour through the glass; if any of them is not, it is obvious at a
+     glance. Drawn on a canvas and handed over as a PNG data URL, exactly the shape of the real
+     payload. Six frames, then it stops: a mock may not leave a timer running for ever. */
+  function stripPNG(shift) {
+    var w = 360, h = 12, c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    var g = c.getContext('2d');
+    var grad = g.createLinearGradient(0, 0, w, 0);
+    var stops = ['#2f6fe0', '#b23fd0', '#d64545', '#e0a059', '#1f8f4e', '#2f6fe0'];
+    for (var i = 0; i < stops.length; i++) grad.addColorStop(i / (stops.length - 1), stops[(i + shift) % stops.length]);
+    g.fillStyle = grad; g.fillRect(0, 0, w, h);
+    /* two hard blocks and a dark band: edges are what a blur is judged on */
+    g.fillStyle = '#0b0d10'; g.fillRect(w * 0.34, 0, 26, h);
+    g.fillStyle = '#ffffff'; g.fillRect(w * 0.58, 0, 14, h);
+    g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0, h - 4, w, 4);
+    return c.toDataURL('image/png');
+  }
+
+  function sendBackdrops() {
+    var n = 0;
+    (function frame() {
+      if (!revealed || n >= 6) return;
+      emit('bar.backdrop', {
+        png: stripPNG(n), w: 360, h: 12,
+        rect: { x: 0, y: 1012, w: 1440, h: 48 },   // physical px of the bar's rest rect
+        ms: Date.now()
+      });
+      n++;
+      setTimeout(frame, 250);                       // main sends ~4 a second
+    })();
+  }
+  /* 300ms after the reveal lands, which is what main does: nothing arrives during the morph. */
+  if (REVEAL) setTimeout(function () { if (revealed) sendBackdrops(); }, 300 + DUR_IN);
 
   /* …and the hide, for watching the fade out. Main drops the window 20ms after the page is done. */
   if (HIDE_AT) setTimeout(function () {

@@ -84,7 +84,8 @@ namespace Mantle {
     public static readonly string[] Commands = new string[] {
       "ping", "windows", "foreground", "focus", "minimize", "close", "toggle",
       "taskbar", "appbar", "traywatch", "edgeclip", "glass", "corners", "place", "morph", "region",
-      "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "tray", "trayClick", "quit"
+      "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop",
+      "tray", "trayClick", "quit"
     };
 
     public static bool Passive;        // --passive: never touch the live shell
@@ -587,10 +588,36 @@ namespace Mantle {
           // attribute dies with it. Refused only for a hwnd that is not a
           // window, an unknown mode, or the taskbar.
           IntPtr cHwnd = Json.GetHwnd(req, "hwnd");
-          string usedCorner;
-          string cerr = Corners.Apply(cHwnd, Json.GetString(req, "mode"), out usedCorner);
+          string usedCorner, usedBorder, borderWhy;
+          // `border` absent means "leave the window border alone", which is not
+          // the same as "default" - so the key's presence is what decides.
+          string askedBorder = Json.HasKey(req, "border") ? Json.GetString(req, "border") : null;
+          string cerr = Corners.Apply(cHwnd, Json.GetString(req, "mode"), askedBorder,
+                                      out usedCorner, out usedBorder, out borderWhy);
           if (cerr != null) return cerr;
-          result = Json.Obj("ok", true, "mode", usedCorner);
+          // `mode` is kept alongside `used` for the callers written against the
+          // first version of this command; they are always the same value.
+          var cres = Json.Obj("ok", true, "used", usedCorner, "mode", usedCorner, "border", usedBorder);
+          if (borderWhy != null) cres["borderReason"] = borderWhy;
+          result = cres;
+          return null;
+        }
+
+        case "backdrop": {
+          // Read-only: it BitBlts out of the screen DC and changes nothing, so
+          // it runs in passive like `windows` and `icon`. The bar's own window
+          // is excluded from the capture by main.js before it calls (window
+          // affinity belongs to the window's owner, not to us).
+          string bpng;
+          int bw2, bh2, bscale;
+          double bms;
+          string bkerr = Backdrop.Capture(Json.GetInt(req, "x", 0), Json.GetInt(req, "y", 0),
+                                          Json.GetInt(req, "w", 0), Json.GetInt(req, "h", 0),
+                                          Json.GetInt(req, "scale", Backdrop.DefaultScale),
+                                          out bpng, out bw2, out bh2, out bms, out bscale);
+          if (bkerr != null) return bkerr;
+          result = Json.Obj("ok", true, "png", bpng, "w", bw2, "h", bh2,
+                            "scale", bscale, "ms", Math.Round(bms, 1));
           return null;
         }
 
@@ -910,6 +937,11 @@ namespace Mantle {
       // looking broken, and it costs one Win32 call.
       try { detail.Add(EdgeClip.ReleaseForExit() ? "cursor clip: released" : "cursor clip: none was held"); }
       catch (Exception ex) { done = false; detail.Add("cursor clip: release failed (" + ex.Message + "); it dies with the process"); }
+
+      // GDI handles are process-owned, so this is tidiness rather than safety -
+      // but a leaked DC is the kind of thing that only shows up as "Windows got
+      // slow after a week", and one call costs nothing.
+      try { Backdrop.Release(); } catch (Exception) { }
 
       // Animation threads first: they are the only thing left that still calls
       // SetWindowPos, and a frame landing mid-restore is pure confusion.

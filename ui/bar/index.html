@@ -21,9 +21,15 @@
      page must paint before main's first 'bar.reveal' arrives; `edge` is the safe default shape
      until that event says whether main is holding the window as a pill. bar.js drops .pre on the
      first event and adds `up`. -->
-<body data-edge="bottom" class="pre edge">
+<body data-edge="bottom" class="pre edge no-backdrop">
 
 <div id="bar" class="bar" role="toolbar" aria-label="Mantle bar">
+
+  <!-- THE BACKDROP, and it must be the FIRST child so it paints under everything. Main sends a
+       PNG of the screen strip behind the bar ~4x a second while the bar is up; bar.js swaps the
+       src and nothing else, and bar.css blurs it and clips it to the bar's radius. This is the
+       whole reason the glass is see-through: no DWM mode could be tuned to do it. -->
+  <div class="bdrop" aria-hidden="true"><img id="backdrop" alt=""></div>
 
   <!-- LEFT: the Mantle mark, which opens the launcher. Inline SVG so it inherits currentColor
        and needs no asset (img-src would have to allow it, and a missing file would be a hole). -->

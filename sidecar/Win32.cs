@@ -57,6 +57,14 @@ namespace Mantle {
     public const uint SPIF_SENDCHANGE = 0x0002;
     public const int SM_CXSCREEN = 0;
     public const int SM_CYSCREEN = 1;
+    // The VIRTUAL SCREEN: every monitor's rect unioned, with the primary's
+    // top-left at 0,0 - so the left/top can be NEGATIVE when a second monitor
+    // sits above or to the left. Backdrop validates against this, not against
+    // the primary, or a capture on a second screen would be refused.
+    public const int SM_XVIRTUALSCREEN = 76;
+    public const int SM_YVIRTUALSCREEN = 77;
+    public const int SM_CXVIRTUALSCREEN = 78;
+    public const int SM_CYVIRTUALSCREEN = 79;
     /// The number of display monitors. 1 is the only case EdgeClip will touch:
     /// a cursor clip is a SINGLE rectangle across the whole virtual desktop, so
     /// a second screen would be walled off by it.
@@ -173,6 +181,15 @@ namespace Mantle {
     public const int DWMWCP_DONOTROUND = 1;
     public const int DWMWCP_ROUND = 2;
     public const int DWMWCP_ROUNDSMALL = 3;
+    /// DWMWA_BORDER_COLOR (Windows 11 22000+). Windows 11 paints a 1 px border
+    /// around every window, OUTSIDE the client area and following DWM's own
+    /// rounding - so a frameless window whose page draws a 24 px pill still
+    /// shows a faint 8 px-rounded outline at each corner (measured on build 16,
+    /// 2026-09-21). DWMWA_COLOR_NONE removes it; it is a per-window attribute
+    /// that dies with the window.
+    public const int DWMWA_BORDER_COLOR = 34;
+    public const uint DWMWA_COLOR_NONE = 0xFFFFFFFE;
+    public const uint DWMWA_COLOR_DEFAULT = 0xFFFFFFFF;
 
     // ------------------------------------------------------------- WinEvents
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
@@ -385,7 +402,20 @@ namespace Mantle {
     /// is still ours, and Morph deletes it there.
     [DllImport("user32.dll", SetLastError = true)] public static extern int SetWindowRgn(IntPtr hwnd, IntPtr hRgn, bool redraw);
 
+    [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
+
     // ------------------------------------------------------------------- gdi32
+    /// BitBlt raster ops. CAPTUREBLT is what makes layered and DWM-composed
+    /// windows appear in a screen grab; without it the shot has holes.
+    public const uint SRCCOPY = 0x00CC0020;
+    public const uint CAPTUREBLT = 0x40000000;
+
+    [DllImport("gdi32.dll", SetLastError = true)] public static extern IntPtr CreateCompatibleDC(IntPtr dc);
+    [DllImport("gdi32.dll", SetLastError = true)] public static extern IntPtr CreateCompatibleBitmap(IntPtr dc, int w, int h);
+    [DllImport("gdi32.dll", SetLastError = true)] public static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+    [DllImport("gdi32.dll", SetLastError = true)] public static extern bool DeleteDC(IntPtr dc);
+    [DllImport("gdi32.dll", SetLastError = true)] public static extern bool BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
     [DllImport("gdi32.dll", SetLastError = true)] public static extern IntPtr CreateRoundRectRgn(int l, int t, int r, int b, int w, int h);
     [DllImport("gdi32.dll", SetLastError = true)] public static extern bool DeleteObject(IntPtr obj);
     [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr CopyIcon(IntPtr hIcon);
@@ -419,6 +449,11 @@ namespace Mantle {
     // -------------------------------------------------------------------- other
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int val, int size);
     [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int val, int size);
+    /// The same export for the COLORREF attributes: declared with a uint so the
+    /// 0xFFFFFFFE sentinel does not have to be written as a negative int at
+    /// every call site.
+    [DllImport("dwmapi.dll", EntryPoint = "DwmSetWindowAttribute")]
+    public static extern int DwmSetWindowAttributeColor(IntPtr hwnd, int attr, ref uint val, int size);
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SHGetFileInfoW(string path, uint fileAttrs, ref SHFILEINFO info, uint cb, uint flags);
     /// The SAME export, declared again with a PIDL first argument. Two
     /// declarations rather than an IntPtr one everywhere, so the common
