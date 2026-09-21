@@ -16,6 +16,7 @@
  *   ?windows=20   emit 20 windows instead of 6 (proves the icon-only overflow path)
  *   ?state=down   sidecar reported down, so the amber status chip is on screen
  *   ?edge=top     pretend the bar is docked at the top (bar.js also honours this)
+ *   ?bg=1         paint a loud wallpaper behind the page, MOCK ONLY (see below)
  */
 (function () {
   'use strict';
@@ -25,6 +26,19 @@
   var q = new URLSearchParams(location.search);
   var WIN_COUNT = Math.max(0, parseInt(q.get('windows'), 10) || 6);
   var SIDECAR_DOWN = q.get('state') === 'down';
+
+  /* ?bg=1 — a stand-in wallpaper, and ONLY here inside the mock, so nothing in the shipped bar
+     can ever paint outside the bar element. In Electron the window is transparent and DWM blurs
+     the real desktop behind it; on disk there is nothing behind the page at all, so a screenshot
+     over white would make the glass look solid and any contrast judgement meaningless. These are
+     saturated, hostile colours on purpose: if the text survives THIS, a wallpaper is no threat.
+     Painted on <html> only; <body> stays transparent. */
+  if (q.get('bg') === '1') {
+    document.documentElement.style.background =
+      'linear-gradient(90deg,#0b0d10 0%,#2f6fe0 12%,#0b0d10 22%,#d64545 34%,#1f8f4e 46%,' +
+      '#0b0d10 56%,#b23fd0 68%,#e0a059 80%,#0b0d10 90%,#2f6fe0 100%)';
+    console.log('[mock] ?bg=1: wallpaper stand-in painted on <html> (mock only)');
+  }
 
   /* Two genuine 32x32 PNGs (generated, not placeholders) so the icon path is exercised with
      real bitmaps; the rest of the windows carry icon:null so the letter-tile fallback is
@@ -64,13 +78,19 @@
     return {
       mode: 'test',
       edge: q.get('edge') === 'top' ? 'top' : 'bottom',
+      /* These shapes are lane B's State contract, not the mock's invention: sidecar.status is
+         'ok' | 'starting' | 'down', tray.status is 'ok' | 'unavailable', hotkey.winTap is a
+         boolean. If the contract moves again, this object moves with it — a mock that drifts
+         from the bridge is worse than no mock, because the bar then looks healthy in a shot and
+         silent in production (it cost exactly that: the status chips vanished from one round of
+         screenshots before anyone noticed). */
       sidecar: SIDECAR_DOWN
-        ? { ok: false, reason: 'sidecar exited: exit code 1' }
-        : { ok: true, reason: '' },
+        ? { status: 'down', reason: 'sidecar exited: exit code 1' }
+        : { status: 'ok', reason: '' },
       taskbar: { hidden: true, reason: '' },        // test mode never touches the real taskbar
       desktop: { attached: true, reason: '' },
-      tray: { available: false, reason: 'explorer exposes 0 legacy tray buttons on this build' },
-      hotkey: { on: false, reason: 'test mode: hook not installed' }
+      tray: { status: 'unavailable', reason: 'explorer exposes 0 legacy tray buttons on this build' },
+      hotkey: { winTap: false, reason: 'test mode: hook not installed' }
     };
   }
 

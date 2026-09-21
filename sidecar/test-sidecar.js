@@ -33,11 +33,12 @@ const BUILD = path.join(HERE, 'build.ps1');
 // Scratch, not the repo: the state file is a runtime artefact and a test run
 // must not leave one lying next to the source.
 const STATE = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '.state.json');
+const STATE_EOF = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '.eof.state.json');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function readState() {
-  try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch (e) { return null; }
+function readState(file) {
+  try { return JSON.parse(fs.readFileSync(file || STATE, 'utf8')); } catch (e) { return null; }
 }
 
 /**
@@ -60,11 +61,11 @@ function virtualisedScreenWidth() {
 }
 
 /** The sidecar writes the file just after `ready`, so poll rather than sleep. */
-async function waitForState(predicate, timeoutMs) {
+async function waitForState(predicate, timeoutMs, file) {
   const until = Date.now() + timeoutMs;
   let last = null;
   for (;;) {
-    const s = readState();
+    const s = readState(file);
     if (s) { last = s; if (predicate(s)) return s; }
     if (Date.now() >= until) return last;
     await sleep(50);
@@ -185,8 +186,10 @@ async function main() {
   }
 
   // ---- ping -------------------------------------------------------------
+  let selfHwnd = null;
   try {
     const r = await s.send('ping');
+    if (r.ok && r.result) selfHwnd = r.result.selfHwnd;
     check('ping ok', r.ok === true, JSON.stringify(r));
     check('ping reports passive + pid + version',
       r.ok && r.result && r.result.passive === true &&
@@ -195,6 +198,10 @@ async function main() {
     // Physical pixels, because SHAppBarMessage is not DPI-virtualised (see
     // Program.InitDpi). If this ever goes false the app bar lands 200 px off.
     check('ping reports dpiAware:true', r.ok && r.result && r.result.dpiAware === true,
+      JSON.stringify(r.result));
+    // The one window the sidecar owns, so `glass` has something safe to aim at.
+    check('ping reports selfHwnd as a decimal string',
+      typeof selfHwnd === 'string' && /^\d+$/.test(selfHwnd) && selfHwnd !== '0',
       JSON.stringify(r.result));
   } catch (e) { check('ping', false, e.message); }
 
@@ -309,6 +316,44 @@ async function main() {
     } catch (e) { check(`${what} refused in passive`, false, e.message); }
   }
 
+  // ---- glass ------------------------------------------------------------
+  // NOT in the refusal list on purpose: `glass` only ever touches a window the
+  // caller owns, so there is nothing for passive mode to protect. The only
+  // refusals are a hwnd that is not a window.
+  try {
+    const r = await s.send('glass', { hwnd: '0', mode: 'acrylic' });
+    check('glass refuses hwnd 0 with a reason',
+      r.ok === false && typeof r.error === 'string' && r.error.length > 0, JSON.stringify(r));
+  } catch (e) { check('glass refuses hwnd 0 with a reason', false, e.message); }
+
+  try {
+    const r = await s.send('glass', { hwnd: '1', mode: 'acrylic' });
+    check('glass refuses a hwnd that is not a window',
+      r.ok === false && typeof r.error === 'string' && r.error.includes('no longer exists'),
+      JSON.stringify(r));
+  } catch (e) { check('glass refuses a hwnd that is not a window', false, e.message); }
+
+  if (selfHwnd) {
+    try {
+      const on = await s.send('glass', { hwnd: selfHwnd, mode: 'acrylic', tint: '#101014CC' });
+      check('glass acrylic applies to the sidecar\'s own window',
+        on.ok === true && on.result && on.result.applied === true && on.result.mode === 'acrylic',
+        JSON.stringify(on));
+      const off = await s.send('glass', { hwnd: selfHwnd, mode: 'off' });
+      check('glass off applies to the sidecar\'s own window',
+        off.ok === true && off.result && off.result.applied === true && off.result.mode === 'off',
+        JSON.stringify(off));
+    } catch (e) { check('glass on the sidecar\'s own window', false, e.message); }
+  } else {
+    check('glass on the sidecar\'s own window', false, 'ping did not report selfHwnd');
+  }
+
+  try {
+    const r = await s.send('glass', { hwnd: selfHwnd || '1', mode: 'frosted' });
+    check('glass refuses an unknown mode with a reason',
+      r.ok === false && typeof r.error === 'string' && r.error.includes('acrylic'), JSON.stringify(r));
+  } catch (e) { check('glass refuses an unknown mode with a reason', false, e.message); }
+
   // ---- unknown command --------------------------------------------------
   try {
     const r = await s.send('nonsense-command');
@@ -375,7 +420,72 @@ async function main() {
     try { s2.proc.kill(); } catch (_) {}
   }
 
+  // ---- stdin EOF WITH a state file --------------------------------------
+  // The 2026-09-21 live crash test: Electron was killed, the sidecar went away
+  // and Explorer reclaimed the app bar, but the state file still said
+  // "restored":false - the restore had blocked on a stdout write to a pipe with
+  // no reader. The restore must now finish, and the file must say so, on the
+  // EOF path exactly as it does on `quit`.
+  try { fs.unlinkSync(STATE_EOF); } catch (e) { /* not there: that is the point */ }
+  const s3 = start(['--passive', '--parent-pid=' + process.pid, '--state-file=' + STATE_EOF]);
+  try {
+    await s3.waitEvent('ready', 6000);
+    await waitForState((v) => v && v.original, 3000, STATE_EOF);
+    s3.proc.stdin.end();
+    const ex = await s3.waitExit(3000);
+    check('stdin EOF with a state file exits 0', ex.code === 0, 'exit code ' + ex.code);
+    const st = await waitForState((v) => v && v.restored === true, 3000, STATE_EOF);
+    check('stdin EOF writes restored:true BEFORE exiting',
+      st !== null && st.restored === true,
+      st ? JSON.stringify(st) : 'no file at ' + STATE_EOF);
+    check('stdin EOF leaves no app bar recorded',
+      st !== null && st.changed && Array.isArray(st.changed.appbars) && st.changed.appbars.length === 0,
+      st ? JSON.stringify(st.changed) : '');
+  } catch (e) {
+    check('stdin EOF writes restored:true BEFORE exiting', false, e.message);
+    try { s3.proc.kill(); } catch (_) {}
+  }
+
+  // ---- a stdout NOBODY READS (the actual 2026-09-21 failure) ------------
+  // When Electron is killed, the read end of the sidecar's stdout can still be
+  // open while nothing drains it: writes do not fail, they BLOCK once the pipe
+  // fills. That is what swallowed the restore. Reproduced here by never reading
+  // stdout and then flooding it with icon replies until it wedges - the restore
+  // must still run, the note must still be written, and the process must still
+  // die.
+  {
+    const STATE_WEDGE = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '.wedge.state.json');
+    try { fs.unlinkSync(STATE_WEDGE); } catch (e) { /* not there */ }
+    const p = spawn(EXE, ['--passive', '--parent-pid=' + process.pid, '--state-file=' + STATE_WEDGE],
+      { stdio: ['pipe', 'pipe', 'ignore'] });
+    p.stdout.pause();   // never read; a paused stdio stream is never drained
+    let exited = null;
+    p.on('exit', (code) => { exited = code === null ? -1 : code; });
+    try {
+      await waitForState((v) => v && v.original, 5000, STATE_WEDGE);
+      for (let i = 0; i < 200; i++) {
+        p.stdin.write(JSON.stringify({ id: 1000 + i, cmd: 'icon', path: 'C:\\Windows\\explorer.exe' }) + '\n');
+      }
+      await sleep(800);          // let the replies fill the pipe and wedge it
+      const t0 = Date.now();
+      p.stdin.end();             // EOF: the restore must happen anyway
+
+      const st = await waitForState((v) => v && v.restored === true, 6000, STATE_WEDGE);
+      check('a wedged stdout cannot stop the restore being recorded',
+        st !== null && st.restored === true, st ? JSON.stringify(st) : 'no file at ' + STATE_WEDGE);
+
+      for (let i = 0; i < 80 && exited === null; i++) await sleep(100);
+      check('a wedged stdout cannot stop the sidecar exiting',
+        exited !== null, 'still running ' + (Date.now() - t0) + 'ms after EOF');
+    } catch (e) {
+      check('a wedged stdout cannot stop the restore being recorded', false, e.message);
+    }
+    if (exited === null) { try { p.kill(); } catch (_) {} }
+    try { fs.unlinkSync(STATE_WEDGE); } catch (e) { /* already gone */ }
+  }
+
   try { fs.unlinkSync(STATE); } catch (e) { /* already gone */ }
+  try { fs.unlinkSync(STATE_EOF); } catch (e) { /* already gone */ }
 
   for (const f of failures) console.log('  FAIL: ' + f);
   if (trayNote) console.log('  note: ' + trayNote);

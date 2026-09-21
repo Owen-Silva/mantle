@@ -49,6 +49,7 @@ const PAGE = 'file:///C:/Users/user/mantle/ui/bar/index.html';
 /* Each shot is one state worth looking at, not one size for its own sake. */
 const SHOTS = [
   { name: 'bar-1920', w: 1920, h: 44, q: '' },
+  { name: 'bar-1920-bg', w: 1920, h: 44, q: '?bg=1' },   // loud wallpaper: is the glass actually letting it through?
   { name: 'bar-1280', w: 1280, h: 44, q: '' },
   { name: 'bar-1280-20win', w: 1280, h: 44, q: '?windows=20' },
   { name: 'bar-1920-down', w: 1920, h: 44, q: '?state=down' }
@@ -71,8 +72,10 @@ const SHOTS = [
       await page.goto(PAGE + s.q, { waitUntil: 'load' });
       /* The page is deliberately transparent (the Electron window is), so a screenshot over
          nothing would composite onto white and misrepresent every contrast judgement. Paint a
-         plausible dark desktop behind it — on <html>, never on the bar. */
-      await page.addStyleTag({ content: 'html{background:#141619 !important;}' });
+         plausible dark desktop behind it — on <html>, never on the bar. The ?bg=1 shot brings
+         its own (much louder) wallpaper from the mock, so leave that one alone. */
+      if (!s.q.includes('bg=1'))
+        await page.addStyleTag({ content: 'html{background:#141619 !important;}' });
       await page.evaluate(() => document.fonts.ready);
       await page.waitForTimeout(350);           // the mock bridge answers at 30ms; this is slack, not a race
       const file = path.join(OUT, s.name + '.png');

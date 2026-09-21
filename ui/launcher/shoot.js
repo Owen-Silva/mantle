@@ -1,13 +1,19 @@
 require('C:/Users/user/dev-tools/tools/lowcpu.js');
-/* shoot.js — four headless screenshots of the launcher, for eyes only.
+/* shoot.js — headless screenshots of the launcher, plus a real contrast check.
  *
  * Line 1 is the machine-wide CPU cap and browser lock: it pins this process to
  * a few cores at below-normal priority and lets exactly one headless browser
- * run at a time. It is required, not optional; a browser script without it is
- * a rule break.
+ * run at a time. It is required, not optional.
  *
- * Nothing here runs Electron and nothing here opens an app: the page is loaded
- * over file:// with mock-mantle.js standing in for the bridge.
+ * Nothing here runs Electron and nothing here opens an app: the page loads over
+ * file:// with mock-mantle.js standing in for the bridge.
+ *
+ * The contrast pass is the point of the harness, not a bonus. The panel is
+ * translucent now, so how legible the text is depends on the desktop behind it.
+ * So: screenshot, then read the PNG back pixel by pixel, take the DARKEST pixel
+ * inside each text run (that is the glass showing between the glyphs) and
+ * measure the token colour against it. Guessing from the design tokens alone
+ * would miss the wallpaper entirely.
  *
  *   node ui/launcher/shoot.js
  */
@@ -19,13 +25,19 @@ const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-co
 const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
 const PAGE = 'file:///C:/Users/user/mantle/ui/launcher/index.html';
 const OUT = 'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/edd3247c-6214-4642-9069-bbf7e50b1555/scratchpad/lanes/launcher';
+const DPR = 1.25;
 
-/* The launcher's own body is transparent, because the Electron window is.
-   A screenshot of that would be a PNG with a hole in it, so the harness paints
-   a desktop-ish backdrop behind the page through CSSOM (which the page's CSP
-   allows, unlike an injected <style> tag) — this changes nothing inside the
-   panel, it only gives the drop shadow and the hairline something to sit on. */
-const BACKDROP = 'linear-gradient(140deg, #2b3138 0%, #1d2126 45%, #262b31 100%)';
+/* The three text colours that sit on the glass, straight out of tokens.css. */
+const TEXT = {
+  'name (--fg)': [238, 241, 248],
+  'subtitle (--fg-3)': [166, 171, 181],
+  'source error (--amber)': [224, 160, 89],
+};
+const SAMPLE = {
+  'name (--fg)': '.row.is-sel .name',
+  'subtitle (--fg-3)': '.row:not(.is-sel) .sub',
+  'source error (--amber)': '.src-error',
+};
 
 (async () => {
   if (!fs.existsSync(CHROME)) throw new Error('no chromium at ' + CHROME);
@@ -34,9 +46,14 @@ const BACKDROP = 'linear-gradient(140deg, #2b3138 0%, #1d2126 45%, #262b31 100%)
   const browser = await chromium.launch({ executablePath: CHROME, headless: true });
   const ctx = await browser.newContext({
     viewport: { width: 680, height: 460 },
-    deviceScaleFactor: 1.25,
+    deviceScaleFactor: DPR,
     colorScheme: 'dark',
   });
+  /* A plain page to decode the PNGs in: about:blank has no CSP, so a canvas
+     can take the screenshot back apart. */
+  const lab = await ctx.newPage();
+  await lab.goto('about:blank');
+
   const shots = [];
 
   async function shoot(name, url, prep) {
@@ -45,51 +62,97 @@ const BACKDROP = 'linear-gradient(140deg, #2b3138 0%, #1d2126 45%, #262b31 100%)
     page.on('pageerror', e => problems.push('pageerror: ' + e.message));
     page.on('console', m => { if (m.type() === 'error') problems.push('console: ' + m.text()); });
     await page.goto(url, { waitUntil: 'load' });
-    await page.evaluate(bg => { document.documentElement.style.background = bg; }, BACKDROP);
-    await page.waitForTimeout(150);          // the mock resolves on a microtask
+    await page.waitForTimeout(150);              // the mock resolves on a microtask
     if (prep) await prep(page);
+
     const file = path.join(OUT, name + '.png');
-    await page.screenshot({ path: file });
-    /* Read the state back out of the DOM as well as photographing it: a
-       stylesheet blocked by CSP, an unfocused input or a missing notice are
-       all things a small PNG can hide. */
-    const probe = await page.evaluate(() => {
+    const buf = await page.screenshot({ path: file });
+
+    /* Read the state out of the DOM as well as photographing it: a blocked
+       stylesheet, a lost focus or a missing notice can all hide in a small PNG. */
+    const probe = await page.evaluate(sel => {
       const cs = el => (el ? getComputedStyle(el) : null);
-      const slotAfter = cs(document.querySelector('.slot'));
-      return {
-        border: cs(document.querySelector('.panel')).borderTopWidth,
-        focused: document.activeElement === document.getElementById('q'),
-        underline: getComputedStyle(document.querySelector('.slot'), '::after').opacity,
-        rows: document.querySelectorAll('.row').length,
-        sel: document.querySelectorAll('.row.is-sel').length,
-        why: (document.querySelector('.why') || {}).textContent || '',
-        notice: document.getElementById('notice').hidden ? '' : document.getElementById('notice').textContent,
-        slotBg: slotAfter.backgroundColor,
+      const rect = q => {
+        const el = document.querySelector(q);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height };
       };
-    });
-    shots.push({ file, probe, problems });
+      const out = { rects: {} };
+      for (const k of Object.keys(sel)) out.rects[k] = rect(sel[k]);
+      const panel = document.querySelector('.panel');
+      out.border = cs(panel).borderTopWidth;
+      out.fillLayers = cs(panel).backgroundImage.split(/,(?![^(]*\))/).length;
+      out.bodyBg = cs(document.body).backgroundColor;
+      out.htmlBg = cs(document.documentElement).backgroundImage === 'none' ? 'none' : 'wallpaper';
+      out.focused = document.activeElement === document.getElementById('q');
+      out.underline = getComputedStyle(document.querySelector('.slot'), '::after').opacity;
+      out.rows = document.querySelectorAll('.row').length;
+      out.why = (document.querySelector('.why') || {}).textContent || '';
+      out.notice = document.getElementById('notice').hidden ? '' : document.getElementById('notice').textContent;
+      return out;
+    }, SAMPLE);
+
+    const contrast = await lab.evaluate(async ({ png, rects, text, dpr }) => {
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = png; });
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      c.getContext('2d').drawImage(img, 0, 0);
+      const lin = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+      const lum = (r, g, b) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+      const out = {};
+      for (const key of Object.keys(rects)) {
+        const r = rects[key];
+        if (!r || r.w < 2 || r.h < 2) { out[key] = null; continue; }
+        const d = c.getContext('2d').getImageData(
+          Math.round(r.x * dpr), Math.round(r.y * dpr),
+          Math.max(1, Math.round(r.w * dpr)), Math.max(1, Math.round(r.h * dpr))).data;
+        // darkest pixel inside the text run = the glass between the glyphs
+        let best = 2, rgb = null;
+        for (let i = 0; i < d.length; i += 4) {
+          const L = lum(d[i], d[i + 1], d[i + 2]);
+          if (L < best) { best = L; rgb = [d[i], d[i + 1], d[i + 2]]; }
+        }
+        const t = text[key];
+        const tl = lum(t[0], t[1], t[2]);
+        out[key] = {
+          ratio: Math.round(((Math.max(tl, best) + 0.05) / (Math.min(tl, best) + 0.05)) * 100) / 100,
+          behind: 'rgb(' + rgb.join(',') + ')',
+        };
+      }
+      return out;
+    }, { png: 'data:image/png;base64,' + buf.toString('base64'), rects: probe.rects, text: TEXT, dpr: DPR });
+
+    delete probe.rects;
+    shots.push({ file, probe, contrast, problems });
     await page.close();
-    return file;
   }
 
-  await shoot('01-empty', PAGE);
-  await shoot('02-typed-ch', PAGE, async page => {
+  await shoot('01-glass-plain', PAGE);                       // no wallpaper: the white worst case
+  await shoot('02-glass-busy', PAGE + '?bg=1');
+  await shoot('03-typed-ch', PAGE + '?bg=1', async page => {
     await page.click('#q');
     await page.type('#q', 'ch', { delay: 30 });
-    await page.waitForTimeout(220);          // 40ms debounce + render
+    await page.waitForTimeout(220);                          // 40ms debounce + render
   });
-  await shoot('03-sidecar-down', PAGE + '?state=down');
-  await shoot('04-launch-failed', PAGE + '?fail=1', async page => {
+  await shoot('04-launch-failed', PAGE + '?bg=1&fail=1', async page => {
     await page.keyboard.press('Enter');
     await page.waitForTimeout(220);
   });
+  await shoot('05-sidecar-down', PAGE + '?bg=1&state=down');
 
   await browser.close();
 
   for (const s of shots) {
     console.log(s.file);
-    console.log('    ' + JSON.stringify(s.probe) +
-      (s.problems.length ? '\n    PROBLEMS: ' + s.problems.join(' | ') : ''));
+    console.log('    ' + JSON.stringify(s.probe));
+    for (const k of Object.keys(s.contrast)) {
+      const c = s.contrast[k];
+      console.log('    ' + (c ? (c.ratio >= 4.5 ? 'OK  ' : 'LOW ') + c.ratio + ':1  ' + k + '  on ' + c.behind
+        : 'n/a  ' + k));
+    }
+    if (s.problems.length) console.log('    PROBLEMS: ' + s.problems.join(' | '));
   }
 })().catch(err => {
   console.error('shoot.js failed: ' + (err && err.stack || err));

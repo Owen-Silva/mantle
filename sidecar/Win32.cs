@@ -84,6 +84,41 @@ namespace Mantle {
     /// notification is harmless: we register for the OS's sake, not to listen.
     public const uint WM_APPBAR_CALLBACK = WM_USER + 0x2A5;
 
+    // ----------------------------------------------------------------- glass
+    // The blur-behind TranslucentTB and electron-acrylic-window use. It is an
+    // UNDOCUMENTED user32 export (no header, no MSDN page), which is why it is
+    // wrapped in a try/catch at the call site: a future Windows may drop it.
+    //
+    // WHY NOT Electron's own backgroundMaterial:'acrylic': that is DWM's system
+    // backdrop, and DWM only paints it on the ACTIVE window. Mantle's bar is
+    // never active - it must not steal focus - so the system backdrop rendered
+    // as a flat solid. An accent policy renders on inactive windows too.
+    public const int WCA_ACCENT_POLICY = 19;
+    public const int ACCENT_DISABLED = 0;
+    public const int ACCENT_ENABLE_BLURBEHIND = 3;
+    public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+    /// Draw the tint over the whole client area rather than only the edges.
+    public const int ACCENT_FLAGS_DRAW_ALL_BORDERS = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ACCENT_POLICY {
+      public int AccentState;
+      public int AccentFlags;
+      /// ABGR (0xAABBGGRR), NOT the ARGB you would write in CSS.
+      public uint GradientColor;
+      public int AnimationId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINDOWCOMPOSITIONATTRIBDATA {
+      public int Attrib;
+      public IntPtr pvData;
+      public int cbData;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WINDOWCOMPOSITIONATTRIBDATA data);
+
     // ------------------------------------------------------------------- DPI
     // MEASURED 2026-09-21, and it cost a wrong app bar on the first live run:
     // SHAppBarMessage IS NOT DPI-VIRTUALISED. From a DPI-unaware process on
@@ -309,6 +344,11 @@ namespace Mantle {
 
     // ----------------------------------------------------------------- kernel32
     [DllImport("kernel32.dll")] public static extern int GetCurrentThreadId();
+    [DllImport("kernel32.dll")] public static extern IntPtr GetCurrentProcess();
+    /// The bluntest possible exit: no finalizers, no AppDomain unload, no
+    /// flush. Only ever used by the shutdown watchdog, when the alternative is
+    /// a sidecar that hangs forever holding shell state.
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool TerminateProcess(IntPtr proc, uint code);
     [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
     [DllImport("kernel32.dll", SetLastError = true)] public static extern bool CloseHandle(IntPtr h);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern bool QueryFullProcessImageNameW(IntPtr proc, uint flags, StringBuilder buf, ref int size);

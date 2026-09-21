@@ -14,7 +14,7 @@ const { trayImage } = require('./lib/tray-icon');
 const { openTarget } = require('./lib/open-target');
 const { probe } = require('./lib/net-probe');
 const { placeholderUrl } = require('./lib/placeholder');
-const { createBar, createLauncher, createDesktop, hwndOf, acrylicSupport, BAR_H } = require('./lib/windows');
+const { createBar, createLauncher, createDesktop, hwndOf, BAR_H } = require('./lib/windows');
 
 /*
  * Mantle's main process: a shell LAYER over Windows 11.
@@ -678,11 +678,118 @@ async function applyMode() {
     } catch (err) {
       state.set('tray', { status: 'unavailable', reason: `${err.message} (test mode: probed once, not polled)` });
     }
+    // Glass runs in test mode too: it only ever touches Mantle's own two windows,
+    // so passive allows it, and a test run is the only place this lane can see
+    // whether it worked at all.
+    await applyGlass();
     return;
   }
 
   await applyLive();
+  await applyGlass();
   startTrayPoll();
+}
+
+/*
+ * GLASS: the bar and the launcher get a Windows blur-behind backdrop.
+ *
+ * WHY NOT Electron's `backgroundMaterial: 'acrylic'`, which this file used for
+ * about an hour on 2026-09-21: that is DWM's SYSTEM BACKDROP, and Windows draws a
+ * system backdrop only on the ACTIVE window. The bar is `focusable: false` and is
+ * never active by design; the launcher is inactive most of the time. Both showed
+ * the solid fallback nearly always -- "it doesnt look glass ui like at all". The
+ * API was doing exactly what it documents, on two windows that can never satisfy
+ * it.
+ *
+ * The sidecar's `glass` command uses SetWindowCompositionAttribute blur-behind
+ * instead, which does not care whether the window is active. It changes nothing
+ * outside our own two windows, so it is allowed in passive mode and runs in
+ * --test too -- which is the only way this lane can see it work at all.
+ */
+const GLASS_TINT = '#1C1E2240';
+
+// Has the first glass pass run? A page's FIRST did-finish-load is not a reload,
+// and calling it one produced "the launcher reloaded and its glass could not be
+// put back" before anything had ever been applied -- a true sentence about the
+// wrong event. applyGlass() owns the first application; reapplyGlass only ever
+// speaks about what happens after it.
+let glassPassDone = false;
+
+/**
+ * Ask for glass on both windows and record ONE honest answer for the pair.
+ * Never throws: no glass is a look, not a failure, and it has to be a look with
+ * a reason attached rather than a mystery.
+ */
+async function applyGlass() {
+  glassPassDone = true;
+  if (!flags.acrylic) {
+    state.set('glass', {
+      material: 'none',
+      reason: '--no-acrylic: the bar and launcher are plain transparent windows, so their glass is whatever lane C and lane D paint in CSS',
+    });
+    return;
+  }
+
+  const targets = [['the bar', barWin], ['the launcher', launcherWin]];
+  const applied = [];
+  const problems = [];
+  let oldExe = false;
+
+  for (const [label, win] of targets) {
+    if (!win || win.isDestroyed()) {
+      problems.push(`${label}: its window does not exist`);
+      continue;
+    }
+    try {
+      const r = await sidecar.call('glass', { hwnd: hwndOf(win), mode: 'acrylic', tint: GLASS_TINT });
+      if (r && r.applied) applied.push(`${label} (${(r && r.mode) || 'mode not reported'})`);
+      else problems.push(`${label}: the sidecar ran the glass command and reported it was not applied`);
+    } catch (err) {
+      if (Sidecar.isOldExeError(err)) oldExe = true;
+      problems.push(`${label}: ${err.message}`);
+    }
+  }
+
+  if (oldExe) {
+    state.set('glass', { material: 'none', reason: 'sidecar exe predates the glass command: run npm run build:sidecar' });
+    process.stderr.write('mantle: sidecar exe predates the glass command: run npm run build:sidecar\n');
+    return;
+  }
+  if (!problems.length) {
+    state.set('glass', {
+      material: 'acrylic-blur-behind',
+      reason: `blur-behind glass on ${applied.join(' and ')}; it stays on while the window is inactive, which is why this is not Electron's backgroundMaterial`,
+    });
+    return;
+  }
+  state.set('glass', {
+    material: 'none',
+    reason: `${problems.join('; ')}${applied.length ? ` (${applied.join(' and ')} did get it)` : ''}`,
+  });
+}
+
+/**
+ * One window asked again after a reload. Silent when the sidecar is not up yet:
+ * the first load fires before it has said hello, and applyGlass() is what covers
+ * that moment -- recording a failure here would be reporting our own ordering.
+ */
+function reapplyGlass(label, win) {
+  if (!flags.acrylic) return;
+  if (!glassPassDone) return;            // first load: applyGlass() has this
+  if (sidecar.blockedReason()) return;
+  if (!win || win.isDestroyed()) return;
+  sidecar.call('glass', { hwnd: hwndOf(win), mode: 'acrylic', tint: GLASS_TINT }).then((r) => {
+    if (!(r && r.applied)) {
+      state.set('glass', { material: 'none', reason: `${label} reloaded and the sidecar did not put its glass back` });
+    }
+  }).catch((err) => {
+    state.set('glass', {
+      material: 'none',
+      reason: Sidecar.isOldExeError(err)
+        ? 'sidecar exe predates the glass command: run npm run build:sidecar'
+        : `${label} reloaded and its glass could not be put back: ${err.message}`,
+    });
+  });
 }
 
 /**
@@ -803,12 +910,21 @@ async function applyLive() {
   } else {
     try {
       const hwnd = hwndOf(barWin);
-      const r = await sidecar.call('appbar', { hwnd, edge: flags.barEdge, size: BAR_H });
+      // SIZE IS IN THE SIDECAR'S UNITS, not ours. A DPI-aware sidecar reads 44 as
+      // 44 PHYSICAL pixels, which on Owen's 125% display is 35 DIP -- measured on
+      // the live run: the bar window came back 0,1036..1080 physical, a 35pt-tall
+      // bar under a 44pt-tall page. BAR_H is a DIP number (it is what lane C's CSS
+      // uses), so it has to be scaled on the way out and the returned rect scaled
+      // back on the way in. A DPI-unaware sidecar is already handed virtualised
+      // numbers, so for it 44 means 44.
+      const scale = screen.getPrimaryDisplay().scaleFactor || 1;
+      const size = age.dpiAware === true ? Math.round(BAR_H * scale) : BAR_H;
+      const r = await sidecar.call('appbar', { hwnd, edge: flags.barEdge, size });
       appbarHwnd = hwnd;
       const placed = placeBar(r && r.rect, age.dpiAware);
       state.set('workarea', {
         reserved: true,
-        reason: `Mantle's bar is registered as an app bar; Explorer keeps maximised windows off it and drops the reservation by itself if Mantle dies (${placed.how})`,
+        reason: `Mantle's bar is registered as an app bar ${size}px tall${size === BAR_H ? '' : ` (${BAR_H}dip at ${scale}x)`}; Explorer keeps maximised windows off it and drops the reservation by itself if Mantle dies (${placed.how})`,
       });
     } catch (err) {
       if (Sidecar.isOldExeError(err)) { oldExeBaseline(`the sidecar refused "appbar": ${err.message}`); return; }
@@ -1280,16 +1396,7 @@ function watchPage(win, label) {
 }
 
 app.whenReady().then(() => {
-  // Real Windows 11 acrylic, or the honest reason it is not. Decided ONCE, here,
-  // and handed to both windows: `transparent` cannot be changed after a window is
-  // built, so this is the last moment the question can be asked.
-  const support = acrylicSupport();
-  const useAcrylic = flags.acrylic && support.ok;
-  if (flags.acrylic && !support.ok) {
-    process.stderr.write(`mantle: no acrylic: ${support.reason}\n`);
-  }
-
-  const bar = createBar({ root: ROOT, test: flags.test, barEdge: flags.barEdge, acrylic: useAcrylic });
+  const bar = createBar({ root: ROOT, test: flags.test, barEdge: flags.barEdge });
   barWin = bar.win;
   watchPage(barWin, 'The bar');
   barWin.once('ready-to-show', () => barWin.showInactive());
@@ -1297,27 +1404,18 @@ app.whenReady().then(() => {
     // A reloaded bar has no popover open, so any room it borrowed is now room
     // nothing is using. Give it back rather than leaving a 300px-tall "bar".
     if (barPopover) COMMANDS['bar.popover']({ open: false }).catch(() => {});
+    reapplyGlass('the bar', barWin);
   });
   if (!bar.load.loaded) process.stderr.write(`mantle: ${bar.load.reason}\n`);
 
-  const launcher = createLauncher({ root: ROOT, test: flags.test, acrylic: useAcrylic });
+  const launcher = createLauncher({ root: ROOT, test: flags.test });
   launcherWin = launcher.win;
   watchPage(launcherWin, 'The launcher');
   if (!launcher.load.loaded) process.stderr.write(`mantle: ${launcher.load.reason}\n`);
-
-  // One state piece for two windows: 'acrylic' only when BOTH got it, because a
-  // bar of real glass beside a launcher of painted-on glass is a bug report
-  // waiting to happen, and the reason names whichever one missed out.
-  const glassPieces = [bar.glass, launcher.glass];
-  const bothAcrylic = glassPieces.every((g) => g && g.material === 'acrylic');
-  state.set('glass', {
-    material: bothAcrylic ? 'acrylic' : 'css',
-    reason: !flags.acrylic
-      ? '--no-acrylic: the bar and launcher are transparent windows with lane C\'s CSS glass, exactly as before'
-      : bothAcrylic
-        ? `${support.reason}; the bar and the launcher both blur the real desktop behind them`
-        : glassPieces.map((g) => (g && g.reason) || 'a window did not report what glass it got').join('; '),
-  });
+  // A reload rebuilds the page, not the window, so the composition attribute
+  // should survive -- but "should" is cheap to stop relying on, and re-asking
+  // costs one JSON line.
+  launcherWin.webContents.on('did-finish-load', () => { reapplyGlass('the launcher', launcherWin); });
   if (flags.test) {
     // In test mode the launcher is the thing being looked at, so it is up from
     // the start -- inactive, and with no hide-on-blur, or toback.ps1 sending it

@@ -95,25 +95,31 @@ Flags (`electron . <flags>`):
 | `--screenshot=<dir>` | test mode only: 4s after the windows load, capture `bar.png`, `launcher.png`, `desktop.png` into `<dir>`, then quit |
 | `--bar-edge=top\|bottom` | which edge the bar sits on (default `bottom`) |
 | `--no-desktop` | skip the desktop layer entirely |
-| `--no-acrylic` | no Windows 11 acrylic on the bar and launcher: the old transparent windows with lane C's CSS glass only |
+| `--no-acrylic` | no blur-behind glass on the bar and launcher: plain transparent windows with whatever the pages paint in CSS |
 
 ### Glass
 
-The bar and the launcher use **real Windows 11 acrylic**
-(`backgroundMaterial: 'acrylic'`), so they blur what is genuinely behind them on
+The bar and the launcher are transparent windows that get a **Windows
+blur-behind backdrop** from the sidecar's `glass` command
+(`SetWindowCompositionAttribute`), so they blur what is genuinely behind them on
 the desktop — something `backdrop-filter` cannot do, because CSS can only sample
-pixels the page itself composites.
+pixels the page itself composites. It touches nothing but Mantle's own two
+windows, so it is allowed in passive mode and runs in `--test` too.
 
-The trap: **the material only renders on a window with `transparent: false`.** A
-transparent window has no backdrop for DWM to put a material on, so the option is
-accepted and silently does nothing. The two acrylic windows are therefore opaque
-windows with `backgroundColor: '#00000000'` and transparent page bodies. The
-desktop layer keeps `transparent: true` and gets no material — it sits *under*
-the wallpaper, so there is nothing behind it to blur.
+**Do not "simplify" this to Electron's `backgroundMaterial: 'acrylic'`.** That
+was tried first and reverted the same day. `backgroundMaterial` is DWM's *system
+backdrop*, and Windows draws a system backdrop **only on the active window**. The
+bar is `focusable: false` and is never active by design; the launcher is inactive
+most of the time. Both showed the solid fallback nearly always. The API was doing
+exactly what it documents, on two windows that can never satisfy it.
 
-Which path was taken is in `state.glass` — `{ material: 'acrylic' | 'css',
-reason }` — and the desktop's *Needs attention* strip shows it whenever it is not
-acrylic, whether that was `--no-acrylic` or Windows refusing.
+The desktop layer gets no glass — it sits *under* the wallpaper, so there is
+nothing behind it to blur.
+
+Which path was taken is in `state.glass` — `{ material: 'acrylic-blur-behind' |
+'none', reason }` — and the desktop's *Needs attention* strip shows it whenever
+it is not glass, whether that was `--no-acrylic`, a sidecar too old for the
+command, or a refusal.
 
 ## Getting Windows back
 
@@ -162,7 +168,7 @@ The shape, pushed to every window on every change and readable with
   desktop:   { attached, mode, reason },
   hotkey:    { winTap,   reason },
   tray:      { status: 'ok'|'unavailable', reason },
-  glass:     { material: 'acrylic'|'css', reason },   // real DWM acrylic, or CSS
+  glass:     { material: 'acrylic-blur-behind'|'none', reason },
   shortcuts: { killSwitch, launcher, reason }   // globalShortcut registration
 }
 ```

@@ -93,6 +93,7 @@ namespace Mantle {
     static StreamWriter _out;
     static readonly object _writeLock = new object();
     static int _shuttingDown;
+    static volatile bool _suppressEvents;   // set the instant a shutdown starts
     static Win32.ConsoleCtrlHandler _ctrlHandler;   // static: the GC must not collect it
 
     [STAThread]
@@ -119,9 +120,8 @@ namespace Mantle {
       // Anything that escapes a handler still restores the shell before dying.
       AppDomain.CurrentDomain.UnhandledException += delegate (object s, UnhandledExceptionEventArgs e) {
         var ex = e.ExceptionObject as Exception;
-        EmitLog("error", "sidecar is exiting on an unhandled error: " + (ex == null ? "unknown" : ex.Message));
-        SafetyRestore();
-        FlushOut();
+        // Same path as every other exit: restore first, speak afterwards.
+        RequestShutdown(1, "unhandled error: " + (ex == null ? "unknown" : ex.Message));
       };
       // A throw on the UI thread is survivable: report it, keep serving.
       Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
@@ -227,13 +227,28 @@ namespace Mantle {
     // ------------------------------------------------------------------ output
 
     public static void Emit(object payload) {
+      // Once the shutdown has started, NOTHING routine may touch stdout - see
+      // RequestShutdown for the hang this prevents.
+      if (_suppressEvents) return;
+      WriteLine(payload, -1);
+    }
+
+    /// `lockTimeoutMs` < 0 waits for the write lock (the normal case). A
+    /// positive value gives up instead, which is what the shutdown path uses:
+    /// if another thread is wedged mid-write into a pipe whose reader has died,
+    /// the restore must NOT queue up behind it.
+    static void WriteLine(object payload, int lockTimeoutMs) {
       string line;
       try {
         line = Json.Write(payload);
       } catch (Exception) {
         return;   // never let serialising an event kill a command
       }
-      lock (_writeLock) {
+      bool taken = false;
+      try {
+        if (lockTimeoutMs < 0) { Monitor.Enter(_writeLock); taken = true; }
+        else taken = Monitor.TryEnter(_writeLock, lockTimeoutMs);
+        if (!taken) return;
         try {
           _out.Write(line);
           _out.Write('\n');
@@ -241,6 +256,9 @@ namespace Mantle {
         } catch (Exception) {
           // The pipe is gone; the stdin reader will notice EOF and shut us down.
         }
+      } catch (Exception) {
+      } finally {
+        if (taken) Monitor.Exit(_writeLock);
       }
     }
 
@@ -356,8 +374,13 @@ namespace Mantle {
           // does - divides by the display's scale factor. false means the calls
           // below failed and the rects are virtualised, which would put the app
           // bar in the wrong place; dpiReason then says exactly why.
+          // selfHwnd is the sidecar's own hidden message-loop window, as a
+          // decimal string like every other hwnd here. It exists so the test
+          // harness has a window it OWNS to point `glass` at - never a window
+          // belonging to anyone else.
           var ping = Json.Obj("pid", OwnPid, "passive", Passive, "version", Version,
-                              "dpiAware", DpiAware, "dpiMode", DpiMode);
+                              "dpiAware", DpiAware, "dpiMode", DpiMode,
+                              "selfHwnd", LoopHandle.ToInt64().ToString(CultureInfo.InvariantCulture));
           if (!DpiAware || DpiReason != null) ping["dpiReason"] = DpiReason;
           result = ping;
           return null;
@@ -428,6 +451,22 @@ namespace Mantle {
           if (berr != null) return berr;
           // Physical pixels as a DPI-UNAWARE process sees them; see ping.
           result = Json.Obj("rect", new object[] { bar.left, bar.top, bar.right, bar.bottom });
+          return null;
+        }
+
+        case "glass": {
+          // NOT refused in passive, and that is deliberate: this only ever
+          // touches a window the caller already owns (Mantle's bar, launcher or
+          // desktop layer). It changes nothing about the shell, holds no state
+          // and dies with the window, so there is nothing for passive mode to
+          // protect the machine from.
+          IntPtr gHwnd = Json.GetHwnd(req, "hwnd");
+          bool applied;
+          string usedMode;
+          string gerr = Glass.Apply(gHwnd, Json.GetString(req, "mode"),
+                                    Json.GetString(req, "tint"), out applied, out usedMode);
+          if (gerr != null) return gerr;
+          result = Json.Obj("applied", applied, "mode", usedMode);
           return null;
         }
 
@@ -521,10 +560,52 @@ namespace Mantle {
     /// in the test harness is a real requirement.
     public static void RequestShutdown(int code, string reason) {
       if (Interlocked.Exchange(ref _shuttingDown, 1) != 0) return;
-      try { EmitLog("warn", "sidecar shutting down: " + reason); } catch (Exception) { }
-      SafetyRestore();
-      FlushOut();
+
+      // THE ORDER BELOW IS A BUG FIX (live crash test, 2026-09-21). The sidecar
+      // used to log "sidecar shutting down" to stdout FIRST. When Electron is
+      // killed, the read end of that pipe is dead but a handle to it can still
+      // be open, so a write does not fail - it BLOCKS once the buffer fills.
+      // The window watcher emits `windows` events carrying base64 icons every
+      // few hundred ms, so it was usually already wedged inside the write lock
+      // when the parent died. RequestShutdown then blocked on that same lock,
+      // SafetyRestore never ran, and the process sat there until something
+      // killed it ~15 s later - leaving the state file still saying
+      // "appbars":["6358484"],"restored":false. Explorer reclaimed the app bar
+      // only because the window finally died with the process.
+      //
+      // So now: silence stdout, arm a watchdog, do the whole restore and the
+      // state-file write with NO stdout in the path, and only then try to
+      // speak - with a bounded lock wait.
+      _suppressEvents = true;
+      ShellState.Quiet = true;
+      ArmHardExit(code, HardExitMs);
+
+      bool done;
+      string detail = SafetyRestore(out done);
+
+      WriteLine(Json.Obj("ev", "log", "level", "warn", "message", "sidecar shutting down: " + reason), 250);
+      WriteLine(Json.Obj("ev", "restore", "done", done, "detail", detail), 250);
       Environment.Exit(code);
+    }
+
+    /// How long the whole shutdown gets before the process is shot in the head.
+    /// The restore itself is microseconds of Win32 plus one small file write;
+    /// this only ever fires when something outside us is wedged (a pipe with no
+    /// reader, an explorer that will not answer SHAppBarMessage, a hung
+    /// Environment.Exit). A sidecar that hangs is the one thing that must never
+    /// happen, because it is a sidecar still holding shell state.
+    const int HardExitMs = 2000;
+
+    static void ArmHardExit(int code, int ms) {
+      try {
+        var t = new Thread(delegate () {
+          Thread.Sleep(ms);
+          try { Win32.TerminateProcess(Win32.GetCurrentProcess(), (uint)code); } catch (Exception) { }
+        });
+        t.IsBackground = true;   // must never keep the process alive by itself
+        t.Name = "mantle-hard-exit";
+        t.Start();
+      } catch (Exception) { }
     }
 
     /// Everything the sidecar could be holding that would make Windows look
@@ -536,9 +617,13 @@ namespace Mantle {
     /// stdout may already be gone by the time this runs, so the closing
     /// `restore` event is genuinely best-effort; the state file is the record
     /// that survives.
-    static void SafetyRestore() {
+    static string SafetyRestore(out bool done) {
       var detail = new List<string>();
-      bool done = true;
+      done = true;
+
+      // First, so nothing keeps feeding events into a pipe nobody is reading.
+      try { WindowList.Stop(); }
+      catch (Exception) { detail.Add("window watcher: would not stop; it dies with the process"); }
 
       try { detail.Add(AppBars.RemoveAllForExit()); }
       catch (Exception ex) { done = false; detail.Add("app bars: cleanup failed (" + ex.Message + ")"); }
@@ -549,22 +634,20 @@ namespace Mantle {
       try { Hotkey.Uninstall(); detail.Add("keyboard hook: uninstalled"); }
       catch (Exception ex) { done = false; detail.Add("keyboard hook: uninstall failed (" + ex.Message + "); it dies with the process anyway"); }
 
-      try { WindowList.Stop(); }
-      catch (Exception) { detail.Add("window watcher: would not stop; it dies with the process"); }
-
-      // The state file records that the restore ran. A failure to write it is
-      // bookkeeping, not shell state, so it is reported but does not make the
-      // restore itself "not done".
+      // LAST, and SYNCHRONOUSLY ON THIS THREAD, with no stdout between here and
+      // the steps above: this is the record that outlives the process, and the
+      // 2026-09-21 crash test proved it is the one that must not be skipped.
+      // AppBars.RemoveAllForExit has already cleared `changed.appbars`.
       try {
         if (ShellState.Enabled) {
           string werr = ShellState.MarkRestored(true);
           detail.Add(werr == null ? "state file: restored:true written" : "state file: " + werr);
+        } else {
+          detail.Add("state file: none was asked for (--state-file), so nothing was recorded");
         }
       } catch (Exception ex) { detail.Add("state file: could not be updated (" + ex.Message + ")"); }
 
-      try {
-        Emit(Json.Obj("ev", "restore", "done", done, "detail", string.Join("; ", detail.ToArray())));
-      } catch (Exception) { }
+      return string.Join("; ", detail.ToArray());
     }
   }
 }

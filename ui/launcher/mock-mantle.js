@@ -11,6 +11,8 @@
  * Query flags for the visual checks:
  *   ?state=down  the sidecar is down, so the notice line appears
  *   ?fail=1      every launch fails, so the inline reason appears under a row
+ *   ?bg=1        paints a loud wallpaper behind the page, so a screenshot can
+ *                show what the glass actually lets through
  */
 (function () {
   'use strict';
@@ -19,6 +21,18 @@
   var flags = new URLSearchParams(location.search);
   var SIDECAR_DOWN = flags.get('state') === 'down';
   var ALWAYS_FAIL = flags.get('fail') === '1';
+
+  /* The page itself paints nothing outside the panel — html and body stay
+     transparent so DWM's blur-behind is what you see. In MOCK MODE ONLY there
+     is no desktop behind the window, so ?bg=1 stands in with a deliberately
+     awful wallpaper: bright, saturated, high-frequency. If text still reads
+     over that, it reads over anything. Set through CSSOM rather than a <style>
+     tag because the page's CSP allows the first and blocks the second. */
+  if (flags.get('bg') === '1') {
+    document.documentElement.style.background =
+      'repeating-linear-gradient(115deg, #ff7a45 0px, #ffd166 90px, #fff2e0 150px, ' +
+      '#8ef0c8 210px, #6bb7ff 280px, #c79bff 340px, #ff7a45 420px)';
+  }
 
   /* Five real 32x32 PNGs (generated, not stolen from Windows) so the icon
      column is exercised with actual bitmaps; every other row falls back to a

@@ -4,8 +4,9 @@ Electron cannot call Win32. This is the one process that can.
 
 `Mantle.Sidecar.exe` is a ~58 KB .NET Framework 4 executable that owns **every**
 Win32 call in Mantle: the window list, the taskbar's auto-hide state, the app
-bar that reserves screen space for Mantle's own bar, the desktop reparent, the
-solo-Win gesture, volume, icons and the tray. Electron starts it,
+bar that reserves screen space for Mantle's own bar, the blur behind Mantle's
+own windows, the desktop reparent, the solo-Win gesture, volume, icons and the
+tray. Electron starts it,
 talks to it over stdin/stdout in JSON lines, and kills it by closing the pipe.
 
 One process, one protocol, one place to audit anything that touches the live
@@ -53,7 +54,7 @@ sidecar/bin/Mantle.Sidecar.exe [--passive] [--parent-pid=<pid>] [--state-file=<p
 
 | flag | meaning |
 | --- | --- |
-| `--passive` | Test mode. Nothing on the live desktop may move. Exactly these commands are refused with `{"ok":false,"error":"refused: sidecar is passive (test mode)"}` — `focus`, `minimize`, `close`, `toggle`, `taskbar`, `appbar`, `workarea`, `desktop`, `hotkey`, `trayClick`. Everything read-only (`ping`, `windows`, `icon`, `volume`, `tray`, `quit`) and every event still works. A **removed** form (`taskbar {show}`, `workarea {bottom|top}`) answers with *why it was removed* instead, in every mode: that is more useful to a caller than "refused". |
+| `--passive` | Test mode. Nothing on the live desktop may move. Exactly these commands are refused with `{"ok":false,"error":"refused: sidecar is passive (test mode)"}` — `focus`, `minimize`, `close`, `toggle`, `taskbar`, `appbar`, `workarea`, `desktop`, `hotkey`, `trayClick`. Everything read-only (`ping`, `windows`, `icon`, `volume`, `tray`, `quit`) and every event still works — and so does `glass`, which only ever touches a window the caller already owns. A **removed** form (`taskbar {show}`, `workarea {bottom|top}`) answers with *why it was removed* instead, in every mode: that is more useful to a caller than "refused". |
 | `--parent-pid=<pid>` | Exclude that process's windows from the list (so Mantle's own bar and launcher never show up in Mantle's own taskbar), and exit — after restoring the shell — when that process dies. |
 | `--state-file=<path>` | Where to leave the recovery note (see **Safety**). Written at startup with the **original** shell state before anything is touched, after every change, and again at the end of the restore path. Absent is legal and says so: `{"ev":"log","level":"warn","message":"no --state-file: a recovery script cannot know the original shell state"}`. |
 
@@ -109,7 +110,7 @@ through a JavaScript number.
 
 | cmd | args | result |
 | --- | --- | --- |
-| `ping` | — | `{pid, passive, version, dpiAware, dpiMode}`, plus `dpiReason` when awareness was not set cleanly — see **DPI** below. `dpiAware` is the protocol handshake: an exe that does not report it predates the auto-hide and app-bar commands |
+| `ping` | — | `{pid, passive, version, dpiAware, dpiMode, selfHwnd}`, plus `dpiReason` when awareness was not set cleanly. `selfHwnd` is the sidecar's own hidden message window, so a test has a window it owns to point `glass` at — see **DPI** below. `dpiAware` is the protocol handshake: an exe that does not report it predates the auto-hide and app-bar commands |
 | `windows` | — | `[{hwnd, title, exe, pid, minimized, foreground, icon}]` |
 | `focus` | `{hwnd}` | `{}` — raise it |
 | `minimize` | `{hwnd}` | `{}` |
@@ -122,6 +123,7 @@ through a JavaScript number.
 | `appbar` | `{hwnd, remove:true}` | `{removed:bool}` — `ABM_REMOVE` |
 | `workarea` | `{reset:true}` | `{rect:[l,t,r,b]}` — belt and braces: put the work area back to the one captured at startup |
 | `workarea` | `{bottom}` \| `{top}` | `ok:false` — `workarea: setting the work area was removed on 2026-09-21; use appbar` |
+| `glass` | `{hwnd, mode:"acrylic"\|"blur"\|"off", tint:"#RRGGBBAA"}` | `{applied:bool, mode}` — real blur behind one of **Mantle's own** windows. Allowed in passive (see below). `tint` defaults to `#000000` at 60% (`0x99000000`); a malformed one is an error, never a silent default |
 | `desktop` | `{hwnd}` | `{mode:"workerw-sibling"\|"workerw-child"\|"progman"}` |
 | `desktop` | `{hwnd, detach:true}` | `{}` |
 | `hotkey` | `{winTap:bool}` | `{installed:bool}` |
@@ -183,10 +185,33 @@ safe to die holding:
 ### Exits
 
 **Every** exit path — `quit`, stdin EOF, parent death, Ctrl+C, console close,
-unhandled exception — runs the same restore first: remove every app bar, restore
-the taskbar state, uninstall the keyboard hook, unhook the window watchers,
-write `restored:true` to the state file, emit `{"ev":"restore",…}`, *then* exit.
-Each step is wrapped so that one failure never skips the next.
+unhandled exception — runs the same restore first: stop the window watcher,
+remove every app bar, restore the taskbar state, uninstall the keyboard hook,
+write `restored:true` to the state file, *then* emit `{"ev":"restore",…}` and
+exit. Each step is wrapped so that one failure never skips the next.
+
+**The order of those last two is a bug fix** (live crash test, 2026-09-21).
+Electron was killed; the sidecar did go away and Explorer did reclaim the app
+bar, but the state file still read `"appbars":["6358484"],"restored":false`.
+Cause: the shutdown used to log `sidecar shutting down` to **stdout first**.
+When the parent is killed, the read end of that pipe can still be open with
+nobody draining it, so a write does not fail — it **blocks** once the buffer
+fills. The window watcher, which emits `windows` events carrying base64 icons,
+was already wedged inside the write lock, so the shutdown blocked on that same
+lock and the restore never ran. Three changes:
+
+1. **stdout is silenced the instant a shutdown starts** — the whole restore, and
+   the state-file write, happen with no stdout anywhere in the path,
+   synchronously on the thread that noticed the exit.
+2. The two closing lines are written with a **bounded** wait for the write lock
+   (250 ms each) rather than an unbounded one.
+3. A **hard-exit watchdog** (2 s, `TerminateProcess` on self) is armed first, so
+   a wedged pipe, an Explorer that will not answer `SHAppBarMessage`, or a hung
+   `Environment.Exit` can never leave a sidecar alive holding shell state.
+
+Measured on the reproduction (a stdout nobody reads, flooded until it wedges):
+the state file is written **554 ms before** the process exits, and the exit
+still happens 579 ms after EOF.
 
 An error inside a command never kills the process; it answers `ok:false`.
 
@@ -268,6 +293,15 @@ Consequences:
   not open Start. Win+E, Win+L, Win+Shift+S all keep working. Swallowing the Win
   keyup instead would leave Windows believing Win is held down forever, which is
   a far worse bug than Start opening by accident.
+- **Glass.** `SetWindowCompositionAttribute` with a `WCA_ACCENT_POLICY`, the
+  undocumented export TranslucentTB and electron-acrylic-window use.
+  **Why not Electron's `backgroundMaterial:'acrylic'`:** that asks DWM for a
+  system backdrop, and DWM paints a system backdrop only on the **active**
+  window. Mantle's bar must never take focus, so it is permanently inactive and
+  the acrylic rendered as a flat solid. An accent policy renders on inactive
+  windows. `GradientColor` is **ABGR** (`0xAABBGGRR`), not the ARGB you would
+  write in CSS — the swap happens here so no caller has to remember it. A
+  Windows without the export says so and the window renders solid.
 - **Volume.** CoreAudio COM, declared by hand. **Method order in those
   interfaces is the ABI** — the vtable is positional, so every method is listed
   even though three are called. Reordering one silently calls the wrong
@@ -316,7 +350,7 @@ Builds the exe if it is missing, then runs the whole protocol against a
 `--passive` instance and prints one line:
 
 ```
-SIDECAR TEST: 36 passed, 0 failed
+SIDECAR TEST: 47 passed, 0 failed
 ```
 
 It is safe to run while someone is using the machine: passive mode is what makes
@@ -330,6 +364,10 @@ the original state from the first moment of a run and say `restored:true` after
 `quit`, and a run without `--state-file` must warn. It holds the line on the DPI
 bug too: `ping` must say `dpiAware:true`, and the captured work area must be at
 least as wide as what a DPI-unaware process sees (1920 vs 1536 here) — if that
-ever regresses, the app bar is landing 200 px off again. The state file goes to
-the OS temp directory and is deleted afterwards: a test run leaves nothing
-behind.
+ever regresses, the app bar is landing 200 px off again.
+
+And it reproduces the crash-test bug directly: one instance is flooded with
+`icon` replies while **nothing reads its stdout**, until the pipe wedges, and is
+then sent EOF. It must still write `restored:true` and still exit. State files
+go to the OS temp directory and are deleted afterwards: a test run leaves
+nothing behind.

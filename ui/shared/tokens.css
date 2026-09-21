@@ -44,6 +44,11 @@
   --acrylic-bg: rgba(26,28,32,.80);         /* body when DWM acrylic is on */
   --chamber-bg: rgba(26,28,32,.62);         /* the Claude chamber's own glass */
   --panel-bg:   rgba(34,37,42,.96);       /* panes floating over a page: nothing behind them to blur */
+  /* Mantle (2026-09-21): the bar and launcher sit over a DWM blur-behind, so their fill
+     must let it through. --panel-bg at .96 read as a flat strip (Owen: "doesnt look glass
+     ui like at all"). Tone comes from these; the blur comes from the window. */
+  --pane-glass:        rgba(28,30,34,.58);
+  --pane-glass-strong: rgba(28,30,34,.74);
 
   /* a lit seam: 1px of ion light, brightest at the centre */
   --seam: linear-gradient(90deg, transparent 0%, var(--seam-color) 50%, transparent 100%);

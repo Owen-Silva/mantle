@@ -47,6 +47,12 @@ namespace Mantle {
     static readonly object _lock = new object();
     static string _lastWriteError;
 
+    /// Set by the shutdown path. A failed write then comes back as a RETURN
+    /// VALUE for the restore event instead of going to stdout - because the
+    /// whole reason the 2026-09-21 crash test lost its `restored:true` was a
+    /// stdout write that blocked forever on a pipe with no reader.
+    public static bool Quiet;
+
     /// --state-file=<path>. Absent is legal (the sidecar still runs), but it
     /// costs a recovery script its only source of truth, so it is announced.
     public static void Configure(string path) {
@@ -129,7 +135,7 @@ namespace Mantle {
                      " (a recovery script will not know the original shell state)";
         // Say it once per distinct reason: this can be called several times a
         // second during shutdown and a wall of identical warnings helps nobody.
-        if (_lastWriteError != msg) {
+        if (_lastWriteError != msg && !Quiet) {
           _lastWriteError = msg;
           try { Program.EmitLog("warn", msg); } catch (Exception) { }
         }

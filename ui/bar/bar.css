@@ -57,17 +57,27 @@ body[data-edge="top"] { justify-content: flex-start; }
   align-items: center;
   gap: 8px;
   padding: 0 8px;
-  background: var(--panel-bg);
-  /* One static blur. No moving layer underneath it: a drifting gradient under backdrop-filter
-     costs a quarter of a core all day (learned the hard way in the browser chrome). */
-  backdrop-filter: blur(18px) saturate(115%);
-  -webkit-backdrop-filter: blur(18px) saturate(115%);
-  /* the single hairline that separates Mantle from the desktop, on the inward-facing edge */
+  /* THE GLASS. The window is blurred behind by DWM (sidecar + lane B), so the page's only job is
+     to be a thin tinted pane and let that blur through: a translucent fill, the --sheen wash over
+     it, and a lit top lip. An opaque --panel-bg here is what made the bar read as a flat strip.
+     No backdrop-filter: in a transparent Electron window it samples nothing but this page, so it
+     would cost GPU time and blur nothing. DWM is doing the real blur. */
+  background-color: var(--pane-glass-strong);
+  /* --shade-in under the sheen is a CONTRAST decision, measured, not a taste one: sampling the
+     rendered pixels over a deliberately hostile wallpaper showed --pane-glass alone (.58) leaves
+     window titles at 3.2:1 over a bright warm stop, and --pane-glass-strong alone (.74) at ~4.4:1
+     — both under Owen's 4.5:1 floor. Fill + shade lands at ~0.79 effective alpha: still a fifth
+     of the wallpaper coming through, plus the DWM blur behind, and every label clears 4.5:1. */
+  background-image: var(--sheen), linear-gradient(var(--shade-in), var(--shade-in));
+  /* the hairline that separates Mantle from the desktop, with a 1px specular lip just inside it
+     so the pane looks lit from above rather than cut out of the screen */
   border-top: 1px solid var(--edge);
+  box-shadow: inset 0 1px 0 var(--specular);
 }
 body[data-edge="top"] .bar {
   border-top: 0;
   border-bottom: 1px solid var(--edge);
+  box-shadow: inset 0 -1px 0 var(--specular);
 }
 
 /* ---------------------------------------------------------------- shared button chrome */
@@ -160,7 +170,8 @@ body[data-edge="top"] .bar {
   height: 2px;
   border-radius: 1px;
   background: var(--ion);
-  box-shadow: 0 0 6px var(--ion-glow);   /* glow ONLY as the active cue */
+  /* flat, no bloom: a glow that is on screen all day is decoration, and decoration in the dark
+     is what reads as "AI slop". The 2px of ion IS the cue. */
 }
 body[data-edge="top"] .win.active::after { bottom: auto; top: 0; }
 
@@ -205,7 +216,10 @@ body[data-edge="top"] .win.active::after { bottom: auto; top: 0; }
   max-width: 190px;
   padding: 0 9px;
   border-radius: var(--radius-ctl);
-  background: var(--glass);
+  /* A chip is a recess in the pane, not a raised tile: --shade-in darkens the wallpaper showing
+     through right behind the label, which is what keeps --fg-3 above 4.5:1 over a bright
+     wallpaper (a --glass fill would LIGHTEN it and fail). */
+  background: var(--shade-in);
   color: var(--fg-3);
   font-size: 11.5px;
   white-space: nowrap;
@@ -248,11 +262,13 @@ button.chip:hover { background: var(--glass-2); }
   min-width: 210px;
   max-width: 340px;
   padding: 11px 12px;
-  background: var(--panel-bg);
+  /* denser than the bar (it has to hold readable rows over any wallpaper) but still glass */
+  background-color: var(--pane-glass-strong);
+  background-image: var(--sheen);
   border: 1px solid var(--edge);
   border-radius: var(--bevel);
   corner-shape: round bevel round bevel;   /* the Mantle container signature; ignored where unsupported */
-  box-shadow: 0 10px 30px var(--shade-drop);
+  box-shadow: inset 0 1px 0 var(--specular), 0 10px 30px var(--shade-drop);
   color: var(--fg-2);
   font-size: 12.5px;
 }

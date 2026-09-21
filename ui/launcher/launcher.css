@@ -38,11 +38,41 @@ html, body {
   flex-direction: column;
   min-height: 0;
 
-  background: var(--panel-bg);
+  /* Real glass: the window has a DWM blur-behind, so the fill must let the
+     desktop through instead of sealing it off with --panel-bg at .96.
+     The stack, bottom layer last as CSS writes it:
+       --pane-glass-strong  the translucent pane tint (.74)
+       --shade-in x3        three black washes. WHY three: the tint alone
+                            leaves 21% of the desktop showing, and a pale
+                            wallpaper then drags --fg-3 and --amber to 3.7:1.
+                            Each wash costs a little transparency and buys
+                            contrast; three lands at 13.3% showing through with
+                            --fg-3 at 4.70:1 and --amber at 4.81:1 against a
+                            WHITE backdrop, the worst case there is. DWM's blur
+                            behind the window does the rest of the work.
+       --sheen              the diagonal reflection every Mantle pane carries. */
+  background:
+    var(--sheen),
+    linear-gradient(var(--shade-in), var(--shade-in)),
+    linear-gradient(var(--shade-in), var(--shade-in)),
+    linear-gradient(var(--shade-in), var(--shade-in)),
+    var(--pane-glass-strong, var(--acrylic-bg));
+
   border: 1px solid var(--edge);    /* the plain 1px hairline, not a lit rim */
   border-radius: var(--bevel-lg);
   box-shadow: 0 10px 30px var(--shade-drop);
-  overflow: hidden;
+  overflow: hidden;                 /* clips the highlight below to the radius */
+}
+
+/* the cut top edge catching light: 1px of --specular INSIDE the hairline.
+   Static, no glow — a lit edge, not a neon rim. */
+.panel::before {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 1px;
+  background: var(--specular);
+  pointer-events: none;
 }
 
 /* ---- the input --------------------------------------------------------- */
@@ -54,6 +84,13 @@ html, body {
   height: 58px;
   display: flex;
   align-items: center;
+  /* the one lit surface: where you type. --glass-2 sits on its own --shade-in
+     wash, so lightening this band does not hand back the contrast the panel
+     just bought — the input still reads as raised, and 18px text over it
+     measures 9.6:1 on a white desktop. */
+  background:
+    linear-gradient(var(--glass-2), var(--glass-2)),
+    var(--shade-in);
   border-bottom: 1px solid var(--edge);
 }
 
@@ -122,7 +159,14 @@ html, body {
   padding: 0 12px 0 10px;
 }
 
-.row.is-sel { background: var(--glass-2); }
+/* the selected row: the same lit-surface recipe as the input slot, and for the
+   same reason — the subtitle and the failure line that sit on it are --fg-3
+   and --amber, the two colours a pale wallpaper threatens first */
+.row.is-sel {
+  background:
+    linear-gradient(var(--glass-2), var(--glass-2)),
+    var(--shade-in);
+}
 
 /* the 2px accent bar on the selected row */
 .row.is-sel .row-main::before {
@@ -199,7 +243,8 @@ html, body {
   padding: 7px 14px 8px;
   font-size: 12px;
   color: var(--fg-3);
-  background: var(--glass-thin);
+  /* no fill: --glass-thin would lighten exactly the band that carries the
+     amber source errors, and the hairline already separates the footer */
 }
 .foot-row {
   display: flex;
@@ -229,8 +274,7 @@ html, body {
   padding: 7px 14px 8px;
   font-size: 12px;
   line-height: 1.35;
-  color: var(--amber);
-  background: var(--glass-thin);
+  color: var(--amber);              /* unfilled, for the same reason as .foot */
 }
 .notice[hidden] { display: none; }
 

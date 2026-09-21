@@ -169,11 +169,11 @@
     ['desktop', 'Desktop layer', (p) => p.attached === true],
     ['hotkey', 'Win key', (p) => p.winTap === true],
     ['tray', 'Notification area', (p) => p.status === 'ok'],
-    // 'acrylic' is real Windows 11 frosted glass, which blurs the actual desktop
-    // behind the bar and launcher. 'css' means lane C's painted-on glass is
-    // standing in -- either because --no-acrylic asked for it, or because Windows
-    // would not give it, and the reason says which.
-    ['glass', 'Window glass', (p) => p.material === 'acrylic'],
+    // 'acrylic-blur-behind' is a real Windows backdrop blurring what is actually
+    // behind the bar and launcher. 'none' means only whatever the pages paint in
+    // CSS -- because --no-acrylic asked for it, or because the sidecar could not
+    // apply it -- and the reason says which.
+    ['glass', 'Window glass', (p) => p.material === 'acrylic-blur-behind'],
     ['shortcuts', 'Shortcuts', (p) => p.killSwitch === true && p.launcher === true],
   ];
 
