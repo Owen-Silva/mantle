@@ -1,0 +1,128 @@
+:root {
+  --ink-0: #1a1c20;
+  --ink-1: #212429;
+
+  --fg:   #eef1f8;
+  --fg-2: #b0b5bf;
+  --fg-3: #a6abb5;                        /* 4.5:1 on --panel-bg; #5c6478 was 3.1:1 */
+
+  --glass:   rgba(255,255,255,.055);
+  --glass-2: rgba(255,255,255,.09);
+  --glass-3: rgba(255,255,255,.14);
+
+  --edge:     rgba(255,255,255,.11);
+  --specular: rgba(255,255,255,.14);
+
+  --ion:      #72adca;
+  --ion-soft: rgba(114,173,202,.14);
+  --ion-glow: rgba(114,173,202,.22);
+
+  --amber:      #e0a059;
+  --amber-glow: rgba(224,160,89,.26);
+
+  /* the diagonal reflection every glass surface carries */
+  --sheen: linear-gradient(115deg,
+    rgba(255,255,255,.035)  0%,
+    rgba(255,255,255,.035) 38%,
+    rgba(255,255,255,.035) 60%);
+
+  /* --- surfaces and details that are not a plain fill --------- */
+  --glass-thin:  rgba(255,255,255,.04);   /* titlebar: the lightest pane */
+  --shade-in:    rgba(0,0,0,.20);         /* the shaded lower lip of a pane */
+  --shade-drop:  rgba(0,0,0,.45);         /* the 1px shadow a pane casts */
+  --focus-ring:  rgba(255,255,255,.55);
+  --placeholder: rgba(190,195,205,.80);   /* --fg-3 vanished against the glass */
+  --scroll-thumb:       rgba(255,255,255,.18);
+  --scroll-thumb-hover: rgba(255,255,255,.28);
+  --tab-shimmer: rgba(255,255,255,.5);    /* the travelling highlight on a loading tab */
+
+  --ion-line:     rgba(114,173,202,.65);  /* omnibox border, focused */
+  --ion-select:   rgba(114,173,202,.30);
+  --seam-color:   rgba(114,173,202,.14);  /* the lit seam under the chrome */
+  --chamber-seam: rgba(114,173,202,.16);   /* the lit top edge of the chamber */
+
+  --acrylic-bg: rgba(26,28,32,.80);         /* body when DWM acrylic is on */
+  --chamber-bg: rgba(26,28,32,.62);         /* the Claude chamber's own glass */
+  --panel-bg:   rgba(34,37,42,.96);       /* panes floating over a page: nothing behind them to blur */
+
+  /* a lit seam: 1px of ion light, brightest at the centre */
+  --seam: linear-gradient(90deg, transparent 0%, var(--seam-color) 50%, transparent 100%);
+
+  /* the three aurora layers, tokenised whole so a theme relights them */
+  --aurora-band: linear-gradient(-35deg,
+    rgba(140,170,255,0)   50%,
+    rgba(140,170,255,.03) 76%,
+    rgba(140,170,255,.06) 100%);
+
+  --aurora-pool: radial-gradient(1000px 480px at 50% 108%,
+    rgba(75,34,168,.13)  0%,
+    rgba(75,34,168,.055) 45%,
+    rgba(75,34,168,0)   74%);
+
+  --aurora-rim: radial-gradient(600px 600px at 100% 100%,
+    rgba(15,181,201,.085)  0%,
+    rgba(15,181,201,.035) 46%,
+    rgba(15,181,201,0)   78%);
+
+  /* type + metrics */
+  --ui-font:    'Bahnschrift', 'Segoe UI Variable', 'Segoe UI', sans-serif;
+  --icon-font:  'Segoe Fluent Icons', 'Segoe MDL2 Assets', sans-serif;
+  --titlebar-h: 40px;
+  --nav-h:      44px;
+
+  /* --- instrument glass -----------------------------------------
+     The glass starts behaving like a pane of an instrument: a cut
+     edge that catches light, a lit rim, status as light, type as a
+     readout. Every token below is built out of the theme tokens
+     above with var(), so the ONE definition here covers dark, light
+     and all six palettes — a palette that relights --ion / --edge /
+     --specular relights these with it. Never copy them per palette.
+
+     A container (the omnibox slot, the active chip, a popover, a
+     pane) carries --bevel with corner-shape: round bevel round
+     bevel — TL round, TR cut, BR round, BL cut. Two cuts on the
+     diagonal, echoing the 115deg sheen; four would read as a kit.
+     CONTROLS keep ordinary round corners at --radius-ctl, so the
+     bevel stays a container signature, and nothing under ~28px
+     tall is ever bevelled. */
+  --bevel:      10px;
+  --bevel-lg:   14px;                     /* full panes, the new-tab search slot */
+  --radius-ctl:  6px;                     /* buttons, chips, menu rows */
+
+  /* the 1px lit edge: specular at the top-left falling to the accent
+     at the bottom-right, so a container looks lit from above and
+     powered from below. Painted as a border-box background layer
+     under a transparent border, which is the only way to put a
+     gradient edge on translucent glass. */
+  --rim: linear-gradient(135deg,
+    var(--specular)  0%,
+    var(--edge)     30%,
+    var(--edge)     62%,
+    var(--edge)    100%);
+
+  /* the same rim with the accent at full strength: the focused slot */
+  --rim-focus: linear-gradient(135deg,
+    var(--specular) 0%,
+    var(--ion-line) 45%,
+    var(--ion) 100%);
+
+  /* a quiet row, or a tile at rest */
+  --rim-soft: linear-gradient(135deg, var(--edge) 0%, transparent 60%);
+
+  /* status as light. A pip is a dot that glows rather than a dot that
+     is painted. --pip-glow is the cool instrument light; the amber
+     pair is kept separate because amber resolves through --amber, not
+     --ion, and it alone means "a Claude session". The two amber
+     strengths preserve the distinction the chamber already draws:
+     live breathes, needs-you flashes brighter. */
+  --pip-glow:         none;
+  --pip-amber:        0 0 3px var(--amber-glow);
+  --pip-amber-strong: 0 0 4px var(--amber-glow);
+
+  /* the lit seam stood on end, for the split divider */
+  --seam-v: linear-gradient(180deg, transparent 0%, var(--seam-color) 50%, transparent 100%);
+
+  /* Bahnschrift's wdth axis one notch in (75–100): labels, tab
+     titles, the omnibox, badges — type set as a readout */
+  --readout-stretch: 87.5%;
+}

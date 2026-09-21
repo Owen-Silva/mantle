@@ -1,0 +1,15 @@
+{
+  "name": "mantle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A shell layer over Windows: own bar, launcher and desktop, Windows kept underneath.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "electron . --test --profile-name=dev --screenshot=shots",
+    "build:sidecar": "powershell -NoProfile -ExecutionPolicy Bypass -File sidecar/build.ps1"
+  },
+  "dependencies": {
+    "electron": "^44.3.0"
+  }
+}

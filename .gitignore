@@ -1,0 +1,7 @@
+node_modules/
+sidecar/bin/
+sidecar/obj/
+shots/
+*.log
+.DS_Store
+Thumbs.db
