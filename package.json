@@ -13,7 +13,9 @@
     "shots": "electron . --test --profile-name=dev --screenshot=shots",
     "check": "node tools/check.js",
     "kill:test": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/kill-test.ps1 -Match dev",
-    "build:sidecar": "powershell -NoProfile -ExecutionPolicy Bypass -File sidecar/build.ps1"
+    "build:sidecar": "powershell -NoProfile -ExecutionPolicy Bypass -File sidecar/build.ps1",
+    "test:pinned": "node lib/pinned.test.js",
+    "test:sidecar": "node sidecar/test-sidecar.js"
   },
   "dependencies": {
     "electron": "^44.3.0"

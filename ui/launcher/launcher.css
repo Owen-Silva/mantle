@@ -53,10 +53,9 @@ html, body {
        --sheen              the diagonal reflection every Mantle pane carries. */
   background:
     var(--sheen),
-    linear-gradient(var(--shade-in), var(--shade-in)),
-    linear-gradient(var(--shade-in), var(--shade-in)),
-    linear-gradient(var(--shade-in), var(--shade-in)),
-    var(--pane-glass-strong, var(--acrylic-bg));
+    /* no wash: Owen saw the heavier fills live and asked for "way more" transparency.
+       The launcher is an ACTIVE window when shown, so DWM's blur behind it is real. */
+    var(--pane-glass-mid, var(--acrylic-bg));
 
   border: 1px solid var(--edge);    /* the plain 1px hairline, not a lit rim */
   border-radius: var(--bevel-lg);

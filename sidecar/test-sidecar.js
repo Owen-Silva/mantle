@@ -34,6 +34,16 @@ const BUILD = path.join(HERE, 'build.ps1');
 // must not leave one lying next to the source.
 const STATE = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '.state.json');
 const STATE_EOF = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '.eof.state.json');
+// A shortcut of our own, in scratch, for `lnk`. Writing one .lnk in the temp
+// folder is the only thing this suite creates on the machine, and it is
+// deleted again at the end: the real Start menu is read, never written.
+const LNK = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '.lnk');
+const LNK_MISSING = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '-not-here.lnk');
+// A second shortcut that points at a SHELL FOLDER (This PC) rather than a file.
+// Links like this store an item list and no path at all - Owen's pinned File
+// Explorer is one - and they are the reason `lnk` reads the IDList.
+const LNK_SHELL = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '-shell.lnk');
+const THIS_PC = '::{20D04FE0-3AEA-1069-A2D8-08002B30309D}';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -58,6 +68,51 @@ function virtualisedScreenWidth() {
   } catch (e) {
     return null;
   }
+}
+
+/**
+ * Write one throwaway .lnk with the shell's own shortcut writer (WScript.Shell
+ * is what every installer uses), so `lnk` is tested against a REAL shortcut
+ * rather than bytes we made up. Returns null on success or the reason, which
+ * the caller reports as a failure - a check that cannot run must say so.
+ */
+function makeShortcut() {
+  // Both shortcuts in ONE powershell start: the machine is busy and a process
+  // launch is the most expensive thing this suite does.
+  try {
+    const r = spawnSync('powershell', ['-NoProfile', '-Command',
+      `$w = New-Object -ComObject WScript.Shell;` +
+      `$s = $w.CreateShortcut('${LNK}');` +
+      `$s.TargetPath = 'C:\\Windows\\explorer.exe';` +
+      `$s.Arguments = '/root,C:\\';` +
+      `$s.WorkingDirectory = 'C:\\Windows';` +
+      `$s.IconLocation = 'C:\\Windows\\explorer.exe,3';` +
+      `$s.Save();` +
+      `$p = $w.CreateShortcut('${LNK_SHELL}');` +
+      `$p.TargetPath = '${THIS_PC}';` +
+      `$p.Save()`], { encoding: 'utf8' });
+    if (!fs.existsSync(LNK)) return 'powershell did not write it: ' + ((r.stderr || r.stdout || '').trim() || 'no output');
+    return null;
+  } catch (e) {
+    return e.message;
+  }
+}
+
+/**
+ * The real pinned "File Explorer" shortcut, if this machine has one. It is the
+ * link that motivated the IDList path - read-only, never written - and it is a
+ * smoke check, not a requirement: a machine without the pin just prints a note.
+ */
+function findExplorerPin() {
+  const appdata = process.env.APPDATA || '';
+  if (!appdata) return null;
+  const candidates = [
+    path.join(appdata, 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned', 'TaskBar', 'File Explorer.lnk'),
+    path.join(appdata, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'System Tools', 'File Explorer.lnk'),
+    path.join(appdata, 'Microsoft', 'Internet Explorer', 'Quick Launch', 'File Explorer.lnk')
+  ];
+  for (const c of candidates) { try { if (fs.existsSync(c)) return c; } catch (e) { /* keep looking */ } }
+  return null;
 }
 
 /** The sidecar writes the file just after `ready`, so poll rather than sleep. */
@@ -276,6 +331,15 @@ async function main() {
       !('icon' in w) || (w.icon !== null && typeof w.icon !== 'string'));
     check('every window entry has the full shape', bad.length === 0,
       bad.length ? JSON.stringify(bad[0]).slice(0, 200) : '');
+
+    // exe + pid are what the launcher groups by and what `lnk` targets are
+    // matched against, so they are checked by name and not only as part of the
+    // shape above. An empty exe is legal (an elevated process denies us the
+    // query), a MISSING one is not.
+    const noId = list.filter((w) => !('exe' in w) || typeof w.exe !== 'string' ||
+                                    !('pid' in w) || typeof w.pid !== 'number' || w.pid <= 0);
+    check('every window entry carries exe and pid', noId.length === 0,
+      noId.length ? JSON.stringify(noId[0]).slice(0, 200) : '');
   } catch (e) { check('windows', false, e.message); }
 
   // ---- icon -------------------------------------------------------------
@@ -286,6 +350,347 @@ async function main() {
       typeof url === 'string' && url.startsWith('data:image/png;base64,') && url.length > 200,
       typeof url === 'string' ? url.slice(0, 40) + ' len=' + url.length : JSON.stringify(r));
   } catch (e) { check('icon', false, e.message); }
+
+  // ---- lnk --------------------------------------------------------------
+  // Printed at the end: what the two shortcut shapes actually resolved to, so
+  // a run says out loud what lane A will be handed rather than only pass/fail.
+  let shellLnkNote = '';
+  let explorerPinNote = '';
+  // Read-only, so it runs in passive: the shortcut is opened STGM_READ and the
+  // one .lnk involved is ours, in scratch. Both paths go in ONE call on
+  // purpose - the missing one must come back ok:false WITHOUT costing the good
+  // one its answer, because the launcher scans hundreds at a time.
+  {
+    const why = makeShortcut();
+    check('a test shortcut can be created', why === null, why || '');
+    if (why === null) {
+      try {
+        const r = await s.send('lnk', { paths: [LNK, LNK_MISSING] });
+        const items = r.ok && r.result ? r.result.items : null;
+        check('lnk answers with one item per path',
+          r.ok === true && Array.isArray(items) && items.length === 2,
+          JSON.stringify(r).slice(0, 200));
+        if (Array.isArray(items) && items.length === 2) {
+          const it = items[0];
+          check('lnk resolves the target of a real shortcut',
+            it.ok === true && typeof it.target === 'string' &&
+            it.target.toLowerCase().endsWith('\\explorer.exe'),
+            JSON.stringify(it).slice(0, 220));
+          check('lnk returns the arguments and working directory',
+            typeof it.args === 'string' && it.args.indexOf('/root') === 0 &&
+            typeof it.workdir === 'string' && it.workdir.toLowerCase().endsWith('windows'),
+            JSON.stringify(it).slice(0, 220));
+          check('lnk returns the icon location and index',
+            typeof it.iconPath === 'string' && it.iconPath.toLowerCase().endsWith('\\explorer.exe') &&
+            it.iconIndex === 3,
+            JSON.stringify(it).slice(0, 220));
+          // A classic shortcut has no App User Model ID; the FIELD must still
+          // be there, because a Store pin is the only thing that fills it and
+          // the caller must not have to guard for its absence.
+          check('lnk always reports an aumid field (null for a classic shortcut)',
+            'aumid' in it && (it.aumid === null || typeof it.aumid === 'string'),
+            JSON.stringify(it).slice(0, 220));
+          // iconPng is what a launcher actually draws, so it is on EVERY item
+          // - a data URL when the shell gave us a picture, null when it did
+          // not, never absent.
+          check('lnk returns a ready-to-draw iconPng',
+            'iconPng' in it && typeof it.iconPng === 'string' &&
+            it.iconPng.startsWith('data:image/png;base64,') && it.iconPng.length > 200,
+            typeof it.iconPng === 'string' ? it.iconPng.slice(0, 40) + ' len=' + it.iconPng.length
+                                           : JSON.stringify(it).slice(0, 220));
+
+          const gone = items[1];
+          check('lnk answers a missing path with ok:false and a reason',
+            gone.ok === false && typeof gone.reason === 'string' && gone.reason.length > 0 &&
+            gone.path === LNK_MISSING,
+            JSON.stringify(gone).slice(0, 220));
+        }
+      } catch (e) { check('lnk', false, e.message); }
+    }
+
+    // ---- a shortcut with NO file target (the pinned-File-Explorer shape) ----
+    // GetPath answers "" for these; everything the caller can use comes from
+    // the item list. Without that fallback the launcher shows a blank tile.
+    if (fs.existsSync(LNK_SHELL)) {
+      try {
+        const r = await s.send('lnk', { paths: [LNK_SHELL] });
+        const it = r.ok && r.result && r.result.items ? r.result.items[0] : null;
+        shellLnkNote = it ? 'shell-folder lnk: target=' + JSON.stringify(it.target) +
+                            ' iconPng=' + (typeof it.iconPng === 'string' ? it.iconPng.length + ' chars' : String(it.iconPng))
+                          : 'shell-folder lnk: ' + JSON.stringify(r).slice(0, 120);
+        check('lnk resolves a shortcut that has no file target',
+          it !== null && it.ok === true && typeof it.target === 'string' && it.target.length > 0,
+          JSON.stringify(it).slice(0, 220));
+        check('lnk gives that shortcut an icon from its item list',
+          it !== null && (it.iconPng === null || typeof it.iconPng === 'string'),
+          JSON.stringify(it).slice(0, 220));
+      } catch (e) { check('lnk resolves a shortcut that has no file target', false, e.message); }
+    } else {
+      shellLnkNote = 'shell-folder lnk: powershell would not write one, so the IDList path was ' +
+                     'only exercised against the real pin below';
+    }
+
+    // The real thing, read-only: the pin that made this necessary.
+    const pin = findExplorerPin();
+    if (pin) {
+      try {
+        const r = await s.send('lnk', { paths: [pin] });
+        const it = r.ok && r.result && r.result.items ? r.result.items[0] : null;
+        explorerPinNote = 'File Explorer pin: ok=' + (it ? it.ok : '?') +
+                          ' target=' + JSON.stringify(it ? it.target : null) +
+                          ' aumid=' + JSON.stringify(it ? it.aumid : null) +
+                          ' iconPng=' + (it && typeof it.iconPng === 'string' ? it.iconPng.length + ' chars' : String(it && it.iconPng));
+        check('the real pinned File Explorer shortcut resolves to something launchable',
+          it !== null && it.ok === true &&
+          ((typeof it.target === 'string' && it.target.length > 0) || typeof it.aumid === 'string'),
+          JSON.stringify(it).slice(0, 220));
+      } catch (e) { check('the real pinned File Explorer shortcut resolves', false, e.message); }
+    } else {
+      explorerPinNote = 'File Explorer pin: not on this machine, so it was not read';
+    }
+
+    try {
+      const r = await s.send('lnk', {});
+      check('lnk without paths says what it needs',
+        r.ok === false && typeof r.error === 'string' && r.error.includes('paths'), JSON.stringify(r));
+    } catch (e) { check('lnk without paths says what it needs', false, e.message); }
+  }
+
+  // ---- keys -------------------------------------------------------------
+  // The allow-list is answered BEFORE passive (see Program.Run): "win+x is not
+  // a combo this command sends" is true in every mode.
+  try {
+    const r = await s.send('keys', { combo: 'win+x' });
+    check('keys win+x answers "combo not allowed"',
+      r.ok === false && r.error === 'combo not allowed', JSON.stringify(r));
+  } catch (e) { check('keys win+x answers "combo not allowed"', false, e.message); }
+
+  // And an ALLOWED combo must still be refused here: a test run may never type
+  // into the live desktop.
+  for (const combo of ['win+a', 'win+n', 'win+d']) {
+    try {
+      const r = await s.send('keys', { combo });
+      check(`keys ${combo} is refused in passive, with a reason`,
+        r.ok === false && typeof r.error === 'string' &&
+        r.error.includes('passive') && r.error.includes(combo),
+        JSON.stringify(r));
+    } catch (e) { check(`keys ${combo} is refused in passive`, false, e.message); }
+  }
+
+  try {
+    const r = await s.send('keys', {});
+    check('keys without a combo says which three it takes',
+      r.ok === false && typeof r.error === 'string' && r.error.includes('win+a'), JSON.stringify(r));
+  } catch (e) { check('keys without a combo says which three it takes', false, e.message); }
+
+  // ---- foreground -------------------------------------------------------
+  try {
+    const r = await s.send('foreground');
+    const f = r.ok ? r.result : null;
+    check('foreground reports hwnd, rect and a fullscreen boolean',
+      r.ok === true && f && typeof f.hwnd === 'string' && /^\d+$/.test(f.hwnd) &&
+      Array.isArray(f.rect) && f.rect.length === 4 && f.rect.every((n) => typeof n === 'number') &&
+      typeof f.fullscreen === 'boolean',
+      JSON.stringify(r).slice(0, 220));
+    check('foreground reports a title and an exe as strings',
+      r.ok === true && f && typeof f.title === 'string' && typeof f.exe === 'string',
+      JSON.stringify(f).slice(0, 220));
+  } catch (e) { check('foreground', false, e.message); }
+
+  // ---- traywatch --------------------------------------------------------
+  // Pointed at the sidecar's OWN hidden window - never anyone else's, and
+  // never the taskbar. The subscribe emits the tray's state straight away,
+  // which is also how this test learns the taskbar's hwnd without spawning
+  // anything: it is in the event.
+  let trayHwnd = null;
+  if (selfHwnd) {
+    try {
+      const r = await s.send('traywatch', { hwnd: selfHwnd });
+      check('traywatch subscribes to the sidecar\'s own window',
+        r.ok === true && r.result && r.result.ok === true, JSON.stringify(r));
+      const ev = await s.waitEvent('tray', 3000);
+      check('traywatch emits a tray event with visible + rect',
+        ev && ev.event === 'tray' && typeof ev.visible === 'boolean' &&
+        Array.isArray(ev.rect) && ev.rect.length === 4,
+        JSON.stringify(ev).slice(0, 200));
+      if (ev && typeof ev.tray === 'string' && /^\d+$/.test(ev.tray) && ev.tray !== '0') trayHwnd = ev.tray;
+    } catch (e) { check('traywatch on the sidecar\'s own window', false, e.message); }
+
+    // The refusal that keeps the 2026-09-21 incident from happening again:
+    // traywatch RAISES the window it is given, so it may never be given the
+    // taskbar.
+    if (trayHwnd) {
+      try {
+        const r = await s.send('traywatch', { hwnd: trayHwnd });
+        check('traywatch refuses Shell_TrayWnd itself',
+          r.ok === false && typeof r.error === 'string' && r.error.includes('taskbar'),
+          JSON.stringify(r));
+      } catch (e) { check('traywatch refuses Shell_TrayWnd itself', false, e.message); }
+    } else {
+      check('traywatch refuses Shell_TrayWnd itself', false,
+        'the tray event did not carry a taskbar hwnd, so the refusal could not be tested');
+    }
+
+    try {
+      const r = await s.send('traywatch', { hwnd: null });
+      check('traywatch with hwnd:null unsubscribes',
+        r.ok === true && r.result && r.result.ok === true && r.result.watching === false,
+        JSON.stringify(r));
+    } catch (e) { check('traywatch with hwnd:null unsubscribes', false, e.message); }
+  } else {
+    check('traywatch on the sidecar\'s own window', false, 'ping did not report selfHwnd');
+  }
+
+  // ---- corners ----------------------------------------------------------
+  // Aimed at the sidecar's own hidden window, like `glass`: DWM rounds one
+  // window's frame and the attribute dies with the window, so there is nothing
+  // for passive mode to protect.
+  if (selfHwnd) {
+    for (const mode of ['round', 'roundsmall', 'default']) {
+      try {
+        const r = await s.send('corners', { hwnd: selfHwnd, mode });
+        check(`corners ${mode} applies to the sidecar's own window`,
+          r.ok === true && r.result && r.result.ok === true && r.result.mode === mode,
+          JSON.stringify(r));
+      } catch (e) { check(`corners ${mode}`, false, e.message); }
+    }
+  }
+
+  try {
+    const r = await s.send('corners', { hwnd: selfHwnd || '1', mode: 'bevelled' });
+    check('corners refuses an unknown mode with a reason',
+      r.ok === false && typeof r.error === 'string' && r.error.includes('round'), JSON.stringify(r));
+  } catch (e) { check('corners refuses an unknown mode with a reason', false, e.message); }
+
+  try {
+    const r = await s.send('corners', { hwnd: '1', mode: 'round' });
+    check('corners refuses a hwnd that is not a window',
+      r.ok === false && typeof r.error === 'string' && r.error.includes('no longer exists'),
+      JSON.stringify(r));
+  } catch (e) { check('corners refuses a hwnd that is not a window', false, e.message); }
+
+  if (trayHwnd) {
+    try {
+      const r = await s.send('corners', { hwnd: trayHwnd, mode: 'round' });
+      check('corners refuses the Windows taskbar',
+        r.ok === false && typeof r.error === 'string' && r.error.includes('taskbar'), JSON.stringify(r));
+    } catch (e) { check('corners refuses the Windows taskbar', false, e.message); }
+  }
+
+  // ---- morph + region ---------------------------------------------------
+  // Driven against the sidecar's own hidden window, which is never visible and
+  // never in the window list: the animation is real, the desktop sees nothing.
+  if (selfHwnd) {
+    const A = { x: 120, y: 120, w: 480, h: 320, r: 0 };
+    const B = { x: 160, y: 150, w: 560, h: 380, r: 12 };
+    const C = { x: 200, y: 180, w: 600, h: 400, r: 16 };
+    const box = (b) => [b.x, b.y, b.x + b.w, b.y + b.h];
+
+    try {
+      const r = await s.send('morph', { hwnd: selfHwnd, from: A, to: B, ms: 120, ease: [0.2, 0, 0, 1] });
+      check('morph replies only after the animation has landed',
+        r.ok === true && r.result && r.result.ok === true && typeof r.result.frames === 'number' &&
+        r.result.frames >= 4,
+        JSON.stringify(r));
+      // The whole promise of the command: the window ENDS exactly on `to`, not
+      // a rounding error away from it.
+      check('morph lands the window exactly on the target rect',
+        r.ok === true && Array.isArray(r.result.rect) &&
+        JSON.stringify(r.result.rect) === JSON.stringify(box(B)),
+        JSON.stringify(r.result && r.result.rect) + ' wanted ' + JSON.stringify(box(B)));
+    } catch (e) { check('morph', false, e.message); }
+
+    // A second morph for the same window supersedes the first, and the
+    // superseded one must still ANSWER - a promise that never settles would
+    // hang the caller forever.
+    try {
+      const first = s.send('morph', { hwnd: selfHwnd, from: B, to: A, ms: 900 });
+      await sleep(80);
+      const second = await s.send('morph', { hwnd: selfHwnd, from: B, to: C, ms: 120 });
+      const firstReply = await first;
+      check('a second morph cancels the first, and the first says so',
+        firstReply.ok === false && (firstReply.reason === 'cancelled' || firstReply.error === 'cancelled'),
+        JSON.stringify(firstReply));
+      check('the morph that superseded it still lands on its own target',
+        second.ok === true && second.result &&
+        JSON.stringify(second.result.rect) === JSON.stringify(box(C)),
+        JSON.stringify(second.result));
+    } catch (e) { check('a second morph cancels the first', false, e.message); }
+
+    // cancel:true stops it WHERE IT IS and clears nothing else.
+    try {
+      const running = s.send('morph', { hwnd: selfHwnd, from: C, to: A, ms: 900 });
+      await sleep(80);
+      const stop = await s.send('morph', { hwnd: selfHwnd, cancel: true });
+      check('morph cancel:true is acknowledged',
+        stop.ok === true && stop.result && stop.result.cancelled === true, JSON.stringify(stop));
+      const cancelled = await running;
+      check('a cancelled morph answers ok:false with reason "cancelled"',
+        cancelled.ok === false && (cancelled.reason === 'cancelled' || cancelled.error === 'cancelled'),
+        JSON.stringify(cancelled));
+    } catch (e) { check('morph cancel', false, e.message); }
+
+    for (const [ease, what] of [
+      [[0.4, 0], 'too few numbers'],
+      [[2, 0, 0.5, 1], 'x outside 0..1'],
+      ['ease-in-out', 'a string instead of an array']
+    ]) {
+      try {
+        const r = await s.send('morph', { hwnd: selfHwnd, from: A, to: B, ms: 60, ease });
+        check(`morph refuses a bad ease (${what})`,
+          r.ok === false && typeof r.error === 'string' && r.error.includes('ease'), JSON.stringify(r));
+      } catch (e) { check(`morph refuses a bad ease (${what})`, false, e.message); }
+    }
+
+    try {
+      const r = await s.send('morph', { hwnd: selfHwnd, to: B, ms: 60 });
+      check('morph without a from rect says what it needs',
+        r.ok === false && typeof r.error === 'string' && r.error.includes('from'), JSON.stringify(r));
+    } catch (e) { check('morph without a from rect says what it needs', false, e.message); }
+
+    // region on its own: round at the current size, then clear.
+    try {
+      const on = await s.send('region', { hwnd: selfHwnd, r: 14 });
+      check('region rounds the window at its current size',
+        on.ok === true && on.result && on.result.ok === true && on.result.r === 14, JSON.stringify(on));
+      const off = await s.send('region', { hwnd: selfHwnd, r: 0 });
+      check('region with r:0 clears the region',
+        off.ok === true && off.result && off.result.r === 0, JSON.stringify(off));
+    } catch (e) { check('region', false, e.message); }
+  }
+
+  try {
+    const r = await s.send('morph', { hwnd: '1', from: { x: 0, y: 0, w: 10, h: 10 }, to: { x: 1, y: 1, w: 10, h: 10 }, ms: 40 });
+    check('morph refuses a hwnd that is not a window',
+      r.ok === false && typeof r.error === 'string' && r.error.includes('no longer exists'), JSON.stringify(r));
+  } catch (e) { check('morph refuses a hwnd that is not a window', false, e.message); }
+
+  if (trayHwnd) {
+    try {
+      const r = await s.send('morph', {
+        hwnd: trayHwnd, from: { x: 0, y: 0, w: 100, h: 40 }, to: { x: 0, y: 0, w: 200, h: 40 }, ms: 40
+      });
+      check('morph refuses the Windows taskbar',
+        r.ok === false && typeof r.error === 'string' && r.error.includes('taskbar'), JSON.stringify(r));
+    } catch (e) { check('morph refuses the Windows taskbar', false, e.message); }
+
+    try {
+      const r = await s.send('region', { hwnd: trayHwnd, r: 8 });
+      check('region refuses the Windows taskbar',
+        r.ok === false && typeof r.error === 'string' && r.error.includes('taskbar'), JSON.stringify(r));
+    } catch (e) { check('region refuses the Windows taskbar', false, e.message); }
+  }
+
+  // ---- ping lists what it serves ----------------------------------------
+  try {
+    const r = await s.send('ping');
+    const cmds = r.ok && r.result ? r.result.commands : null;
+    check('ping lists the commands it serves',
+      Array.isArray(cmds) && ['lnk', 'keys', 'foreground', 'traywatch', 'corners', 'morph', 'region',
+                              'windows', 'glass', 'place']
+        .every((c) => cmds.indexOf(c) >= 0),
+      JSON.stringify(cmds));
+  } catch (e) { check('ping lists the commands it serves', false, e.message); }
 
   // ---- volume (READ ONLY: never change what Owen is listening to) -------
   try {
@@ -486,9 +891,14 @@ async function main() {
 
   try { fs.unlinkSync(STATE); } catch (e) { /* already gone */ }
   try { fs.unlinkSync(STATE_EOF); } catch (e) { /* already gone */ }
+  // The only two files this suite created on the machine.
+  try { fs.unlinkSync(LNK); } catch (e) { /* already gone */ }
+  try { fs.unlinkSync(LNK_SHELL); } catch (e) { /* already gone */ }
 
   for (const f of failures) console.log('  FAIL: ' + f);
   if (trayNote) console.log('  note: ' + trayNote);
+  if (shellLnkNote) console.log('  note: ' + shellLnkNote);
+  if (explorerPinNote) console.log('  note: ' + explorerPinNote);
   console.log(`SIDECAR TEST: ${passed} passed, ${failures.length} failed`);
   process.exit(failures.length === 0 ? 0 : 1);
 }

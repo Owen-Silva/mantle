@@ -1,23 +1,37 @@
 /* bar.css — Mantle's replacement for the Windows taskbar.
  *
+ * Shape (Owen, 2026-09-21): "all my pinned to taskbar things just icons centered, and when I put
+ * my mouse to the bottom of the screen it pulls up a glass UI taskbar with all the pinned app
+ * icons, and then shows the regular stuff on the right too." So: 48dip, hidden at rest, one row —
+ * a launcher glyph on the left, the app icons centred ON THE SCREEN (not between the clusters,
+ * exactly like Windows 11), the readouts on the right.
+ *
+ * Colour (Owen, same day, pointing at the Northwind site's nav pill): LIGHT frosted glass, not dark
+ * grey. Every colour below comes from ../shared/glass-light.css, which carries the Northwind pill's
+ * own values as --lg-*. tokens.css is still linked first and still owns the dark surfaces (the
+ * launcher, the desktop layer); this file takes nothing but geometry from it.
+ *
  * Rules this file is built to, because they are easy to break by accident:
- *  - Colour ONLY through tokens.css. There is not one literal colour below; a palette change
- *    there must relight the bar without touching this file.
+ *  - Colour ONLY through var(--lg-*). There is not one literal colour below.
  *  - The page background stays transparent. Electron's bar window is transparent, so anything
- *    painted on <html>/<body> would appear as a rectangle of fog around the bar. The glass is
- *    painted on .bar itself.
- *  - Nothing moves at rest. No keyframes, no transform loops, no gradient animation. Hover and
- *    active transitions are 120ms steps(2): two discrete frames, so the compositor does two
- *    paints instead of eight, and the bar costs ~0% CPU while Owen works.
- *  - Neutral dark grey instrument glass, plain 1px hairlines. --ion appears on the foreground
- *    window and on focus, nowhere else; glow only as an active/focus cue, never as decoration.
+ *    painted on <html>/<body> would appear as a rectangle of fog around the bar.
+ *  - NO backdrop-filter. In a transparent Electron window it samples this page and nothing else.
+ *    The sidecar applies DWM acrylic (blur + light tint) to the whole window; this file draws the
+ *    white tint on top of that frost and nothing more. --lg-fill is deliberately .55, below the
+ *    Northwind pill's .68, because the DWM tint is already contributing the difference.
+ *  - NO text-shadow. On light glass the ink carries itself; a shadow under dark text on a
+ *    near-white pane just reads as a printing fault.
+ *  - Nothing moves at rest. The only animation is the reveal/hide slide — one GPU transform on
+ *    .bar, 120ms, started by an event from main. Hover/active transitions are steps(2): two
+ *    discrete paints, not an eight-frame ramp.
+ *  - --lg-acc marks the active window and focus, nowhere else.
  */
 
 :root {
-  --bar-h: 44px;
-  --win-max: 180px;      /* widest a labelled window button gets */
-  --win-min: 112px;      /* narrowest a labelled button may be before the strip goes icon-only */
-  --win-icon: 32px;      /* icon-only width */
+  --bar-h: 48px;         /* the contract with lane A: 48 dip, full width, bottom edge */
+  --cell: 40px;          /* one app cell */
+  --cell-icon: 32px;     /* the icon inside it */
+  --cell-gap: 6px;
   --gap: 4px;
 }
 
@@ -28,6 +42,7 @@ html, body {
   padding: 0;
   height: 100%;
   background: transparent;   /* see header: the transparent Electron window must show NOTHING here */
+  overflow: hidden;
 }
 
 body {
@@ -35,20 +50,29 @@ body {
   font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   font-size: 12.5px;
   line-height: 1;
-  color: var(--fg-2);
+  color: var(--lg-ink-2);
   -webkit-font-smoothing: antialiased;
   user-select: none;
   cursor: default;
-  overflow: hidden;
   /* The bar hugs one edge of whatever window it is given, so the same page works whether the
-     window is exactly 44px tall (production) or taller (popover room / screenshots). */
+     window is exactly 48px tall (production) or taller (popover room). */
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
 }
 body[data-edge="top"] { justify-content: flex-start; }
 
-/* ---------------------------------------------------------------- the bar itself */
+/* ---------------------------------------------------------------- the bar itself
+   THE DIVISION OF LABOUR, and the reason there is no transform below: MAIN animates the WINDOW
+   (in edge mode it slides it up from under the screen; in pill mode it also grows its width and
+   rounds its corners with a Win32 region). This page animates PAINT ONLY — fill, border, shadow,
+   ink, opacity — over the same duration and the same curve, so the two halves read as one object
+   detaching. Anything here that animated width, padding or transform would fight the window and
+   lag it, so nothing does; the page is resized every frame during the morph and every box below
+   is laid out to follow that resize instantly.
+
+   The state lives in a token pair, exactly the way Northwind's .nav / .nav.is-detached does it: one
+   element, two sets of values, everything interpolating between them. Nothing is swapped. */
 .bar {
   position: relative;
   flex: 0 0 var(--bar-h);
@@ -57,27 +81,67 @@ body[data-edge="top"] { justify-content: flex-start; }
   align-items: center;
   gap: 8px;
   padding: 0 8px;
-  /* THE GLASS. The window is blurred behind by DWM (sidecar + lane B), so the page's only job is
-     to be a thin tinted pane and let that blur through: a translucent fill, the --sheen wash over
-     it, and a lit top lip. An opaque --panel-bg here is what made the bar read as a flat strip.
-     No backdrop-filter: in a transparent Electron window it samples nothing but this page, so it
-     would cost GPU time and blur nothing. DWM is doing the real blur. */
-  background-color: var(--pane-glass-strong);
-  /* --shade-in under the sheen is a CONTRAST decision, measured, not a taste one: sampling the
-     rendered pixels over a deliberately hostile wallpaper showed --pane-glass alone (.58) leaves
-     window titles at 3.2:1 over a bright warm stop, and --pane-glass-strong alone (.74) at ~4.4:1
-     — both under Owen's 4.5:1 floor. Fill + shade lands at ~0.79 effective alpha: still a fifth
-     of the wallpaper coming through, plus the DWM blur behind, and every label clears 4.5:1. */
-  background-image: var(--sheen), linear-gradient(var(--shade-in), var(--shade-in));
-  /* the hairline that separates Mantle from the desktop, with a 1px specular lip just inside it
-     so the pane looks lit from above rather than cut out of the screen */
-  border-top: 1px solid var(--edge);
-  box-shadow: inset 0 1px 0 var(--specular);
+
+  /* --- the FLUSH set: what the bar is before main reveals it --- */
+  --pane-fill: var(--lg-fill-0);
+  --pane-edge: var(--lg-edge-0);
+  --pane-sh:   var(--lg-pane-up-0);
+  --pane-ink:  var(--lg-ink-0);
+  --pane-on:   0;                 /* the content's opacity */
+
+  background-color: var(--pane-fill);
+  border: 1px solid var(--pane-edge);
+  box-shadow: var(--pane-sh);
+  color: var(--pane-ink);
+
+  /* Paint only. border-radius is NOT here on purpose: main rounds the window itself, so the CSS
+     radius has to match the window on the very frame the mode changes, not ease toward it. */
+  transition:
+    background-color var(--lg-dur, 560ms) var(--lg-ease),
+    border-color     var(--lg-dur, 560ms) var(--lg-ease),
+    box-shadow       var(--lg-dur, 560ms) var(--lg-ease),
+    color            var(--lg-dur, 560ms) var(--lg-ease);
 }
-body[data-edge="top"] .bar {
-  border-top: 0;
-  border-bottom: 1px solid var(--edge);
-  box-shadow: inset 0 -1px 0 var(--specular);
+
+/* --- the DETACHED set --- */
+body.up .bar {
+  --pane-fill: var(--lg-fill);
+  --pane-edge: var(--lg-edge-out);
+  --pane-sh:   var(--lg-pane-up);
+  --pane-ink:  var(--lg-ink-2);
+  --pane-on:   1;
+}
+
+/* --- the two shapes. Geometry only, applied on the frame the mode arrives. --- */
+body.edge .bar {                                  /* docked: flush with the screen's bottom lip */
+  border-width: 1px 1px 0;
+  border-radius: var(--lg-r) var(--lg-r) 0 0;     /* must match the 8px DWM window rounding */
+}
+body.pill .bar {                                  /* floating: main has grown the window inward */
+  border-width: 1px;
+  border-radius: var(--lg-r-pill);
+}
+
+/* docked at the top instead: the lip and the shadow flip, nothing else changes */
+body[data-edge="top"] .bar { --pane-sh: var(--lg-pane-dn-0); }
+body[data-edge="top"].up .bar { --pane-sh: var(--lg-pane-dn); }
+body[data-edge="top"].edge .bar {
+  border-width: 0 1px 1px;
+  border-radius: 0 0 var(--lg-r) var(--lg-r);
+}
+
+/* Before the first event the bar paints in the flush state with NO transition, so the very first
+   reveal is a detach and not a half-drawn bar fading out of nowhere. */
+body.pre .bar, body.pre .left, body.pre .dock, body.pre .right { transition: none; }
+
+/* The content fades with the pane, on the same curve. It carries its own constant ink so the
+   fade is a single opacity ramp: if it inherited the pane's interpolating colour as well, the
+   glyphs would come in at opacity squared while the clock — which sets its own colour — came in
+   linearly, and the cluster would look out of step with itself. */
+.left, .dock, .right {
+  color: var(--lg-ink-2);
+  opacity: var(--pane-on);
+  transition: opacity var(--lg-dur, 560ms) var(--lg-ease);
 }
 
 /* ---------------------------------------------------------------- shared button chrome */
@@ -87,110 +151,119 @@ body[data-edge="top"] .bar {
   border: 0;
   margin: 0;
   background: transparent;
-  color: var(--fg-2);
+  color: var(--lg-ink-2);
   font: inherit;
-  height: 34px;
+  height: 36px;
   padding: 0 8px;
-  border-radius: var(--radius-ctl);
+  border-radius: var(--lg-r-ctl);
   display: flex;
   align-items: center;
   gap: 7px;
   flex: 0 0 auto;
   cursor: default;
-  /* steps(2): two paints per transition, not a smooth ramp. */
   transition: background-color 120ms steps(2), color 120ms steps(2);
 }
-.btn:hover { background: var(--glass); color: var(--fg); }
-.btn:active { background: var(--glass-2); }
+.btn:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.btn:active { background: var(--lg-press); }
 /* The bar window is focusable:false, so :focus-visible almost never fires — but when the page
    is opened in a normal browser it must still show where the keyboard is. */
-.btn:focus-visible { outline: 1px solid var(--ion); outline-offset: -1px; box-shadow: 0 0 0 2px var(--ion-soft); }
+.btn:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; box-shadow: 0 0 0 2px var(--lg-acc-soft); }
 
-.glyph { width: 34px; justify-content: center; padding: 0; }
+.glyph { width: 36px; justify-content: center; padding: 0; }
 
+/* ---------------------------------------------------------------- left: the launcher glyph */
+.left { flex: 0 0 auto; display: flex; align-items: center; gap: var(--gap); }
 .start { width: 38px; justify-content: center; padding: 0; }
 .start svg { display: block; }
-.start:hover, .start:active { color: var(--ion); }
+.start:hover, .start:active { color: var(--lg-acc); }
 
-.sep { flex: 0 0 1px; width: 1px; height: 20px; background: var(--edge); }
-
-/* ---------------------------------------------------------------- window strip */
-.windows {
-  flex: 1 1 auto;
-  min-width: 0;             /* without this a long title would push the right cluster off screen */
+/* ---------------------------------------------------------------- centre: the app icons
+   Absolutely centred on the WINDOW, so the row does not shift when a chip appears on the right
+   or the clock gets wider — the Windows 11 behaviour Owen is used to. JS sets --dock-max to the
+   space that is actually free between the two clusters, so a full dock can never slide under the
+   clock; if even that is not enough, it says so in the state strip rather than cropping quietly. */
+.dock {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  height: 100%;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: var(--gap);
+  gap: var(--cell-gap);
+  max-width: var(--dock-max, 100%);
   overflow: hidden;
-  height: var(--bar-h);
-  padding: 0 2px;
 }
+.dock:empty { display: none; }
 
-.win {
+.cell {
   position: relative;
-  flex: 1 1 var(--win-max);
-  max-width: var(--win-max);
-  min-width: 0;
-  height: 34px;
-  padding: 0 8px 0 5px;
-  overflow: hidden;
+  flex: 0 0 var(--cell);
+  width: var(--cell);
+  height: var(--cell);
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--lg-ink);
+  font: inherit;
+  border-radius: var(--lg-r-ctl);
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  /* a stepped, short background change: two paints, 150ms ceiling */
+  transition: background-color 150ms steps(2);
 }
-.win .t {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.cell:hover { background: var(--lg-hover); }
+.cell:active { background: var(--lg-press); }
+.cell:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
 
-/* the app icon, or a letter tile when the sidecar had no icon to give */
-.win .ico {
-  flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
-  border-radius: 5px;
+.cell .ico {
+  width: var(--cell-icon);
+  height: var(--cell-icon);
   display: grid;
   place-items: center;
   overflow: hidden;
-  font-size: 12px;
+  border-radius: 7px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: .02em;
-  color: var(--fg-2);
-  background: var(--glass-2);
-  box-shadow: inset 0 0 0 1px var(--edge);
+  color: var(--lg-ink);
+  transition: transform 120ms steps(2);
 }
-.win .ico img { width: 24px; height: 24px; display: block; }
-.win .ico.has-img { background: transparent; box-shadow: none; }
+.cell .ico img { width: var(--cell-icon); height: var(--cell-icon); display: block; }
+/* pressed = slightly smaller, the only transform besides the slide */
+.cell:active .ico { transform: scale(.92); }
+/* the letter tile, for an item the sidecar could not give an icon for (its reason is in the
+   tooltip — an unexplained blank square is exactly the silent failure we refuse) */
+.cell .ico.tile { background: var(--lg-tile); }
 
-/* foreground window: the one place --ion is allowed to sit at rest */
-.win.active { background: var(--glass-2); color: var(--fg); }
-.win.active::after {
-  content: '';
-  position: absolute;
-  left: 7px; right: 7px; bottom: 0;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--ion);
-  /* flat, no bloom: a glow that is on screen all day is decoration, and decoration in the dark
-     is what reads as "AI slop". The 2px of ion IS the cue. */
+/* the running dot: always laid out (so icons never jump when an app opens), only painted when
+   the item has windows. The accent when one of them is the active window, ink otherwise. */
+.cell .dot {
+  flex: 0 0 4px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--lg-ink-2);
+  visibility: hidden;
 }
-body[data-edge="top"] .win.active::after { bottom: auto; top: 0; }
+.cell.run .dot { visibility: visible; }
+.cell.act .dot { background: var(--lg-acc); }
 
-/* minimized: present but asleep */
-.win.min { color: var(--fg-3); }
-.win.min .ico { opacity: .6; }
-
-/* Overflow: labels go before anything is ever clipped. JS adds .icons after measuring. */
-.windows.icons .win {
-  flex: 0 1 var(--win-icon);
-  max-width: var(--win-icon);
-  min-width: 24px;          /* the icon's own width: it can compress this far and no further */
-  padding: 0;
-  justify-content: center;
+/* the hairline between pinned apps and apps that are merely running */
+.dock .div {
+  flex: 0 0 1px;
+  width: 1px;
+  height: 22px;
+  margin: 0 3px;
+  background: var(--lg-edge-out);
 }
-.windows.icons .win .t { display: none; }
-.windows.icons .win.active::after { left: 3px; right: 3px; }
 
-/* ---------------------------------------------------------------- right cluster */
+/* ---------------------------------------------------------------- right: the regular stuff */
 .right {
   flex: 0 0 auto;
   margin-left: auto;
@@ -200,12 +273,14 @@ body[data-edge="top"] .win.active::after { bottom: auto; top: 0; }
   height: var(--bar-h);
 }
 
+.sep { flex: 0 0 1px; width: 1px; height: 20px; background: var(--lg-edge-out); }
+
 .tray { display: flex; align-items: center; gap: 2px; }
 .tray:empty { display: none; }
-.tray .ti { width: 26px; height: 26px; padding: 0; justify-content: center; border-radius: var(--radius-ctl); }
+.tray .ti { width: 26px; height: 26px; padding: 0; justify-content: center; border-radius: var(--lg-r-ctl); }
 .tray .ti img { width: 16px; height: 16px; display: block; }
 
-/* status chips: one per thing that is not ok, label short, reason in the tooltip */
+/* the state strip: one chip per thing that is not ok, label short, reason in the tooltip */
 .chips { display: flex; align-items: center; gap: var(--gap); }
 .chips:empty { display: none; }
 .chip {
@@ -215,17 +290,16 @@ body[data-edge="top"] .win.active::after { bottom: auto; top: 0; }
   height: 24px;
   max-width: 190px;
   padding: 0 9px;
-  border-radius: var(--radius-ctl);
-  /* A chip is a recess in the pane, not a raised tile: --shade-in darkens the wallpaper showing
-     through right behind the label, which is what keeps --fg-3 above 4.5:1 over a bright
-     wallpaper (a --glass fill would LIGHTEN it and fail). */
-  background: var(--shade-in);
-  color: var(--fg-3);
-  font-size: 11.5px;
+  border-radius: var(--lg-r-ctl);
+  /* A chip is a recess in the pane, not a raised tile: a low-alpha ink wash, which is the one
+     direction that reads on near-white glass (a white fill would vanish into it). */
+  background: var(--lg-sunk);
+  color: var(--lg-ink-2);
+  font-size: 12.5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  box-shadow: inset 0 0 0 1px var(--edge);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
 }
 .chip.wide { max-width: 300px; }
 /* the label is its own element so ellipsis works: text-overflow does not apply to a flex box's
@@ -237,20 +311,24 @@ body[data-edge="top"] .win.active::after { bottom: auto; top: 0; }
   border-radius: 50%;
   background: currentColor;
 }
-.chip.warn { color: var(--amber); }
-.chip.warn .pip { box-shadow: var(--pip-amber); }
+/* a warning on light glass is burnt orange, not the dark theme's amber: --amber is ~2:1 here */
+.chip.warn { color: var(--lg-warn); background: var(--lg-warn-soft); }
 button.chip { border: 0; font-family: inherit; cursor: default; transition: background-color 120ms steps(2); }
-button.chip:hover { background: var(--glass-2); }
+button.chip:hover { background: var(--lg-press); }
 
+/* clock + date, stacked like Windows 11's: time is the readout, date is its subtitle */
 .clock {
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  color: var(--fg);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
   padding: 0 9px;
-  min-width: 56px;
-  justify-content: center;
+  min-width: 62px;
+  font-variant-numeric: tabular-nums;
 }
-.battery .pct { font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.clock .t { font-size: 13px; color: var(--lg-ink); }
+.clock .d { font-size: 12.5px; color: var(--lg-ink-2); }
+
+.battery .pct { font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .battery { width: auto; padding: 0 7px; gap: 5px; }
 
 /* ---------------------------------------------------------------- popovers */
@@ -262,29 +340,29 @@ button.chip:hover { background: var(--glass-2); }
   min-width: 210px;
   max-width: 340px;
   padding: 11px 12px;
-  /* denser than the bar (it has to hold readable rows over any wallpaper) but still glass */
-  background-color: var(--pane-glass-strong);
-  background-image: var(--sheen);
-  border: 1px solid var(--edge);
-  border-radius: var(--bevel);
-  corner-shape: round bevel round bevel;   /* the Mantle container signature; ignored where unsupported */
-  box-shadow: inset 0 1px 0 var(--specular), 0 10px 30px var(--shade-drop);
-  color: var(--fg-2);
+  /* denser than the bar (it has to hold readable rows over anything) but the same glass. Its
+     shadow is the Northwind stack the right way up: the popover floats above the bar exactly like
+     the nav pill floats above the page. */
+  background-color: var(--lg-fill-strong);
+  border: 1px solid var(--lg-edge-in);
+  border-radius: var(--lg-r-pop);
+  box-shadow: inset 0 1px 0 var(--lg-edge-in), var(--lg-shadow);
+  color: var(--lg-ink-2);
   font-size: 12.5px;
 }
 body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
 .pop[hidden] { display: none; }
 
-.pop h3 { margin: 0 0 8px; font-size: 11.5px; font-weight: 600; color: var(--fg-3); letter-spacing: .04em; text-transform: uppercase; }
+.pop h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 600; color: var(--lg-ink-3); letter-spacing: .04em; text-transform: uppercase; }
 .pop .row { display: flex; align-items: center; gap: 10px; }
-.pop .big { font-size: 15px; color: var(--fg); margin-bottom: 4px; }
-.pop .sub { color: var(--fg-3); line-height: 1.45; }
-.pop .note { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--edge); color: var(--amber); line-height: 1.45; }
+.pop .big { font-size: 15px; color: var(--lg-ink); margin-bottom: 4px; }
+.pop .sub { color: var(--lg-ink-3); line-height: 1.45; }
+.pop .note { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--lg-edge-out); color: var(--lg-warn); line-height: 1.45; }
 
 .pop input[type="range"] {
   flex: 1 1 auto;
   width: 100%;
-  accent-color: var(--ion);      /* the only accent in a popover */
+  accent-color: var(--lg-acc);      /* the only accent in a popover */
   background: transparent;
 }
 .pop .item {
@@ -293,15 +371,33 @@ body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
   text-align: left;
   border: 0;
   background: transparent;
-  color: var(--fg-2);
+  color: var(--lg-ink-2);
   font: inherit;
   padding: 7px 8px;
-  border-radius: var(--radius-ctl);
+  border-radius: var(--lg-r-ctl);
   cursor: default;
   transition: background-color 120ms steps(2), color 120ms steps(2);
 }
-.pop .item:hover { background: var(--glass-2); color: var(--fg); }
-.pop .item.danger:hover { color: var(--amber); }
-.pop .item.armed { color: var(--amber); background: var(--glass-2); }
-.pop .mute { flex: 0 0 auto; padding: 5px 9px; border-radius: var(--radius-ctl); border: 0; background: var(--glass-2); color: var(--fg-2); font: inherit; }
-.pop .mute[aria-pressed="true"] { color: var(--ion); box-shadow: inset 0 0 0 1px var(--ion-line); }
+.pop .item:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.pop .item.danger:hover { color: var(--lg-warn); }
+.pop .item.armed { color: var(--lg-warn); background: var(--lg-warn-soft); }
+.pop .mute { flex: 0 0 auto; padding: 5px 9px; border-radius: var(--lg-r-ctl); border: 0; background: var(--lg-sunk); color: var(--lg-ink-2); font: inherit; }
+.pop .mute[aria-pressed="true"] { background: var(--lg-acc); color: var(--lg-acc-on); }
+
+/* a window row inside the per-app popover: the title takes the room, the close button is a
+   fixed-width glyph at the end */
+.pop .wrow { display: flex; align-items: center; gap: 6px; }
+.pop .wrow .item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop .wrow .item.on { color: var(--lg-acc); }
+.pop .x {
+  flex: 0 0 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-3);
+  font: inherit;
+  cursor: default;
+  transition: background-color 120ms steps(2), color 120ms steps(2);
+}
+.pop .x:hover { background: var(--lg-warn-soft); color: var(--lg-warn); }

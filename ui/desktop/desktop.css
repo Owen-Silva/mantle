@@ -10,6 +10,19 @@
   - Colour comes from ui/shared/tokens.css only.
 */
 
+/* A soft haze along the bottom edge of the desktop layer. The bar's blur-behind frosts
+   whatever is under it, and under it is always this layer (the app-bar reservation keeps
+   windows above the bar), so with a dark wallpaper the bar had nothing to frost and read
+   as a flat strip (Owen, 2026-09-21). Static, one paint, no animation. */
+body::after {
+  content: '';
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: 240px;
+  pointer-events: none;
+  background: linear-gradient(to top, var(--ion-glow), transparent 72%);
+}
+
 html, body {
   margin: 0;
   height: 100%;

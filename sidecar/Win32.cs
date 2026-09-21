@@ -30,6 +30,10 @@ namespace Mantle {
 
     // ------------------------------------------------------------- SetWindowPos
     public static readonly IntPtr HWND_BOTTOM = new IntPtr(1);
+    /// -1, and it really is a handle-shaped sentinel. Only ever applied to a
+    /// window MANTLE OWNS (see TrayWatch): putting someone else's window on top
+    /// is how a shell layer makes a machine feel broken.
+    public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
     public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOMOVE = 0x0002;
     public const uint SWP_NOACTIVATE = 0x0010;
@@ -156,6 +160,15 @@ namespace Mantle {
     /// e.g. UWP apps parked on another virtual desktop. They look perfectly
     /// visible to IsWindowVisible, which is why every shell has to ask DWM.
     public const int DWMWA_CLOAKED = 14;
+    /// DWMWA_WINDOW_CORNER_PREFERENCE (Windows 11 22000+). Rounding is done by
+    /// DWM on the window's own frame, so it costs nothing to draw and is the
+    /// only way to round a window whose frame we do not paint. On Windows 10
+    /// the call returns E_INVALIDARG and the caller is told so.
+    public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    public const int DWMWCP_DEFAULT = 0;
+    public const int DWMWCP_DONOTROUND = 1;
+    public const int DWMWCP_ROUND = 2;
+    public const int DWMWCP_ROUNDSMALL = 3;
 
     // ------------------------------------------------------------- WinEvents
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
@@ -165,6 +178,10 @@ namespace Mantle {
     public const uint EVENT_OBJECT_DESTROY = 0x8001;
     public const uint EVENT_OBJECT_SHOW = 0x8002;
     public const uint EVENT_OBJECT_HIDE = 0x8003;
+    public const uint EVENT_OBJECT_REORDER = 0x8004;
+    /// Fires when a window MOVES or RESIZES - the event that tells us the
+    /// auto-hidden taskbar has just slid back onto the screen.
+    public const uint EVENT_OBJECT_LOCATIONCHANGE = 0x800B;
     public const uint EVENT_OBJECT_NAMECHANGE = 0x800C;
     public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
     public const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
@@ -178,8 +195,19 @@ namespace Mantle {
     public const uint WM_SYSKEYDOWN = 0x0104;
     public const uint WM_SYSKEYUP = 0x0105;
     public const uint LLKHF_INJECTED = 0x00000010;
+    /// The SECOND injected bit: set when the injecting process runs at a LOWER
+    /// integrity level than the hooking one. Windows sets it INSTEAD OF (not as
+    /// well as) LLKHF_INJECTED in that case, so a hook that tests only 0x10 can
+    /// still answer its own synthetic keystrokes. Both bits are checked in
+    /// Hotkey.HookProc - that is what stops `keys win+a` from opening Mantle's
+    /// launcher on its way past.
+    public const uint LLKHF_LOWER_IL_INJECTED = 0x00000002;
     public const int VK_LWIN = 0x5B;
     public const int VK_RWIN = 0x5C;
+    // The only three partner keys `keys` will ever send (Keys.cs says why).
+    public const int VK_A = 0x41;
+    public const int VK_D = 0x44;
+    public const int VK_N = 0x4E;
     /// VK 0xFF is "no key" / reserved. Sending it as the partner of a Win press
     /// makes Windows classify the chord as Win+<something>, so Start stays shut.
     public const int VK_DUMMY = 0xFF;
@@ -201,6 +229,14 @@ namespace Mantle {
     public const uint SHGFI_LARGEICON = 0x000000000;
     public const uint SHGFI_SMALLICON = 0x000000001;
     public const uint SHGFI_USEFILEATTRIBUTES = 0x000000010;
+    /// The first argument is a PIDL, not a path. The ONLY way to get an icon
+    /// for a shortcut that points at a shell folder rather than a file (the
+    /// pinned File Explorer link is one).
+    public const uint SHGFI_PIDL = 0x000000008;
+    /// SIGDN_DESKTOPABSOLUTEPARSING: the name that identifies an item from the
+    /// desktop down, and can be parsed back - "C:\Users\user" for a folder,
+    /// "::{20D04FE0-...}" for This PC. It is what a launcher can actually open.
+    public const uint SIGDN_DESKTOPABSOLUTEPARSING = 0x80028000;
 
     // ------------------------------------------------------------------ structs
     [StructLayout(LayoutKind.Sequential)]
@@ -309,8 +345,10 @@ namespace Mantle {
     [DllImport("user32.dll")] public static extern bool IsChild(IntPtr parent, IntPtr child);
     [DllImport("user32.dll")] public static extern IntPtr GetDesktopWindow();
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool GetMonitorInfoW(IntPtr monitor, ref MONITORINFO info);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
     [DllImport("user32.dll", SetLastError = true)] static extern IntPtr GetWindowLongPtrW(IntPtr hwnd, int index);
     [DllImport("user32.dll", SetLastError = true)] static extern int GetWindowLongW(IntPtr hwnd, int index);
     [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SetWindowLongPtrW(IntPtr hwnd, int index, IntPtr val);
@@ -330,6 +368,14 @@ namespace Mantle {
     [DllImport("user32.dll")] public static extern IntPtr CallNextHookEx(IntPtr hook, int nCode, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
     [DllImport("user32.dll", SetLastError = true)] public static extern bool DestroyIcon(IntPtr hIcon);
+    /// WINDOWS TAKES OWNERSHIP of hRgn on success - it must NOT be deleted
+    /// afterwards, and it must not be reused for a second window. On failure it
+    /// is still ours, and Morph deletes it there.
+    [DllImport("user32.dll", SetLastError = true)] public static extern int SetWindowRgn(IntPtr hwnd, IntPtr hRgn, bool redraw);
+
+    // ------------------------------------------------------------------- gdi32
+    [DllImport("gdi32.dll", SetLastError = true)] public static extern IntPtr CreateRoundRectRgn(int l, int t, int r, int b, int w, int h);
+    [DllImport("gdi32.dll", SetLastError = true)] public static extern bool DeleteObject(IntPtr obj);
     [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr CopyIcon(IntPtr hIcon);
 
     /// 64-bit user32 has GetWindowLongPtrW; 32-bit user32 does not (the macro maps
@@ -360,12 +406,79 @@ namespace Mantle {
 
     // -------------------------------------------------------------------- other
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int val, int size);
+    [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int val, int size);
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SHGetFileInfoW(string path, uint fileAttrs, ref SHFILEINFO info, uint cb, uint flags);
+    /// The SAME export, declared again with a PIDL first argument. Two
+    /// declarations rather than an IntPtr one everywhere, so the common
+    /// path-based call sites keep their string marshalling.
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHGetFileInfoW")]
+    public static extern IntPtr SHGetFileInfoPidl(IntPtr pidl, uint fileAttrs, ref SHFILEINFO info, uint cb, uint flags);
+    /// Returns a CoTaskMem string: the caller MUST CoTaskMemFree it.
+    [DllImport("shell32.dll")] public static extern int SHGetNameFromIDList(IntPtr pidl, uint sigdnName, out IntPtr name);
+    [DllImport("ole32.dll")] public static extern void CoTaskMemFree(IntPtr p);
     /// Returns a UINT_PTR whose meaning depends on dwMessage: non-zero = the
     /// call was accepted for ABM_NEW/REMOVE/SETPOS, and the STATE BITS for
     /// ABM_GETSTATE (so "0" there means a normal, always-visible taskbar, not
     /// an error - never test it for failure).
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SHAppBarMessage(uint dwMessage, ref APPBARDATA pData);
+
+    // ------------------------------------------------------------------- COM
+    // Only Shortcuts.cs (the `lnk` command) needs COM, and only to read: it
+    // creates a ShellLink, loads a .lnk read-only and asks it questions. The
+    // interfaces themselves live next to that code; the flat entry points live
+    // here with every other P/Invoke.
+    public const uint COINIT_APARTMENTTHREADED = 0x2;
+    public const int S_OK = 0;
+    public const int S_FALSE = 1;
+    /// CoInitializeEx on a thread that is already in the OTHER apartment kind.
+    /// Not an error for us: it means COM is up, just not the way we asked.
+    public const int RPC_E_CHANGED_MODE = unchecked((int)0x80010106);
+    /// GPS_DEFAULT: a read-only store, which is all `lnk` ever wants.
+    public const uint GPS_DEFAULT = 0;
+    /// STGM_READ: IPersistFile::Load must never be able to rewrite a shortcut
+    /// on the user's Start menu.
+    public const int STGM_READ = 0;
+    /// IShellLink::GetPath - give us the path AS STORED, with no drive-letter
+    /// substitution and no "search for a moved target" round trip (which can
+    /// block for seconds on a dead network share).
+    public const uint SLGP_RAWPATH = 0x4;
+    public const ushort VT_EMPTY = 0;
+    public const ushort VT_BSTR = 8;
+    public const ushort VT_LPWSTR = 31;
+
+    [DllImport("ole32.dll")] public static extern int CoInitializeEx(IntPtr reserved, uint flags);
+    [DllImport("ole32.dll")] public static extern int PropVariantClear(ref PROPVARIANT pv);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern int SHGetPropertyStoreFromParsingName(string path, IntPtr bindCtx, uint flags,
+                                                               ref Guid riid, out IPropertyStore store);
+
+    /// A Guid + a DWORD. Used only for PKEY_AppUserModel_ID here.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROPERTYKEY { public Guid fmtid; public uint pid; }
+
+    /// 24 bytes on x64: vt(2) + three reserved shorts(6) + an 8-byte-aligned
+    /// union we only ever read as a pointer. Anything we read out of `p` must
+    /// be handed back with PropVariantClear or the string leaks.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROPVARIANT {
+      public ushort vt;
+      public ushort r1, r2, r3;
+      public IntPtr p;
+      public IntPtr p2;
+    }
+
+    /// The Windows property system, cut down to the one method `lnk` calls.
+    /// A Store/UWP pin has NO file target - the thing that identifies it is
+    /// PKEY_AppUserModel_ID, and this is the only way to read it.
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown),
+     Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99")]
+    public interface IPropertyStore {
+      void GetCount(out uint cProps);
+      void GetAt(uint iProp, out PROPERTYKEY pkey);
+      void GetValue(ref PROPERTYKEY key, out PROPVARIANT pv);
+      void SetValue(ref PROPERTYKEY key, ref PROPVARIANT pv);
+      void Commit();
+    }
 
     // ------------------------------------------------------------------ helpers
     public static string GetWindowText(IntPtr hwnd) {

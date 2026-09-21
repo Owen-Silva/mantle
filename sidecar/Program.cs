@@ -72,7 +72,20 @@ namespace Mantle {
   }
 
   static class Program {
-    public const string Version = "0.1.0";
+    /// 0.2.0 (2026-09-21): added lnk, keys, foreground and traywatch, and
+    /// `ping` now lists the commands it serves so a caller can feature-detect
+    /// instead of guessing from a version number.
+    public const string Version = "0.2.0";
+
+    /// Everything Run() answers, in the order a reader would want them. This is
+    /// the protocol's own index: if a command is added below it belongs here,
+    /// because `ping.commands` is what the Electron side checks before offering
+    /// a feature.
+    public static readonly string[] Commands = new string[] {
+      "ping", "windows", "foreground", "focus", "minimize", "close", "toggle",
+      "taskbar", "appbar", "traywatch", "glass", "corners", "place", "morph", "region",
+      "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "tray", "trayClick", "quit"
+    };
 
     public static bool Passive;        // --passive: never touch the live shell
     public static int ParentPid;       // --parent-pid=N: whose windows to hide, whose death to follow
@@ -279,6 +292,26 @@ namespace Mantle {
         : Json.Obj("id", NormalizeId(id), "ok", false, "error", error));
     }
 
+    /// A command that answers LATER returns this instead of a result, and the
+    /// dispatcher says nothing. Only `morph` uses it: its reply is the proof
+    /// that the animation landed, so it cannot be sent before the last frame.
+    public static readonly object Deferred = new object();
+
+    /// The reply channel for a worker thread (the morph thread). Goes through
+    /// the same Emit, and therefore the same single write lock, as everything
+    /// else on this stream.
+    public static void ReplyFromWorker(object id, bool ok, object result, string error) {
+      Reply(id, ok, result, error);
+    }
+
+    /// A morph that was superseded or cancelled still OWES ITS CALLER AN
+    /// ANSWER - a promise that never settles is worse than a failure. Both
+    /// `error` and `reason` carry the word, so a caller that reads either one
+    /// can tell this apart from a real failure.
+    public static void ReplyCancelled(object id) {
+      Emit(Json.Obj("id", NormalizeId(id), "ok", false, "error", "cancelled", "reason", "cancelled"));
+    }
+
     /// Ids arrive as JSON numbers (parsed to double). Echo 3 as 3, not 3.0.
     static object NormalizeId(object id) {
       if (id is double) {
@@ -352,6 +385,10 @@ namespace Mantle {
         object result = null;
         string err = Run(cmd, req, ref result);
         if (err != null) Reply(id, false, null, err);
+        // `morph` answers from its own thread when the last frame lands, so the
+        // dispatcher must stay quiet or the caller would get two replies to one
+        // id and the correlation table would never settle.
+        else if (ReferenceEquals(result, Deferred)) { }
         else Reply(id, true, result, null);
       } catch (FormatException fe) {
         Reply(id, false, null, "bad request: " + fe.Message);
@@ -380,7 +417,8 @@ namespace Mantle {
           // belonging to anyone else.
           var ping = Json.Obj("pid", OwnPid, "passive", Passive, "version", Version,
                               "dpiAware", DpiAware, "dpiMode", DpiMode,
-                              "selfHwnd", LoopHandle.ToInt64().ToString(CultureInfo.InvariantCulture));
+                              "selfHwnd", LoopHandle.ToInt64().ToString(CultureInfo.InvariantCulture),
+                              "commands", Commands);
           if (!DpiAware || DpiReason != null) ping["dpiReason"] = DpiReason;
           result = ping;
           return null;
@@ -389,6 +427,60 @@ namespace Mantle {
         case "windows":
           result = WindowList.Build();
           return null;
+
+        case "foreground":
+          // Read-only: GetForegroundWindow, GetWindowRect, GetMonitorInfo. It
+          // runs in passive because looking at the desktop changes nothing -
+          // and the bar's "a game is full-screen, get out of the way" decision
+          // is exactly the thing a test needs to be able to exercise.
+          result = Foreground.Read();
+          return null;
+
+        case "lnk": {
+          // Allowed in passive: IPersistFile::Load is opened STGM_READ and
+          // nothing here can write to the user's Start menu. See Shortcuts.cs.
+          object rawPaths;
+          if (!Json.TryGet(req, "paths", out rawPaths))
+            return "lnk needs paths: an array of .lnk paths to read";
+          var list = rawPaths as IList;
+          if (list == null)
+            return "lnk: paths must be an ARRAY of shortcut paths, even for one";
+          result = Json.Obj("items", Shortcuts.Resolve(list));
+          return null;
+        }
+
+        case "keys": {
+          // THE ALLOW-LIST IS CHECKED BEFORE PASSIVE, on purpose (same
+          // reasoning as `taskbar`): "win+x is not a combo this command sends"
+          // is true in every mode, and a caller who heard "refused: passive"
+          // would go on believing it works in a live run.
+          string combo = Json.GetString(req, "combo");
+          if (string.IsNullOrEmpty(combo))
+            return "keys needs a combo: one of win+a, win+n, win+d";
+          if (!Keys.IsAllowed(combo)) return "combo not allowed";
+          // And THIS is what passive is for: a test run must never type into
+          // whatever the person at the machine is doing.
+          if (Passive)
+            return PassiveRefusal + ": keys would type " + combo.Trim().ToLowerInvariant() +
+                   " into the live desktop";
+          string kerr = Keys.Send(combo);
+          if (kerr != null) return kerr;
+          result = Json.Obj("ok", true, "combo", combo.Trim().ToLowerInvariant());
+          return null;
+        }
+
+        case "traywatch": {
+          // NOT refused in passive, for the same reason as `glass` and `place`:
+          // every call it makes that can CHANGE anything takes the caller's own
+          // hwnd. It never touches the taskbar's z-order, visibility or state -
+          // it only watches it. Subscribe refuses the taskbar itself outright.
+          IntPtr barHwnd = Json.GetHwnd(req, "hwnd");
+          bool watching;
+          string twerr = TrayWatch.Subscribe(barHwnd, out watching);
+          if (twerr != null) return twerr;
+          result = Json.Obj("ok", true, "watching", watching);
+          return null;
+        }
 
         case "focus":
         case "minimize":
@@ -467,6 +559,76 @@ namespace Mantle {
                                     Json.GetString(req, "tint"), out applied, out usedMode);
           if (gerr != null) return gerr;
           result = Json.Obj("applied", applied, "mode", usedMode);
+          return null;
+        }
+
+        case "corners": {
+          // Same footing as `glass`: one window, the caller's own, and the
+          // attribute dies with it. Refused only for a hwnd that is not a
+          // window, an unknown mode, or the taskbar.
+          IntPtr cHwnd = Json.GetHwnd(req, "hwnd");
+          string usedCorner;
+          string cerr = Corners.Apply(cHwnd, Json.GetString(req, "mode"), out usedCorner);
+          if (cerr != null) return cerr;
+          result = Json.Obj("ok", true, "mode", usedCorner);
+          return null;
+        }
+
+        case "morph": {
+          // Same footing as `place`: it moves a window Mantle owns, holds no
+          // shell state and dies with the window, so passive has nothing to
+          // protect. Morph.Check refuses the taskbar.
+          IntPtr mHwnd = Json.GetHwnd(req, "hwnd");
+          if (Json.GetBool(req, "cancel", false)) {
+            // Stops the animation WHERE IT IS. It deliberately does not clear
+            // the region or restore the rect: cancelling is not undoing.
+            result = Json.Obj("ok", true, "cancelled", Morph.Cancel(mHwnd));
+            return null;
+          }
+          Morph.Box mFrom, mTo;
+          string berr = GetBox(req, "from", out mFrom);
+          if (berr != null) return berr;
+          berr = GetBox(req, "to", out mTo);
+          if (berr != null) return berr;
+          double[] ease;
+          string eerr = GetEase(req, out ease);
+          if (eerr != null) return eerr;
+          string merr = Morph.Start(mHwnd, mFrom, mTo, Json.GetInt(req, "ms", 180), ease,
+                                    req.ContainsKey("id") ? req["id"] : null);
+          if (merr != null) return merr;
+          result = Deferred;   // the morph thread replies when the last frame lands
+          return null;
+        }
+
+        case "region": {
+          IntPtr rgHwnd = Json.GetHwnd(req, "hwnd");
+          int usedR;
+          string gerr2 = Morph.SetRegion(rgHwnd, Json.GetInt(req, "r", 0), out usedR);
+          if (gerr2 != null) return gerr2;
+          result = Json.Obj("ok", true, "r", usedR);
+          return null;
+        }
+
+        case "place": {
+          // Same footing as glass: it moves a window Mantle already owns, so
+          // passive mode has nothing to protect. Why it exists: Electron's
+          // setBounds clamps a window into the WORK AREA, and the app bar has
+          // just shrunk the work area by exactly the bar's height, so Electron
+          // put the bar a bar-height above its own slot every time (live,
+          // 2026-09-21 14:30: window 774..818 with the work area at 820). A
+          // raw SetWindowPos does not clamp; main hands us the PHYSICAL rect
+          // Explorer accepted and we move the window there, no activation, no
+          // z-order change.
+          IntPtr pHwnd = Json.GetHwnd(req, "hwnd");
+          if (pHwnd == IntPtr.Zero || !Win32.IsWindow(pHwnd)) return "place: hwnd is not a window";
+          int px = Json.GetInt(req, "x", 0), py = Json.GetInt(req, "y", 0);
+          int pw = Json.GetInt(req, "w", 0), ph = Json.GetInt(req, "h", 0);
+          if (pw <= 0 || ph <= 0) return "place: w and h must be positive physical pixels";
+          if (!Win32.SetWindowPos(pHwnd, IntPtr.Zero, px, py, pw, ph, Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE))
+            return "place: SetWindowPos failed (Win32 error " + Marshal.GetLastWin32Error() + ")";
+          Win32.RECT placedRect;
+          Win32.GetWindowRect(pHwnd, out placedRect);
+          result = Json.Obj("rect", new object[] { placedRect.left, placedRect.top, placedRect.right, placedRect.bottom });
           return null;
         }
 
@@ -552,6 +714,52 @@ namespace Mantle {
       }
     }
 
+    // ------------------------------------------------------ request helpers
+
+    /// A {x,y,w,h,r} sub-object, in physical pixels. Missing fields are 0,
+    /// which for r means "no rounded region" - the one default that has to be
+    /// harmless, because a caller that forgets r must not get a clipped window.
+    static string GetBox(Dictionary<string, object> req, string key, out Morph.Box box) {
+      box = new Morph.Box();
+      object v;
+      if (!Json.TryGet(req, key, out v))
+        return "morph needs " + key + ":{x,y,w,h,r} in physical pixels";
+      var d = v as Dictionary<string, object>;
+      if (d == null) return "morph: " + key + " must be an object {x,y,w,h,r}";
+      box.X = Json.GetInt(d, "x", 0);
+      box.Y = Json.GetInt(d, "y", 0);
+      box.W = Json.GetInt(d, "w", 0);
+      box.H = Json.GetInt(d, "h", 0);
+      box.R = Json.GetInt(d, "r", 0);
+      return null;
+    }
+
+    /// [x1,y1,x2,y2], the CSS cubic-bezier control points. Absent means the
+    /// default curve; malformed is an ERROR rather than a silent fallback, or a
+    /// typo in a renderer would ship an animation nobody asked for.
+    static string GetEase(Dictionary<string, object> req, out double[] ease) {
+      ease = null;
+      object v;
+      if (!Json.TryGet(req, "ease", out v)) return null;
+      var list = v as IList;
+      if (list == null) return "ease must be four numbers: [x1,y1,x2,y2]";
+      var vals = new double[list.Count];
+      for (int i = 0; i < list.Count; i++) {
+        object o = list[i];
+        if (o is double) { vals[i] = (double)o; continue; }
+        double d;
+        if (o is string && double.TryParse((string)o, NumberStyles.Float, CultureInfo.InvariantCulture, out d)) {
+          vals[i] = d;
+          continue;
+        }
+        return "ease must be four numbers: [x1,y1,x2,y2]";
+      }
+      string bad = Bezier.Validate(vals);
+      if (bad != null) return bad;
+      ease = vals;
+      return null;
+    }
+
     // ------------------------------------------------------------------ exiting
 
     /// Idempotent, callable from any thread. Restores the live shell, flushes,
@@ -630,6 +838,17 @@ namespace Mantle {
 
       try { detail.Add(Taskbar.RestoreForExit()); }
       catch (Exception ex) { done = false; detail.Add("taskbar: restore failed (" + ex.Message + ")"); }
+
+      // Animation threads first: they are the only thing left that still calls
+      // SetWindowPos, and a frame landing mid-restore is pure confusion.
+      try { Morph.CancelAll(); detail.Add("morphs: stopped"); }
+      catch (Exception ex) { detail.Add("morphs: could not be stopped (" + ex.Message + "); they die with the process"); }
+
+      // Before the keyboard hook and with no stdout in the way: an out-of-
+      // context WinEvent hook that outlives its thread is Explorer calling into
+      // a dead process on every taskbar move.
+      try { TrayWatch.Stop(); detail.Add("tray watch: unhooked"); }
+      catch (Exception ex) { done = false; detail.Add("tray watch: unhook failed (" + ex.Message + "); it dies with the process anyway"); }
 
       try { Hotkey.Uninstall(); detail.Add("keyboard hook: uninstalled"); }
       catch (Exception ex) { done = false; detail.Add("keyboard hook: uninstall failed (" + ex.Message + "); it dies with the process anyway"); }

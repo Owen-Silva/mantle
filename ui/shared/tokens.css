@@ -49,6 +49,11 @@
      ui like at all"). Tone comes from these; the blur comes from the window. */
   --pane-glass:        rgba(28,30,34,.58);
   --pane-glass-strong: rgba(28,30,34,.74);
+  /* the bar: Owen saw .74 live over his dark wallpaper and it still read as a solid strip
+     ("atill doesnt look anything like a glass ui"); the frost has to dominate, so the page
+     fill drops to .42 and the labels get a 1px drop shadow for legibility instead */
+  --pane-glass-thin:   rgba(28,30,34,.20);   /* Owen, live: "more transparent like way more" */
+  --pane-glass-mid:    rgba(28,30,34,.36);   /* the launcher: lists over arbitrary app content */
 
   /* a lit seam: 1px of ion light, brightest at the centre */
   --seam: linear-gradient(90deg, transparent 0%, var(--seam-color) 50%, transparent 100%);

@@ -72,9 +72,14 @@ namespace Mantle {
       if (nCode == Win32.HC_ACTION) {
         try {
           var k = (Win32.KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(Win32.KBDLLHOOKSTRUCT));
-          // Ignore anything we (or any other automation) injected, including the
-          // 0xFF partner key below - otherwise we would answer our own input.
-          if ((k.flags & Win32.LLKHF_INJECTED) == 0) {
+          // Ignore anything we (or any other automation) injected: the 0xFF
+          // partner key below, and every chord `keys` sends. Without this, the
+          // LWIN-down of `keys win+a` looks like the start of a solo Win tap
+          // and Mantle's launcher opens on top of the panel we just asked
+          // Windows for. BOTH injected bits are tested - Windows sets
+          // LLKHF_LOWER_IL_INJECTED instead of LLKHF_INJECTED when the injector
+          // runs at a lower integrity level than this process.
+          if ((k.flags & (Win32.LLKHF_INJECTED | Win32.LLKHF_LOWER_IL_INJECTED)) == 0) {
             uint msg = (uint)wParam.ToInt64();
             bool isDown = msg == Win32.WM_KEYDOWN || msg == Win32.WM_SYSKEYDOWN;
             bool isUp = msg == Win32.WM_KEYUP || msg == Win32.WM_SYSKEYUP;
