@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!--
+  The "Mantle" logon task, as a template: tools/install-autostart.ps1 fills in
+  {{USER}}, {{EXE}}, {{ROOT}} and {{LOG}} and registers it with schtasks.
+
+  Why a scheduled task and not a Run key or the Startup folder:
+    - it starts 15 s AFTER logon, once explorer's taskbar exists (Mantle reads
+      the taskbar's state on start and puts it back on quit);
+    - it runs electron.exe DIRECTLY (no cmd.exe wrapper that would orphan it);
+    - ExecutionTimeLimit PT0S: the default task limit of 3 days would KILL
+      Mantle on the fourth day, and a killed Mantle leaves the cursor clip in
+      force (see tools/restore-windows.ps1);
+    - it is owned by the Task Scheduler service, not by whatever terminal
+      started it, so closing that terminal (or a supervisor reaping its
+      background tasks) does not take Mantle with it.
+  Stop it cleanly with `npm run quit`; never `schtasks /End` it (that is a kill).
+-->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Mantle, Owen's shell layer over Windows: starts 15 s after logon. Stop it cleanly with "npm run quit" in {{ROOT}}; put Windows back without Mantle with "npm run restore" there. Registered by tools/install-autostart.ps1.</Description>
+    <URI>\Mantle</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>{{USER}}</UserId>
+      <Delay>PT15S</Delay>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{{USER}}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <DisallowStartOnRemoteAppSession>false</DisallowStartOnRemoteAppSession>
+    <UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>4</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{{EXE}}</Command>
+      <Arguments>. --live --log={{LOG}}</Arguments>
+      <WorkingDirectory>{{ROOT}}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

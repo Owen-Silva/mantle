@@ -137,6 +137,35 @@ const BAR_MODE = flags.dock ? 'dock' : 'hover';
  * pill, in the 14-DIP gap and beside it. Pill mode is for a machine whose taskbar
  * lives on another edge. It works either way; it just looks doubled if not.
  */
+/*
+ * --log=<path>: everything Mantle prints goes to that file as well. For runs
+ * that have no terminal -- the logon task (tools/install-autostart.ps1) -- this
+ * is the only copy of the log there is. Appends, stamps each start, and never
+ * takes Mantle down: a log file that cannot be written is simply not written.
+ */
+(function teeLogToFile() {
+  const arg = process.argv.slice(1).find((a) => typeof a === 'string' && a.startsWith('--log='));
+  const file = arg ? arg.slice('--log='.length).replace(/^"|"$/g, '') : '';
+  if (!file) return;
+  const fs = require('fs');
+  let fd = null;
+  try {
+    fs.mkdirSync(require('path').dirname(file), { recursive: true });
+    fd = fs.openSync(file, 'a');
+    fs.writeSync(fd, `\n===== mantle start ${new Date().toISOString()} pid ${process.pid}: ${process.argv.slice(1).join(' ')}\n`);
+  } catch (err) {
+    process.stderr.write(`mantle: --log=${file} cannot be written (${err && err.message ? err.message : err}); logging to the terminal only\n`);
+    return;
+  }
+  for (const stream of [process.stdout, process.stderr]) {
+    const orig = stream.write.bind(stream);
+    stream.write = (chunk, ...rest) => {
+      try { fs.writeSync(fd, typeof chunk === 'string' ? chunk : Buffer.from(chunk)); } catch (_) { /* never fatal */ }
+      return orig(chunk, ...rest);
+    };
+  }
+})();
+
 const ARGV = process.argv.slice(1);
 flags.pill = ARGV.some((a) => a === '--pill');       // still accepted; it is the default now
 flags.flush = ARGV.some((a) => a === '--flush');     // the old full-width edge strip

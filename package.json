@@ -9,6 +9,8 @@
     "live": "electron . --live",
     "quit": "electron . --quit",
     "restore": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/restore-windows.ps1",
+    "autostart": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/install-autostart.ps1 -Run",
+    "autostart:remove": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/install-autostart.ps1 -Uninstall",
     "test": "electron . --test --profile-name=dev",
     "shots": "electron . --test --profile-name=dev --screenshot=shots",
     "check": "node tools/check.js",
