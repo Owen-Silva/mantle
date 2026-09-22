@@ -212,6 +212,18 @@ app.setAppUserModelId('com.owensilva.mantle');
 // and a blank capturePage() are both symptoms of the same optimisation, so it
 // goes off. These pages are idle between ticks; the cost is not measurable.
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+/*
+ * The GPU service runs INSIDE the main process. Measured 2026-09-21 (private
+ * bytes, 30 s after start, same pages): a separate GPU process held 148 MB and
+ * the whole of Mantle 291 MB; in-process, main grew to 134 MB and the whole of
+ * Mantle came to 242-246 MB. That is the process's own overhead (a second copy
+ * of Chromium's runtime), not the textures, which cost the same either way.
+ * Clicks, hide/reveal cycles, popovers and the backdrop blur were exercised on
+ * it before it was adopted. The trade: a GPU driver crash now takes Mantle
+ * down instead of a GPU process that would have restarted -- the logon task
+ * restarts Mantle on a non-zero exit (tools/mantle-logon-task.xml).
+ */
+app.commandLine.appendSwitch('in-process-gpu');
 
 // Where the sidecar records what Windows looked like BEFORE Mantle touched it.
 // %APPDATA%\mantle\shell-state.json in live mode (Electron's userData for the app
@@ -3693,6 +3705,42 @@ function watchPage(win, label) {
   });
 }
 
+/*
+ * One line of memory numbers per process, 30 s after start and then every 30
+ * minutes: private bytes per page (what each renderer alone holds), main's
+ * heap, and the GPU/utility working sets. Owen asked for the footprint to come
+ * down "as much as possible without making it worse", and the only way to
+ * know either is to have the numbers in the log where the pages are named.
+ */
+async function logMemory(tag) {
+  const parts = [];
+  try {
+    // app.getAppMetrics() is the one source that covers every process, and on
+    // Windows it carries privateBytes (KB). Renderers are matched to their
+    // window through the OS pid, so the log names the page, not "renderer".
+    const byPid = new Map(app.getAppMetrics().map((p) => [p.pid, p]));
+    const fmt = (p) => `private ${Math.round((p.memory.privateBytes || 0) / 1024)} MB, ws ${Math.round(p.memory.workingSetSize / 1024)} MB`;
+    let privateTotal = 0;
+    for (const p of byPid.values()) privateTotal += (p.memory.privateBytes || 0);
+    for (const [name, w] of [['bar', barWin], ['launcher', launcherWin], ['desktop', desktopWin]]) {
+      if (!w || w.isDestroyed()) { parts.push(`${name}: no window`); continue; }
+      const pid = w.webContents.getOSProcessId();
+      const p = byPid.get(pid);
+      parts.push(`${name} pid ${pid}: ${p ? fmt(p) : 'not in the app metrics'}`);
+      byPid.delete(pid);
+    }
+    const mu = process.memoryUsage();
+    for (const p of byPid.values()) {
+      const who = p.type === 'Browser' ? 'main' : `${p.type}${p.name ? ` ${p.name}` : ''}`;
+      parts.push(`${who} pid ${p.pid}: ${fmt(p)}${p.type === 'Browser' ? `, js heap ${Math.round(mu.heapUsed / 1048576)} MB, external ${Math.round(mu.external / 1048576)} MB` : ''}`);
+    }
+    parts.unshift(`electron private total ${Math.round(privateTotal / 1024)} MB (the sidecar is not counted)`);
+  } catch (err) {
+    parts.push(`could not read the rest: ${err && err.message ? err.message : err}`);
+  }
+  process.stdout.write(`mantle: memory (${tag}): ${parts.join(' | ')}\n`);
+}
+
 app.whenReady().then(() => {
   const bar = createBar({ root: ROOT, test: flags.test, barEdge: flags.barEdge });
   barWin = bar.win;
@@ -3709,21 +3757,31 @@ app.whenReady().then(() => {
   });
   if (!bar.load.loaded) process.stderr.write(`mantle: ${bar.load.reason}\n`);
 
-  const launcher = createLauncher({ root: ROOT, test: flags.test });
-  launcherWin = launcher.win;
-  watchPage(launcherWin, 'The launcher');
-  if (!launcher.load.loaded) process.stderr.write(`mantle: ${launcher.load.reason}\n`);
-  // A reload rebuilds the page, not the window, so the composition attribute
-  // should survive -- but "should" is cheap to stop relying on, and re-asking
-  // costs one JSON line.
-  launcherWin.webContents.on('did-finish-load', () => { reapplyGlass('the launcher', launcherWin, 'acrylic'); });
-  if (flags.test) {
-    // In test mode the launcher is the thing being looked at, so it is up from
-    // the start -- inactive, and with no hide-on-blur, or toback.ps1 sending it
-    // to the back would make it vanish.
-    launcherWin.once('ready-to-show', () => launcherWin.showInactive());
+  const memFirst = setTimeout(() => logMemory('30 s after start'), 30000);
+  if (memFirst.unref) memFirst.unref();
+  const memEvery = setInterval(() => logMemory('every 30 min'), 30 * 60 * 1000);
+  if (memEvery.unref) memEvery.unref();
+
+  if (process.env.MANTLE_NO_LAUNCHER === '1') {
+    // Measurement switch only: how much of the footprint is the launcher window.
+    process.stdout.write('mantle: MANTLE_NO_LAUNCHER=1: the launcher window was not created (measurement run; the Win key does nothing)\n');
   } else {
-    launcherWin.on('blur', () => hideLauncher());
+    const launcher = createLauncher({ root: ROOT, test: flags.test });
+    launcherWin = launcher.win;
+    watchPage(launcherWin, 'The launcher');
+    if (!launcher.load.loaded) process.stderr.write(`mantle: ${launcher.load.reason}\n`);
+    // A reload rebuilds the page, not the window, so the composition attribute
+    // should survive -- but "should" is cheap to stop relying on, and re-asking
+    // costs one JSON line.
+    launcherWin.webContents.on('did-finish-load', () => { reapplyGlass('the launcher', launcherWin, 'acrylic'); });
+    if (flags.test) {
+      // In test mode the launcher is the thing being looked at, so it is up from
+      // the start -- inactive, and with no hide-on-blur, or toback.ps1 sending it
+      // to the back would make it vanish.
+      launcherWin.once('ready-to-show', () => launcherWin.showInactive());
+    } else {
+      launcherWin.on('blur', () => hideLauncher());
+    }
   }
 
   if (flags.desktop) {

@@ -54,6 +54,12 @@
     <WakeToRun>false</WakeToRun>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
     <Priority>4</Priority>
+    <!-- A crash (non-zero exit) brings Mantle back within a minute, three times
+         at most; a clean `npm run quit` exits 0 and stays quit. -->
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
   </Settings>
   <Actions Context="Author">
     <Exec>
