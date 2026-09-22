@@ -116,11 +116,14 @@
      (shell.css lines 118-121). Owen asked for the reveal to feel like exactly that, so the number
      lives here rather than being retyped per rule. --lg-dur is overwritten per event by bar.js,
      because main sends the duration it is actually animating the WINDOW with: the page's paint
-     and the window's geometry must not disagree. --lg-dur-out is the hide (main drops the window
-     at 340ms, so the fade has to be done by 320ms) — the same curve, so it reads as the same
-     object leaving. */
+     and the window's geometry must not disagree. --lg-dur-out is the hide, and it is SHORTER than
+     the entry on purpose: main drops the window ~350ms after the event, so an exit timed to the
+     wire gets cut off and reads as a snap (which is exactly what it did live in build 23). 260
+     lands with 90ms of margin. Same curve, so it is the same object leaving. bar.css picks between
+     the two by state — body.up takes --lg-dur, the bare body takes --lg-dur-out — so an exit has a
+     real duration even if no script ever writes one. */
   --lg-dur:     560ms;
-  --lg-dur-out: 320ms;
+  --lg-dur-out: 260ms;
   --lg-ease:    cubic-bezier(.22,.68,.30,1);
 
   /* what is behind the glass. Not a colour any more: it is whatever main last photographed. The

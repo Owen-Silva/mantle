@@ -722,6 +722,7 @@ async function main() {
   } catch (e) { check('launch is refused in passive', false, e.message); }
 
   const quickNotes = [];
+  let hitNote = '';
   // ---- the quick settings panel -----------------------------------------
   // Reads only. NOTHING in this block may toggle a radio or move the
   // brightness on the machine Owen is sitting at: every switch is expected to
@@ -1039,6 +1040,52 @@ async function main() {
     } catch (e) { check('region refuses the Windows taskbar', false, e.message); }
   }
 
+  // ---- hittest / raise --------------------------------------------------
+  // Written for a real bug: Explorer's full-screen LockScreenBackstopFrame sits
+  // inside the topmost band and swallowed every click on Mantle's bar. A shell
+  // that is invisibly covered looks exactly like a shell with broken handlers,
+  // so the sidecar has to be able to say which it is.
+  if (selfHwnd) {
+    const R = { x: 140, y: 140, w: 520, h: 360, r: 0 };
+    try {
+      // ms:0 lands in one frame, so the window is at a rect this test knows.
+      await s.send('morph', { hwnd: selfHwnd, from: R, to: R, ms: 0 });
+      const r = await s.send('hittest', { x: R.x + R.w / 2, y: R.y + R.h / 2 });
+      const d = r.ok ? r.result : null;
+      check('hittest answers with the full shape at a known point',
+        r.ok === true && d && d.ok === true &&
+        typeof d.hwnd === 'string' && /^\d+$/.test(d.hwnd) &&
+        typeof d.root === 'string' && /^\d+$/.test(d.root) &&
+        typeof d.cls === 'string' && typeof d.title === 'string' &&
+        typeof d.pid === 'number' && typeof d.exe === 'string',
+        JSON.stringify(r).slice(0, 220));
+      hitNote = 'hittest at the sidecar window centre: cls=' + (d && d.cls) +
+        ' title=' + JSON.stringify(d && d.title) + ' pid=' + (d && d.pid);
+    } catch (e) { check('hittest answers with the full shape at a known point', false, e.message); }
+  }
+
+  try {
+    const r = await s.send('hittest', { x: 0, y: 0 });
+    check('hittest at 0,0 answers',
+      r.ok === true && r.result && r.result.ok === true && typeof r.result.cls === 'string',
+      JSON.stringify(r).slice(0, 200));
+  } catch (e) { check('hittest at 0,0 answers', false, e.message); }
+
+  try {
+    const r = await s.send('raise', { hwnd: selfHwnd || '1' });
+    check('raise is refused in passive, with a reason',
+      r.ok === false && typeof r.error === 'string' && r.error.includes('passive'), JSON.stringify(r));
+  } catch (e) { check('raise is refused in passive', false, e.message); }
+
+  // The argument is checked BEFORE passive, so hwnd 0 says what is wrong with
+  // it rather than hiding behind the refusal.
+  try {
+    const r = await s.send('raise', { hwnd: '0' });
+    check('raise with hwnd 0 errors on the argument',
+      r.ok === false && typeof r.error === 'string' &&
+      r.error.includes('hwnd') && !r.error.includes('passive'), JSON.stringify(r));
+  } catch (e) { check('raise with hwnd 0 errors on the argument', false, e.message); }
+
   // ---- ping lists what it serves ----------------------------------------
   try {
     const r = await s.send('ping');
@@ -1046,7 +1093,7 @@ async function main() {
     check('ping lists the commands it serves',
       Array.isArray(cmds) && ['lnk', 'keys', 'foreground', 'traywatch', 'corners', 'morph', 'region',
                               'edgeclip', 'backdrop', 'app', 'pins', 'launch', 'wifi', 'bluetooth', 'brightness',
-                              'nightlight', 'power', 'windows', 'glass', 'place']
+                              'nightlight', 'power', 'hittest', 'raise', 'windows', 'glass', 'place']
         .every((c) => cmds.indexOf(c) >= 0),
       JSON.stringify(cmds));
   } catch (e) { check('ping lists the commands it serves', false, e.message); }
@@ -1256,6 +1303,7 @@ async function main() {
 
   for (const f of failures) console.log('  FAIL: ' + f);
   for (const n of quickNotes) console.log('  note: ' + n);
+  if (hitNote) console.log('  note: ' + hitNote);
   if (windowsAppNote) console.log('  note: ' + windowsAppNote);
   if (pinsNote) console.log('  note: ' + pinsNote);
   if (backdropNote) console.log('  note: ' + backdropNote);

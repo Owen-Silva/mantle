@@ -175,7 +175,9 @@
      no transition at all — body.pre, set in index.html. */
   var revealed = false, gotFirstEvent = false, barMode = 'edge';
 
-  var DUR_IN = 560, DUR_OUT = 320;    // Northwind's --dur-nav, and the hide main gives us (it drops the window at 340)
+  var DUR_IN = 560, DUR_OUT = 260;    // Northwind's --dur-nav in; out is quicker, and must beat main's window drop
+  var OUT_MAX = 300;                  // main hides the window ~350ms after the event: never animate past that
+  var lastEventAt = 0;                // when main last told us to move, so a stale state push cannot fight it
 
   /* The shape is main's call: 'pill' floats the window off the edge, 'edge' keeps it docked.
      Anything else (or nothing) is edge — the docked shape is the safe one, because a pill radius
@@ -190,18 +192,46 @@
 
   function slide(on, why, mode, ms) {
     if (mode) setMode(mode);
-    /* Main tells us how long it is taking; the page must not out-run or lag the window. The
-       fallbacks are Northwind's 560ms in and the 320ms the hide contract gives us. */
+    /* Main tells us how long it is taking; the page must not out-run or lag the window. In goes at
+       Northwind's 560ms. Out is capped at OUT_MAX whatever main asks for, because main drops the window
+       ~350ms after the event and an exit the window cuts off is the snap we are fixing. The two
+       durations live in SEPARATE variables so neither write can land on the wrong state: bar.css
+       picks --lg-dur under body.up and --lg-dur-out without it, so the exit has a real duration
+       even if this line never ran. */
     var d = (typeof ms === 'number' && ms > 0) ? Math.round(ms) : (on ? DUR_IN : DUR_OUT);
-    el.body.style.setProperty('--lg-dur', d + 'ms');
+    if (!on) d = Math.max(140, Math.min(d, OUT_MAX));
+    el.body.style.setProperty(on ? '--lg-dur' : '--lg-dur-out', d + 'ms');
 
     if (!gotFirstEvent) {
       gotFirstEvent = true;
       el.body.classList.remove('pre');
       void el.bar.offsetWidth;        // commit the flush paint before the class flips, or there is no transition to run
     }
-    if (revealed === on) return;
+
+    /* The CLASS is the truth, not the flag. They used to be able to drift — a state push could set
+       revealed=false while body.up was still on, and the real bar.hide would then early-return and
+       never remove it: the pill stayed up until main dropped the window out from under it. That is
+       exactly the reported bug. Now the class is always reconciled, and only the side effects are
+       skipped when nothing actually moved. */
+    var wasUp = el.body.classList.contains('up');
     revealed = on;
+    if (wasUp === on) {
+      /* A reveal while we are already up means main hid the window under us and is showing it
+         again: rewind to the down state with transitions off, then let the entry play from there.
+         Anything else here is a genuine no-op. */
+      if (on) {
+        el.body.classList.add('pre');
+        el.body.classList.remove('up');
+        void el.bar.offsetWidth;      // commit the down state un-transitioned
+        el.body.classList.remove('pre');
+        void el.bar.offsetWidth;      // and commit the transitions being back on, before .up returns
+        el.body.classList.add('up');
+        cancelClearBackdrop();
+        refreshPinned();
+        console.log('[bar] re-reveal (re-armed)', barMode, d + 'ms', '—', (why || 'no reason given'));
+      }
+      return;
+    }
     el.body.classList.toggle('up', on);
     if (!on) {
       closePop();
@@ -1434,7 +1464,13 @@
     /* Main's own view of the reveal wins if it ever disagrees with ours (a missed event, a
        reload while the bar was up): the bar must never be parked off screen while the shell
        believes it is showing. */
-    if (state && state.bar && typeof state.bar.revealed === 'boolean' && state.bar.revealed !== revealed)
+    /* ...but only once the events have gone quiet. A state push that lands in the middle of a
+       reveal is main's OLD view arriving late, and honouring it there reverses the animation the
+       events just started (and, before the class became the truth, left the two out of step for
+       good). The events own the movement; this is the repair for a missed one. */
+    if (state && state.bar && typeof state.bar.revealed === 'boolean' &&
+        state.bar.revealed !== el.body.classList.contains('up') &&
+        Date.now() - lastEventAt > 1200)
       slide(state.bar.revealed, 'state.bar.revealed');
     renderChips();
     renderTray(lastTray);
@@ -1463,8 +1499,8 @@
       try { mantle.on('state', function (s) { applyState(s); }); } catch (e) { /* optional channel */ }
     }
 
-    on('bar.reveal', function (p) { slide(true, p && p.why, p && p.mode, p && p.ms); });
-    on('bar.hide', function (p) { slide(false, p && p.why, null, p && p.ms); });
+    on('bar.reveal', function (p) { lastEventAt = Date.now(); slide(true, p && p.why, p && p.mode, p && p.ms); });
+    on('bar.hide', function (p) { lastEventAt = Date.now(); slide(false, p && p.why, null, p && p.ms); });
     on('bar.pinned', renderDock);
     on('bar.backdrop', setBackdrop);
     /* Pushed every 2s ONLY while the quick-settings panel is open (and after every set), so this

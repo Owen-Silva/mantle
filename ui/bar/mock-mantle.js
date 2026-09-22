@@ -18,6 +18,8 @@
  *   ?reveal=0     never send the fake 'bar.reveal', so the flush (hidden) state can be inspected
  *   ?mode=pill    reveal as the floating pill (24px, bordered all round); ?mode=edge is the default
  *   ?hideAt=1800  send 'bar.hide' that many ms after load, to watch the fade out
+ *   ?hidefx=1     loop it: hide, reveal, hide, reveal, one every 2s, for judging the exit by eye
+ *                 (each hide carries ms:320 the way main does, so the page's own cap is exercised)
  *   ?apps=N       N pinned items instead of 12 (proves the centred row, the slide and the clip)
  *   ?qs=fail      Bluetooth and brightness come back ok:false, so the panel's muted-with-a-reason
  *                 path is on screen instead of having to be imagined
@@ -34,6 +36,7 @@
   var REVEAL = q.get('reveal') !== '0';
   var MODE = q.get('mode') === 'pill' ? 'pill' : 'edge';
   var HIDE_AT = parseInt(q.get('hideAt'), 10) || 0;
+  var HIDE_FX = q.get('hidefx') === '1';     // loop hide/reveal so the exit can be watched repeatedly
   /* 12 pins + the 2 running below = the 14 icons the live bar actually has, which is the count
      that overflowed at 1120px. The mock has to be able to reproduce that or the fit rule is
      untested. ?apps=N overrides it. */
@@ -406,7 +409,23 @@
     emit('bar.hide', { why: 'mock: pointer left the bar', ms: DUR_OUT });
   }, HIDE_AT);
 
+  /* ?hidefx=1: the exit on a loop, one event every 2s, so the slide-down can be watched over and
+     over without chasing the pointer. This one IS allowed to run for ever — it is an opt-in debug
+     switch and looping is the whole point. Each hide is sent with main's real ms (320); the page
+     caps it to 300 itself, so this also proves the cap. Backdrops are re-sent on each reveal
+     because the page drops the strip on the way out. */
+  if (HIDE_FX) setInterval(function () {
+    if (revealed) {
+      revealed = false;
+      emit('bar.hide', { why: 'mock: hidefx loop', ms: DUR_OUT });
+    } else {
+      revealed = true;
+      emit('bar.reveal', { why: 'mock: hidefx loop', mode: MODE, ms: DUR_IN });
+      setTimeout(function () { if (revealed) sendBackdrops(); }, DUR_IN);
+    }
+  }, 2000);
+
   console.log('[mock] window.mantle installed (no real bridge found) — pinned:', PIN_COUNT,
     'running:', RUNNING.length, 'mode:', MODE, 'reveal:', REVEAL,
-    'hideAt:', HIDE_AT || 'never', 'sidecar down:', SIDECAR_DOWN);
+    'hideAt:', HIDE_AT || 'never', 'hidefx:', HIDE_FX, 'sidecar down:', SIDECAR_DOWN);
 })();

@@ -421,8 +421,19 @@ let restoreChain = Promise.resolve();
 // bottom 4 DIP of the display, full width, and the reachable half of it is real.
 const REVEAL_BAND_DIP = 4;
 const POLL_HIDDEN_MS = 80;     // cheap: one cursor read, no Win32 call
-const POLL_SHOWN_MS = 120;
-const HIDE_GRACE_MS = 500;     // cursor outside the bar this long before it goes
+/*
+ * How fast the bar gets out of the way (build 23, measured: the pill was still
+ * fully up 856 ms after the cursor left, and Owen's read of that was "when it
+ * goes away it just waits a second and then disappears").
+ *
+ * The delay was the grace period plus up to a whole poll interval: 500 + 120.
+ * 180 + 60 puts the START of the exit ~200-240 ms after the cursor leaves, which
+ * is quick enough to feel like a response and still long enough to survive the
+ * cursor clipping a corner on its way past. The popover exception and the page's
+ * own hover truth are untouched -- they are what make a short grace safe.
+ */
+const POLL_SHOWN_MS = 60;
+const HIDE_GRACE_MS = 180;     // cursor outside the bar this long before it goes
 const HIDE_SLIDE_MS = 350;     // between the 'bar.hide' event and barWin.hide(): the page's 320 ms exit, plus 30
 
 /*
@@ -457,6 +468,21 @@ let hoverTimer = null;
 let barRevealed = false;
 let barLeftAt = null;          // when the cursor last left the bar, or null while it is in
 let rendererHoverAt = 0;       // last 'bar.hover' {inside:true} from lane B's page
+/*
+ * THE BAR IS NEVER hide()-DEN: it is PARKED below the screen edge (build 29).
+ *
+ * Owen: "you had it at one point a few minutes ago it had started working now it
+ * doesnt again". Measured with a WM_LBUTTONUP hook on the window and a mousedown
+ * trace in the page (builds 26-28): the FIRST reveal after start took clicks;
+ * after one hide()/showInactive() cycle the window still received every mouse
+ * message but the page never saw another mousedown -- with the re-raise off too,
+ * so it was the cycle itself, on this window (transparent, frameless,
+ * focusable:false, always-on-top). Keeping the window shown and moving it below
+ * the screen with the sidecar's `place` instead (build 29) kept clicks working
+ * through every cycle, popovers included. So parkBar() is the hide, and
+ * barWin.hide() is only the fallback when the sidecar cannot place the window.
+ */
+let barParked = false;         // the window is shown but sits below the screen edge
 let hideTimer = null;
 let foregroundReason = null;   // why the fullscreen check is not being made, if it is not
 let hoverFirstTick = true;
@@ -760,8 +786,10 @@ function pointIn(rect, pt) {
  * In pill mode this is a UNION, not the window rect, because the island floats 14
  * DIP above the screen edge: the cursor arrives in the band at the very bottom,
  * and the trip up into the island crosses a strip of bare wallpaper. Treating
- * that strip as outside would hide the bar in the 500 ms it takes to reach it --
- * the bar would run away from the pointer coming for it.
+ * that strip as outside would hide the bar out from under the pointer coming for
+ * it -- and since the grace period came down to 180 ms (build 23), the whole trip
+ * up from the band now takes longer than the hide would, so this union is what
+ * makes the faster hide safe rather than twitchy.
  *
  *   the bar's own window rect
  *   + the reveal band (the bottom 4 DIP, full width)
@@ -854,6 +882,7 @@ async function runMorph(from, to, ms, what) {
   const land = async (why) => {
     if (seq !== morphSeq) return;
     const placed = await placeBar([to.x, to.y, to.x + to.w, to.y + to.h], sidecarDpiAware, { quiet: true });
+    process.stdout.write(`mantle: morph (${what}) to ${JSON.stringify(to)} landed without the animation: ${why}${placed.ok ? '' : `; and ${placed.how}`}\n`);
     setBar({ reason: `the bar ${what === 'reveal' ? 'appears' : 'goes'} without the animation: ${why}${placed.ok ? '' : `; and ${placed.how}`}` });
   };
 
@@ -901,7 +930,7 @@ async function revealByPage(geo, why, visible) {
   // the window also covers the transparent strip under it -- 17 px of scenery that
   // does not belong in the pill's blur.
   const shotRect = clampToDisplay(geo.pill ? geo.pill.phys : rect).rect;
-  if (!visible) {
+  if (!visible || barParked) {
     try {
       const shot = await sidecar.call('backdrop', { x: shotRect.x, y: shotRect.y, w: shotRect.w, h: shotRect.h, scale: BACKDROP_SCALE }, 2000);
       if (shot && shot.png) {
@@ -910,11 +939,14 @@ async function revealByPage(geo, why, visible) {
     } catch (_) { /* the loop retries after landing; a reveal never waits on this */ }
     if (!barRevealed || !barWin || barWin.isDestroyed()) return;   // hidden again while we waited
     await placeBar([rect.x, rect.y, rect.x + rect.w, rect.y + rect.h], sidecarDpiAware, { quiet: true });
+    barParked = false;
   }
 
   try {
     barWin.showInactive();
     if (!flags.test) barWin.setAlwaysOnTop(true, 'screen-saver');
+    // ...and then prove it: alwaysOnTop only puts us IN the topmost band.
+    raiseBar(why);
   } catch (err) {
     setBar({ revealed: false, reason: `the bar window would not show: ${err.message}` });
     return;
@@ -932,6 +964,55 @@ async function revealByPage(geo, why, visible) {
   if (revealLandTimer.unref) revealLandTimer.unref();
 }
 
+/*
+ * MAKE SURE THE BAR IS ACTUALLY ON TOP (build 23).
+ *
+ * Owen: "im pressing them and they arent doing anything". WindowFromPoint over
+ * every point of the revealed bar came back with an explorer.exe window of class
+ * LockScreenBackstopFrame -- full-screen, visible, WS_EX_TOPMOST -- sitting above
+ * ours inside the topmost band and swallowing every click. Clicks worked right
+ * after start and stopped later, because Windows raised that window at a moment
+ * of its own choosing. alwaysOnTop is not a promise that we are FIRST among
+ * topmost windows; it only puts us in the band.
+ *
+ * So every reveal re-asserts it: moveTop() (free, in-process) and then the
+ * sidecar's `raise`, which does the SetWindowPos and then asks WindowFromPoint at
+ * the window's centre whether WE are what a click would hit. One retry, and if
+ * something is still over us the State names it -- "the buttons do nothing" with
+ * no explanation is exactly the failure the no-silent-failures rule is about.
+ * At most two sidecar calls per reveal.
+ */
+let raiseComplaint = null;      // what was last found covering us, so it is logged once
+async function raiseBar(why) {
+  if (!barWin || barWin.isDestroyed()) return;
+  try { barWin.moveTop(); } catch (_) { /* free when it works, nothing when it does not */ }
+  if (sidecar.blockedReason()) return;
+
+  const ask = async () => (await sidecar.call('raise', { hwnd: hwndOf(barWin) }, 3000)) || {};
+  try {
+    let r = await ask();
+    if (r.onTop === false) r = await ask();          // once more: the cap is two calls
+    if (r.onTop === false) {
+      const o = r.over || {};
+      const what = `${o.cls || 'an unnamed window'} '${o.title || ''}' (pid ${o.pid === undefined ? '?' : o.pid})`;
+      setBar({ ok: false, revealed: true, reason: `something sits over the bar and takes its clicks: ${what}` });
+      if (raiseComplaint !== what) {
+        raiseComplaint = what;
+        process.stdout.write(`mantle: the bar is covered by ${what}, so its buttons will not respond (${why})\n`);
+      }
+      return;
+    }
+    raiseComplaint = null;
+  } catch (err) {
+    setBar({
+      revealed: true,
+      reason: Sidecar.isOldExeError(err)
+        ? 'the bar could not be raised above other topmost windows (the sidecar exe has no "raise" command yet: run npm run build:sidecar), so its buttons may not respond'
+        : `the bar could not be raised above other topmost windows, so its buttons may not respond: ${err.message}`,
+    });
+  }
+}
+
 function revealBar(why) {
   if (!barWin || barWin.isDestroyed()) {
     setBar({ revealed: false, reason: `there is no bar window to reveal (${why})` });
@@ -942,6 +1023,7 @@ function revealBar(why) {
   const visible = barWin.isVisible();
   if (barRevealed && visible && !wasHiding) return;
   barRevealed = true;
+  process.stdout.write(`mantle: reveal: ${why}\n`);
 
   const geo = barGeometry();
 
@@ -963,6 +1045,8 @@ function revealBar(why) {
     barWin.showInactive();
     // A window that was hidden can lose its band; re-assert rather than assume.
     if (!flags.test) barWin.setAlwaysOnTop(true, 'screen-saver');
+    // ...and then prove it: alwaysOnTop only puts us IN the topmost band.
+    raiseBar(why);
   } catch (err) {
     setBar({ revealed: false, reason: `the bar window would not show: ${err.message}` });
     return;
@@ -985,8 +1069,38 @@ function revealBar(why) {
  * then hide it (at 340 ms, so the window is already gone from view when it goes).
  * Hiding immediately would make the bar vanish rather than leave.
  */
+/*
+ * Take the bar off the screen WITHOUT hiding the window: see barParked. The page
+ * has already run its exit, so the window holds nothing but a transparent strip
+ * when it goes below the edge. Only if the sidecar cannot place it does this fall
+ * back to barWin.hide(), and it says so, because the next reveal then goes
+ * through the hide()/showInactive() cycle that costs the page its clicks.
+ */
+function parkBar(geo, why) {
+  const start = sideRect(geo.start);
+  const fallback = (how) => {
+    barParked = false;
+    try { barWin.hide(); } catch (err) {
+      setBar({ revealed: true, reason: `the bar window would not hide: ${err.message}` });
+      return;
+    }
+    process.stdout.write(`mantle: bar hidden instead of parked (${how}): the buttons may stop responding after this reveal\n`);
+  };
+  placeBar([start.x, start.y, start.x + start.w, start.y + start.h], sidecarDpiAware, { quiet: true })
+    .then((placed) => {
+      if (placed && placed.ok) {
+        barParked = true;
+        process.stdout.write(`mantle: bar parked below the screen at ${JSON.stringify(start)} (${why})\n`);
+      } else {
+        fallback(placed && placed.how ? placed.how : 'the sidecar did not place it');
+      }
+    })
+    .catch((err) => fallback(err && err.message ? err.message : String(err)));
+}
+
 function beginHide(why) {
   if (!barRevealed || hideTimer) return;
+  process.stdout.write(`mantle: hide: ${why}\n`);
   const geo = barGeometry();
   stopBackdrop(`the bar is leaving: ${why}`);
   // The panel goes with the bar: a 2 s poll for a panel nobody can see is pure cost.
@@ -1006,12 +1120,7 @@ function beginHide(why) {
     hideTimer = null;
     barRevealed = false;
     barLeftAt = null;
-    if (barWin && !barWin.isDestroyed()) {
-      try { barWin.hide(); } catch (err) {
-        setBar({ revealed: true, reason: `the bar window would not hide: ${err.message}` });
-        return;
-      }
-    }
+    if (barWin && !barWin.isDestroyed()) parkBar(geo, why);
     setBar({ ok: true, revealed: false, reason: barReason(`hidden: ${why}`) });
     process.stdout.write(`mantle: bar hidden (${why})\n`);
   }, HIDE_SLIDE_MS);
@@ -1935,6 +2044,8 @@ const COMMANDS = {
      */
     const fresh = !!(a && a.fresh);
     const wins = Array.isArray(item.windows) ? item.windows : [];
+    // One line per click, so a click that "did nothing" can be read back from the log.
+    process.stdout.write(`mantle: bar.open ${item.name}: ${wins.length} window(s)${fresh ? ', fresh' : ''}${wins.length === 1 ? `, active=${!!wins[0].active}, hwnd ${wins[0].hwnd}` : ''}\n`);
 
     if (!fresh && wins.length >= 2) {
       return { ok: true, reason: null, action: 'list', windows: wins };
@@ -1944,6 +2055,7 @@ const COMMANDS = {
       const action = w.active ? 'minimize' : 'focus';
       try {
         await sidecar.call(action, { hwnd: String(w.hwnd) }, 4000);
+        process.stdout.write(`mantle: bar.open ${item.name}: ${action} of ${w.hwnd} done\n`);
         return { ok: true, reason: null, action, hwnd: String(w.hwnd) };
       } catch (err) {
         return { ok: false, reason: `${item.name} is running but Mantle could not ${action} it: ${err.message}` };
@@ -2047,6 +2159,10 @@ const COMMANDS = {
         // and 200 ms of travel reads as the pill growing rather than jumping.
         const geo = barGeometry();
         const side = { dip: Object.assign({ r: PILL_RADIUS_DIP }, dip), phys: Object.assign({ r: geo.radius }, toPhys(dip)) };
+        // Same rule as the resting rect and the `place` path below: the BOTTOM is
+        // the screen edge, computed, never a rounded height (62 DIP at 1.25x is
+        // 77.5 px, and a 78 px window closed one pixel past the screen -- build 26).
+        if (flags.barEdge !== 'top') side.phys.h = geo.bottomPhys - side.phys.y;
         await runMorph(sideRect(currentSide(geo)), sideRect(side), 200, open ? 'reveal' : 'hide');
       } else if (sidecarDpiAware === true && !sidecar.blockedReason()) {
         // Through the sidecar, not setBounds: see placeBar() -- setBounds clamps
@@ -2067,6 +2183,12 @@ const COMMANDS = {
     }
 
     barPopover = extra ? { key: (a && a.key) || 'unnamed', height: extra } : null;
+    try {
+      process.stdout.write(`mantle: bar.popover ${open ? `open (${(a && a.key) || 'unnamed'}, asked ${asked}px, got ${extra}px)` : 'closed'} -> window now ${JSON.stringify(barWin.getBounds())} (DIP)\n`);
+    } catch (_) { /* the window may be gone; the line is only a trace */ }
+    // The window just changed size, which is another moment Windows can re-order
+    // the topmost band -- and a popover nobody can click is worse than no popover.
+    if (open && !flags.dock) raiseBar('a popover opened');
     if (open && extra < asked) {
       process.stdout.write(`mantle: the bar asked for ${asked}px of popover room and got ${extra}px (the cap is ${POPOVER_MAX}px)\n`);
     }
@@ -2169,8 +2291,16 @@ ipcMain.handle('mantle:call', async (_e, name, args) => {
   const fn = COMMANDS[name];
   if (!fn) return { ok: false, error: `Mantle has no command called "${name}"` };
   try {
-    return { ok: true, result: await fn(args || {}) };
+    const result = await fn(args || {});
+    // A command that answers ok:false is a failure the page will show as a chip --
+    // a 56 px pip in pill mode, which nobody reads. It goes to the log too, so
+    // "I clicked and nothing happened" can be answered from the log (2026-09-21).
+    if (result && typeof result === 'object' && result.ok === false && !/^(state|sys)\./.test(name)) {
+      process.stdout.write(`mantle: ${name} ${args ? JSON.stringify(args).slice(0, 120) : ''} -> ${result.reason || 'ok:false, no reason'}\n`);
+    }
+    return { ok: true, result };
   } catch (err) {
+    process.stdout.write(`mantle: ${name} threw: ${err && err.message ? err.message : String(err)}\n`);
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }
 });

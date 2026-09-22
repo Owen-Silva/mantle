@@ -83,7 +83,8 @@ namespace Mantle {
     /// a feature.
     public static readonly string[] Commands = new string[] {
       "ping", "windows", "foreground", "focus", "minimize", "close", "toggle",
-      "taskbar", "appbar", "traywatch", "edgeclip", "glass", "corners", "place", "morph", "region",
+      "taskbar", "appbar", "traywatch", "edgeclip", "hittest", "raise",
+      "glass", "corners", "place", "morph", "region",
       "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop",
       "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power",
       "tray", "trayClick", "quit"
@@ -488,6 +489,29 @@ namespace Mantle {
           string kerr = Keys.Send(combo);
           if (kerr != null) return kerr;
           result = Json.Obj("ok", true, "combo", combo.Trim().ToLowerInvariant());
+          return null;
+        }
+
+        case "hittest": {
+          // Read-only, so passive runs it: this is the DIAGNOSIS for "my
+          // buttons do nothing", and a test must be able to ask it.
+          result = HitTest.At(Json.GetInt(req, "x", 0), Json.GetInt(req, "y", 0));
+          return null;
+        }
+
+        case "raise": {
+          // The hwnd is validated BEFORE the passive check, like every other
+          // argument here: hwnd 0 is a malformed request in any mode.
+          IntPtr rHwnd = Json.GetHwnd(req, "hwnd");
+          if (rHwnd == IntPtr.Zero) return "raise: no hwnd given";
+          if (!Win32.IsWindow(rHwnd)) return "raise: window " + rHwnd.ToInt64() + " no longer exists";
+          // It changes a live z-order, so passive refuses it - even though the
+          // window is the caller's own.
+          if (Passive) return PassiveRefusal + ": raise would change a live window's z-order";
+          IDictionary raised;
+          string rerr3 = HitTest.Raise(rHwnd, out raised);
+          if (rerr3 != null) return rerr3;
+          result = raised;
           return null;
         }
 

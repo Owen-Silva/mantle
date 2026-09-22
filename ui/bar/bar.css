@@ -29,6 +29,9 @@
  *  - Nothing moves at rest. The reveal IS animated here (transform + width on .bar, on the Northwind
  *    curve) but only ever as a state change; between states nothing is running. Hover/active
  *    transitions are steps(2): two discrete paints, not an eight-frame ramp.
+ *  - IN AND OUT ARE DIFFERENT LENGTHS, and the state picks which: 560ms in, 260ms out (see --dur
+ *    below). The exit MUST be the shorter one, because main drops the window ~350ms after
+ *    'bar.hide' and an exit still running when the window goes is not an exit, it is a snap.
  *  - --lg-acc marks the active window and focus, nowhere else.
  */
 
@@ -70,6 +73,16 @@ body {
   justify-content: flex-end;
 }
 body[data-edge="top"] { justify-content: flex-start; }
+
+/* THE DURATION, per state, and this is load-bearing: --dur is read by every transition that plays
+   the reveal, and it resolves from the AFTER-change style. Adding .up gives the entry's 560ms;
+   removing .up gives the exit's 260ms — without JS having to write a variable before it flips the
+   class. That race is what made the exit snap live (build 23: the pill sat fully up for 856ms and
+   then vanished with the window). CSS alone now guarantees an exit animation; --lg-dur/
+   --lg-dur-out only let main tune the numbers. The exit is deliberately quicker than the entry:
+   main hides the window 350ms after the event, so 260 lands with margin. */
+body { --dur: var(--lg-dur-out, 260ms); }
+body.up { --dur: var(--lg-dur, 560ms); }
 
 /* ---------------------------------------------------------------- the bar itself
    THE DIVISION OF LABOUR, rewritten 2026-09-21 after Owen: "when the taskbar expands out it isn't
@@ -122,10 +135,10 @@ body[data-edge="top"] { justify-content: flex-start; }
      thing Northwind's nav does when it detaches, and the content inside is laid out by flex rather
      than scaled, so nothing in it distorts. */
   transition:
-    transform  var(--lg-dur, 560ms) var(--lg-ease),
-    width      var(--lg-dur, 560ms) var(--lg-ease),
-    box-shadow var(--lg-dur, 560ms) var(--lg-ease),
-    color      var(--lg-dur, 560ms) var(--lg-ease);
+    transform  var(--dur) var(--lg-ease),
+    width      var(--dur) var(--lg-ease),
+    box-shadow var(--dur) var(--lg-ease),
+    color      var(--dur) var(--lg-ease);
 }
 
 /* PILL MODE geometry: a 48 dip island centred in the window with the 14 dip transparent strip
@@ -155,9 +168,9 @@ body.edge .bar { width: 100%; margin: 0; --pane-w: 100%; --pane-y: var(--bar-h);
   background-clip: padding-box;
   box-shadow: var(--pane-lip);
   transition:
-    background-color var(--lg-dur, 560ms) var(--lg-ease),
-    border-color     var(--lg-dur, 560ms) var(--lg-ease),
-    box-shadow       var(--lg-dur, 560ms) var(--lg-ease);
+    background-color var(--dur) var(--lg-ease),
+    border-color     var(--dur) var(--lg-ease),
+    box-shadow       var(--dur) var(--lg-ease);
 }
 
 /* --- the DETACHED set --- */
@@ -236,7 +249,7 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
   z-index: 2;                    /* above the tint layer, which is above the blurred backdrop */
   color: var(--lg-ink-2);
   opacity: var(--pane-on);
-  transition: opacity var(--lg-dur, 560ms) var(--lg-ease);
+  transition: opacity var(--dur) var(--lg-ease);
 }
 
 /* ---------------------------------------------------------------- shared button chrome */
