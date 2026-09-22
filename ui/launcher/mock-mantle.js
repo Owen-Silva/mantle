@@ -13,6 +13,9 @@
  *   ?fail=1      every launch fails, so the inline reason appears under a row
  *   ?bg=1        paints a loud wallpaper behind the page, so a screenshot can
  *                show what the glass actually lets through
+ *   ?blur=0      no backdrop is ever sent and the State piece says it is not ok,
+ *                which is the fallback pane (--lg-fill-fb) plus the "no blur: …"
+ *                line in the footer — the failure must be visible, not silent
  */
 (function () {
   'use strict';
@@ -21,6 +24,7 @@
   var flags = new URLSearchParams(location.search);
   var SIDECAR_DOWN = flags.get('state') === 'down';
   var ALWAYS_FAIL = flags.get('fail') === '1';
+  var NO_BLUR = flags.get('blur') === '0';
 
   /* The page itself paints nothing outside the panel — html and body stay
      transparent so DWM's blur-behind is what you see. In MOCK MODE ONLY there
@@ -160,11 +164,44 @@
     (listeners[event] || []).forEach(function (cb) { try { cb(payload); } catch (e) { /* a bad listener is the page's problem */ } });
   }
 
+  /* THE BACKDROP main would photograph. The launcher's glass is a live picture of the screen
+     behind the window, blurred in CSS — there is no screen behind a file:// page, so the mock
+     paints one: a deliberately loud gradient with hard-edged blocks in it, at the size main sends
+     (the 680x460 window's rect downscaled 4x). If the blur, the clip and the tint are all
+     working, that comes through the glass as soft colour; if any of them is not, it is obvious at
+     a glance. Drawn on a canvas and handed over as a PNG data URL, exactly the shape of the real
+     payload. ONE frame, then it stops: a mock may not leave a timer running for ever. */
+  var BD_W = 170, BD_H = 115;                  // 680x460 at BACKDROP_SCALE 4
+
+  function backdropPNG() {
+    var c = document.createElement('canvas');
+    c.width = BD_W; c.height = BD_H;
+    var g = c.getContext('2d');
+    var grad = g.createLinearGradient(0, 0, BD_W, BD_H);
+    var stops = ['#2f6fe0', '#b23fd0', '#d64545', '#e0a059', '#1f8f4e', '#2f6fe0'];
+    for (var i = 0; i < stops.length; i++) grad.addColorStop(i / (stops.length - 1), stops[i]);
+    g.fillStyle = grad; g.fillRect(0, 0, BD_W, BD_H);
+    /* hard blocks and a dark band: edges are what a blur is judged on */
+    g.fillStyle = '#0b0d10'; g.fillRect(BD_W * 0.30, 0, 22, BD_H);
+    g.fillStyle = '#ffffff'; g.fillRect(BD_W * 0.58, BD_H * 0.15, 16, BD_H * 0.7);
+    g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0, BD_H - 18, BD_W, 18);
+    return c.toDataURL('image/png');
+  }
+
   var STATE = {
     mode: 'mock',
     sidecar: SIDECAR_DOWN
       ? { status: 'down', reason: 'sidecar exited: exit code 1' }
       : { status: 'ok', reason: '' },
+    /* main's own report about that picture, merged per window exactly as State.backdrop is:
+       {on, ok, ms, reason}. Only ok:false is a line in the launcher. */
+    backdrop: {
+      launcher: NO_BLUR
+        ? { on: false, ok: false, ms: 0, fps: 0,
+            reason: 'mock: ?blur=0, so nothing behind the launcher is being photographed' }
+        : { on: true, ok: true, ms: 7, fps: 4,
+            reason: 'mock: a synthetic strip stands in for the screen behind the launcher' },
+    },
   };
 
   window.mantle = {
@@ -193,6 +230,17 @@
       };
     },
   };
+
+  /* 300ms after load, which is when main's first frame lands (it captures once just before the
+     window is shown), then the State that says the capture is healthy. Nothing repeats. */
+  if (!NO_BLUR) setTimeout(function () {
+    emit('launcher.backdrop', {
+      png: backdropPNG(), w: BD_W, h: BD_H,
+      rect: { x: 620, y: 310, w: 680, h: 460 },   // physical px of the launcher's rect
+      ms: 7,
+    });
+    emit('state', STATE);
+  }, 300);
 
   // a test can drive the visible event by hand
   window.__mockShow = function () { emit('launcher:visible', true); };

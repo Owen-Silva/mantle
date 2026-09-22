@@ -254,6 +254,9 @@ namespace Mantle {
     /// for a shortcut that points at a shell folder rather than a file (the
     /// pinned File Explorer link is one).
     public const uint SHGFI_PIDL = 0x000000008;
+    /// SIGDN_NORMALDISPLAY: the name a human reads ("Calculator"), which is NOT
+    /// the file name and is localised.
+    public const uint SIGDN_NORMALDISPLAY = 0;
     /// SIGDN_DESKTOPABSOLUTEPARSING: the name that identifies an item from the
     /// desktop down, and can be parsed back - "C:\Users\user" for a folder,
     /// "::{20D04FE0-...}" for This PC. It is what a launcher can actually open.
@@ -463,6 +466,179 @@ namespace Mantle {
     /// Returns a CoTaskMem string: the caller MUST CoTaskMemFree it.
     [DllImport("shell32.dll")] public static extern int SHGetNameFromIDList(IntPtr pidl, uint sigdnName, out IntPtr name);
     [DllImport("ole32.dll")] public static extern void CoTaskMemFree(IntPtr p);
+
+    // --------------------------------------------------- app identity / shell items
+    // The modern shell speaks in APP USER MODEL IDs, not exe paths: a Store app
+    // has no .lnk, five of Owen's fourteen pins are Store apps, and every UWP
+    // window is hosted by ApplicationFrameHost.exe. See Apps.cs.
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern int SHCreateItemFromParsingName(string path, IntPtr bindCtx, ref Guid riid,
+                                                         [MarshalAs(UnmanagedType.Interface)] out object item);
+    [DllImport("shell32.dll")]
+    public static extern int SHCreateItemFromIDList(IntPtr pidl, ref Guid riid,
+                                                    [MarshalAs(UnmanagedType.Interface)] out object item);
+    /// The window's OWN property store, which is where a packaged app stamps
+    /// its AUMID. Same PKEY the `lnk` command reads off a shortcut.
+    [DllImport("shell32.dll")]
+    public static extern int SHGetPropertyStoreForWindow(IntPtr hwnd, ref Guid riid,
+                                                         [MarshalAs(UnmanagedType.Interface)] out object store);
+    /// Win 8+. Returns ERROR_SUCCESS, ERROR_INSUFFICIENT_BUFFER (122), or
+    /// APPMODEL_ERROR_NO_APPLICATION (15703) for an ordinary Win32 process -
+    /// which is not an error, just "this one is not packaged".
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetApplicationUserModelId(IntPtr process, ref uint length, StringBuilder id);
+    public const int APPMODEL_ERROR_NO_APPLICATION = 15703;
+    public const int ERROR_INSUFFICIENT_BUFFER = 122;
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool ShellExecuteExW(ref SHELLEXECUTEINFO info);
+    /// Do the work on THIS thread and finish before returning (we have no
+    /// message loop to spare), and never show an error UI on the user's screen -
+    /// the reason comes back to the caller instead.
+    public const uint SEE_MASK_NOASYNC = 0x00000100;
+    public const uint SEE_MASK_FLAG_NO_UI = 0x00000400;
+    public const int SW_SHOWNORMAL = 1;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct SHELLEXECUTEINFO {
+      public int cbSize;
+      public uint fMask;
+      public IntPtr hwnd;
+      public string lpVerb, lpFile, lpParameters, lpDirectory;
+      public int nShow;
+      public IntPtr hInstApp, lpIDList;
+      public string lpClass;
+      public IntPtr hkeyClass;
+      public uint dwHotKey;
+      public IntPtr hIcon;
+      public IntPtr hProcess;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SIZE { public int cx, cy; }
+
+    // ------------------------------------------------ HBITMAP -> pixels
+    // IShellItemImageFactory hands back an HBITMAP, and a Store icon is 32bpp
+    // WITH an alpha channel. Image.FromHbitmap throws that channel away and the
+    // icon renders on a black square, so the bits are read out by hand.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct BITMAP {
+      public int bmType, bmWidth, bmHeight, bmWidthBytes;
+      public ushort bmPlanes, bmBitsPixel;
+      public IntPtr bmBits;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct BITMAPINFOHEADER {
+      public uint biSize;
+      public int biWidth, biHeight;
+      public ushort biPlanes, biBitCount;
+      public uint biCompression, biSizeImage;
+      public int biXPelsPerMeter, biYPelsPerMeter;
+      public uint biClrUsed, biClrImportant;
+    }
+
+    public const uint BI_RGB = 0;
+    public const uint DIB_RGB_COLORS = 0;
+
+    // ------------------------------------------------------------ power state
+    /// GetSystemPowerStatus, the one call that answers "on battery?" without
+    /// WMI. 255 in a percent field means "unknown", and BatteryLifeTime is
+    /// 0xFFFFFFFF until Windows has watched the discharge for a while -
+    /// neither is an error, so both are reported as null rather than guessed.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SYSTEM_POWER_STATUS {
+      public byte ACLineStatus;        // 0 offline, 1 online, 255 unknown
+      public byte BatteryFlag;         // 128 = no system battery
+      public byte BatteryLifePercent;  // 0-100, 255 unknown
+      public byte SystemStatusFlag;    // 1 = battery saver on (Win10+)
+      public uint BatteryLifeTime;     // seconds, 0xFFFFFFFF unknown
+      public uint BatteryFullLifeTime;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS status);
+
+    // ------------------------------------------------------------------- wlan
+    // The native Wi-Fi API. NOT netsh and NOT a PowerShell cmdlet: the bar
+    // polls this twice a second, and a process launch per poll would cost more
+    // than the whole shell.
+    public const uint WLAN_INTF_OPCODE_RADIO_STATE = 4;
+    public const uint WLAN_INTF_OPCODE_CURRENT_CONNECTION = 7;
+    public const uint WLAN_INTF_OPCODE_CHANNEL_NUMBER = 8;
+    public const uint DOT11_RADIO_STATE_UNKNOWN = 0;
+    public const uint DOT11_RADIO_STATE_ON = 1;
+    public const uint DOT11_RADIO_STATE_OFF = 2;
+    /// wlan_interface_state_connected
+    public const uint WLAN_INTERFACE_STATE_CONNECTED = 1;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct WLAN_INTERFACE_INFO {
+      public Guid InterfaceGuid;
+      [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string strInterfaceDescription;
+      public uint isState;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct DOT11_SSID {
+      public uint uSSIDLength;
+      [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)] public byte[] ucSSID;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WLAN_ASSOCIATION_ATTRIBUTES {
+      public DOT11_SSID dot11Ssid;
+      public uint dot11BssType;
+      [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)] public byte[] dot11Bssid;
+      public uint dot11PhyType;
+      public uint uDot11PhyIndex;
+      public uint wlanSignalQuality;   // ALREADY 0-100; no dBm conversion needed
+      public uint ulRxRate;
+      public uint ulTxRate;
+    }
+
+    /// Deliberately stops after the association attributes: the security
+    /// attributes follow in memory and we do not read them, which is safe
+    /// because PtrToStructure only reads what the struct declares.
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct WLAN_CONNECTION_ATTRIBUTES {
+      public uint isState;
+      public uint wlanConnectionMode;
+      [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string strProfileName;
+      public WLAN_ASSOCIATION_ATTRIBUTES wlanAssociationAttributes;
+    }
+
+    /// One PHY's radio state. This is also the shape WlanSetInterface takes to
+    /// turn a radio on or off.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WLAN_PHY_RADIO_STATE {
+      public uint dwPhyIndex;
+      public uint dot11SoftwareRadioState;
+      public uint dot11HardwareRadioState;   // read-only: the physical switch
+    }
+
+    [DllImport("wlanapi.dll")] public static extern uint WlanOpenHandle(uint client, IntPtr reserved, out uint negotiated, out IntPtr handle);
+    [DllImport("wlanapi.dll")] public static extern uint WlanCloseHandle(IntPtr handle, IntPtr reserved);
+    [DllImport("wlanapi.dll")] public static extern uint WlanEnumInterfaces(IntPtr handle, IntPtr reserved, out IntPtr list);
+    [DllImport("wlanapi.dll")] public static extern uint WlanQueryInterface(IntPtr handle, ref Guid iface, uint opcode, IntPtr reserved, out uint dataSize, out IntPtr data, IntPtr valueType);
+    [DllImport("wlanapi.dll")] public static extern uint WlanSetInterface(IntPtr handle, ref Guid iface, uint opcode, uint dataSize, IntPtr data, IntPtr reserved);
+    [DllImport("wlanapi.dll")] public static extern void WlanFreeMemory(IntPtr p);
+
+    // -------------------------------------------------------------- bluetooth
+    /// Presence only: whether this machine HAS a Bluetooth radio at all, which
+    /// is the one question the WinRT radio list cannot answer when it comes
+    /// back empty (no radios and no Bluetooth hardware look identical there).
+    [StructLayout(LayoutKind.Sequential)]
+    public struct BLUETOOTH_FIND_RADIO_PARAMS { public uint dwSize; }
+
+    [DllImport("bthprops.cpl", SetLastError = true)]
+    public static extern IntPtr BluetoothFindFirstRadio(ref BLUETOOTH_FIND_RADIO_PARAMS p, out IntPtr radio);
+    [DllImport("bthprops.cpl", SetLastError = true)]
+    public static extern bool BluetoothFindRadioClose(IntPtr find);
+
+    [DllImport("gdi32.dll")] public static extern int GetObjectW(IntPtr obj, int size, ref BITMAP bm);
+    [DllImport("gdi32.dll")] public static extern int GetDIBits(IntPtr dc, IntPtr bmp, uint start, uint lines,
+                                                               byte[] bits, ref BITMAPINFOHEADER info, uint usage);
     /// Returns a UINT_PTR whose meaning depends on dwMessage: non-zero = the
     /// call was accepted for ABM_NEW/REMOVE/SETPOS, and the STATE BITS for
     /// ABM_GETSTATE (so "0" there means a normal, always-visible taskbar, not

@@ -2,18 +2,41 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- the pane is light frosted glass now, so the UA's own bits (caret, selection, a fallback
+     scrollbar) must be drawn for a light surface rather than Mantle's old dark one -->
+<meta name="color-scheme" content="light">
+<!-- file:// documents are opaque origins, so 'self' matches nothing here: main loads this page
+     with loadFile(). Scheme sources are what the bar and the desktop layer already use, and what
+     Electron accepts without logging its insecure-CSP warning. data: is for the backdrop PNG main
+     sends and for the sidecar's icon bitmaps. -->
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; font-src 'self'">
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
 <title>Mantle launcher</title>
-<!-- tokens.css first: it is the :root block every Mantle surface shares, and
-     launcher.css only ever reads from it, never redefines a colour. -->
+<!-- tokens.css FIRST, exactly as the bar links it: it is Mantle's dark instrument :root, which the
+     surfaces that have not moved yet still resolve through. launcher.css no longer reads a single
+     value from it — not a colour, not the font. glass-light.css comes after it and carries the
+     Northwind nav pill's LIGHT frosted glass as --lg-*: the taskbar's theme, which Owen asked every
+     Mantle surface to wear ("everything that we build for this wrapper, their UI needs to be this
+     exact same theme as the taskbar", 2026-09-21), typeface included. -->
 <link rel="stylesheet" href="../shared/tokens.css">
+<link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="launcher.css">
 </head>
-<body>
+<!-- no-backdrop is the honest boot state: nothing has been photographed behind this window yet,
+     so the tint carries the pane alone (the thicker --lg-fill-fb). launcher.js drops it on the
+     first 'launcher.backdrop' frame and puts it back when the window is hidden. `up` is the shown
+     state and the whole of the enter animation; it is added on visibilitychange. -->
+<body class="no-backdrop">
   <!-- One pane. The window itself is transparent and sized 680x460 by the main
        process; this panel is the only thing that paints. -->
   <main class="panel" id="panel">
+
+    <!-- THE BACKDROP, and it must be the FIRST child so it paints under everything. Main sends a
+         PNG of the screen behind this window once before it is shown and ~4x a second while it is
+         up; launcher.js swaps the src and nothing else, and launcher.css blurs it and clips it to
+         the panel's radius. This is the whole reason the glass is see-through: no DWM mode could
+         be tuned to do it (acrylic renders a near-opaque white slab). -->
+    <div class="bdrop" aria-hidden="true"><img id="backdrop" alt=""></div>
 
     <div class="slot">
       <input id="q" type="text" autocomplete="off" autocorrect="off" spellcheck="false"
@@ -25,7 +48,8 @@
     <div class="results" id="results" role="listbox" aria-label="Results" tabindex="-1"></div>
 
     <footer class="foot">
-      <!-- a source that failed prints its reason here, in amber, in words -->
+      <!-- a source that failed prints its reason here, in --lg-warn, in words; so does the
+           backdrop when main cannot photograph what is behind this window -->
       <div class="src-errors" id="srcErrors"></div>
       <div class="foot-row">
         <span class="counts" id="counts">indexing…</span>

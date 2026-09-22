@@ -3,30 +3,49 @@
 <head>
   <meta charset="utf-8">
   <!-- Scheme sources, not 'self': a file:// document is an opaque origin in
-       Chromium, so 'self' matches nothing and would block this page's own CSS. -->
+       Chromium, so 'self' matches nothing and would block this page's own CSS.
+       data: is in img-src because the wallpaper picture main sends arrives as a
+       PNG data URL and is painted as a CSS background-image. -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; frame-src http://127.0.0.1:7373">
   <title>Mantle desktop</title>
-  <!-- The shared palette. Everything on this page takes its colour from here and
-       nowhere else, so a change to the tokens relights the desktop with it. -->
+  <!-- tokens.css first, for fonts and geometry only; glass-light.css after it,
+       and EVERY colour on this page comes from that file (--lg-*). It is the
+       same token set ui/bar resolves through, because the desktop layer wears
+       the taskbar's theme, not one of its own. -->
   <link rel="stylesheet" href="../shared/tokens.css">
+  <link rel="stylesheet" href="../shared/glass-light.css">
   <link rel="stylesheet" href="desktop.css">
 </head>
-<body>
+<!-- no-backdrop is the state this page BOOTS in: no picture of the wallpaper has
+     arrived yet, so the tiles carry themselves on the thicker fallback tint. It
+     comes off on the first good 'desktop.backdrop'. -->
+<body class="no-backdrop">
   <!--
     The desktop layer sits UNDER every window and OVER the wallpaper, so the body
-    stays transparent and only these tiles paint. One top-left cluster: the time,
+    stays transparent and only these panes paint. One top-left cluster: the time,
     what the machine is doing, a live look at Mission Control, and - only when
     there is something wrong - a strip that says what and why.
+
+    Every pane is the taskbar's material, in the taskbar's order: .bdrop (the
+    wallpaper under THAT pane, blurred) first, the tint on its ::after above it,
+    the content above that. The .bdrop divs are empty on purpose - the picture is
+    one CSS background, parked on <html> as --desktop-backdrop by desktop.js.
   -->
   <main class="cluster">
 
-    <section class="time" aria-label="Clock">
-      <div class="clock" id="clock">--:--</div>
+    <section class="pane time" aria-label="Clock">
+      <div class="bdrop" aria-hidden="true"></div>
+      <!-- 12-hour with seconds, Windows style: "4:15:32 PM". The parts are
+           separate elements so a tick rewrites only the digits that changed. -->
+      <div class="clock" id="clock">
+        <span class="hm" id="clock-hm">--:--</span><span class="cn">:</span><span class="ss" id="clock-ss">--</span><span class="mer" id="clock-mer"></span>
+      </div>
       <div class="date" id="date">&nbsp;</div>
     </section>
 
-    <section class="tile" id="stats-tile" aria-label="System">
+    <section class="pane tile" id="stats-tile" aria-label="System">
+      <div class="bdrop" aria-hidden="true"></div>
       <h2 class="tile-head">System</h2>
       <dl class="rows">
         <div class="row"><dt>CPU</dt><dd id="cpu">&mdash;</dd></div>
@@ -36,21 +55,27 @@
       <p class="note" id="stats-note" hidden></p>
     </section>
 
-    <section class="tile" id="mc-tile" aria-label="Mission Control">
+    <section class="pane tile" id="mc-tile" aria-label="Mission Control">
+      <div class="bdrop" aria-hidden="true"></div>
       <h2 class="tile-head">Mission Control <span class="head-note" id="mc-head-note"></span></h2>
       <div class="mc-frame" id="mc-frame" hidden></div>
       <p class="note" id="mc-note">Checking 127.0.0.1:7373&hellip;</p>
     </section>
 
-    <section class="strip" id="strip" hidden aria-label="Needs attention">
+    <section class="pane strip" id="strip" hidden aria-label="Needs attention">
+      <div class="bdrop" aria-hidden="true"></div>
       <h2 class="tile-head">Needs attention <span class="head-note" id="strip-mode"></span></h2>
       <ul class="strip-list" id="strip-list"></ul>
     </section>
 
   </main>
 
-  <!-- Plain browser script: contextIsolation and sandbox are on, so there is no
-       require() here. window.mantle (from preload.js) is the only bridge. -->
+  <!-- Plain browser scripts: contextIsolation and sandbox are on, so there is no
+       require() here. window.mantle (from preload.js) is the only bridge.
+       mock-mantle.js installs a fake one ONLY when there is no real bridge, which
+       inside Electron is never - it is here so this page can be opened straight
+       off disk (?mock=1) and looked at. -->
+  <script src="mock-mantle.js"></script>
   <script src="desktop.js"></script>
 </body>
 </html>

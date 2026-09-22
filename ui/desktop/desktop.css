@@ -1,35 +1,63 @@
 /*
-  The desktop layer.
+  desktop.css — the desktop layer, wearing the taskbar's glass.
 
-  Rules this file lives by:
-  - The body NEVER paints. In live mode this window is reparented under the
-    wallpaper, and a full-screen background would cover Owen's wallpaper with a
-    grey rectangle. Only the tiles have a surface.
-  - No animation at all. No transitions, no keyframes, no gradients that move.
-    This window is on screen every waking hour; at rest it must cost nothing.
-  - Colour comes from ui/shared/tokens.css only.
+  THEME. Owen, 2026-09-21: "everything that we build for this wrapper, their UI needs to be this
+  exact same theme as the taskbar." So this layer resolves every colour through
+  ../shared/glass-light.css (--lg-*) — the same token set ui/bar/bar.css uses — and there is not
+  one colour literal below. tokens.css is still linked first for fonts and geometry, but nothing
+  here takes a colour from it any more: the dark instrument set (the fg ramp, edge, the shade and
+  ion families, amber, and bevel's corner-shape signature) is gone from this file.
+
+  THE MATERIAL STACK, lifted from .bar / .bar::after / .bdrop:
+      .bdrop  (z0)  the wallpaper under THAT pane, blurred 12px / saturated 150%
+      ::after (z1)  the tint — --lg-fill, the 1px outer hairline, the inner lip
+      content (z2)  the ink
+  The tint cannot be the pane's own background-color: it has to sit ABOVE the backdrop layer, and
+  a background-color paints below every child. That is why it is a pseudo-element, exactly as on
+  the bar.
+
+  THE BODY NEVER PAINTS. In live mode this window is the size of the screen and is reparented
+  under the desktop icons, so anything painted on <html>/<body> would cover Owen's wallpaper with
+  a rectangle. Only the panes have a surface.
+  The bottom haze that used to be here (a 240px ion-glow gradient on body::after) is DELETED.
+  Its one stated reason was that the bar's DWM blur-behind had nothing to frost over a dark
+  wallpaper — the bar captures and blurs its own backdrop now, so the haze bought nothing and all
+  it did was tint the bottom of Owen's wallpaper blue.
+
+  THE BACKDROP, and why it is one picture rather than one per pane. Main sends
+  'desktop.backdrop' {png, w, h, rect, ms} ONCE at start and again after a display change: a
+  capture of the WHOLE screen with the wallpaper only, downscaled 8x. desktop.js parks it on
+  <html> as --desktop-backdrop, and every .bdrop paints that same image at 100vw x 100vh with
+  background-attachment: fixed — so each copy is aligned to the viewport, and each pane shows
+  exactly the piece of wallpaper that is underneath it. The live window IS the display bounds, so
+  100vw/100vh is the captured rect 1:1 (in test mode the window is 960x540 and the picture is
+  stretched to fit it, which is a test-mode-only inaccuracy, not a live one).
+  Each .bdrop overhangs its pane by 14px on every side and the pane clips it: a 12px blur pulls
+  transparency in from the edges of whatever it is blurring, and that fringe would read as a pale
+  rim just inside the glass. The overhang puts the fringe outside the clip.
+  NO CSS backdrop-filter anywhere, for the same reason the bar has none: in a transparent Electron
+  window it samples this page and nothing else, so it costs GPU time and blurs nothing.
+  body.no-backdrop is the honest fallback — no picture has arrived yet, or main said it could not
+  take one — and thickens the tint to --lg-fill-fb so a pane is still a pane. The reason itself
+  goes in the "Needs attention" strip; nothing about the failure is silent.
+
+  NO ANIMATION AT ALL, unchanged and non-negotiable: no transitions, no keyframes, no gradients
+  that move. This window is on screen every waking hour; at rest it must cost nothing. The tint
+  tokens are static — there is no reveal here to interpolate.
+
+  NO text-shadow. The ink sits on light glass now and carries itself; a shadow under dark text on
+  a near-white pane reads as a printing fault. --lg-acc marks one thing only (Mission Control
+  being live); anything wrong is --lg-warn.
 */
-
-/* A soft haze along the bottom edge of the desktop layer. The bar's blur-behind frosts
-   whatever is under it, and under it is always this layer (the app-bar reservation keeps
-   windows above the bar), so with a dark wallpaper the bar had nothing to frost and read
-   as a flat strip (Owen, 2026-09-21). Static, one paint, no animation. */
-body::after {
-  content: '';
-  position: fixed;
-  left: 0; right: 0; bottom: 0;
-  height: 240px;
-  pointer-events: none;
-  background: linear-gradient(to top, var(--ion-glow), transparent 72%);
-}
 
 html, body {
   margin: 0;
   height: 100%;
-  background: transparent;        /* the wallpaper, in live mode */
+  background: transparent;        /* the wallpaper, in live mode. See the header. */
   overflow: hidden;
-  color: var(--fg);
-  font-family: var(--ui-font);
+  color: var(--lg-ink-2);
+  /* the bar's face, verbatim: same theme means the same type, not only the same glass */
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   cursor: default;
   user-select: none;
@@ -49,58 +77,101 @@ html, body {
   gap: 16px;
 }
 
-/*
-  A short window (test mode is 960x540; the live one is a whole screen) has to
-  show the same things, smaller. Nothing is dropped: the clock shrinks, the
-  Mission Control view shortens, and the strip becomes the part that scrolls --
-  with its item count in the heading, so a scrolled-off row is never a row that
-  silently was not there.
-*/
-@media (max-height: 760px) {
-  .cluster { top: 22px; left: 30px; gap: 11px; }
-  .clock { font-size: 48px; }
-  .date { margin-top: 3px; font-size: 13px; }
-  .tile, .strip { padding: 11px 13px 12px; }
-  .mc-frame { height: 132px; }
+/* --- the pane: the bar's glass, three layers ------------------------------ */
+
+.pane {
+  position: relative;
+  overflow: hidden;               /* the clip that hides .bdrop's 14px blur fringe */
+  border-radius: 16px;            /* the tile radius; inner controls use --lg-r */
+  padding: 14px 16px 15px;
+  /* the pane itself paints NOTHING but its drop shadow: the fill and the two hairlines are on
+     ::after, above the backdrop image. Northwind's shadow the right way up — these panes float on
+     the wallpaper the way the nav pill floats above the page. */
+  background: transparent;
+  box-shadow: var(--lg-shadow);
+  color: var(--lg-ink-2);
 }
+
+/* the wallpaper under this pane. One image for the whole screen (see the header): the pane does
+   not know where it is on screen, and with background-attachment: fixed it does not have to. */
+.pane > .bdrop {
+  position: absolute;
+  inset: -14px;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--desktop-backdrop, none);
+  background-size: 100vw 100vh;
+  background-position: 0 0;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  filter: blur(12px) saturate(150%);
+}
+
+/* THE TINT, and the only place the two hairlines live. background-clip: padding-box keeps the
+   fill strictly inside the 1px border — a fill under a translucent hairline doubles it and reads
+   as a 2px edge at the corners. */
+.pane::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border: 1px solid var(--lg-edge-out);
+  border-radius: inherit;
+  background-color: var(--lg-fill);
+  background-clip: padding-box;
+  box-shadow: var(--lg-lip-up);
+}
+
+/* nothing blurred underneath: the tint has to carry the pane on its own, so it thickens */
+body.no-backdrop .pane::after { background-color: var(--lg-fill-fb); }
+
+/* the content, above both layers */
+.pane > :not(.bdrop) { position: relative; z-index: 2; }
 
 /* --- the time ------------------------------------------------------------ */
 
-.time { padding-left: 2px; }
-
+/*
+  12-hour with seconds and a meridiem suffix (Owen, 2026-09-21: "i dont want it in military time
+  and i want the time to the second"). The parts are separate elements so a tick touches only the
+  text that changed. Nothing moves while it runs: tabular-nums fixes the digit advance, .ss
+  reserves its two digits, and the pane is a fixed-width block, so the seconds rolling can shift
+  nothing. The hour is unpadded, so the line does grow by one digit at 9:59:59 -> 10:00:00 — a
+  blank leading-zero slot to prevent that would look like a typo for the other 23 hours.
+*/
 .clock {
+  display: flex;
+  align-items: baseline;
+  /* the same family as the bar, on its Display optical size: Segoe UI Variable ships Text for
+     body sizes and Display for large type, and a 76px readout is exactly what Display is cut
+     for. Everything after the first name is the bar's stack, unchanged. */
+  font-family: 'Segoe UI Variable Display', 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   font-size: 76px;
   line-height: 1;
   font-weight: 300;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
-  /* A readable clock over an unknown wallpaper needs a shadow, not a glow:
-     it is legibility, not decoration. */
-  text-shadow: 0 2px 6px rgba(0, 0, 0, .55);
+  color: var(--lg-ink);
+}
+
+.clock .ss { min-width: 2ch; }
+
+.clock .mer {
+  margin-left: .16em;
+  font-size: .30em;               /* the suffix, not the readout */
+  font-weight: 500;
+  letter-spacing: .06em;
+  min-width: 2.4em;               /* its own em: AM and PM are not exactly the same width */
+  color: var(--lg-ink-2);
 }
 
 .date {
   margin-top: 6px;
   font-size: 14px;
-  color: var(--fg-2);
-  font-stretch: var(--readout-stretch);
-  text-shadow: 0 1px 4px rgba(0, 0, 0, .5);
+  color: var(--lg-ink-2);
 }
 
-/* --- tiles --------------------------------------------------------------- */
-
-.tile,
-.strip {
-  background: var(--glass);
-  border: 1px solid var(--edge);
-  border-radius: var(--bevel);
-  /* TL round, TR cut, BR round, BL cut: the container signature from the tokens.
-     Browsers without corner-shape simply get the rounded corners. */
-  corner-shape: round bevel round bevel;
-  padding: 14px 16px 15px;
-  backdrop-filter: blur(14px) saturate(120%);
-  box-shadow: 0 1px 0 var(--shade-in) inset, 0 2px 10px var(--shade-drop);
-}
+/* --- readouts ------------------------------------------------------------ */
 
 .tile-head {
   margin: 0 0 10px;
@@ -108,8 +179,7 @@ html, body {
   font-weight: 500;
   letter-spacing: .09em;
   text-transform: uppercase;
-  color: var(--fg-3);
-  font-stretch: var(--readout-stretch);
+  color: var(--lg-ink-3);
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -119,8 +189,10 @@ html, body {
   letter-spacing: 0;
   text-transform: none;
   font-size: 11px;
-  color: var(--fg-3);
+  color: var(--lg-ink-3);
 }
+/* the one accent on this layer: Mission Control is actually up and drawing */
+.head-note.live { color: var(--lg-acc); }
 
 .rows { margin: 0; }
 
@@ -132,26 +204,27 @@ html, body {
   padding: 4px 0;
 }
 
-.row + .row { border-top: 1px solid var(--edge); }
+.row + .row { border-top: 1px solid var(--lg-edge-out); }
 
 dt {
   font-size: 12px;
-  color: var(--fg-2);
-  font-stretch: var(--readout-stretch);
+  color: var(--lg-ink-2);
 }
 
 dd {
   margin: 0;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-  color: var(--fg);
+  color: var(--lg-ink);
 }
 
+/* a note is never decoration here — it is the sentence that says why a number is missing, so it
+   gets readable ink rather than the quiet --lg-ink-3 */
 .note {
   margin: 10px 0 0;
   font-size: 11.5px;
   line-height: 1.5;
-  color: var(--fg-3);
+  color: var(--lg-ink-2);
 }
 
 /* --- Mission Control ----------------------------------------------------- */
@@ -164,9 +237,9 @@ dd {
   width: 100%;
   height: 240px;
   overflow: hidden;
-  border-radius: 6px;
-  border: 1px solid var(--edge);
-  background: var(--ink-0);
+  border-radius: var(--lg-r);
+  border: 1px solid var(--lg-edge-out);
+  background: var(--lg-sunk);     /* a recess in the pane while the dashboard paints itself */
 }
 
 .mc-frame iframe {
@@ -183,31 +256,38 @@ dd {
 /* --- the state strip ----------------------------------------------------- */
 
 .strip {
-  /* Amber, because this is the one tile that means "look at me". It is a border
-     and a pip, never a glow: a lit rectangle would read as decoration. */
-  border-color: rgba(224, 160, 89, .38);
-  /* The strip is the one thing that can be arbitrarily long, so it is the one
-     thing that gives way in a short window. min-height:0 is what lets a flex
-     child shrink below its content at all. */
+  /* The one pane that means "look at me". It says so with the warn hairline, the warn heading and
+     a warn pip per row — never a glow: a lit rectangle reads as decoration. */
   min-height: 0;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
 }
 
-.strip::-webkit-scrollbar { width: 6px; }
-.strip::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
-.strip::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
-.strip::-webkit-scrollbar-track { background: transparent; }
+.strip::after { border-color: var(--lg-warn-soft); }
+.strip .tile-head { color: var(--lg-warn); }
 
+/*
+  The strip is the one thing that can be arbitrarily long, so it is the one thing that gives way in
+  a short window — but the SCROLL lives on the list, not on the pane. A scrolling pane would carry
+  its own .bdrop up with the content and the glass would slide off the wallpaper; this way the
+  backdrop and the heading (which holds the count) stay put and only the rows move.
+  min-height:0 is what lets a flex child shrink below its content at all.
+*/
 .strip-list {
   margin: 0;
   padding: 0;
   list-style: none;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+
+.strip-list::-webkit-scrollbar { width: 6px; }
+.strip-list::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 3px; }
+.strip-list::-webkit-scrollbar-thumb:hover { background: var(--lg-press); }
+.strip-list::-webkit-scrollbar-track { background: transparent; }
 
 .strip-list li {
   display: grid;
@@ -216,7 +296,7 @@ dd {
   align-items: start;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--fg-2);
+  color: var(--lg-ink-2);
 }
 
 .strip-list .pip {
@@ -224,19 +304,32 @@ dd {
   height: 6px;
   margin-top: 6px;
   border-radius: 50%;
-  background: var(--amber);
-  box-shadow: var(--pip-amber);
+  background: var(--lg-warn);
 }
 
 .strip-list b {
-  color: var(--fg);
+  color: var(--lg-ink);
   font-weight: 500;
-  font-stretch: var(--readout-stretch);
 }
 
-/* The one state that is not amber: the bridge itself being gone means this page
-   cannot ask anything at all, so it says so in the accent and stays put. */
-.fatal {
-  color: var(--fg);
-  border-color: var(--ion-line);
+/* The bridge being gone means this page cannot ask Mantle anything at all, so that one row is not
+   allowed to be quiet: full ink, not the secondary ramp. */
+.fatal .strip-list li { color: var(--lg-ink); }
+
+/* --- short windows -------------------------------------------------------
+  A short window (test mode is 960x540; the live one is a whole screen) has to show the same
+  things, smaller. Nothing is dropped: the clock shrinks, the Mission Control view shortens, and
+  the strip's list is the part that scrolls -- with its item count in the heading, so a
+  scrolled-off row is never a row that silently was not there.
+
+  THIS BLOCK LIVES LAST ON PURPOSE. A media query adds no specificity, so when it sat at the top
+  of the file (where it was until 2026-09-21) every rule in it lost to the identical selector
+  further down and the whole breakpoint was dead except .cluster. Anything added here must stay
+  below the rule it is overriding. */
+@media (max-height: 760px) {
+  .cluster { top: 22px; left: 30px; gap: 11px; }
+  .clock { font-size: 48px; }
+  .date { margin-top: 3px; font-size: 13px; }
+  .pane { padding: 11px 13px 12px; }
+  .mc-frame { height: 132px; }
 }

@@ -94,7 +94,7 @@
 
   /* The running dot sits over a blurred photograph of the desktop, so what is behind it can be
      light or dark from one minute to the next. A 1px white ring separates it from both. */
-  --lg-dot-ring: rgba(255,255,255,.7);
+  --lg-dot-ring: rgba(255,255,255,.7);   /* UNUSED since the dot became a line (which needs no ring); kept for any round pip a later surface adds */
 
   /* ---- warning ---------------------------------------------------------
      Mantle's --amber (#e0a059) is a dark-theme colour and sits at ~2:1 on white glass. This is
@@ -109,7 +109,7 @@
   --lg-r:      8px;
   --lg-r-pill: 24px;
   --lg-r-ctl:  6px;                          /* buttons, chips, icon cells */
-  --lg-r-pop:  14px;                         /* popovers */
+  --lg-r-pop:  16px;                         /* popovers: the quick-settings and calendar panels */
 
   /* ---- motion ----------------------------------------------------------
      Northwind's nav detach, verbatim: --dur-nav 560ms on --ease-nav cubic-bezier(.22,.68,.30,1)

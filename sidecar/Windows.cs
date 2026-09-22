@@ -103,8 +103,17 @@ namespace Mantle {
       Program.Emit(Json.Obj("ev", "windows", "list", list));
     }
 
+    /// Per-hwnd app identity (who really owns the window, its AUMID, its exe).
+    /// CACHED because none of it changes while the window lives, and the list
+    /// is rebuilt ten times a second: resolving a UWP frame means enumerating
+    /// child windows, opening a process and asking the property system, which
+    /// is far too much to pay per tick. The dictionary is rebuilt from the
+    /// windows actually seen, so closed windows drop out on their own.
+    static Dictionary<string, Apps.WinApp> _appCache = new Dictionary<string, Apps.WinApp>(StringComparer.Ordinal);
+
     public static List<object> Build() {
       var found = new List<object>();
+      var seen = new Dictionary<string, Apps.WinApp>(StringComparer.Ordinal);
       int ownPid = Program.OwnPid;
       int parentPid = Program.ParentPid;
 
@@ -132,15 +141,36 @@ namespace Mantle {
           if (pid == ownPid) return true;
           if (parentPid > 0 && pid == parentPid) return true;   // never list the shell's own UI
 
-          string exe = Win32.GetProcessPath(pid);
+          // The app behind the window. For a UWP app this is NOT the window's
+          // own process: ApplicationFrameWindow is an empty shell owned by
+          // ApplicationFrameHost.exe, and every UWP app on the machine would
+          // otherwise report the same exe and group into one bogus pile.
+          string key = hwnd.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + pid;
+          Apps.WinApp app;
+          if (!_appCache.TryGetValue(key, out app)) app = Apps.ForWindow(hwnd, cls, pid);
+          seen[key] = app;
+
+          string exe = app.Exe;
+          // A packaged app's icon comes from its PACKAGE, not from its exe
+          // (which usually has none), and is cached by AUMID.
+          string icon = null;
+          if (app.Aumid != null && (app.Host == "frame" || Apps.IsPackagedPath(exe)))
+            icon = Apps.IconFor(app.Aumid);
+          if (icon == null && exe.Length > 0) icon = Icons.ForPath(exe);
+
           found.Add(Json.Obj(
             "hwnd", hwnd.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture),
             "title", title,
             "exe", exe,
-            "pid", pid,
+            "pid", app.Pid,
+            // The identity a pin can be matched against: an exe path cannot
+            // group Discord (Update.exe pinned, Discord.exe running), Edge, or
+            // anything from the Store. An AUMID can.
+            "aumid", app.Aumid,
+            "host", app.Host,
             "minimized", Win32.IsIconic(hwnd),
             "foreground", hwnd == Win32.GetForegroundWindow(),
-            "icon", exe.Length > 0 ? Icons.ForPath(exe) : null));
+            "icon", icon));
         } catch (Exception ex2) {
           // One bad window must never truncate the list.
           Program.EmitLog("warn", "skipped a window while listing: " + ex2.Message);
@@ -149,6 +179,7 @@ namespace Mantle {
       };
       Win32.EnumWindows(cb, IntPtr.Zero);
       GC.KeepAlive(cb);   // the delegate must outlive the unmanaged call
+      _appCache = seen;   // windows that have closed drop out of the cache here
       return found;
     }
 

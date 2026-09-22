@@ -1,28 +1,61 @@
 /* launcher.css — the pane that replaces the Start menu.
  *
- * Rules this file is built under, so a later edit does not quietly break them:
- *  - Every colour comes from ../shared/tokens.css. No hex, no rgba() here.
- *  - Nothing animates at rest. The launcher appearing and disappearing is
- *    Electron show/hide, not a CSS transition, so idle CPU is zero: there is
- *    no transform, no filter animation, no looping keyframe in this file.
- *  - Hover feedback is stepped and short (<=150ms) so it reads as a switch
- *    rather than a fade, and never produces a long tail of compositing work.
- *  - Accent (--ion) appears in exactly two places: the selected row's left bar
- *    and the focused input's underline. Everything else is grey glass and
- *    1px hairlines. Glow is not a decoration here.
+ * THE THEME IS THE TASKBAR'S (Owen, 2026-09-21): "everything that we build for this wrapper,
+ * their UI needs to be this exact same theme as the taskbar". So this file is ui/bar/bar.css's
+ * material, rule for rule: Northwind's light frosted glass, every colour resolved through --lg-*
+ * from ../shared/glass-light.css, and the bar's own typeface and 12.5px base — "the exact same
+ * theme" includes the face. tokens.css is still linked first (as it is on the bar) and still owns
+ * Mantle's dark instrument palette for the surfaces that have not moved yet, but this file now
+ * takes NOTHING from it at all. There is not one colour literal below.
+ *
+ * THE MATERIAL STACK, which the whole file depends on, and which is the bar's:
+ *   .bdrop (z0)    a PNG of the screen behind this window, blurred here in CSS
+ *   .panel::after  (z1) the tint + the outer hairline + the inner white lip
+ *   the content    (z2) slot, results, footer, notice
+ * The tint CANNOT be .panel's own background-color: a child <img> paints above its parent's
+ * background, so the fill has to live on a pseudo-element above the image. NO CSS
+ * backdrop-filter anywhere — in a transparent Electron window it samples this page and nothing
+ * else, so it would cost GPU time and blur nothing — and no DWM mode either: acrylic renders a
+ * near-opaque white slab and blur-behind over a dark desktop a black one. Main photographs what
+ * is behind this window instead, and launcher.js swaps the <img> src.
+ *
+ * The rest of the rules, so a later edit does not quietly break them:
+ *  - Colour ONLY through var(--lg-…). No hex, no rgb(), no rgba(), no hsl() here.
+ *  - The fill is --lg-fill (.45) while a backdrop is showing and --lg-fill-fb (.62) when there is
+ *    none (body.no-backdrop) — an honest fallback, not a guess: with nothing blurred underneath
+ *    the tint has to carry the pane alone.
+ *  - NO text-shadow. On light glass the ink carries itself.
+ *  - Nothing animates at rest. There is exactly ONE animation in this file: the ENTER, run when
+ *    the window becomes visible (main hides it instantly, so there is no exit). No keyframes, no
+ *    loops, no filter animation. Hover/selection changes are stepped and short (<=150ms), so
+ *    they read as a switch rather than a fade.
+ *  - --lg-acc appears in exactly two places, as it always has: the selected row's left bar and
+ *    the focused input's underline. Warnings are --lg-warn (burnt orange) — the dark theme's
+ *    --amber sits at ~2:1 on this pane.
  */
+
+:root {
+  --panel-r: 20px;    /* a big panel: not the bar's 24px island pill, not a control's 8px */
+  --in: 320ms;        /* the enter, on Northwind's curve. Main shows the window and this runs once. */
+}
 
 * { box-sizing: border-box; }
 
 html, body {
   height: 100%;
   margin: 0;
-  /* transparent: the Electron window is transparent, so the desktop (or
-     whatever is behind the launcher) shows around the panel's shadow */
+  /* transparent: the Electron window is transparent, so the desktop (or whatever is behind the
+     launcher) shows around the panel's shadow. Anything painted here would be a rectangle of fog. */
   background: transparent;
   overflow: hidden;
-  font-family: var(--ui-font);
-  color: var(--fg);
+  /* the BAR's face, not Mantle's dark-theme Bahnschrift: "exact same theme as the taskbar"
+     includes the type. Segoe UI Variable is the Windows 11 face; system-ui keeps it sane
+     anywhere else. 12.5px and antialiased are the bar's, so the two surfaces set text the same
+     way; only the search field steps up, because it is the thing being typed into. */
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px;
+  -webkit-font-smoothing: antialiased;
+  color: var(--lg-ink-2);
   /* the launcher is a keyboard surface; a stray text selection from a
      double-click only ever looks like a glitch */
   user-select: none;
@@ -37,72 +70,105 @@ html, body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  border-radius: var(--panel-r);
+  overflow: hidden;                 /* clips the backdrop image and the rows to the radius */
 
-  /* Real glass: the window has a DWM blur-behind, so the fill must let the
-     desktop through instead of sealing it off with --panel-bg at .96.
-     The stack, bottom layer last as CSS writes it:
-       --pane-glass-strong  the translucent pane tint (.74)
-       --shade-in x3        three black washes. WHY three: the tint alone
-                            leaves 21% of the desktop showing, and a pale
-                            wallpaper then drags --fg-3 and --amber to 3.7:1.
-                            Each wash costs a little transparency and buys
-                            contrast; three lands at 13.3% showing through with
-                            --fg-3 at 4.70:1 and --amber at 4.81:1 against a
-                            WHITE backdrop, the worst case there is. DWM's blur
-                            behind the window does the rest of the work.
-       --sheen              the diagonal reflection every Mantle pane carries. */
-  background:
-    var(--sheen),
-    /* no wash: Owen saw the heavier fills live and asked for "way more" transparency.
-       The launcher is an ACTIVE window when shown, so DWM's blur behind it is real. */
-    var(--pane-glass-mid, var(--acrylic-bg));
+  /* the fill, handed to the tint layer below. .45 over a real blur; the thicker fallback when
+     there is nothing blurred under it. */
+  --pane-fill: var(--lg-fill);
 
-  border: 1px solid var(--edge);    /* the plain 1px hairline, not a lit rim */
-  border-radius: var(--bevel-lg);
-  box-shadow: 0 10px 30px var(--shade-drop);
-  overflow: hidden;                 /* clips the highlight below to the radius */
+  /* .panel itself paints NOTHING but the drop shadow: a background-color here would be buried
+     under the backdrop <img>. The shadow is Northwind's own stack, the way up: this panel floats
+     above the desktop exactly like the nav pill floats above the page. */
+  background: transparent;
+  box-shadow: var(--lg-shadow);
+
+  /* THE ENTER. The panel starts down, small and clear; body.up (set on visibilitychange) is the
+     whole animation. The paint tokens ride along on the same curve, as the bar's do. */
+  opacity: 0;
+  transform: translateY(10px) scale(.985);
+  transition:
+    opacity    var(--in) var(--lg-ease),
+    transform  var(--in) var(--lg-ease),
+    box-shadow var(--in) var(--lg-ease);
 }
+body.up .panel { opacity: 1; transform: translateY(0) scale(1); }
 
-/* the cut top edge catching light: 1px of --specular INSIDE the hairline.
-   Static, no glow — a lit edge, not a neon rim. */
-.panel::before {
+/* No backdrop has arrived yet, or it was just cleared: the tint goes up to the fallback fill. */
+body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
+
+/* THE TINT, and the only place the two hairlines live. It sits inside the same radius, so the 1px
+   border is drawn once, on top of the blurred backdrop, with background-clip:padding-box keeping
+   the fill strictly inside it — a fill under a translucent hairline would double it and read as a
+   2px edge at the corners. The lip is the white catch of light just inside the top edge. */
+.panel::after {
   content: "";
   position: absolute;
-  left: 0; right: 0; top: 0;
-  height: 1px;
-  background: var(--specular);
+  inset: 0;
+  z-index: 1;
   pointer-events: none;
+  border: 1px solid var(--lg-edge-out);
+  border-radius: inherit;
+  background-color: var(--pane-fill);
+  background-clip: padding-box;
+  box-shadow: var(--lg-lip-up);
+  transition: background-color var(--in) var(--lg-ease);
 }
+
+/* ---- the backdrop ------------------------------------------------------
+   .bdrop is the clip; the image inside it is deliberately 14px LARGER on every side than the box,
+   because a 12px blur pulls transparency in from an image's own edges and that fringe would show
+   as a pale rim all round the glass. The overscan puts the fringe outside the clip. translateZ(0)
+   keeps the blur on one composited layer, so a src swap repaints that layer and touches no
+   layout — which is the whole per-frame cost of this at 4 fps. */
+.bdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms var(--lg-ease);
+}
+.bdrop.on { opacity: 1; }
+.bdrop img {
+  position: absolute;
+  left: -14px;
+  top: -14px;
+  width: calc(100% + 28px);
+  height: calc(100% + 28px);
+  display: block;
+  object-fit: fill;              /* the frame is a downscale of this window's rect: stretch it back */
+  filter: blur(12px) saturate(150%);
+  transform: translateZ(0);
+}
+
+/* the content sits above both layers */
+.slot, .results, .foot, .notice { position: relative; z-index: 2; }
 
 /* ---- the input --------------------------------------------------------- */
 
 .slot {
   flex: none;
-  position: relative;
   padding: 0 16px;
   height: 58px;
   display: flex;
   align-items: center;
-  /* the one lit surface: where you type. --glass-2 sits on its own --shade-in
-     wash, so lightening this band does not hand back the contrast the panel
-     just bought — the input still reads as raised, and 18px text over it
-     measures 9.6:1 on a white desktop. */
-  background:
-    linear-gradient(var(--glass-2), var(--glass-2)),
-    var(--shade-in);
-  border-bottom: 1px solid var(--edge);
+  /* no fill: on light glass a lighter band is invisible, and a darker one would put the row of
+     18px text into a recess it does not need. The hairline is the whole separation. */
+  border-bottom: 1px solid var(--lg-edge-out);
 }
 
-/* The focused underline: one hairline of accent, drawn over the divider so the
-   pane does not change height when focus arrives. :focus-within rather than a
-   class the script toggles — the input's focus is the whole truth here, and a
-   CSS-only rule cannot drift out of step with it. */
+/* The focused underline: one hairline of accent, drawn over the divider so the pane does not
+   change height when focus arrives. :focus-within rather than a class the script toggles — the
+   input's focus is the whole truth here, and a CSS-only rule cannot drift out of step with it. */
 .slot::after {
   content: "";
   position: absolute;
   left: 0; right: 0; bottom: -1px;
   height: 1px;
-  background: var(--ion);
+  background: var(--lg-acc);
   opacity: 0;
 }
 .slot:focus-within::after { opacity: 1; }
@@ -112,16 +178,15 @@ html, body {
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--fg);
+  color: var(--lg-ink);
   font-family: inherit;
-  font-size: 18px;
-  font-stretch: var(--readout-stretch);
+  font-size: 15px;                  /* one step up from the 12.5px base: the line you type in */
   line-height: 1.2;
   padding: 0;
   user-select: text;
   cursor: text;
 }
-#q::placeholder { color: var(--placeholder); }
+#q::placeholder { color: var(--lg-ink-3); }
 
 /* ---- results ----------------------------------------------------------- */
 
@@ -132,18 +197,21 @@ html, body {
   overscroll-behavior: contain;
   padding: 6px;
   outline: 0;
+  /* ink at low alpha, never white: a white thumb on a white-tinted pane is invisible */
   scrollbar-width: thin;
-  scrollbar-color: var(--scroll-thumb) transparent;
+  scrollbar-color: var(--lg-press) transparent;
 }
 .results::-webkit-scrollbar { width: 8px; }
 .results::-webkit-scrollbar-thumb {
-  background: var(--scroll-thumb);
+  background: var(--lg-tile);
   border-radius: 4px;
 }
-.results::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+.results::-webkit-scrollbar-thumb:hover { background: var(--lg-press); }
 
+/* the rows are the bar's cells: ink washes at low alpha for hover and press, and the same wash
+   one step stronger for the row Enter would fire */
 .row {
-  border-radius: var(--radius-ctl);
+  border-radius: var(--lg-r);
   /* stepped, short: a switch, not a fade */
   transition: background-color 120ms steps(2, end);
 }
@@ -158,14 +226,12 @@ html, body {
   padding: 0 12px 0 10px;
 }
 
-/* the selected row: the same lit-surface recipe as the input slot, and for the
-   same reason — the subtitle and the failure line that sit on it are --fg-3
-   and --amber, the two colours a pale wallpaper threatens first */
-.row.is-sel {
-  background:
-    linear-gradient(var(--glass-2), var(--glass-2)),
-    var(--shade-in);
-}
+/* the selected row: --lg-tile, the strongest of the three washes, so the keyboard's position is
+   readable at a glance over anything the blur happens to be showing */
+.row.is-sel { background: var(--lg-tile); }
+/* AFTER .is-sel on purpose: the two have the same specificity, so source order is what decides
+   whether a press reads on the row the keyboard is already on. It has to. */
+.row:active { background: var(--lg-press); }
 
 /* the 2px accent bar on the selected row */
 .row.is-sel .row-main::before {
@@ -174,20 +240,21 @@ html, body {
   left: 0; top: 7px; bottom: 7px;
   width: 2px;
   border-radius: 1px;
-  background: var(--ion);
+  background: var(--lg-acc);
 }
 
-/* the icon cell: a real 32px bitmap when the sidecar gave us one, otherwise a
-   letter tile (apps) or a drawn glyph (command / setting / url) */
+/* the icon cell: a real 32px bitmap when the sidecar gave us one, otherwise a letter tile (apps)
+   or a drawn glyph (command / setting / url). --lg-sunk rather than the bar's --lg-tile because
+   here the tile can land ON a selected row, and two equal washes would merge into one square. */
 .ico {
   flex: none;
   width: 28px; height: 28px;
-  border-radius: 6px;
-  background: var(--glass-2);
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--fg-2);
+  color: var(--lg-ink-2);
   font-size: 13px;
   font-weight: 600;
   overflow: hidden;
@@ -200,7 +267,7 @@ html, body {
   flex: 1 1 auto;
   min-width: 0;
   font-size: 14px;
-  color: var(--fg);
+  color: var(--lg-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -210,7 +277,7 @@ html, body {
   flex: 0 1 auto;
   max-width: 44%;
   font-size: 12.5px;
-  color: var(--fg-3);
+  color: var(--lg-ink-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -223,27 +290,27 @@ html, body {
   padding: 0 12px 9px 50px;
   font-size: 12px;
   line-height: 1.35;
-  color: var(--amber);
+  color: var(--lg-warn);
 }
-.why.is-ok { color: var(--fg-2); }
+.why.is-ok { color: var(--lg-ink-2); }
 
 .empty {
   padding: 16px 12px;
   font-size: 13px;
-  color: var(--fg-3);
+  color: var(--lg-ink-3);
 }
-.empty.is-bad { color: var(--amber); }
+.empty.is-bad { color: var(--lg-warn); }
 
 /* ---- footer ------------------------------------------------------------ */
 
 .foot {
   flex: none;
-  border-top: 1px solid var(--edge);
+  border-top: 1px solid var(--lg-edge-out);
   padding: 7px 14px 8px;
   font-size: 12px;
-  color: var(--fg-3);
-  /* no fill: --glass-thin would lighten exactly the band that carries the
-     amber source errors, and the hairline already separates the footer */
+  color: var(--lg-ink-3);
+  /* no fill: the hairline already separates the footer, and a wash under the warn-coloured source
+     errors would only take contrast away from them */
 }
 .foot-row {
   display: flex;
@@ -256,29 +323,31 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.counts { font-stretch: var(--readout-stretch); }
+/* --readout-stretch went with Bahnschrift: Segoe UI Variable has no width axis, so asking for
+   87.5% here would only invite a synthesised condense. */
+.counts { font-variant-numeric: tabular-nums; }
 
 .src-errors:not(:empty) { margin-bottom: 5px; }
 .src-error {
-  color: var(--amber);
+  color: var(--lg-warn);
   line-height: 1.35;
 }
-.src-note { color: var(--fg-3); line-height: 1.35; }   /* a source that works but has something to say */
+.src-note { color: var(--lg-ink-3); line-height: 1.35; }   /* a source that works but has something to say */
 
 /* ---- the sidecar notice ------------------------------------------------ */
 
 .notice {
   flex: none;
-  border-top: 1px solid var(--edge);
+  border-top: 1px solid var(--lg-edge-out);
   padding: 7px 14px 8px;
   font-size: 12px;
   line-height: 1.35;
-  color: var(--amber);              /* unfilled, for the same reason as .foot */
+  color: var(--lg-warn);            /* unfilled, for the same reason as .foot */
 }
 .notice[hidden] { display: none; }
 
 /* A pointer is optional here, but when there is one, hovering picks the row.
    Kept inside a hover query so a touch device never gets a stuck hover. */
 @media (hover: hover) {
-  .row:not(.is-sel):hover { background: var(--glass); }
+  .row:not(.is-sel):hover { background: var(--lg-hover); }
 }

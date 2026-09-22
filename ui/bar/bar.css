@@ -26,7 +26,8 @@
  *    parent's background — that is why the fill lives on a pseudo-element.
  *  - NO text-shadow. On light glass the ink carries itself; a shadow under dark text on a
  *    near-white pane just reads as a printing fault.
- *  - Nothing moves at rest. The reveal is paint only (main moves the window); hover/active
+ *  - Nothing moves at rest. The reveal IS animated here (transform + width on .bar, on the Northwind
+ *    curve) but only ever as a state change; between states nothing is running. Hover/active
  *    transitions are steps(2): two discrete paints, not an eight-frame ramp.
  *  - --lg-acc marks the active window and focus, nowhere else.
  */
@@ -37,6 +38,10 @@
   --cell-icon: 24px;     /* the icon inside it (was 32; 24 dip = the Windows taskbar's own icon size) */
   --cell-gap: 6px;
   --gap: 4px;
+  /* the transparent strip main leaves under the pill: the window is 48 + 14 dip tall, its bottom
+     edge IS the screen edge, and this is both the gap below the island and the extra distance the
+     pill has to travel to be fully out of sight. */
+  --lift: 14px;
 }
 
 * { box-sizing: border-box; }
@@ -67,13 +72,19 @@ body {
 body[data-edge="top"] { justify-content: flex-start; }
 
 /* ---------------------------------------------------------------- the bar itself
-   THE DIVISION OF LABOUR, and the reason there is no transform below: MAIN animates the WINDOW
-   (in edge mode it slides it up from under the screen; in pill mode it also grows its width and
-   rounds its corners with a Win32 region). This page animates PAINT ONLY — fill, border, shadow,
-   ink, opacity — over the same duration and the same curve, so the two halves read as one object
-   detaching. Anything here that animated width, padding or transform would fight the window and
-   lag it, so nothing does; the page is resized every frame during the morph and every box below
-   is laid out to follow that resize instantly.
+   THE DIVISION OF LABOUR, rewritten 2026-09-21 after Owen: "when the taskbar expands out it isn't
+   that smooth, can you make it expand out smoother". It used to be main's job: the sidecar
+   resized the WINDOW every frame for 560ms and the page relaid out inside it every one of those
+   frames. That is what wasn't smooth.
+
+   Now the window is shown ONCE, already at its final rect, and never moves for a reveal. THE PAGE
+   ANIMATES THE PILL: transform + width on one element, on the Northwind curve, with the paint
+   transitions (fill, edges, ink, --pane-on) running alongside exactly as before. The window is 14
+   dip taller than the pill — the pill on top, a transparent strip below it — so its bottom edge
+   is the screen edge and the pill has somewhere to rise FROM.
+
+   "Nothing moves at rest" still holds, and is still the rule: every transition below runs on a
+   state change (a reveal, a hide, a hover) and nothing is animating in between.
 
    The state lives in a token pair, exactly the way Northwind's .nav / .nav.is-detached does it: one
    element, two sets of values, everything interpolating between them. Nothing is swapped. */
@@ -93,19 +104,40 @@ body[data-edge="top"] { justify-content: flex-start; }
   --pane-drop: var(--lg-drop-up-0);
   --pane-ink:  var(--lg-ink-0);
   --pane-on:   0;                 /* the content's opacity */
+  /* ...and the DOWN geometry: fully below the window's bottom edge (the pill's 48 + the 14 dip
+     strip under it), narrowed to 62%. This is the resting state, so it is also the first frame
+     the window ever shows — before 'bar.reveal' arrives there must be nothing on screen. */
+  --pane-y: calc(var(--bar-h) + var(--lift));
+  --pane-w: 62%;
 
   /* .bar itself paints NOTHING but the drop shadow: the fill and the hairlines are on ::after,
      above the backdrop image. A background-color here would be buried under that image. */
   background: transparent;
   box-shadow: var(--pane-drop);
   color: var(--pane-ink);
+  transform: translateY(var(--pane-y));
 
-  /* Paint only. border-radius is NOT here on purpose: main rounds the window itself, so the CSS
-     radius has to match the window on the very frame the mode changes, not ease toward it. */
+  /* border-radius is deliberately absent: the mode classes set it, and it must be right on the
+     frame the mode arrives, not eased toward. Width IS animated — it is one element, the same
+     thing Northwind's nav does when it detaches, and the content inside is laid out by flex rather
+     than scaled, so nothing in it distorts. */
   transition:
+    transform  var(--lg-dur, 560ms) var(--lg-ease),
+    width      var(--lg-dur, 560ms) var(--lg-ease),
     box-shadow var(--lg-dur, 560ms) var(--lg-ease),
     color      var(--lg-dur, 560ms) var(--lg-ease);
 }
+
+/* PILL MODE geometry: a 48 dip island centred in the window with the 14 dip transparent strip
+   below it, which is the room the pill rises through. body's flex-end does the vertical part. */
+body.pill .bar {
+  width: var(--pane-w);
+  max-width: 100%;
+  margin: 0 auto var(--lift);
+}
+/* EDGE MODE: the same rise, no width change — it is docked, so it is always full width, and it
+   sits on the window's bottom edge, so it only has its own height to fall through. */
+body.edge .bar { width: 100%; margin: 0; --pane-w: 100%; --pane-y: var(--bar-h); }
 
 /* THE TINT, and the only place the two hairlines live. It sits inside the same radius, so the
    1px border is drawn once, on top of the blurred backdrop, with background-clip:padding-box
@@ -136,6 +168,11 @@ body.up .bar {
   --pane-drop: var(--lg-drop-up);
   --pane-ink:  var(--lg-ink-2);
   --pane-on:   1;
+  /* in place, and full width. This block MUST stay after the two mode rules above: they set the
+     down geometry and this one overrides it at the same specificity, so source order is what
+     decides. */
+  --pane-y: 0px;
+  --pane-w: 100%;
 }
 /* No backdrop has arrived yet (or it was just cleared): there is nothing blurred under the tint,
    so the tint has to carry the pane on its own and goes up to the fallback fill. */
@@ -245,7 +282,10 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
   left: 50%;
   top: 0;
   height: 100%;
-  transform: translateX(-50%);
+  /* centred on the bar, then slid by --dock-shift when the centred row would run under a cluster
+     — Windows 11's behaviour, and the reason every pin stays visible instead of being clipped.
+     JS sets the shift; it is never transitioned, so it cannot lag a resize. */
+  transform: translateX(calc(-50% + var(--dock-shift, 0px)));
   display: flex;
   align-items: center;
   gap: var(--cell-gap);
@@ -285,8 +325,8 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
   display: grid;
   place-items: center;
   overflow: hidden;
-  border-radius: 7px;
-  font-size: 13px;
+  border-radius: 6px;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: .02em;
   color: var(--lg-ink);
@@ -299,20 +339,23 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
    tooltip — an unexplained blank square is exactly the silent failure we refuse) */
 .cell .ico.tile { background: var(--lg-tile); }
 
-/* the running dot: always laid out (so icons never jump when an app opens), only painted when
-   the item has windows. The accent when one of them is the active window, ink otherwise. */
-.cell .dot {
-  flex: 0 0 4px;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
+/* THE RUNNING INDICATOR, Windows 11's: a short rounded line under the icon, not a dot. 6x3 in ink
+   while the app merely has windows, growing to 16x3 in the accent when one of them is the active
+   window — the same language Windows uses, so Owen reads it without learning anything. It is laid
+   out for EVERY cell (hidden, not absent) so an icon never shifts when an app opens, and it
+   carries no ring: the line is long enough to read on its own over the blurred backdrop.
+   The cell is a column box, so `flex` here is the HEIGHT and `width` is free to animate. */
+.cell .ind {
+  flex: 0 0 3px;
+  width: 6px;
+  height: 3px;
+  border-radius: 2px;
   background: var(--lg-ink-2);
-  /* the ring is a box-shadow, not a border: it must not change the 4px the layout reserves */
-  box-shadow: 0 0 0 1px var(--lg-dot-ring);
   visibility: hidden;
+  transition: width 150ms steps(2), background-color 150ms steps(2);
 }
-.cell.run .dot { visibility: visible; }
-.cell.act .dot { background: var(--lg-acc); }
+.cell.run .ind { visibility: visible; }
+.cell.act .ind { width: 16px; background: var(--lg-acc); }
 
 /* the hairline between pinned apps and apps that are merely running */
 .dock .div {
@@ -363,6 +406,12 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
   box-shadow: inset 0 0 0 1px var(--lg-edge-out);
 }
 .chip.wide { max-width: 300px; }
+/* PILL MODE: chips shrink to their pips, the whole strip capped at 56px. A chip is the bar
+   talking about a problem, and in the island it was stealing the room the icons needed to be
+   visible at all — the reasons are all still there, in the tooltip, where they were anyway. */
+body.pill .chips { max-width: 56px; overflow: hidden; }
+body.pill .chip { max-width: none; padding: 0 6px; gap: 0; }
+body.pill .chip .lbl { display: none; }
 /* the label is its own element so ellipsis works: text-overflow does not apply to a flex box's
    own anonymous text runs, and a long "bridge missing: …" would otherwise be hard-clipped */
 .chip .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -386,7 +435,16 @@ button.chip:hover { background: var(--lg-press); }
   min-width: 62px;
   font-variant-numeric: tabular-nums;
 }
-.clock .t { font-size: 13px; color: var(--lg-ink); }
+/* The time ticks every second while the bar is up, so its box is sized for the LONGEST string it
+   can ever hold ("10:00:00 PM"); with tabular figures on top of that, 9:59:59 → 10:00:00 swaps a
+   text node and moves nothing else in the cluster. */
+.clock .t {
+  font-size: 13px;
+  color: var(--lg-ink);
+  font-variant-numeric: tabular-nums;
+  min-width: 80px;
+  text-align: right;
+}
 .clock .d { font-size: 12.5px; color: var(--lg-ink-2); }
 
 .battery .pct { font-size: 12.5px; font-variant-numeric: tabular-nums; }
@@ -448,8 +506,28 @@ body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
 /* a window row inside the per-app popover: the title takes the room, the close button is a
    fixed-width glyph at the end */
 .pop .wrow { display: flex; align-items: center; gap: 6px; }
-.pop .wrow .item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* every row is padded for the accent bar, so titles do not shift when the active window changes */
+.pop .wrow .item {
+  position: relative;
+  min-width: 0;
+  padding-left: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* the active window: the same accent mark the icon's indicator uses, stood on end */
 .pop .wrow .item.on { color: var(--lg-acc); }
+.pop .wrow .item.on::before {
+  content: '';
+  position: absolute;
+  left: 5px; top: 50%;
+  width: 3px; height: 14px;
+  margin-top: -7px;
+  border-radius: 2px;
+  background: var(--lg-acc);
+}
+/* minimized: present, but asleep — and the tooltip says the word */
+.pop .wrow .item.min { color: var(--lg-ink-3); }
 .pop .x {
   flex: 0 0 26px;
   height: 26px;
@@ -469,3 +547,175 @@ body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
 body.pill .chip .lbl { display: none; }
 body.pill .chip { padding: 0 5px; }
 .chips { max-width: 30%; min-width: 0; overflow: hidden; }
+
+/* ---------------------------------------------------------------- quick settings
+
+   Windows 11's panel, on Mantle's glass: a 2x2 grid of tiles, two sliders, a footer. An ON tile
+   is filled with the accent and its ink flips to the pane colour, which is what Windows does and
+   the one place a solid accent block is allowed. A part the shell cannot read or switch renders
+   .dead — muted, not blank — with its reason in the tooltip and again as a note line, because a
+   greyed control that never says why is the silent failure this shell refuses. */
+.pop.qs, .pop.cal { min-width: 268px; }
+
+.qsgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.qstile {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 0 8px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-tile);
+  color: var(--lg-ink);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.qstile:hover { background: var(--lg-hover); }
+.qstile:active { background: var(--lg-press); }
+.qstile:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.qsico { grid-row: 1 / 3; display: grid; place-items: center; }
+.qslbl { font-size: 12.5px; line-height: 1.1; }
+.qssub {
+  font-size: 12.5px;
+  line-height: 1.2;
+  color: var(--lg-ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ON: the accent block, with the pane's own white as the ink on top of it */
+.qstile.on { background: var(--lg-acc); color: var(--lg-acc-on); }
+.qstile.on .qssub { color: var(--lg-acc-on); opacity: .82; }
+.qstile.on:hover { background: var(--lg-acc); }
+/* DEAD: readable, obviously inert, and the reason is one hover away */
+.qstile.dead { background: var(--lg-sunk); color: var(--lg-ink-3); }
+.qstile.dead .qsico { opacity: .55; }
+.qstile.dead:hover { background: var(--lg-sunk); }
+/* PENDING: in flight, waiting for the reply that decides the real state */
+.qstile.pending { opacity: .6; }
+
+.qsrow { margin-bottom: 9px; }
+.qsrow.dead { opacity: .55; }
+.qsrowhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  color: var(--lg-ink-2);
+}
+.qsval { color: var(--lg-ink-3); font-variant-numeric: tabular-nums; }
+.qsline { display: flex; align-items: center; gap: 8px; }
+.qsline input[type="range"] { flex: 1 1 auto; width: 100%; accent-color: var(--lg-acc); background: transparent; }
+.qsmute {
+  flex: 0 0 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-tile);
+  color: var(--lg-ink);
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.qsmute:hover { background: var(--lg-hover); }
+.qsmute.on { background: var(--lg-acc); color: var(--lg-acc-on); }
+.qsmute.pending { opacity: .6; }
+
+.qsnotes:empty { display: none; }
+.qsnotes .note { margin-top: 0; padding-top: 6px; border-top: 0; }
+.qsnotes .note + .note { padding-top: 2px; }
+
+.qsfoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--lg-edge-out);
+}
+.qspower { flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: var(--lg-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qsacts { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+.qslink {
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 7px;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.qslink:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.qsgear {
+  flex: 0 0 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-2);
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.qsgear:hover { background: var(--lg-hover); color: var(--lg-ink); }
+
+/* ---------------------------------------------------------------- the calendar */
+.calhead { margin-bottom: 8px; }
+.calhead .big { font-size: 15px; color: var(--lg-ink); font-variant-numeric: tabular-nums; }
+.calhead .sub { color: var(--lg-ink-2); margin-top: 2px; }
+
+.calnav { display: flex; align-items: center; gap: 2px; margin-bottom: 6px; }
+.caltitle { flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: var(--lg-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calbtn {
+  flex: 0 0 auto;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.calbtn:hover { background: var(--lg-hover); color: var(--lg-ink); }
+
+.calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+.caldow { margin-bottom: 2px; }
+.caldowc { text-align: center; font-size: 12.5px; color: var(--lg-ink-3); padding: 2px 0; }
+.calday {
+  display: grid;
+  place-items: center;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 12.5px;
+  color: var(--lg-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.calday.other { color: var(--lg-ink-3); opacity: .7; }
+/* today is RINGED, not filled: a filled accent circle in a month grid reads as a selection, and
+   nothing in this calendar is selectable yet */
+.calday.today { color: var(--lg-acc); box-shadow: inset 0 0 0 1px var(--lg-acc); }
+
+.calfoot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--lg-edge-out);
+}

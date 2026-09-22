@@ -18,7 +18,9 @@
  *   ?reveal=0     never send the fake 'bar.reveal', so the flush (hidden) state can be inspected
  *   ?mode=pill    reveal as the floating pill (24px, bordered all round); ?mode=edge is the default
  *   ?hideAt=1800  send 'bar.hide' that many ms after load, to watch the fade out
- *   ?apps=N       N pinned items instead of 8 (proves the centred row and the clipping report)
+ *   ?apps=N       N pinned items instead of 12 (proves the centred row, the slide and the clip)
+ *   ?qs=fail      Bluetooth and brightness come back ok:false, so the panel's muted-with-a-reason
+ *                 path is on screen instead of having to be imagined
  *   ?state=down   sidecar reported down, so the amber status chip is on screen
  *   ?edge=top     pretend the bar is docked at the top (bar.js also honours this)
  */
@@ -32,7 +34,10 @@
   var REVEAL = q.get('reveal') !== '0';
   var MODE = q.get('mode') === 'pill' ? 'pill' : 'edge';
   var HIDE_AT = parseInt(q.get('hideAt'), 10) || 0;
-  var PIN_COUNT = q.get('apps') === null ? 8 : Math.max(0, parseInt(q.get('apps'), 10) || 0);
+  /* 12 pins + the 2 running below = the 14 icons the live bar actually has, which is the count
+     that overflowed at 1120px. The mock has to be able to reproduce that or the fit rule is
+     untested. ?apps=N overrides it. */
+  var PIN_COUNT = q.get('apps') === null ? 12 : Math.max(0, parseInt(q.get('apps'), 10) || 0);
 
   /* Northwind's --dur-nav / the hide budget main works to. The mock sends them the way main does, so
      the page is never the thing that decides how long the morph lasts. */
@@ -59,15 +64,27 @@
 
   /* The eight pinned apps Owen would actually have, in taskbar order, then two apps that are
      running but not pinned (after the hairline). One window is the active one. */
+  /* The three window counts a taskbar has to get right are 0, 1 and "several", so the fixtures
+     cover all three: Edge has 3 (one of them minimized) and is therefore the action:'list' case,
+     Code has 1, Spotify/Steam/Notion have 0. `aumid` rides along the way the real items do, and
+     'app:Microsoft.WindowsCalculator…' is a packaged-app pin, whose id is not an exe path. */
   var PINNED = [
-    { id: 'edge',    name: 'Microsoft Edge',  exe: 'msedge.exe',   icon: ICON_A, wins: ['Mantle build brief — Edge', 'Windows 11 shell docs — Edge'] },
-    { id: 'code',    name: 'Visual Studio Code', exe: 'Code.exe',  icon: ICON_B, wins: ['mantle — bar.js — Visual Studio Code'], active: 0 },
-    { id: 'term',    name: 'Terminal',        exe: 'wt.exe',       icon: ICON_A, wins: ['Windows PowerShell'] },
+    { id: 'edge',    name: 'Microsoft Edge',  exe: 'msedge.exe',   aumid: 'MSEdge', icon: ICON_A,
+      wins: ['Mantle build brief — Edge', 'Windows 11 shell docs — Edge', 'Northwind — example.com — Edge'], min: 2 },
+    { id: 'code',    name: 'Visual Studio Code', exe: 'Code.exe',  aumid: 'Microsoft.VisualStudioCode', icon: ICON_B, wins: ['mantle — bar.js — Visual Studio Code'], active: 0 },
+    { id: 'app:Microsoft.WindowsCalculator_8wekyb3d8bbwe!App', name: 'Calculator', exe: '', aumid: 'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App', icon: ICON_A, wins: [] },
+    { id: 'term',    name: 'Terminal',        exe: 'wt.exe',       aumid: 'Microsoft.WindowsTerminal_8wekyb3d8bbwe!App', icon: ICON_A, wins: ['Windows PowerShell'] },
     { id: 'files',   name: 'File Explorer',   exe: 'explorer.exe', icon: null, iconReason: 'the sidecar could not extract an icon from explorer.exe (access denied)', wins: [] },
     { id: 'spotify', name: 'Spotify',         exe: 'Spotify.exe',  icon: ICON_B, wins: [] },
     { id: 'mail',    name: 'Mail',            exe: 'olk.exe',      icon: null, iconReason: 'packaged app: no icon path in the .lnk', wins: ['Inbox (14) — Mail'] },
     { id: 'steam',   name: 'Steam',           exe: 'steam.exe',    icon: ICON_A, wins: [] },
-    { id: 'notion',  name: 'Notion',          exe: 'Notion.exe',   icon: ICON_B, wins: [] }
+    { id: 'notion',  name: 'Notion',          exe: 'Notion.exe',   icon: ICON_B, wins: [] },
+    /* the four that overflowed live in build 20: at 1120px, 12 pins + 2 running need 582px in a
+       728px span, so the dock must SLIDE left and stay whole rather than cut Riot in half. */
+    { id: 'riot',    name: 'Riot Client',     exe: 'RiotClientServices.exe', aumid: 'RiotClient', icon: ICON_A, wins: [] },
+    { id: 'comet',   name: 'Comet',           exe: 'Comet.exe',    aumid: 'Comet', icon: ICON_B, wins: [] },
+    { id: 'discord', name: 'Discord',         exe: 'Discord.exe',  aumid: 'Discord', icon: ICON_A, wins: ['#general — Discord'] },
+    { id: 'obs',     name: 'OBS Studio',      exe: 'obs64.exe',    aumid: 'OBS', icon: ICON_B, wins: [] }
   ];
   var RUNNING = [
     { id: 'settings', name: 'Settings',   exe: 'SystemSettings.exe', icon: ICON_B, wins: ['Settings'] },
@@ -78,11 +95,16 @@
   function build(list, kind) {
     return list.slice(0, kind === 'pinned' ? PIN_COUNT : list.length).map(function (a, i) {
       return {
-        id: a.id, name: a.name, kind: kind, exe: a.exe,
+        id: a.id, name: a.name, kind: kind, exe: a.exe, aumid: a.aumid || '',
         icon: a.icon || null,
         iconReason: a.icon ? '' : (a.iconReason || 'no icon and no reason was given'),
         windows: a.wins.map(function (t, j) {
-          return { hwnd: (a._h || (a._h = (nextHwnd += 17))) + j, title: t, active: a.active === j };
+          return {
+            hwnd: (a._h || (a._h = (nextHwnd += 17))) + j,
+            title: t,
+            active: a.active === j,
+            minimized: a.min === j
+          };
         })
       };
     });
@@ -94,7 +116,7 @@
   function flatWindows() {
     var out = [];
     items.forEach(function (it) {
-      it.windows.forEach(function (w) { out.push({ hwnd: w.hwnd, title: w.title, active: w.active, foreground: w.active, minimized: false }); });
+      it.windows.forEach(function (w) { out.push({ hwnd: w.hwnd, title: w.title, active: w.active, foreground: w.active, minimized: !!w.minimized }); });
     });
     return out;
   }
@@ -121,6 +143,49 @@
   }
 
   var volume = { level: 0.42, muted: false };
+
+  /* ---- quick settings -------------------------------------------------
+     Plausible values for a laptop on Wi-Fi. ?qs=fail breaks TWO parts (Bluetooth and brightness)
+     with real-sounding reasons, because the panel's whole contract is that a part it cannot read
+     renders muted WITH its reason rather than blank — and that path has to be eyeballable. */
+  var QS_FAIL = q.get('qs') === 'fail';
+  var qsState = {
+    volume:     { level: volume.level, muted: volume.muted, ok: true, reason: '' },
+    wifi:       { present: true, on: true, connected: true, ssid: 'Maple-5G', signal: 82, band: '5 GHz', ok: true, reason: '' },
+    bluetooth:  QS_FAIL
+      ? { present: true, on: false, via: '', ok: false, reason: 'the Bluetooth radio did not answer within 3s (Get-PnpDevice timed out)' }
+      : { present: true, on: true, via: 'PowerShell', ok: true, reason: '' },
+    brightness: QS_FAIL
+      ? { present: false, level: null, ok: false, reason: 'this display exposes no WmiMonitorBrightness instance (desktop monitor)' }
+      : { present: true, level: 0.66, ok: true, reason: '' },
+    nightlight: { present: true, on: false, ok: true, reason: '' },
+    power:      { onBattery: true, percent: 72, minutesLeft: 184, saver: false, ok: true, reason: '' }
+  };
+  var qsWatching = false, qsTimer = 0;
+
+  function qsSnapshot() {
+    qsState.volume.level = volume.level;
+    qsState.volume.muted = volume.muted;
+    return {
+      ok: true, reason: '',
+      volume: qsState.volume, wifi: qsState.wifi, bluetooth: qsState.bluetooth,
+      brightness: qsState.brightness, nightlight: qsState.nightlight, power: qsState.power
+    };
+  }
+
+  function qsPush() {
+    if (!qsWatching) return;
+    emit('qs', qsSnapshot());
+  }
+
+  /* The real main pushes every 2s while the watch is on. The mock does the same, and stops dead
+     when it is turned off — a mock that kept pushing would hide exactly the leak the watch is
+     there to prevent. */
+  function qsLoop() {
+    if (qsTimer) clearTimeout(qsTimer);
+    if (!qsWatching) return;
+    qsTimer = setTimeout(function () { qsPush(); qsLoop(); }, 2000);
+  }
   var revealed = false;
   var listeners = Object.create(null);
 
@@ -130,9 +195,18 @@
     for (var i = 0; i < ls.length; i++) { try { ls[i](payload); } catch (e) { console.error('[mock] listener threw on', channel, e); } }
   }
 
+  function isActiveHwnd(hwnd) {
+    var hit = false;
+    items.forEach(function (it) { it.windows.forEach(function (w) { if (w.hwnd === hwnd && w.active) hit = true; }); });
+    return hit;
+  }
+
   function focus(hwnd) {
     items.forEach(function (it) {
-      it.windows.forEach(function (w) { w.active = (w.hwnd === hwnd); });
+      it.windows.forEach(function (w) {
+        w.active = (w.hwnd === hwnd);
+        if (w.active) w.minimized = false;      // focusing a minimized window restores it
+      });
     });
   }
 
@@ -153,25 +227,65 @@
         /* The real main hides the bar on its own timer; the mock just records it, so a pointer
            leaving the page during a manual poke does not make the bar vanish mid-inspection. */
         return { ok: true, reason: '' };
+      /* Windows 11 semantics, and the mock answers with the same four actions main does, because
+         the renderer BRANCHES on this reply: 'list' is the one it has to act on itself. */
       case 'bar.open': {
         var it = null;
         items.forEach(function (x) { if (x.id === (payload && payload.id)) it = x; });
         if (!it) return { ok: false, reason: 'no pinned item with id "' + (payload && payload.id) + '"' };
-        if (it.windows.length) { focus(it.windows[0].hwnd); setTimeout(function () { emit('windows', flatWindows()); emit('bar.pinned', { ok: true, reason: '', items: items }); }, 0); }
-        return { ok: true, reason: '' };
+        if (payload && payload.fresh) return { ok: true, reason: '', action: 'launched' };
+        if (it.windows.length > 1) return { ok: true, reason: '', action: 'list' };
+        if (!it.windows.length) return { ok: true, reason: '', action: 'launched' };
+        var one = it.windows[0];
+        var wasActive = one.active;
+        if (wasActive) { one.minimized = true; one.active = false; }
+        else { one.minimized = false; focus(one.hwnd); }
+        setTimeout(function () { emit('windows', flatWindows()); emit('bar.pinned', { ok: true, reason: '', items: items }); }, 0);
+        return { ok: true, reason: '', action: wasActive ? 'minimize' : 'focus' };
       }
       case 'bar.window': {
         var hwnd = payload && payload.hwnd, action = payload && payload.action;
         if (action === 'close') {
           items.forEach(function (x) { x.windows = x.windows.filter(function (w) { return w.hwnd !== hwnd; }); });
-        } else if (action === 'minimize') {
-          focus(-1);
+        } else if (action === 'minimize' || (action === 'toggle' && isActiveHwnd(hwnd))) {
+          /* toggle on the ACTIVE window is minimize — the same thing the taskbar does, and the
+             renderer sends 'toggle' for exactly that row. */
+          items.forEach(function (x) { x.windows.forEach(function (w) { if (w.hwnd === hwnd) { w.minimized = true; w.active = false; } }); });
         } else {
           focus(hwnd);
         }
         setTimeout(function () { emit('windows', flatWindows()); emit('bar.pinned', { ok: true, reason: '', items: items }); }, 0);
         return { ok: true, reason: '' };
       }
+      case 'qs.get': return qsSnapshot();
+
+      case 'qs.watch':
+        qsWatching = !!(payload && payload.on);
+        qsLoop();
+        return { ok: true, reason: '' };
+
+      /* Every set answers with the value that actually took, and a part the mock cannot switch
+         answers ok:false WITH a reason — the panel must show that reason, not just fail to move. */
+      case 'qs.set': {
+        var part = payload && payload.part, val = payload && payload.value;
+        var st = {
+          volume: qsState.volume, mute: qsState.volume, wifi: qsState.wifi,
+          bluetooth: qsState.bluetooth, brightness: qsState.brightness
+        }[part];
+        if (!st) return { ok: false, part: part, reason: 'this shell does not know how to set "' + part + '"' };
+        if (st.ok === false) return { ok: false, part: part, reason: st.reason };
+        if (part === 'volume') { volume.level = Math.max(0, Math.min(1, val)); st.level = volume.level; val = st.level; }
+        else if (part === 'mute') { volume.muted = !!val; st.muted = volume.muted; val = st.muted; }
+        else if (part === 'brightness') { st.level = Math.max(0, Math.min(1, val)); val = st.level; }
+        else {
+          st.on = !!val; val = st.on;
+          if (part === 'wifi' && !st.on) { st.connected = false; st.ssid = ''; }
+          else if (part === 'wifi') { st.connected = true; st.ssid = 'Maple-5G'; }
+        }
+        setTimeout(qsPush, 0);                       // main pushes after every set, so the mock does too
+        return { ok: true, part: part, value: val, reason: '' };
+      }
+
       case 'sys.keys':
         /* win+a and win+n are the two combos the bar sends. Anything else is a bug worth seeing,
            and an unknown combo must come back ok:false WITH a reason, never a silent success. */
@@ -185,7 +299,21 @@
         // The unavailable case is the interesting one: the bar must say WHY the tray is empty.
         throw new Error(state().tray.reason);
 
+      /* The M button is the mock's replay control: hide, then reveal again, so the whole motion
+         can be watched as many times as it takes without reloading. In Electron this opens the
+         real launcher and none of this runs. */
       case 'launcher.show':
+        setTimeout(function () {
+          revealed = false;
+          emit('bar.hide', { why: 'mock: replay', ms: DUR_OUT });
+          setTimeout(function () {
+            revealed = true;
+            emit('bar.reveal', { why: 'mock: replay', mode: MODE, ms: DUR_IN });
+            setTimeout(function () { if (revealed) sendBackdrops(); }, 300 + DUR_IN);
+          }, DUR_OUT + 260);
+        }, 0);
+        return { ok: true, reason: '', mock: true };
+
       case 'tray.click':
       case 'open':
       case 'shell.restore':

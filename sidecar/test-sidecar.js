@@ -115,6 +115,23 @@ function findExplorerPin() {
   return null;
 }
 
+/**
+ * The REAL taskbar pin list, base64 of HKCU\...\Taskband\Favorites. Read-only,
+ * and it is the only way to test `pins` against the thing it exists for.
+ * Returns null with the reason printed if the value cannot be read.
+ */
+function favoritesBlobBase64() {
+  try {
+    const r = spawnSync('powershell', ['-NoProfile', '-Command',
+      "$b=(Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Taskband'" +
+      " -Name Favorites -ErrorAction Stop).Favorites; [Convert]::ToBase64String($b)"], { encoding: 'utf8' });
+    const b64 = (r.stdout || '').replace(/\s+/g, '');
+    return b64.length > 100 ? b64 : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 /** The sidecar writes the file just after `ready`, so poll rather than sleep. */
 async function waitForState(predicate, timeoutMs, file) {
   const until = Date.now() + timeoutMs;
@@ -310,6 +327,8 @@ async function main() {
   }
 
   // ---- windows ----------------------------------------------------------
+  let windowsAppNote = '';
+  let pinsNote = '';
   try {
     const r = await s.send('windows');
     const list = r.ok ? r.result : [];
@@ -340,6 +359,24 @@ async function main() {
                                     !('pid' in w) || typeof w.pid !== 'number' || w.pid <= 0);
     check('every window entry carries exe and pid', noId.length === 0,
       noId.length ? JSON.stringify(noId[0]).slice(0, 200) : '');
+
+    // The identity a pin can be matched against. An exe path cannot group
+    // Discord (Update.exe pinned, Discord.exe running), Edge, or any Store app;
+    // an AUMID can. Both keys are always present, null for a plain Win32 app.
+    const noApp = list.filter((w) =>
+      !('aumid' in w) || (w.aumid !== null && typeof w.aumid !== 'string') ||
+      !('host' in w) || (w.host !== null && w.host !== 'frame'));
+    check('every window entry carries aumid and host', noApp.length === 0,
+      noApp.length ? JSON.stringify(noApp[0]).slice(0, 200) : '');
+
+    // A UWP window must NOT report ApplicationFrameHost.exe: the whole point of
+    // the frame lookup is that the window says which app it really is.
+    const frames = list.filter((w) => w.host === 'frame');
+    check('a framed (UWP) window reports the app, not ApplicationFrameHost',
+      frames.every((w) => w.exe === '' || !/ApplicationFrameHost\.exe$/i.test(w.exe)),
+      JSON.stringify(frames.map((w) => ({ title: w.title, exe: w.exe, aumid: w.aumid }))).slice(0, 220));
+    windowsAppNote = 'windows: ' + list.length + ' listed, ' +
+      list.filter((w) => w.aumid).length + ' with an aumid, ' + frames.length + ' framed (UWP)';
   } catch (e) { check('windows', false, e.message); }
 
   // ---- icon -------------------------------------------------------------
@@ -607,6 +644,198 @@ async function main() {
     } catch (e) { check('corners refuses the Windows taskbar', false, e.message); }
   }
 
+  // ---- app / pins / launch ----------------------------------------------
+  // The AUMID layer: the only way to see a Store pin (5 of Owen's 14 have no
+  // .lnk at all) or to group a UWP window under it.
+  try {
+    const r = await s.send('app', { aumid: 'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App' });
+    const d = r.ok ? r.result : null;
+    const b64 = d && typeof d.iconPng === 'string' ? d.iconPng.replace('data:image/png;base64,', '') : '';
+    let magic = '';
+    try { magic = Buffer.from(b64, 'base64').slice(0, 8).toString('hex'); } catch (e) { magic = 'undecodable'; }
+    check('app resolves a Store app id to a name and a png',
+      r.ok === true && d && d.ok === true && typeof d.name === 'string' && d.name.length > 0 &&
+      magic === '89504e470d0a1a0a',
+      'name=' + (d && d.name) + ' magic=' + magic + ' ' + JSON.stringify(r).slice(0, 120));
+  } catch (e) { check('app resolves a Store app id', false, e.message); }
+
+  try {
+    const r = await s.send('app', { aumid: 'Not.A.Real.App_0000000000000!App' });
+    check('app answers an unknown id with ok:false and the HRESULT',
+      r.ok === true && r.result && r.result.ok === false &&
+      typeof r.result.reason === 'string' && r.result.reason.includes('HRESULT'),
+      JSON.stringify(r).slice(0, 200));
+  } catch (e) { check('app answers an unknown id with ok:false', false, e.message); }
+
+  {
+    const blob = favoritesBlobBase64();
+    check('the real Taskband\\Favorites blob can be read for the test', blob !== null,
+      'reg read produced nothing');
+    if (blob) {
+      try {
+        const r = await s.send('pins', { blob }, 20000);
+        const d = r.ok ? r.result : null;
+        const items = d && Array.isArray(d.items) ? d.items : [];
+        check('pins parses the real taskbar pin list',
+          r.ok === true && d && d.ok === true && items.length >= 1,
+          JSON.stringify(r).slice(0, 200));
+        check('pins finds both Store apps and .lnk pins',
+          items.filter((it) => it.kind === 'app').length >= 1 &&
+          items.filter((it) => it.kind === 'lnk').length >= 1,
+          items.map((it) => it.kind).join(','));
+        check('every pin carries the full shape',
+          items.every((it) => typeof it.index === 'number' && typeof it.name === 'string' &&
+                              typeof it.parsing === 'string' && 'aumid' in it && 'lnk' in it &&
+                              'iconPng' in it),
+          JSON.stringify(items[0] || null).slice(0, 220));
+        pinsNote = 'pins (' + items.length + ', format ' + (d && d.format) + ', skipped ' +
+          (d && d.skipped) + '): ' +
+          items.map((it) => it.name + '[' + it.kind + (it.iconPng ? '+icon' : '') + ']').join(', ');
+      } catch (e) { check('pins parses the real taskbar pin list', false, e.message); }
+    }
+
+    // Garbage must be an ANSWER, never a crash and never an invented pin.
+    try {
+      const junk = Buffer.from('not a pidl at all, just text'.repeat(8)).toString('base64');
+      const r = await s.send('pins', { blob: junk });
+      check('pins answers garbage without crashing',
+        r.ok === true && r.result &&
+        (r.result.ok === false || r.result.skipped > 0 || r.result.items.length === 0),
+        JSON.stringify(r).slice(0, 200));
+    } catch (e) { check('pins answers garbage without crashing', false, e.message); }
+
+    try {
+      const r = await s.send('pins', { blob: 'not base64 !!' });
+      check('pins refuses a blob that is not base64',
+        r.ok === false && typeof r.error === 'string' && r.error.includes('base64'), JSON.stringify(r));
+    } catch (e) { check('pins refuses a blob that is not base64', false, e.message); }
+  }
+
+  // launch ACTS, so passive refuses it - and nothing in this suite ever starts
+  // an app on Owen's desktop.
+  try {
+    const r = await s.send('launch', { aumid: 'Not.A.Real.App_0000000000000!App' });
+    check('launch is refused in passive, with a reason',
+      r.ok === false && typeof r.error === 'string' &&
+      r.error.includes('passive') && r.error.includes('launch'),
+      JSON.stringify(r));
+  } catch (e) { check('launch is refused in passive', false, e.message); }
+
+  const quickNotes = [];
+  // ---- the quick settings panel -----------------------------------------
+  // Reads only. NOTHING in this block may toggle a radio or move the
+  // brightness on the machine Owen is sitting at: every switch is expected to
+  // REFUSE, and that refusal is the test.
+  try {
+    const r = await s.send('wifi', {}, 10000);
+    const d = r.ok ? r.result : null;
+    check('wifi reads with the full shape',
+      r.ok === true && d && d.ok === true &&
+      typeof d.present === 'boolean' && typeof d.on === 'boolean' &&
+      typeof d.connected === 'boolean' && (d.ssid === null || typeof d.ssid === 'string') &&
+      typeof d.signal === 'number' && d.signal >= 0 && d.signal <= 100 &&
+      (d.band === null || typeof d.band === 'string') &&
+      (d.reason === null || typeof d.reason === 'string'),
+      JSON.stringify(r).slice(0, 220));
+    if (d) quickNotes.push('wifi: present=' + d.present + ' on=' + d.on + ' connected=' + d.connected +
+      ' ssid=' + JSON.stringify(d.ssid) + ' signal=' + d.signal + ' band=' + JSON.stringify(d.band) +
+      (d.reason ? ' reason=' + JSON.stringify(d.reason) : ''));
+  } catch (e) { check('wifi reads with the full shape', false, e.message); }
+
+  try {
+    const r = await s.send('bluetooth', {}, 20000);
+    const d = r.ok ? r.result : null;
+    check('bluetooth reads with the full shape',
+      r.ok === true && d && typeof d.ok === 'boolean' && typeof d.present === 'boolean' &&
+      typeof d.on === 'boolean' && typeof d.via === 'string' &&
+      (d.reason === null || typeof d.reason === 'string'),
+      JSON.stringify(r).slice(0, 220));
+    if (d) quickNotes.push('bluetooth: present=' + d.present + ' on=' + d.on + ' via=' + d.via +
+      (d.reason ? ' reason=' + JSON.stringify(d.reason) : ''));
+  } catch (e) { check('bluetooth reads with the full shape', false, e.message); }
+
+  try {
+    const r = await s.send('brightness', {}, 15000);
+    const d = r.ok ? r.result : null;
+    check('brightness reads with the full shape',
+      r.ok === true && d && d.ok === true && typeof d.present === 'boolean' &&
+      typeof d.level === 'number' && d.level >= 0 && d.level <= 100 &&
+      (d.reason === null || typeof d.reason === 'string'),
+      JSON.stringify(r).slice(0, 220));
+    // present:false is the EXPECTED answer on a desktop without DDC/CI, and it
+    // must come with a reason the panel can show.
+    check('brightness explains itself when there is no controllable backlight',
+      d && (d.present === true || (typeof d.reason === 'string' && d.reason.length > 0)),
+      JSON.stringify(d));
+    if (d) quickNotes.push('brightness: present=' + d.present + ' level=' + d.level +
+      (d.reason ? ' reason=' + JSON.stringify(d.reason) : ''));
+  } catch (e) { check('brightness reads with the full shape', false, e.message); }
+
+  try {
+    const r = await s.send('nightlight');
+    const d = r.ok ? r.result : null;
+    check('nightlight reads with the full shape',
+      r.ok === true && d && typeof d.ok === 'boolean' && typeof d.present === 'boolean' &&
+      typeof d.on === 'boolean' && (d.reason === null || typeof d.reason === 'string'),
+      JSON.stringify(r).slice(0, 220));
+    if (d) quickNotes.push('nightlight: present=' + d.present + ' on=' + d.on +
+      (d.reason ? ' reason=' + JSON.stringify(d.reason) : ''));
+  } catch (e) { check('nightlight reads with the full shape', false, e.message); }
+
+  try {
+    const r = await s.send('power');
+    const d = r.ok ? r.result : null;
+    check('power reads with the full shape',
+      r.ok === true && d && d.ok === true && typeof d.onBattery === 'boolean' &&
+      (d.percent === null || typeof d.percent === 'number') &&
+      (d.minutesLeft === null || typeof d.minutesLeft === 'number') &&
+      typeof d.saver === 'boolean' && (d.reason === null || typeof d.reason === 'string'),
+      JSON.stringify(r).slice(0, 220));
+    if (d) quickNotes.push('power: onBattery=' + d.onBattery + ' percent=' + d.percent +
+      ' minutesLeft=' + d.minutesLeft + ' saver=' + d.saver +
+      (d.reason ? ' reason=' + JSON.stringify(d.reason) : ''));
+  } catch (e) { check('power reads with the full shape', false, e.message); }
+
+  // Every switch, refused - and the refusal must SAY it is passive.
+  for (const [cmd, extra] of [
+    ['wifi', { on: true }],
+    ['wifi', { on: false }],
+    ['bluetooth', { on: true }],
+    ['brightness', { level: 50 }]
+  ]) {
+    try {
+      const r = await s.send(cmd, extra);
+      check(`${cmd} ${JSON.stringify(extra)} is refused in passive, with a reason`,
+        r.ok === false && typeof r.error === 'string' && r.error.includes('passive'), JSON.stringify(r));
+    } catch (e) { check(`${cmd} ${JSON.stringify(extra)} refused in passive`, false, e.message); }
+  }
+
+  // A switch argument must be a real boolean: coercing 'maybe' to false would
+  // turn someone's Wi-Fi OFF.
+  for (const [cmd, extra, what] of [
+    ['wifi', { on: 'maybe' }, "wifi {on:'maybe'}"],
+    ['bluetooth', { on: 1 }, 'bluetooth {on:1}'],
+    ['brightness', { level: 'bright' }, "brightness {level:'bright'}"],
+    ['brightness', { level: 500 }, 'brightness {level:500}']
+  ]) {
+    try {
+      const r = await s.send(cmd, extra);
+      check(`${what} is refused as a bad argument`,
+        r.ok === false && typeof r.error === 'string' && !r.error.includes('passive'), JSON.stringify(r));
+    } catch (e) { check(`${what} is refused as a bad argument`, false, e.message); }
+  }
+
+  // The two things Mantle is honest about not being able to do yet.
+  for (const [cmd, extra] of [['nightlight', { on: true }], ['power', { saver: true }]]) {
+    try {
+      const r = await s.send(cmd, extra);
+      check(`${cmd} says plainly that the switch is not available yet`,
+        r.ok === true && r.result && r.result.ok === false &&
+        typeof r.result.reason === 'string' && r.result.reason.includes('not available yet'),
+        JSON.stringify(r));
+    } catch (e) { check(`${cmd} says the switch is not available yet`, false, e.message); }
+  }
+
   // ---- backdrop ---------------------------------------------------------
   // Read-only, so it runs in passive: a 64x16 grab of the very top-left corner
   // is the cheapest thing on the screen and tells us nothing about anyone.
@@ -816,7 +1045,8 @@ async function main() {
     const cmds = r.ok && r.result ? r.result.commands : null;
     check('ping lists the commands it serves',
       Array.isArray(cmds) && ['lnk', 'keys', 'foreground', 'traywatch', 'corners', 'morph', 'region',
-                              'edgeclip', 'backdrop', 'windows', 'glass', 'place']
+                              'edgeclip', 'backdrop', 'app', 'pins', 'launch', 'wifi', 'bluetooth', 'brightness',
+                              'nightlight', 'power', 'windows', 'glass', 'place']
         .every((c) => cmds.indexOf(c) >= 0),
       JSON.stringify(cmds));
   } catch (e) { check('ping lists the commands it serves', false, e.message); }
@@ -1025,6 +1255,9 @@ async function main() {
   try { fs.unlinkSync(LNK_SHELL); } catch (e) { /* already gone */ }
 
   for (const f of failures) console.log('  FAIL: ' + f);
+  for (const n of quickNotes) console.log('  note: ' + n);
+  if (windowsAppNote) console.log('  note: ' + windowsAppNote);
+  if (pinsNote) console.log('  note: ' + pinsNote);
   if (backdropNote) console.log('  note: ' + backdropNote);
   if (cornersNote) console.log('  note: ' + cornersNote);
   if (trayNote) console.log('  note: ' + trayNote);

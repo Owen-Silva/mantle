@@ -85,6 +85,7 @@ namespace Mantle {
       "ping", "windows", "foreground", "focus", "minimize", "close", "toggle",
       "taskbar", "appbar", "traywatch", "edgeclip", "glass", "corners", "place", "morph", "region",
       "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop",
+      "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power",
       "tray", "trayClick", "quit"
     };
 
@@ -764,6 +765,80 @@ namespace Mantle {
           return null;
         }
 
+        // ------------------------------------------- the quick settings panel
+        // Owen, at the bar's right cluster: "these buttons need to go to a
+        // wrapper version of where they used to go ... some of them just go to
+        // settings now". Reading state changes nothing and runs in passive;
+        // every switch is refused in passive, because a test run may not turn
+        // off the radio someone is using.
+        //
+        // THE ARGUMENT IS CHECKED BEFORE PASSIVE, as everywhere else here:
+        // `wifi {on:'maybe'}` is a malformed request in every mode.
+
+        case "wifi": {
+          if (Json.HasKey(req, "on")) {
+            bool want;
+            string aerr = StrictBool(req, "on", out want);
+            if (aerr != null) return aerr;
+            if (Passive) return PassiveRefusal + ": wifi would switch the live radio";
+            result = Network.Set(want);
+            return null;
+          }
+          result = Network.Read();
+          return null;
+        }
+
+        case "bluetooth": {
+          if (Json.HasKey(req, "on")) {
+            bool want;
+            string aerr = StrictBool(req, "on", out want);
+            if (aerr != null) return aerr;
+            if (Passive) return PassiveRefusal + ": bluetooth would switch the live radio";
+            result = Bluetooth.Set(want);
+            return null;
+          }
+          result = Bluetooth.Read();
+          return null;
+        }
+
+        case "brightness": {
+          if (Json.HasKey(req, "level")) {
+            object lv;
+            Json.TryGet(req, "level", out lv);
+            if (!(lv is double)) return "brightness: level must be a number from 0 to 100";
+            int want = (int)Math.Round((double)lv);
+            if (want < 0 || want > 100) return "brightness: level must be a number from 0 to 100";
+            if (Passive) return PassiveRefusal + ": brightness would dim the live display";
+            result = Display.SetBrightness(want);
+            return null;
+          }
+          result = Display.Brightness();
+          return null;
+        }
+
+        case "nightlight": {
+          // Read-only on purpose - see Display.cs: the state is an undocumented
+          // CloudStore blob, and writing it wrongly leaves the display stuck.
+          if (Json.HasKey(req, "on")) {
+            result = Json.Obj("ok", false, "present", true, "on", false,
+                              "reason", "not available yet: Mantle can read night light but cannot switch it, " +
+                                        "because Windows has no API for it and its state is an undocumented blob");
+            return null;
+          }
+          result = Display.NightLight();
+          return null;
+        }
+
+        case "power": {
+          if (Json.HasKey(req, "saver")) {
+            result = Json.Obj("ok", false, "reason",
+                              "not available yet: Mantle can report battery saver but cannot switch it");
+            return null;
+          }
+          result = Power.Read();
+          return null;
+        }
+
         case "volume": {
           // Reading volume changes nothing, so it works in passive too.
           int? level = Json.HasKey(req, "level") ? (int?)Json.GetInt(req, "level", 0) : null;
@@ -778,6 +853,46 @@ namespace Mantle {
           string path = Json.GetString(req, "path");
           if (string.IsNullOrEmpty(path)) return "icon needs a path (an .exe or .lnk)";
           result = Json.Obj("icon", Icons.ForPath(path));
+          return null;
+        }
+
+        case "app": {
+          // Read-only: it asks the shell what an app id is called and what it
+          // looks like. An unknown id is an ANSWER (ok:false + the HRESULT),
+          // not a protocol error - the caller is usually walking a pin list and
+          // one dead id must not read as a broken command.
+          string aumid = Json.GetString(req, "aumid");
+          string appName, appPng;
+          string aerr2 = Apps.Info(aumid, out appName, out appPng);
+          result = aerr2 == null
+            ? Json.Obj("ok", true, "aumid", aumid, "name", appName, "iconPng", appPng, "reason", null)
+            : Json.Obj("ok", false, "aumid", aumid, "name", null, "iconPng", null, "reason", aerr2);
+          return null;
+        }
+
+        case "pins": {
+          // Read-only: the caller hands us the REG_BINARY it read; the sidecar
+          // does not touch the registry itself.
+          string b64 = Json.GetString(req, "blob");
+          if (string.IsNullOrEmpty(b64))
+            return "pins needs blob: the base64 of HKCU\\...\\Taskband\\Favorites";
+          byte[] raw;
+          try {
+            raw = Convert.FromBase64String(b64.Trim());
+          } catch (Exception) {
+            return "pins: blob is not valid base64";
+          }
+          result = Apps.Parse(raw);
+          return null;
+        }
+
+        case "launch": {
+          // THE ONE COMMAND HERE THAT ACTS, so it is the one passive refuses.
+          if (Passive) return PassiveRefusal + ": launch would start an app on the live desktop";
+          string lerr = Apps.Launch(Json.GetString(req, "aumid"));
+          result = lerr == null
+            ? Json.Obj("ok", true, "reason", null)
+            : Json.Obj("ok", false, "reason", lerr);
           return null;
         }
 
@@ -808,6 +923,19 @@ namespace Mantle {
     }
 
     // ------------------------------------------------------ request helpers
+
+    /// A switch argument must be a real JSON boolean. Json.GetBool coerces, and
+    /// coercion is the wrong behaviour for a radio: `{on:"maybe"}` would become
+    /// false and turn someone's Wi-Fi OFF. So this refuses anything that is not
+    /// true or false, by name.
+    static string StrictBool(Dictionary<string, object> req, string key, out bool value) {
+      value = false;
+      object v;
+      if (!Json.TryGet(req, key, out v)) return key + " must be true or false";
+      if (v is bool) { value = (bool)v; return null; }
+      return key + " must be true or false, not " +
+             (v is string ? "the string '" + (string)v + "'" : "'" + Convert.ToString(v, CultureInfo.InvariantCulture) + "'");
+    }
 
     /// A {x,y,w,h,r} sub-object, in physical pixels. Missing fields are 0,
     /// which for r means "no rounded region" - the one default that has to be

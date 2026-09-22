@@ -5,12 +5,15 @@
  * or by mock-mantle.js when this page is opened outside Electron) is the ONLY way out of here.
  *
  * THE SHAPE (Owen, 2026-09-21): the bar is HIDDEN at rest. He pushes the mouse to the bottom of
- * the screen, main brings the window in and sends 'bar.reveal', and the glass detaches into view:
- * pinned app icons centred on the screen, the readouts on the right. Main owns the decision AND
- * the window's geometry — it moves, widens and rounds the window itself. This page owns the PAINT
- * (fill, border, shadow, ink, opacity, on main's duration and Northwind's curve) and reports hover
- * back so main knows when to take it away again. Nothing here animates geometry; that would race
- * the window and lag it.
+ * the screen, main shows the window and sends 'bar.reveal', and the glass detaches into view:
+ * pinned app icons centred on the screen, the readouts on the right.
+ *
+ * WHO ANIMATES WHAT (rewritten the same day, after "when the taskbar expands out it isn't that
+ * smooth"): main decides WHEN and shows the window ONCE, already at its final rect — it no longer
+ * resizes anything per frame, which is what wasn't smooth. THIS PAGE animates the pill: transform
+ * and width on .bar plus the paint (fill, border, shadow, ink, opacity), all on main's duration
+ * and Northwind's curve, driven by one class. The page also reports hover back, so main knows when to
+ * take the bar away again.
  *
  * Three rules shape almost every decision below:
  *
@@ -22,7 +25,8 @@
  * 2. IDLE COST ~0. This page is alive every waking hour. There is exactly ONE timer at rest: the
  *    clock, a chained setTimeout aligned to the minute boundary (not setInterval, which drifts and
  *    would fire while the machine is asleep). Everything else is event-driven: bridge pushes,
- *    pointer events, a ResizeObserver. The reveal is one GPU transform, nothing animates at rest.
+ *    pointer events, a ResizeObserver. The reveal is a transition on ONE element, and it only
+ *    runs on a state change — between states nothing is animating at all.
  *
  * 3. THE DOM IS DIFFED, NEVER REBUILT. App cells are keyed by item id, so a push that changes one
  *    window title does not re-create an <img> — a rebuild costs a relayout and makes icons blink.
@@ -199,8 +203,14 @@
     if (revealed === on) return;
     revealed = on;
     el.body.classList.toggle('up', on);
-    if (!on) { closePop(); clearBackdrop(); }   // the strip is a photograph of a screen about to change
-    else refreshPinned();             // the icons are only ever looked at while the bar is up
+    if (!on) {
+      closePop();
+      scheduleClearBackdrop(d);       // the strip is a photograph of a screen about to change — but not yet
+    } else {
+      cancelClearBackdrop();          // a reveal mid-exit: the pill never left, so nothing is stale
+      refreshPinned();                // the icons are only ever looked at while the bar is up
+    }
+    clockGear();                      // seconds while it is up, minutes while it is not
     console.log('[bar]', on ? 'reveal' : 'hide', barMode, d + 'ms', '—', (why || 'no reason given'));
   }
 
@@ -232,6 +242,28 @@
       el.body.classList.remove('no-backdrop');
       el.bdrop.classList.add('on');          // 150ms fade, once, on the first strip after a reveal
     }
+  }
+
+  /* The clear has to wait for the pill to be GONE. Clearing it the moment 'bar.hide' arrives
+     drops the blurred strip out from under a pill that is still on screen, and the glass flashes
+     to the flat fallback fill on its way down. So: on the transform's transitionend, or on a
+     timer main's own duration long, whichever comes first — and cancelled outright if a reveal
+     arrives mid-exit, because then the pill never left. */
+  var clearTimer = 0, clearOnEnd = null;
+
+  function cancelClearBackdrop() {
+    if (clearTimer) { clearTimeout(clearTimer); clearTimer = 0; }
+    if (clearOnEnd) { el.bar.removeEventListener('transitionend', clearOnEnd); clearOnEnd = null; }
+  }
+
+  function scheduleClearBackdrop(ms) {
+    cancelClearBackdrop();
+    function done() { cancelClearBackdrop(); clearBackdrop(); }
+    clearOnEnd = function (ev) {
+      if (ev.target === el.bar && ev.propertyName === 'transform') done();
+    };
+    el.bar.addEventListener('transitionend', clearOnEnd);
+    clearTimer = setTimeout(done, (ms || DUR_OUT) + 20);   // the belt to transitionend's braces
   }
 
   function clearBackdrop() {
@@ -274,7 +306,10 @@
   }
 
   function winsOf(it) { return Array.isArray(it && it.windows) ? it.windows : []; }
-  function isActive(w) { return !!(w && (w.active || w.foreground)); }
+  /* A minimized window is never the active one, whatever the flat list says: Windows leaves the
+     foreground flag on a window it has just minimized for a frame or two, and a bar that lights
+     the accent for a window you cannot see is lying. */
+  function isActive(w) { return !!(w && (w.active || w.foreground) && !w.minimized); }
 
   function makeCell(key) {
     var b = document.createElement('button');
@@ -282,12 +317,12 @@
     b.className = 'cell';
     b.dataset.key = key;
     var ico = document.createElement('span'); ico.className = 'ico';
-    var dot = document.createElement('span'); dot.className = 'dot';
-    b.appendChild(ico); b.appendChild(dot);
+    var ind = document.createElement('span'); ind.className = 'ind';   // the running line, see bar.css
+    b.appendChild(ico); b.appendChild(ind);
     return b;
   }
 
-  function paintDot(b, wins) {
+  function paintInd(b, wins) {
     var run = wins.length > 0;
     var act = false;
     for (var i = 0; i < wins.length; i++) if (isActive(wins[i])) { act = true; break; }
@@ -300,11 +335,15 @@
     var wins = winsOf(it);
     b.dataset.id = String(it.id == null ? '' : it.id);
 
-    var tip = name;
+    /* "<name> — N windows", then anything that needs explaining, then what the other two buttons
+       do. The middle-click line is shown for PINS only, because "new window" is what a pin means;
+       a running-only entry has no launcher behind it to start a second instance from. */
+    var tip = name + (wins.length ? ' — ' + wins.length + (wins.length === 1 ? ' window' : ' windows') : '');
     /* An icon that is missing must say WHY on the item itself: a blank tile with no explanation is
        the silent failure this shell refuses. */
     if (!it.icon) tip += '\n(no icon: ' + (it.iconReason || 'the sidecar gave no reason') + ')';
-    if (wins.length) tip += '\n' + wins.length + (wins.length === 1 ? ' window' : ' windows') + ' — right-click for the list';
+    if (wins.length > 1) tip += '\n(right-click: the window list)';
+    if (it.kind === 'pinned') tip += '\n(middle-click: new window)';
     if (b.title !== tip) { b.title = tip; b.setAttribute('aria-label', name); }
 
     var ico = b.firstChild;
@@ -333,7 +372,7 @@
         ico.textContent = letterOf(name);
       }
     }
-    paintDot(b, wins);
+    paintInd(b, wins);
   }
 
   /* place(): put `node` right after `prev`, and only touch the DOM when it is not already there. */
@@ -434,15 +473,25 @@
   /* CELL/GAP/DIV must match --cell, --cell-gap and .dock .div in bar.css. They are duplicated
      here rather than read back with getComputedStyle because this runs on every resize frame. */
   var CELL = 36, GAP = 6, DIV = 7;
-  var settleTimer = 0, lastKey = '', frozenMax = 'none';
+  var settleTimer = 0, lastKey = '', frozen = { cap: 'none', shift: 0, hidden: 0 };
 
+  /* THE FIT RULE, rebuilt 2026-09-21 after build 20 cut Riot in half and dropped Comet. The old
+     rule measured the SYMMETRIC room (twice the distance to the nearer cluster) and clipped when
+     the icons did not fit inside it. That throws away half the bar: with a wide right cluster —
+     and the seconds clock made it wider — the symmetric room is small while the actual free span
+     is nearly the whole bar. Windows 11 does not do that. It keeps the icons centred while they
+     fit, and SLIDES them when they do not.
+
+     So: centred on the bar's centre while that sits inside the free span; otherwise shifted by the
+     MINIMUM that brings it inside; clipped only when the icons cannot fit in the whole span, and
+     only then does a chip appear — saying how many are hidden. Owen: "i want to be able to see all
+     my pinned stuff not just some of them". */
   function measure() {
     /* VIEWPORT coordinates, off the bar's own rect. Nothing here may assume the bar spans the
        screen: in pill mode the window IS the island, inset from the edges and far narrower than
        the display, and the centre of the icons is the centre of THAT window. */
     var r = el.bar.getBoundingClientRect();
     if (!r.width) return null;
-    var centre = r.left + r.width / 2;
     var leftEnd = el.left ? el.left.getBoundingClientRect().right : r.left + 8;
     /* The chip strip is NOT part of the wall the dock measures against: chips are the bar talking
        about problems, and the "apps clipped" chip was widening the very cluster it measured
@@ -450,9 +499,13 @@
     var tray = $('tray'), vol = $('volume');
     var anchor = (tray && tray.getBoundingClientRect().width > 0) ? tray : (vol || el.right);
     var rightStart = anchor ? anchor.getBoundingClientRect().left : r.right - 8;
+    var spanL = leftEnd + 8, spanR = rightStart - 8;
     return {
       w: Math.round(r.width),
-      room: Math.round(2 * Math.max(0, Math.min(centre - leftEnd - 8, rightStart - centre - 8)))
+      centre: r.left + r.width / 2,
+      spanL: spanL,
+      spanR: spanR,
+      span: Math.max(0, spanR - spanL)
     };
   }
 
@@ -461,12 +514,40 @@
     return n ? n * CELL + (n - 1) * GAP + (divEl.parentNode ? DIV : 0) : 0;
   }
 
-  /* No cap when they fit: then no stale or mid-morph measurement can clip a dock that was going
-     to be fine. A cap when they do not — but never below one cell, because an empty dock is the
-     one outcome that is always wrong. */
-  function capFor(need, room) {
-    if (!need || need <= room) return 'none';
-    return Math.max(room, CELL) + 'px';
+  /* How many cells actually survive a given width, so the chip can say how many are hidden rather
+     than just that some are. The divider counts as part of the first running item. */
+  function fitCount(width) {
+    var used = 0, n = 0;
+    for (var i = 0; i < items.length; i++) {
+      var add = (i ? GAP : 0) + CELL + (items[i].kind === 'running' && i > 0 && items[i - 1].kind !== 'running' ? DIV : 0);
+      if (used + add > width) break;
+      used += add; n++;
+    }
+    return n;
+  }
+
+  /* decide(): the whole rule in one pure function of (measurement, need). Returns the cap, the
+     shift off centre, and how many icons are lost — nothing here touches the DOM. */
+  function decide(m, need) {
+    if (!need) return { cap: 'none', shift: 0, hidden: 0 };
+    if (need <= m.span) {
+      var l = m.centre - need / 2, r = m.centre + need / 2;
+      var shift = 0;
+      if (l < m.spanL) shift = m.spanL - l;          // pushed right, off the launcher
+      else if (r > m.spanR) shift = m.spanR - r;     // pushed left, off the clock (the usual one)
+      return { cap: 'none', shift: shift, hidden: 0 };
+    }
+    /* Genuinely too many: fill the span from its left edge and say what was lost. */
+    return {
+      cap: Math.max(Math.round(m.span), CELL) + 'px',
+      shift: m.spanL - (m.centre - Math.max(m.span, CELL) / 2),
+      hidden: Math.max(1, items.length - fitCount(m.span))
+    };
+  }
+
+  function applyDock(d) {
+    el.dock.style.setProperty('--dock-max', d.cap);
+    el.dock.style.setProperty('--dock-shift', Math.round(d.shift) + 'px');
   }
 
   function layoutDock() {
@@ -476,7 +557,7 @@
     var key = m.w + ':' + need;
     /* Already settled at this width with this many icons? Then this resize is something INSIDE
        the bar changing width — our own chip, a new tray icon — and the settled answer stands. */
-    el.dock.style.setProperty('--dock-max', key === lastKey ? frozenMax : capFor(need, m.room));
+    applyDock(key === lastKey ? frozen : decide(m, need));
     if (settleTimer) clearTimeout(settleTimer);
     settleTimer = setTimeout(settleDock, 50);
   }
@@ -489,15 +570,17 @@
     var key = m.w + ':' + need;
     if (key !== lastKey) {
       lastKey = key;
-      frozenMax = capFor(need, m.room);
+      frozen = decide(m, need);
       // Only while the bar is up: parked (hidden) the window sits at its narrow start width, and a
       // report from there is a false alarm (seen live as "507px in a 695px bar" on every hide).
-      if (revealed && need > m.room + 0.5)
-        fail('dockclip', 'apps clipped', items.length + ' app icons need ' + need + 'px but only ' +
-          m.room + 'px is free either side of centre in a ' + m.w + 'px bar — some are not shown');
+      if (revealed && frozen.hidden)
+        fail('dockclip', frozen.hidden + ' app' + (frozen.hidden === 1 ? '' : 's') + ' hidden',
+          items.length + ' app icons need ' + need + 'px and the free span between the launcher and' +
+          ' the readouts is only ' + Math.round(m.span) + 'px in a ' + m.w + 'px bar, so the last ' +
+          frozen.hidden + ' cannot be shown');
       else clearFail('dockclip');
     }
-    el.dock.style.setProperty('--dock-max', frozenMax);
+    applyDock(frozen);
   }
 
   /* act(): fire a bridge call for a click and, if it fails, put the reason in the bar.
@@ -508,22 +591,53 @@
     });
   }
 
+  /* THE WINDOW LIST, and one function for it: the right-click opens it directly, and a left click
+     opens it when main replies action:'list'. Two callers, one popover \u2014 if they were built
+     separately they would drift, and a taskbar where the two ways of reaching the same list look
+     different is worse than one that only has one way. */
+  function cellOf(ev) { return ev.target.closest ? ev.target.closest('.cell') : null; }
+  function popKeyOf(b) { return 'app:' + b.dataset.key; }
+
+  function openAppPop(b, it) {
+    if (!it || !winsOf(it).length) return;       // nothing to list; the click itself was the action
+    openPop(popKeyOf(b), b, function (pop) { buildAppPop(pop, it); });
+  }
+
+  /* LEFT CLICK = Windows 11's own semantics, and main decides which one applies: focus a window,
+     minimize the one that is already focused, launch the app if it is not running \u2014 or, when
+     there are two or more windows, hand the decision back with action:'list', because only the
+     renderer can put a popover under the icon that was clicked. */
   el.dock.addEventListener('click', function (ev) {
-    var b = ev.target.closest ? ev.target.closest('.cell') : null;
+    var b = cellOf(ev);
     if (!b) return;
+    /* Clicking the icon whose list is already open just closes it (closePop() below clears popKey,
+       so the toggle has to be read first). */
+    var wasOpen = (popKey === popKeyOf(b));
     closePop();
-    act('bar.open', { id: b.dataset.id }, 'open');
+    if (wasOpen) return;
+    act('bar.open', { id: b.dataset.id }, 'open').then(function (r) {
+      if (r && r.action === 'list') openAppPop(b, b._item);
+    });
   });
 
-  /* Right-click lists this app's windows. Nice-to-have per the brief, so it stays small: focus a
-     window, or close it. Nothing here is the only route to anything. */
-  el.dock.addEventListener('contextmenu', function (ev) {
-    var b = ev.target.closest ? ev.target.closest('.cell') : null;
+  /* MIDDLE CLICK = a new instance, the way Windows has always done it. mousedown must be
+     swallowed too, or Chromium starts its autoscroll on the way through. */
+  el.dock.addEventListener('mousedown', function (ev) { if (ev.button === 1) ev.preventDefault(); });
+  el.dock.addEventListener('auxclick', function (ev) {
+    if (ev.button !== 1) return;
+    var b = cellOf(ev);
     if (!b) return;
     ev.preventDefault();
-    var it = b._item;
-    if (!it || !winsOf(it).length) return;      // no windows: the left click (launch) is the only action
-    openPop('app:' + b.dataset.key, b, function (pop) { buildAppPop(pop, it); });
+    closePop();
+    act('bar.open', { id: b.dataset.id, fresh: true }, 'open');
+  });
+
+  /* RIGHT CLICK = the list, always, whatever main would have done with a left click. */
+  el.dock.addEventListener('contextmenu', function (ev) {
+    var b = cellOf(ev);
+    if (!b) return;
+    ev.preventDefault();
+    openAppPop(b, b._item);
   });
 
   function buildAppPop(pop, it) {
@@ -531,12 +645,15 @@
     h.textContent = it.name || it.exe || 'windows';
     pop.appendChild(h);
     winsOf(it).forEach(function (w) {
+      var title = w.title || '(untitled window)';
       var row = document.createElement('div'); row.className = 'wrow';
       var open = document.createElement('button');
       open.type = 'button';
-      open.className = 'item' + (isActive(w) ? ' on' : '');
-      open.textContent = w.title || '(untitled window)';
-      open.title = w.title || '(untitled window)';
+      /* .on carries the accent bar (the active window); .min mutes a minimized one to --lg-ink-3,
+         so the list reads at a glance the way the taskbar itself does. */
+      open.className = 'item' + (isActive(w) ? ' on' : '') + (w.minimized ? ' min' : '');
+      open.textContent = title;
+      open.title = title + (w.minimized ? '\n(minimized)' : '');
       open.addEventListener('click', function () {
         closePop();
         act('bar.window', { hwnd: w.hwnd, action: isActive(w) ? 'toggle' : 'focus' }, 'window');
@@ -587,7 +704,7 @@
     });
     Object.keys(cells).forEach(function (key) {
       var b = cells[key];
-      if (b._item) paintDot(b, winsOf(b._item));
+      if (b._item) paintInd(b, winsOf(b._item));
     });
 
     var sig = keys.sort().join(',');
@@ -636,8 +753,13 @@
 
   function closePop() {
     if (!popKey) return;
+    /* The quick-settings watch exists only for the open panel: leaving it on would have main
+       pushing the whole system state at a closed popover every 2 seconds, on a bar whose entire
+       point is that it costs nothing at rest. */
+    if (popKey === 'qs') { qsPaint = null; qsWatch(false); }
     popKey = null;
     el.pop.hidden = true;
+    el.pop.className = 'pop';          // drop any per-panel class (.cal)
     el.pop.textContent = '';
     if (popTimer) { clearTimeout(popTimer); popTimer = 0; }
     call('bar.popover', { open: false }).catch(function () {});   // shrink request; failure is reported on open, not here
@@ -678,7 +800,8 @@
   document.addEventListener('mousedown', function (ev) {
     if (!popKey) return;
     if (el.pop.contains(ev.target)) return;
-    if (ev.target.closest && ev.target.closest('#volume, #clock, #more, .cell')) return;  // the anchors toggle themselves
+    // the anchors toggle themselves, so a click on one must not also be an outside click
+    if (ev.target.closest && ev.target.closest('#volume, #network, #battery, #clock, #more, .cell')) return;
     closePop();
   }, true);
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closePop(); });
@@ -687,22 +810,25 @@
 
   var vol = { level: null, muted: false, reason: '' };
 
-  function volumeGlyph() {
-    var level = vol.level, muted = vol.muted;
+  /* The speaker, as a string, so the bar glyph and the panel's mute button are the SAME drawing at
+     the same level — two speakers that disagreed would be a bug nobody could see. */
+  function volumeSvg(level, muted) {
     var waves = (level === null || muted) ? 0 : level <= 0.005 ? 0 : level <= 0.33 ? 1 : level <= 0.66 ? 2 : 3;
-    var s = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">';
-    s += '<path d="M2.2 6.1h2.4L8.1 3.1v9.8L4.6 9.9H2.2z" fill="currentColor"/>';
+    var s = '<path d="M2.2 6.1h2.4L8.1 3.1v9.8L4.6 9.9H2.2z" fill="currentColor"/>';
     var arcs = ['M10 6.2a2.6 2.6 0 0 1 0 3.6', 'M11.8 4.9a5 5 0 0 1 0 6.2', 'M13.6 3.6a7.4 7.4 0 0 1 0 8.8'];
     for (var i = 0; i < waves; i++)
       s += '<path d="' + arcs[i] + '" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>';
     if (muted)
       s += '<path d="M10.2 5.6l4.6 4.8M14.8 5.6l-4.6 4.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>';
-    s += '</svg>';
-    el.volume.innerHTML = s;
+    return svg(s);
+  }
+
+  function volumeGlyph() {
+    el.volume.innerHTML = volumeSvg(vol.level, vol.muted);
     el.volume.title = (vol.level === null
       ? 'Volume unavailable — ' + (vol.reason || 'no reason given')
-      : (muted ? 'Muted' : 'Volume ' + Math.round(level * 100) + '%')) +
-      '\nClick: Windows quick settings · right-click: the Mantle slider';
+      : (vol.muted ? 'Muted' : 'Volume ' + Math.round(vol.level * 100) + '%')) +
+      '\nClick: quick settings';
   }
 
   /* Volume is read fresh every time the popover opens: another app changes it constantly, and a
@@ -715,7 +841,7 @@
         throw new Error(msg(e1));
       });
     }).then(function (v) {
-      vol.level = typeof v.level === 'number' ? v.level : null;
+      vol.level = typeof v.level === 'number' ? v.level / 100 : null;   // the sidecar reports 0-100; vol.level is 0-1 (glyph + tooltip)
       vol.muted = !!v.muted;
       vol.reason = vol.level === null ? 'the bridge returned no level' : '';
       volumeGlyph();
@@ -727,77 +853,315 @@
     });
   }
 
-  function buildVolumePop(pop) {
-    var h = document.createElement('h3'); h.textContent = 'Volume'; pop.appendChild(h);
-    var row = document.createElement('div'); row.className = 'row';
-    var range = document.createElement('input');
-    range.type = 'range'; range.min = '0'; range.max = '100'; range.step = '1';
-    range.value = String(Math.round((vol.level || 0) * 100));
-    var mute = document.createElement('button');
-    mute.type = 'button'; mute.className = 'mute';
-    mute.textContent = vol.muted ? 'Unmute' : 'Mute';
-    mute.setAttribute('aria-pressed', String(!!vol.muted));
-    row.appendChild(range); row.appendChild(mute);
-    pop.appendChild(row);
-
-    var note = document.createElement('div'); note.className = 'note'; note.hidden = true;
-    pop.appendChild(note);
-    function problem(text) { note.textContent = text; note.hidden = false; }
-
-    if (vol.level === null) { range.disabled = true; problem('volume unavailable — ' + (vol.reason || 'no reason given')); }
-
-    range.addEventListener('input', function () {
-      var lvl = Number(range.value) / 100;
-      vol.level = lvl; volumeGlyph();
-      callR('volume.set', { level: lvl }).then(function () { note.hidden = true; },
-        function (e) { problem('volume.set failed — ' + msg(e)); });
-    });
-    mute.addEventListener('click', function () {
-      var next = !vol.muted;
-      vol.muted = next; mute.textContent = next ? 'Unmute' : 'Mute';
-      mute.setAttribute('aria-pressed', String(next));
-      volumeGlyph();
-      callR('volume.set', { muted: next }).then(function () { note.hidden = true; },
-        function (e) { problem('volume.set failed — ' + msg(e)); });
-    });
-
-    // refresh from the system now that the popover is open
-    readVolume().then(function () {
-      if (popKey !== 'volume') return;
-      range.disabled = false;
-      range.value = String(Math.round((vol.level || 0) * 100));
-      mute.textContent = vol.muted ? 'Unmute' : 'Mute';
-      mute.setAttribute('aria-pressed', String(!!vol.muted));
-      note.hidden = true;
-    }, function (e) {
-      if (popKey !== 'volume') return;
-      range.disabled = true;
-      problem('could not read the system volume — ' + msg(e));
-    });
-  }
-
   /* ================================================================= the Windows flyouts
 
-     Volume, network and the clock are Windows' own surfaces, and Windows already draws them well.
-     Rather than reimplement quick settings, the bar asks the shell to press the key for it:
-     win+a is volume/wifi/bluetooth, win+n is notifications + calendar. If that call fails, the
-     state strip says so — a click that does nothing in silence is the one thing not allowed. */
+     Two surfaces Mantle cannot replicate — the full quick-settings flyout and the notification
+     centre — are still Windows', and the bar asks the shell to press the key for it. Every panel
+     below keeps one of these as its escape hatch, because "Mantle does 90% of it" is only honest
+     if the last 10% is one click away. A refused key press lands in the state strip. */
   function keys(combo, what) {
     callR('sys.keys', { combo: combo }).then(function () { clearFail('keys'); }, function (e) {
       fail('keys', what + ' failed', 'sys.keys ' + combo + ' was refused, so the Windows flyout did not open: ' + msg(e), 'warn');
     });
   }
 
-  el.volume.addEventListener('click', function () { closePop(); keys('win+a', 'quick settings'); });
-  el.network.addEventListener('click', function () { closePop(); keys('win+a', 'quick settings'); });
-  el.clock.addEventListener('click', function () { closePop(); keys('win+n', 'notifications'); });
+  /* ================================================================= quick settings
 
-  /* Right-click keeps Mantle's own controls reachable — and they are the fallback when the key
-     injection is the thing that is broken. */
-  el.volume.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openPop('volume', el.volume, buildVolumePop); });
-  el.clock.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openPop('clock', el.clock, buildClockPop); });
-  el.network.addEventListener('contextmenu', function (ev) { ev.preventDefault(); act('open', { target: 'ms-settings:network' }, 'settings'); });
-  el.battery.addEventListener('click', function () { act('open', { target: 'ms-settings:batterysaver' }, 'settings'); });
+     Owen, 2026-09-21, pointing at volume / Wi-Fi / battery / clock: "these buttons need to go to a
+     wrapper version of where they used to go … some of them just go to settings now". So the three
+     readouts on the right open ONE panel — Windows 11's shape, Mantle's glass — instead of three
+     different fates (a slider, a settings URI, a key press).
+
+     Everything in it is driven by qs.get / qs.set / qs.watch, and every part carries its own
+     ok/reason. A part that is not ok renders MUTED with the reason in its tooltip AND as a note
+     line at the bottom; it is never blank, and it never silently does nothing. A toggle in flight
+     shows a pending state and is re-rendered from the reply, so a switch that did not take cannot
+     stay lit. */
+  var qs = null, qsBusy = Object.create(null), qsPaint = null;
+
+  function qsPart(name) { return (qs && qs[name]) || null; }
+  function partOk(p) { return !!(p && p.ok !== false); }
+  function partWhy(p, what) {
+    return (p && p.reason) || ('the shell gave no reason why ' + what + ' is unavailable');
+  }
+
+  function qsSnapshot() {
+    return callR('qs.get').then(function (d) {
+      qs = d; clearFail('qs');
+      if (d && d.volume && typeof d.volume.level === 'number') {
+        vol.level = typeof d.volume.level === 'number' ? d.volume.level / 100 : null; vol.muted = !!d.volume.muted; vol.reason = ''; volumeGlyph();
+      }
+      return d;
+    }, function (e) {
+      fail('qs', 'quick settings off', 'qs.get was refused, so the panel cannot read the system: ' + msg(e), 'warn');
+      throw e;
+    });
+  }
+
+  /* The watch is on ONLY while the panel is open: a 2s push into a closed popover is pure cost on
+     a bar that is meant to be free at rest. */
+  function qsWatch(on) {
+    callR('qs.watch', { on: !!on }).then(function () { clearFail('qswatch'); }, function (e) {
+      if (on) fail('qswatch', 'qs stale', 'qs.watch was refused, so the panel shows a snapshot and will not update itself: ' + msg(e));
+    });
+  }
+
+  function qsApplyReply(r) {
+    if (!r || !r.part || !qs) return;
+    var v = r.value;
+    if (r.part === 'volume' && qs.volume) qs.volume.level = v;
+    else if (r.part === 'mute' && qs.volume) qs.volume.muted = !!v;
+    else if (r.part === 'wifi' && qs.wifi) qs.wifi.on = !!v;
+    else if (r.part === 'bluetooth' && qs.bluetooth) qs.bluetooth.on = !!v;
+    else if (r.part === 'brightness' && qs.brightness) qs.brightness.level = v;
+  }
+
+  function qsSet(part, value) {
+    qsBusy[part] = true;
+    if (qsPaint) qsPaint();
+    return callR('qs.set', { part: part, value: value }).then(function (r) {
+      qsBusy[part] = false;
+      qsApplyReply(r);                      // the reply is authoritative, not the click
+      if (qsPaint) qsPaint();
+      clearFail('qsset');
+      return r;
+    }, function (e) {
+      qsBusy[part] = false;
+      if (qsPaint) qsPaint();               // straight back to what the system actually says
+      fail('qsset', part + ' failed', 'qs.set ' + part + ' was refused: ' + msg(e), 'warn');
+    });
+  }
+
+  /* 10 sets a second while a slider is dragged, and the last value always lands (the trailing
+     call), because the one the user stops on is the one that matters. */
+  function throttled(fn, ms) {
+    var last = 0, t = 0, pending = null;
+    return function (v) {
+      pending = v;
+      var now = Date.now(), wait = ms - (now - last);
+      if (wait <= 0) { last = now; fn(pending); }
+      else if (!t) t = setTimeout(function () { t = 0; last = Date.now(); fn(pending); }, wait);
+    };
+  }
+
+  function svg(body, size) {
+    return '<svg viewBox="0 0 16 16" width="' + (size || 16) + '" height="' + (size || 16) +
+      '" aria-hidden="true" focusable="false">' + body + '</svg>';
+  }
+  function wifiGlyph(bars) {
+    var arcs = ['M6.3 10.8a2.6 2.6 0 0 1 3.4 0', 'M4 8.2a6 6 0 0 1 8 0', 'M1.6 5.6a9.5 9.5 0 0 1 12.8 0'];
+    var s = '<circle cx="8" cy="13.2" r="1" fill="currentColor"/>';
+    for (var i = 0; i < 3; i++)
+      s += '<path d="' + arcs[i] + '" fill="none" stroke="currentColor" stroke-width="1.3" ' +
+        'stroke-linecap="round" opacity="' + (i < bars ? '1' : '.28') + '"/>';
+    return svg(s);
+  }
+  var BT_GLYPH = svg('<path d="M6 4.4L10.2 8 6 11.6M8 2v12l2.2-2.4M8 8L5.2 5.8M8 8l-2.8 2.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>');
+  var MOON_GLYPH = svg('<path d="M12.6 10.2A5.2 5.2 0 0 1 6.1 3.6a5.4 5.4 0 1 0 6.5 6.6z" fill="currentColor"/>');
+  var SAVER_GLYPH = svg('<rect x="1.4" y="5" width="10.8" height="6" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="13.2" y="6.8" width="1.4" height="2.4" rx=".7" fill="currentColor"/><path d="M7.4 5.9L5.6 8.4h1.6l-.4 1.8 2-2.4H7.1z" fill="currentColor"/>');
+
+  function buildQsPop(pop) {
+    var tiles = {}, notes = document.createElement('div'), sliders = {};
+
+    var grid = document.createElement('div'); grid.className = 'qsgrid';
+    [['wifi', 'Wi-Fi'], ['bluetooth', 'Bluetooth'], ['nightlight', 'Night light'], ['saver', 'Battery saver']]
+      .forEach(function (t) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'qstile';
+        var ico = document.createElement('span'); ico.className = 'qsico';
+        var lbl = document.createElement('span'); lbl.className = 'qslbl'; lbl.textContent = t[1];
+        var sub = document.createElement('span'); sub.className = 'qssub';
+        b.appendChild(ico); b.appendChild(lbl); b.appendChild(sub);
+        tiles[t[0]] = { b: b, ico: ico, sub: sub, name: t[1] };
+        grid.appendChild(b);
+      });
+    pop.appendChild(grid);
+
+    tiles.wifi.b.addEventListener('click', function () {
+      var p = qsPart('wifi');
+      if (!partOk(p) || !p.present || qsBusy.wifi) return;
+      qsSet('wifi', !p.on);
+    });
+    tiles.bluetooth.b.addEventListener('click', function () {
+      var p = qsPart('bluetooth');
+      if (!partOk(p) || !p.present || qsBusy.bluetooth) return;
+      qsSet('bluetooth', !p.on);
+    });
+    // night light and battery saver are read-only for now, and say so in their tooltips
+
+    function slider(key, label, part, setPart) {
+      var wrap = document.createElement('div'); wrap.className = 'qsrow';
+      var head = document.createElement('div'); head.className = 'qsrowhead';
+      var name = document.createElement('span'); name.textContent = label;
+      var val = document.createElement('span'); val.className = 'qsval';
+      head.appendChild(name); head.appendChild(val);
+      var line = document.createElement('div'); line.className = 'qsline';
+      var range = document.createElement('input');
+      range.type = 'range'; range.min = '0'; range.max = '100'; range.step = '1';
+      line.appendChild(range);
+      wrap.appendChild(head); wrap.appendChild(line);
+      pop.appendChild(wrap);
+      var send = throttled(function (v) { qsSet(setPart, v / 100); }, 100);
+      range.addEventListener('input', function () {
+        val.textContent = range.value + '%';
+        if (setPart === 'volume') { vol.level = Number(range.value) / 100; volumeGlyph(); }
+        send(Number(range.value));
+      });
+      range.addEventListener('change', function () { qsSet(setPart, Number(range.value) / 100); });
+      sliders[key] = { wrap: wrap, range: range, val: val, line: line, part: part };
+      return sliders[key];
+    }
+
+    slider('brightness', 'Brightness', 'brightness', 'brightness');
+    var v = slider('volume', 'Volume', 'volume', 'volume');
+    var mute = document.createElement('button');
+    mute.type = 'button'; mute.className = 'qsmute';
+    mute.addEventListener('click', function () {
+      var p = qsPart('volume');
+      if (qsBusy.mute) return;
+      qsSet('mute', !(p && p.muted));
+    });
+    v.line.appendChild(mute);
+    v.mute = mute;
+
+    notes.className = 'qsnotes';
+    pop.appendChild(notes);
+
+    var foot = document.createElement('div'); foot.className = 'qsfoot';
+    var power = document.createElement('div'); power.className = 'qspower';
+    var acts = document.createElement('div'); acts.className = 'qsacts';
+    var toWin = document.createElement('button');
+    toWin.type = 'button'; toWin.className = 'qslink';
+    toWin.textContent = 'Windows quick settings';
+    toWin.title = 'Open the real Windows flyout (Win+A) — everything Mantle does not wrap yet';
+    toWin.addEventListener('click', function () { closePop(); keys('win+a', 'quick settings'); });
+    var gear = document.createElement('button');
+    gear.type = 'button'; gear.className = 'qsgear';
+    gear.title = 'Open Windows Settings';
+    gear.innerHTML = svg('<path d="M8 5.6A2.4 2.4 0 1 0 8 10.4 2.4 2.4 0 0 0 8 5.6z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 1.6l1 1.7 2-.3.5 1.9 1.8.9-.9 1.8.9 1.8-1.8.9-.5 1.9-2-.3-1 1.7-1-1.7-2 .3-.5-1.9-1.8-.9.9-1.8-.9-1.8 1.8-.9.5-1.9 2 .3z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>');
+    gear.addEventListener('click', function () { closePop(); act('open', { target: 'ms-settings:' }, 'settings'); });
+    acts.appendChild(toWin); acts.appendChild(gear);
+    foot.appendChild(power); foot.appendChild(acts);
+    pop.appendChild(foot);
+
+    function paintTile(key, on, present, ok, sub, tip, glyphHTML, fixed) {
+      var t = tiles[key];
+      t.ico.innerHTML = glyphHTML;
+      t.sub.textContent = sub;
+      t.b.classList.toggle('on', !!on && ok && present);
+      t.b.classList.toggle('dead', !ok || !present || fixed);
+      t.b.classList.toggle('pending', !!qsBusy[key]);
+      t.b.title = tip;
+      if (!ok || !present || fixed) t.b.setAttribute('aria-disabled', 'true');
+      else t.b.removeAttribute('aria-disabled');
+      t.b.setAttribute('aria-pressed', String(!!on));
+    }
+
+    function paint() {
+      var w = qsPart('wifi'), b = qsPart('bluetooth'), n = qsPart('nightlight'),
+          p = qsPart('power'), br = qsPart('brightness'), vv = qsPart('volume');
+      var problems = [];
+
+      // ---- Wi-Fi
+      var wBars = w && w.connected ? Math.max(1, Math.min(3, Math.ceil((w.signal || 0) / 34))) : 0;
+      paintTile('wifi', w && w.on, !w || w.present !== false, partOk(w),
+        !w ? 'Unknown'
+          : !partOk(w) ? 'Unavailable'
+          : w.present === false ? 'No adapter'
+          : !w.on ? 'Off'
+          : w.connected ? (w.ssid || 'Connected') + (w.band ? ' · ' + w.band : '') : 'Not connected',
+        !partOk(w) ? 'Wi-Fi — ' + partWhy(w, 'Wi-Fi')
+          : (w && w.present === false) ? 'No Wi-Fi adapter on this machine'
+          : 'Turn Wi-Fi ' + (w && w.on ? 'off' : 'on'),
+        wifiGlyph(w && w.on ? (wBars || 1) : 0), false);
+      if (!partOk(w)) problems.push('Wi-Fi: ' + partWhy(w, 'Wi-Fi'));
+
+      // ---- Bluetooth
+      var slow = b && b.via && /powershell/i.test(String(b.via));
+      paintTile('bluetooth', b && b.on, !b || b.present !== false, partOk(b),
+        !b ? 'Unknown'
+          : !partOk(b) ? 'Unavailable'
+          : b.present === false ? 'No radio'
+          : (b.on ? 'On' : 'Off') + (slow ? ' · slow' : ''),
+        !partOk(b) ? 'Bluetooth — ' + partWhy(b, 'Bluetooth')
+          : (slow ? 'Switched via PowerShell, so it takes a second or two\n' : '') +
+            'Turn Bluetooth ' + (b && b.on ? 'off' : 'on'),
+        BT_GLYPH, false);
+      if (!partOk(b)) problems.push('Bluetooth: ' + partWhy(b, 'Bluetooth'));
+
+      // ---- Night light (state only)
+      paintTile('nightlight', n && n.on, !n || n.present !== false, partOk(n),
+        !n ? 'Unknown' : !partOk(n) ? 'Unavailable' : n.present === false ? 'Not set up' : (n.on ? 'On' : 'Off'),
+        !partOk(n) ? 'Night light — ' + partWhy(n, 'night light')
+          : 'Mantle cannot switch this yet — it reads the state only',
+        MOON_GLYPH, true);
+      if (!partOk(n)) problems.push('Night light: ' + partWhy(n, 'night light'));
+
+      // ---- Battery saver (state only)
+      paintTile('saver', p && p.saver, !!p, partOk(p),
+        !p ? 'Unknown' : !partOk(p) ? 'Unavailable' : (p.saver ? 'On' : 'Off'),
+        !partOk(p) ? 'Battery saver — ' + partWhy(p, 'battery saver')
+          : 'Mantle cannot switch this yet — it reads the state only',
+        SAVER_GLYPH, true);
+      if (!partOk(p)) problems.push('Power: ' + partWhy(p, 'power'));
+
+      // ---- sliders
+      function paintSlider(s, part, pct, ok, present, why) {
+        var live = ok && present;
+        s.range.disabled = !live;
+        s.wrap.classList.toggle('dead', !live);
+        if (document.activeElement !== s.range && typeof pct === 'number')
+          s.range.value = String(Math.round(pct));
+        s.val.textContent = live ? (typeof pct === 'number' ? Math.round(pct) + '%' : '—') : 'unavailable';
+        s.wrap.title = live ? '' : why;
+      }
+      paintSlider(sliders.brightness, 'brightness',
+        br && typeof br.level === 'number' ? br.level : null,   // qs.get levels are already 0-100 (live: "10000%" before this)
+        partOk(br), !!br && br.present !== false,
+        !br ? 'brightness was not reported' : !partOk(br) ? partWhy(br, 'brightness') : 'This display does not report a brightness control');
+      if (br && !partOk(br)) problems.push('Brightness: ' + partWhy(br, 'brightness'));
+
+      paintSlider(sliders.volume, 'volume',
+        vv && typeof vv.level === 'number' ? vv.level : null,   // 0-100 from qs.get, not the 0-1 of volume.get
+        partOk(vv), !!vv, partOk(vv) ? 'volume was not reported' : partWhy(vv, 'volume'));
+      if (vv && !partOk(vv)) problems.push('Volume: ' + partWhy(vv, 'volume'));
+      var muted = !!(vv && vv.muted);
+      sliders.volume.mute.innerHTML = volumeSvg(muted ? 0 : (vv && vv.level) || 0, muted);
+      sliders.volume.mute.classList.toggle('on', muted);
+      sliders.volume.mute.classList.toggle('pending', !!qsBusy.mute);
+      sliders.volume.mute.title = muted ? 'Unmute' : 'Mute';
+      sliders.volume.mute.setAttribute('aria-pressed', String(muted));
+
+      // ---- footer power line
+      power.textContent = !p ? 'Power state unknown'
+        : !partOk(p) ? 'Power: ' + partWhy(p, 'power')
+        : !p.onBattery ? 'Plugged in' + (typeof p.percent === 'number' ? ' · ' + Math.round(p.percent) + '%' : '')
+        : (typeof p.percent === 'number' ? Math.round(p.percent) + '%' : 'On battery') +
+          (p.minutesLeft ? ' · ' + Math.floor(p.minutesLeft / 60) + 'h ' + (p.minutesLeft % 60) + 'm left' : '');
+
+      // ---- the notes: one line per part that is not ok, never a blank tile with no explanation
+      notes.textContent = '';
+      problems.forEach(function (text) {
+        var d = document.createElement('div'); d.className = 'note'; d.textContent = text;
+        notes.appendChild(d);
+      });
+    }
+
+    qsPaint = paint;
+    paint();                                    // draw from whatever we already know, immediately
+    qsSnapshot().then(function () { if (popKey === 'qs') paint(); },
+      function () { if (popKey === 'qs') paint(); });
+    qsWatch(true);
+  }
+
+  function openQs(anchor) { openPop('qs', anchor || el.right, buildQsPop); }
+
+  el.volume.addEventListener('click', function () { openQs(el.volume); });
+  el.network.addEventListener('click', function () { openQs(el.network); });
+  el.battery.addEventListener('click', function () { openQs(el.battery); });
+  el.volume.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openQs(el.volume); });
+  el.network.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openQs(el.network); });
+  el.battery.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openQs(el.battery); });
 
   /* ================================================================= battery */
 
@@ -821,7 +1185,7 @@
     return call('sys.stats').then(function (s) {
       clearFail('stats');
       renderBattery(s && s.battery);
-      if (s && s.volume && vol.level === null) { vol.level = s.volume.level; vol.muted = !!s.volume.muted; volumeGlyph(); }
+      if (s && s.volume && vol.level === null && typeof s.volume.level === 'number') { vol.level = s.volume.level / 100; vol.muted = !!s.volume.muted; volumeGlyph(); }
     }, function (e) {
       el.battery.hidden = true;
       fail('stats', 'stats off', 'sys.stats failed, so battery and volume readings are stale: ' + msg(e));
@@ -830,48 +1194,172 @@
 
   /* ================================================================= clock */
 
-  var tickN = 0;
+  var tickN = 0, tickTimer = 0;
   function pad(n) { return n < 10 ? '0' + n : String(n); }
 
+  /* 12-hour with seconds, Windows' own shape: "4:15:32 PM" — no leading zero on the hour, two
+     digits on the minutes and seconds, one space before the meridiem. Hand-formatted rather than
+     Intl, because Intl's hour12 output is locale-dependent (it gives "4:15:32 p.m." on some
+     locales and a narrow no-break space before the meridiem on modern ICU), and Owen asked for
+     the Windows en-US string, not for whatever his locale happens to render. The DATE line below
+     still goes through toLocaleDateString: that one SHOULD follow the machine. */
+  function clockText(now) {
+    var h = now.getHours();
+    var mer = h < 12 ? 'AM' : 'PM';
+    h = h % 12; if (h === 0) h = 12;
+    return h + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds()) + ' ' + mer;
+  }
+
+  /* One tick does the least it can: the time is a text node swap on a box that is already wide
+     enough for the longest string it will ever hold (see .clock .t in bar.css — tabular-nums and
+     a min-width), so "9:59:59 PM" → "10:00:00 PM" cannot reflow the cluster, and nothing here
+     measures anything. The date and the tooltip only change on the minute, so they are only
+     touched when their own text actually differs. */
   function tick() {
     var now = new Date();
-    var t = pad(now.getHours()) + ':' + pad(now.getMinutes());     // 24h, always
+    var t = clockText(now);
     if (clkT.textContent !== t) clkT.textContent = t;
     var d = now.toLocaleDateString(undefined, { day: 'numeric', month: 'numeric', year: 'numeric' });
     if (clkD.textContent !== d) clkD.textContent = d;
-    el.clock.title = now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) +
-      '\nClick: notifications and calendar · right-click: the Mantle clock';
+    var tip = now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) +
+      '\nClick: the calendar';
+    if (el.clock.title !== tip) el.clock.title = tip;
 
     // Battery drifts slowly: refreshing it on every fifth minute tick avoids a second timer.
     if (tickN % 5 === 0) readStats();
     tickN++;
-
-    /* THE one timer at rest. Aligned to the next minute boundary (+250ms of slack so we are
-       never a hair early and show the previous minute), chained rather than setInterval so a
-       sleep/resume cannot leave a backlog of missed ticks. */
-    var delay = 60000 - (Date.now() % 60000) + 250;
-    setTimeout(tick, delay);
+    schedule();
   }
 
-  function buildClockPop(pop) {
+  /* THE one timer, and it changes gear with the bar. While the bar is UP the seconds are on
+     screen, so it fires on the second boundary. While it is hidden nobody can see the digits, so
+     it drops back to the minute boundary — the text may be up to a minute stale in a window that
+     is off screen, which costs nothing and is the difference between one wakeup a minute and
+     sixty. Chained setTimeout, never setInterval: a sleep/resume must not leave a backlog, and
+     each hop re-aligns to the real clock instead of drifting. */
+  function schedule() {
+    if (tickTimer) clearTimeout(tickTimer);
+    var period = revealed ? 1000 : 60000;
+    var slack = revealed ? 20 : 250;     // never a hair early, or we would paint the previous second
+    tickTimer = setTimeout(tick, period - (Date.now() % period) + slack);
+  }
+
+  /* Called by slide() the instant a reveal or a hide lands: repaint NOW (the hidden bar's text
+     can be a minute old and it is about to be looked at) and re-aim the timer at the new gear. */
+  function clockGear() {
     var now = new Date();
+    var t = clockText(now);
+    if (clkT.textContent !== t) clkT.textContent = t;
+    schedule();
+  }
+
+  /* ================================================================= the calendar
+
+     The clock opens a month, the way Windows' does. The notification centre is the one half of
+     that flyout Mantle cannot replicate, so it is a link at the bottom that says so rather than
+     something quietly missing. */
+  var calShown = null;          // the 1st of the month on screen; null = follow today
+
+  function sameDay(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
+
+  function buildCalPop(pop) {
+    pop.classList.add('cal');
+    var today = new Date();
+    if (!calShown) calShown = new Date(today.getFullYear(), today.getMonth(), 1);
+
+    var head = document.createElement('div'); head.className = 'calhead';
     var big = document.createElement('div'); big.className = 'big';
-    big.textContent = now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
     var sub = document.createElement('div'); sub.className = 'sub';
-    sub.textContent = now.getFullYear() + ' · ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
-    pop.appendChild(big); pop.appendChild(sub);
-    /* Seconds run ONLY while this popover is open, and as a chained setTimeout that checks
-       popKey first — so there is no interval left alive anywhere in this file, and the "one
-       timer at rest" rule holds by construction rather than by remembering to clear one. */
+    head.appendChild(big); head.appendChild(sub);
+    pop.appendChild(head);
+
+    var nav = document.createElement('div'); nav.className = 'calnav';
+    function navBtn(text, tip, fn) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'calbtn'; b.textContent = text; b.title = tip;
+      b.addEventListener('click', fn);
+      return b;
+    }
+    var title = document.createElement('div'); title.className = 'caltitle';
+    var prev = navBtn('‹', 'Previous month', function () {
+      calShown = new Date(calShown.getFullYear(), calShown.getMonth() - 1, 1); paintGrid();
+    });
+    var next = navBtn('›', 'Next month', function () {
+      calShown = new Date(calShown.getFullYear(), calShown.getMonth() + 1, 1); paintGrid();
+    });
+    var now = navBtn('Today', 'Back to this month', function () {
+      var t = new Date();
+      calShown = new Date(t.getFullYear(), t.getMonth(), 1); paintGrid();
+    });
+    nav.appendChild(title); nav.appendChild(now); nav.appendChild(prev); nav.appendChild(next);
+    pop.appendChild(nav);
+
+    var dow = document.createElement('div'); dow.className = 'calgrid caldow';
+    /* Sunday-first, with the weekday names taken from the machine's locale the same way the date
+       line is — a hard-coded English row would be the one thing in the panel that ignores it. */
+    for (var i = 0; i < 7; i++) {
+      var d = new Date(2026, 1, 1 + i);      // 2026-02-01 is a Sunday: a known week to read names off
+      var c = document.createElement('div'); c.className = 'caldowc';
+      c.textContent = d.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 2);
+      dow.appendChild(c);
+    }
+    pop.appendChild(dow);
+
+    var grid = document.createElement('div'); grid.className = 'calgrid';
+    pop.appendChild(grid);
+
+    var foot = document.createElement('div'); foot.className = 'calfoot';
+    var link = document.createElement('button');
+    link.type = 'button'; link.className = 'qslink';
+    link.textContent = 'Windows notifications';
+    link.title = 'Open the notification centre (Win+N) — the one part of this flyout Mantle cannot draw yet';
+    link.addEventListener('click', function () { closePop(); keys('win+n', 'notifications'); });
+    foot.appendChild(link);
+    pop.appendChild(foot);
+
+    function paintGrid() {
+      var t = new Date();
+      title.textContent = calShown.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      grid.textContent = '';
+      var first = new Date(calShown.getFullYear(), calShown.getMonth(), 1);
+      var start = new Date(first);
+      start.setDate(1 - first.getDay());                 // back to the Sunday on or before the 1st
+      for (var i = 0; i < 42; i++) {
+        var d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+        var c = document.createElement('div');
+        c.className = 'calday' +
+          (d.getMonth() !== calShown.getMonth() ? ' other' : '') +
+          (sameDay(d, t) ? ' today' : '');
+        c.textContent = String(d.getDate());
+        c.title = d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        grid.appendChild(c);
+      }
+    }
+
+    function paintClock() {
+      var d = new Date();
+      big.textContent = clockText(d);
+      sub.textContent = d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    }
+
+    paintClock();
+    paintGrid();
+    /* Seconds run ONLY while this popover is open, and as a chained setTimeout that checks popKey
+       first — so there is no interval left alive anywhere in this file, and the "one timer at
+       rest" rule holds by construction rather than by remembering to clear one. */
     (function second() {
       popTimer = setTimeout(function () {
-        if (popKey !== 'clock') return;
-        var d = new Date();
-        sub.textContent = d.getFullYear() + ' · ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+        if (popKey !== 'cal') return;
+        paintClock();
         second();
       }, 1000 - (Date.now() % 1000) + 20);
     })();
   }
+
+  el.clock.addEventListener('click', function () { openPop('cal', el.clock, buildCalPop); });
+  el.clock.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openPop('cal', el.clock, buildCalPop); });
 
   /* ================================================================= overflow menu */
 
@@ -979,6 +1467,15 @@
     on('bar.hide', function (p) { slide(false, p && p.why, null, p && p.ms); });
     on('bar.pinned', renderDock);
     on('bar.backdrop', setBackdrop);
+    /* Pushed every 2s ONLY while the quick-settings panel is open (and after every set), so this
+       repaints the panel in place and keeps the bar's own speaker honest for free. */
+    on('qs', function (d) {
+      qs = d;
+      if (d && d.volume && typeof d.volume.level === 'number') {
+        vol.level = d.volume.level; vol.muted = !!d.volume.muted; volumeGlyph();
+      }
+      if (popKey === 'qs' && qsPaint) qsPaint();
+    });
     on('windows', renderWindows);
     on('tray', function (list) { lastTray = list || []; renderTray(lastTray); },
       function (reason) { trayThrew = reason; renderTray(lastTray); });   // the tray says it in its own chip

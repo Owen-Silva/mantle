@@ -159,6 +159,15 @@ const BAR_SHAPE = flags.flush && !flags.pill ? 'edge' : 'pill';
  */
 flags.edgeclip = !ARGV.some((a) => a === '--no-edgeclip');
 
+/*
+ * --os-morph: animate the WINDOW with the sidecar's per-frame SetWindowPos, the
+ * way this did until Owen said "when the taskbar expands out it isn't that
+ * smooth". Kept so the two can be compared side by side rather than argued about.
+ * The default now: the window is placed once and the PAGE animates the pill.
+ */
+flags.osMorph = ARGV.some((a) => a === '--os-morph');
+const REVEAL_BY = flags.osMorph ? 'morph' : 'page';
+
 // A test instance gets its own userData directory, which is ALSO what keys
 // Electron's single-instance lock -- that is the whole reason the profile name
 // is mandatory. Without it a test run would take the live shell's lock and be
@@ -399,7 +408,7 @@ let lastRestoreEvent = null;
 
 // The most the bar may grow for a popover. A cap, not a suggestion: a bar that
 // asked for 4000px would become a full-screen always-on-top window.
-const POPOVER_MAX = 320;
+const POPOVER_MAX = 480;   // was 320: the Quick Settings panel asked for 429 live (2026-09-21) and had its top cut off
 let restoreChain = Promise.resolve();
 
 // --- the hover bar -----------------------------------------------------------
@@ -414,7 +423,7 @@ const REVEAL_BAND_DIP = 4;
 const POLL_HIDDEN_MS = 80;     // cheap: one cursor read, no Win32 call
 const POLL_SHOWN_MS = 120;
 const HIDE_GRACE_MS = 500;     // cursor outside the bar this long before it goes
-const HIDE_SLIDE_MS = 340;     // between the 'bar.hide' event and barWin.hide(): the 320 ms morph, plus 20
+const HIDE_SLIDE_MS = 350;     // between the 'bar.hide' event and barWin.hide(): the page's 320 ms exit, plus 30
 
 /*
  * THE MOVEMENT. Owen: it must feel like the Northwind site's nav detaching.
@@ -528,7 +537,7 @@ state.on('change', (snapshot) => {
 function setBar(patch) {
   // ok:false unless the caller says otherwise: the renderer shows a chip only for a NOT-ok reason, so the
   // healthy narration ("the bar is up: ...") stays in State for the overflow menu without becoming a chip.
-  state.set('bar', Object.assign({ mode: BAR_MODE, shape: BAR_SHAPE, ok: false }, patch));
+  state.set('bar', Object.assign({ mode: BAR_MODE, shape: BAR_SHAPE, reveal: REVEAL_BY, ok: false }, patch));
 }
 
 /**
@@ -542,6 +551,38 @@ function barReason(text) {
   return BAR_SHAPE === 'pill'
     ? `${text} -- pill shape: the Windows taskbar shares this edge, so it still comes up under and beside the pill unless it is moved to another edge`
     : text;
+}
+
+/**
+ * Trim a physical rectangle to the desktop, and say whether it had to be trimmed.
+ *
+ * The sidecar refuses a capture rectangle that is even one pixel off the screen
+ * (build 20: "the rect 260,1003 1400x78 is outside the screen"), and three of
+ * those in a row back the whole loop off and drop the window to a flat tint. A
+ * pixel of rounding is not worth that, so it is clamped -- and said, because a
+ * capture that is quietly a pixel short is still a thing worth knowing.
+ */
+function clampToDisplay(rect) {
+  if (!rect || !(rect.w > 0) || !(rect.h > 0)) return { rect, changed: false, note: null };
+  let disp;
+  try {
+    disp = toPhys(screen.getPrimaryDisplay().bounds);
+  } catch (_) {
+    return { rect, changed: false, note: null };
+  }
+  const x = Math.max(disp.x, rect.x);
+  const y = Math.max(disp.y, rect.y);
+  const w = Math.min(rect.x + rect.w, disp.x + disp.w) - x;
+  const h = Math.min(rect.y + rect.h, disp.y + disp.h) - y;
+  if (x === rect.x && y === rect.y && w === rect.w && h === rect.h) return { rect, changed: false, note: null };
+  if (!(w > 0) || !(h > 0)) {
+    return { rect, changed: false, note: `the capture rectangle ${rect.x},${rect.y} ${rect.w}x${rect.h} is entirely off the desktop (${disp.x},${disp.y} ${disp.w}x${disp.h})` };
+  }
+  return {
+    rect: { x, y, w, h },
+    changed: true,
+    note: `the capture rectangle was trimmed to the desktop: asked ${rect.x},${rect.y} ${rect.w}x${rect.h}, took ${x},${y} ${w}x${h}`,
+  };
 }
 
 /** A DIP rectangle in the PHYSICAL pixels the sidecar wants, however that has to happen. */
@@ -582,11 +623,29 @@ function barGeometry() {
   if (BAR_SHAPE === 'pill') {
     const w = Math.min(PILL_MAX_W_DIP, Math.max(120, b.width - PILL_SIDE_GAP_DIP));
     const w0 = Math.max(80, Math.round(w * PILL_START_W));
+    /*
+     * THE WINDOW REACHES THE SCREEN EDGE; the PILL does not (2026-09-21).
+     *
+     * Owen: "when the taskbar expands out it isn't that smooth". The cause was
+     * animating the WINDOW: every frame of the old morph was a SetWindowPos
+     * resize of a transparent Electron window, and each resize makes Chromium
+     * relayout, repaint and reallocate its surface -- so the window's edge ran a
+     * frame ahead of the content inside it.
+     *
+     * Now the window never moves during a reveal and the PAGE animates the pill,
+     * composited and vsync-locked. For that the window has to already cover
+     * everywhere the pill travels: it spans from the pill's resting top all the
+     * way DOWN to the screen edge (pill height + the 14 DIP of lift). The pill is
+     * the top 48 DIP of the page; the bottom 14 DIP stay transparent, which is
+     * the air under the island.
+     *
+     * The hot zone needs no change: the column under the island was already in it.
+     */
     restDip = {
       x: b.x + Math.round((b.width - w) / 2),
-      y: atTop ? b.y + PILL_LIFT_DIP : b.y + b.height - h - PILL_LIFT_DIP,
+      y: atTop ? b.y : b.y + b.height - h - PILL_LIFT_DIP,
       width: w,
-      height: h,
+      height: h + PILL_LIFT_DIP,
     };
     startDip = {
       x: b.x + Math.round((b.width - w0) / 2),   // same centre, narrower
@@ -601,13 +660,43 @@ function barGeometry() {
   }
 
   const rDip = BAR_SHAPE === 'pill' ? PILL_RADIUS_DIP : 0;
+
+  /*
+   * THE BOTTOM EDGE IS COMPUTED, NEVER ROUNDED (build 20, measured live).
+   *
+   * 62 DIP x 1.25 is 77.5, and rounding the HEIGHT on its own gives 78 -- so the
+   * window landed at y 1003 with height 78, i.e. one pixel PAST the bottom of a
+   * 1080-px screen. The sidecar then refused every backdrop frame ("the rect
+   * 260,1003 1400x78 is outside the screen"), three failures in a row backed the
+   * loop off, and the island fell back to the flat tint. The height is therefore
+   * derived from the screen edge -- bottom minus top -- and can never overshoot
+   * it, whatever the scale factor does to the arithmetic.
+   */
+  const dispPhys = toPhys(b);
+  const bottomPhys = dispPhys.y + dispPhys.h;   // toPhys speaks w/h, not width/height
+  const restPhys = toPhys(restDip);
+  if (!atTop) restPhys.h = bottomPhys - restPhys.y;
+
+  // The PILL itself: the 48 DIP the page actually paints, which is the top of the
+  // window at the bottom edge and the bottom of it at the top edge. This is what
+  // gets captured -- capturing the whole window would drag 17 px of the wrong
+  // scenery (the transparent strip under the island) into the pill's blur.
+  const pillDip = {
+    x: restDip.x,
+    y: atTop && BAR_SHAPE === 'pill' ? restDip.y + PILL_LIFT_DIP : restDip.y,
+    width: restDip.width,
+    height: h,
+  };
+
   return {
     shape: BAR_SHAPE,
     edge: atTop ? 'top' : 'bottom',
     scale: sf,
     radius: r,
-    rest: { dip: Object.assign({ r: rDip }, restDip), phys: Object.assign({ r }, toPhys(restDip)) },
+    bottomPhys,
+    rest: { dip: Object.assign({ r: rDip }, restDip), phys: Object.assign({ r }, restPhys) },
     start: { dip: Object.assign({ r: rDip }, startDip), phys: Object.assign({ r }, toPhys(startDip)) },
+    pill: { dip: pillDip, phys: toPhys(pillDip) },
   };
 }
 
@@ -643,7 +732,10 @@ function popoverDipRect(extra) {
     x: rest.x,
     y: flags.barEdge === 'top' ? rest.y : rest.y - extra,
     width: rest.width,
-    height: BAR_H + extra,
+    // rest.height, not BAR_H: in pill mode the window already includes the 14 DIP
+    // of air under the island, and a popover must grow on top of that rather than
+    // eat it.
+    height: rest.height + extra,
   };
 }
 
@@ -791,6 +883,55 @@ async function runMorph(from, to, ms, what) {
  * the morph is what brings it in. The page is told at the SAME moment with the
  * duration, so its fade runs on the same clock as the window's travel.
  */
+/**
+ * The default reveal: place once, show, let the page do the 560 ms.
+ *
+ * Order matters and is the whole point. The backdrop frame is captured while the
+ * window is still hidden -- no content protection, no risk of photographing
+ * ourselves -- and broadcast BEFORE 'bar.reveal', so the page's first frame of
+ * the rise already has the real wallpaper behind it instead of a flat tint that
+ * pops a quarter of a second later. If that one capture fails it is skipped in
+ * silence here: the 4 fps loop starts at landing and will fix it, and a reveal
+ * must never wait on a screenshot.
+ */
+let revealLandTimer = null;
+async function revealByPage(geo, why, visible) {
+  const rect = sideRect(geo.rest);
+  // Capture the PILL, place the WINDOW: the page hangs this image on the pill, and
+  // the window also covers the transparent strip under it -- 17 px of scenery that
+  // does not belong in the pill's blur.
+  const shotRect = clampToDisplay(geo.pill ? geo.pill.phys : rect).rect;
+  if (!visible) {
+    try {
+      const shot = await sidecar.call('backdrop', { x: shotRect.x, y: shotRect.y, w: shotRect.w, h: shotRect.h, scale: BACKDROP_SCALE }, 2000);
+      if (shot && shot.png) {
+        broadcast('bar.backdrop', { png: shot.png, w: shot.w, h: shot.h, rect: { x: shotRect.x, y: shotRect.y, w: shotRect.w, h: shotRect.h }, ms: Number(shot.ms) || 0 });
+      }
+    } catch (_) { /* the loop retries after landing; a reveal never waits on this */ }
+    if (!barRevealed || !barWin || barWin.isDestroyed()) return;   // hidden again while we waited
+    await placeBar([rect.x, rect.y, rect.x + rect.w, rect.y + rect.h], sidecarDpiAware, { quiet: true });
+  }
+
+  try {
+    barWin.showInactive();
+    if (!flags.test) barWin.setAlwaysOnTop(true, 'screen-saver');
+  } catch (err) {
+    setBar({ revealed: false, reason: `the bar window would not show: ${err.message}` });
+    return;
+  }
+  broadcast('bar.reveal', { why, mode: geo.shape, ms: REVEAL_MS });
+  setBar({ ok: true, revealed: true, reason: barReason(`the bar is up: ${why}`) });
+  process.stdout.write(`mantle: bar revealed (${why}) -- ${geo.shape} ${JSON.stringify(rect)}, the page animates it over ${REVEAL_MS} ms\n`);
+
+  // "Landed" is now a clock, not a reply: nothing in the main process is moving.
+  if (revealLandTimer) clearTimeout(revealLandTimer);
+  revealLandTimer = setTimeout(() => {
+    revealLandTimer = null;
+    if (barRevealed) startBackdrop('the bar landed');
+  }, REVEAL_MS);
+  if (revealLandTimer.unref) revealLandTimer.unref();
+}
+
 function revealBar(why) {
   if (!barWin || barWin.isDestroyed()) {
     setBar({ revealed: false, reason: `there is no bar window to reveal (${why})` });
@@ -803,8 +944,19 @@ function revealBar(why) {
   barRevealed = true;
 
   const geo = barGeometry();
-  // Coming back mid-hide starts from wherever the window got to, not from a jump
-  // back down to the edge; a fresh reveal starts from the parked rectangle.
+
+  if (!flags.osMorph) {
+    // THE PAGE ANIMATES IT. The window is placed once, at its resting rectangle,
+    // and never moves during the reveal -- see barGeometry() for why a moving
+    // window could never be smooth. One pre-show backdrop frame goes first so the
+    // pill has something real to blur on its very first painted frame; the window
+    // is still HIDDEN at that point, so nothing has to be excluded from the shot.
+    revealByPage(geo, why, visible);
+    return;
+  }
+
+  // --os-morph: the old road. Coming back mid-hide starts from wherever the
+  // window got to, not from a jump back down to the edge.
   const from = visible ? sideRect(currentSide(geo)) : sideRect(geo.start);
 
   try {
@@ -837,10 +989,19 @@ function beginHide(why) {
   if (!barRevealed || hideTimer) return;
   const geo = barGeometry();
   stopBackdrop(`the bar is leaving: ${why}`);
+  // The panel goes with the bar: a 2 s poll for a panel nobody can see is pure cost.
+  qsWatchStop(`the bar is hiding: ${why}`);
   broadcast('bar.hide', { why, ms: HIDE_MS });
   setBar({ ok: true, revealed: true, reason: barReason(`the bar is leaving: ${why}`) });
-  runMorph(sideRect(currentSide(geo)), sideRect(geo.start), HIDE_MS, 'hide')
-    .catch((err) => setBar({ reason: `the bar is going, but its exit threw: ${err && err.message ? err.message : err}` }));
+  // A reveal that lands DURING an exit must not start capturing over the top of
+  // it; revealBar() sets a fresh one if the cursor comes back.
+  if (revealLandTimer) { clearTimeout(revealLandTimer); revealLandTimer = null; }
+  if (flags.osMorph) {
+    runMorph(sideRect(currentSide(geo)), sideRect(geo.start), HIDE_MS, 'hide')
+      .catch((err) => setBar({ reason: `the bar is going, but its exit threw: ${err && err.message ? err.message : err}` }));
+  }
+  // On the default path nothing moves: the page runs its own 320 ms exit and the
+  // window simply goes at 350 ms, 30 ms after the page has finished.
   hideTimer = setTimeout(() => {
     hideTimer = null;
     barRevealed = false;
@@ -962,89 +1123,247 @@ const BACKDROP_MS = 250;              // 4 fps: it is a wallpaper, not a video
 const BACKDROP_SCALE = 4;             // downscale; the page blurs it anyway
 const BACKDROP_SETTLE_MS = 25;        // for the exclusion to take effect before the shot
 const BACKDROP_MAX_FAILS = 3;
-let backdropTimer = null;
-let backdropFails = 0;
-let backdropFrames = 0;
-let backdropOff = null;               // set once when the sidecar cannot do it at all
+// The desktop layer is the whole screen and sits under the wallpaper, so its
+// picture can be tiny: 8x down is 240x135 here, which a heavy CSS blur cannot
+// tell from the original.
+const DESKTOP_BACKDROP_SCALE = 8;
 
 function wait(ms) {
   return new Promise((r) => { const t = setTimeout(r, ms); if (t.unref) t.unref(); });
 }
 
-function setBackdrop(patch) {
-  state.set('backdrop', Object.assign({ fps: Math.round(1000 / BACKDROP_MS) }, patch));
+/**
+ * One piece of State.backdrop per window, merged rather than replaced: the three
+ * windows fail independently and each has to keep its own reason.
+ */
+function setBackdropPiece(key, patch) {
+  const cur = state.get().backdrop || {};
+  state.set('backdrop', Object.assign({}, cur, { [key]: Object.assign({}, cur[key], patch) }));
 }
 
-async function backdropTick() {
-  backdropTimer = null;
-  if (shuttingDown || !barRevealed || !barWin || barWin.isDestroyed()) return;
-
-  const r = barGeometry().rest.phys;
-  const t0 = Date.now();
+/**
+ * Take one picture of what is behind a window.
+ *
+ * `protect` is the difference between a capture of a window that is ON SCREEN and
+ * one that is still hidden. On screen, the window would photograph itself and
+ * feed its own blur back into itself, so Electron's content protection
+ * (WDA_EXCLUDEFROMCAPTURE) hides it from the capture -- and goes straight back
+ * off in a finally, because a window permanently excluded from capture is a
+ * window missing from every screenshot Owen takes. Hidden, none of that is
+ * needed, which is why every first frame is taken before the window is shown.
+ */
+async function captureBackdrop(win, rect, scale, protect, onProtectError) {
   let protectedOn = false;
+  const t0 = Date.now();
   try {
-    barWin.setContentProtection(true);
-    protectedOn = true;
-    await wait(BACKDROP_SETTLE_MS);
-    const res = await sidecar.call('backdrop', { x: r.x, y: r.y, w: r.w, h: r.h, scale: BACKDROP_SCALE }, 4000);
+    if (protect && win && !win.isDestroyed()) {
+      win.setContentProtection(true);
+      protectedOn = true;
+      await wait(BACKDROP_SETTLE_MS);
+    }
+    const res = await sidecar.call('backdrop', { x: rect.x, y: rect.y, w: rect.w, h: rect.h, scale }, 4000);
     if (!res || !res.png) throw new Error('the sidecar answered "backdrop" without a png');
-    const ms = Number(res.ms) || (Date.now() - t0);
-    backdropFails = 0;
-    backdropFrames++;
-    broadcast('bar.backdrop', { png: res.png, w: res.w, h: res.h, rect: { x: r.x, y: r.y, w: r.w, h: r.h }, ms });
-    if (backdropFrames === 1) {
-      process.stdout.write(`mantle: backdrop capture on: ${Math.round(1000 / BACKDROP_MS)} fps, first frame ${ms} ms\n`);
-    }
-    setBackdrop({ on: true, ok: true, ms, reason: `the bar is blurring a live picture of what is behind it, ${Math.round(1000 / BACKDROP_MS)} times a second (last frame ${ms} ms)` });
+    return { ok: true, png: res.png, w: res.w, h: res.h, ms: Number(res.ms) || (Date.now() - t0) };
   } catch (err) {
-    if (Sidecar.isOldExeError(err)) {
-      // Not a failure to retry: this exe will never have the command.
-      backdropOff = 'the sidecar exe has no "backdrop" command yet, so the bar falls back to its flat tint: run npm run build:sidecar';
-      stopBackdrop(backdropOff);
-      return;
-    }
-    backdropFails++;
-    if (backdropFails >= BACKDROP_MAX_FAILS) {
-      stopBackdrop(`${BACKDROP_MAX_FAILS} captures in a row failed, so the bar falls back to its flat tint: ${err.message}`);
-      return;
-    }
-    setBackdrop({ on: true, ok: true, reason: `one backdrop capture failed and it is still trying (${backdropFails} of ${BACKDROP_MAX_FAILS}): ${err.message}` });
+    return { ok: false, err };
   } finally {
-    // ALWAYS, on every road out: an excluded window is missing from Owen's own
-    // screenshots, and that must never outlive one capture.
-    if (protectedOn && barWin && !barWin.isDestroyed()) {
-      try { barWin.setContentProtection(false); } catch (e2) {
-        setBackdrop({ ok: false, reason: `the bar could not be put back into screen captures, so it will be missing from screenshots: ${e2.message}` });
-      }
+    if (protectedOn && win && !win.isDestroyed()) {
+      try { win.setContentProtection(false); } catch (e2) { onProtectError(e2); }
     }
   }
-  if (!shuttingDown && barRevealed) {
-    backdropTimer = setTimeout(() => { backdropTick().catch(() => {}); }, BACKDROP_MS);
-    if (backdropTimer.unref) backdropTimer.unref();
+}
+
+/**
+ * A backdrop source for one window: a first frame before it is shown, then an
+ * optional loop while it is.
+ *
+ * Owen: "everything that we build for this wrapper, their UI needs to be this
+ * exact same theme as the taskbar". The theme IS this mechanism -- the light
+ * frost is a live picture of the screen behind the window, blurred in CSS -- so
+ * the launcher and the desktop layer get it from the same code the bar does
+ * rather than three lookalike implementations that drift.
+ *
+ *   opts.key     which piece of State.backdrop this writes
+ *   opts.win()   the window, looked up late (it may not exist yet)
+ *   opts.rect()  its rectangle in PHYSICAL px
+ *   opts.event   the event the page listens for
+ *   opts.ms      the loop's period, or 0 for one-shot only
+ *   opts.scale   downscale factor (the page blurs it, so small is free)
+ *   opts.label   what to call this window in a sentence
+ */
+function makeBackdrop(opts) {
+  let timer = null;
+  let fails = 0;
+  let frames = 0;
+  let off = null;                     // set once when the sidecar cannot do it at all
+  const fps = opts.ms ? Math.round(1000 / opts.ms) : 0;
+  const set = (patch) => setBackdropPiece(opts.key, Object.assign({ fps }, patch));
+  const onProtectError = (e) => set({ ok: false, reason: `${opts.label} could not be put back into screen captures, so it will be missing from screenshots: ${e.message}` });
+
+  /** One frame. Returns true if it worked. Never throws. */
+  async function frame(protect) {
+    const win = opts.win();
+    if (!win || win.isDestroyed()) return false;
+    const asked = opts.rect();
+    if (!asked || !(asked.w > 0) || !(asked.h > 0)) {
+      set({ ok: false, reason: `${opts.label} has no rectangle to capture behind it` });
+      return false;
+    }
+    // Clamped BEFORE the call, never after a refusal: a pixel of rounding past
+    // the screen edge used to cost the whole loop.
+    const fit = clampToDisplay(asked);
+    const rect = fit.rect;
+    const trimmed = fit.changed ? ` (${fit.note})` : '';
+    const r = await captureBackdrop(win, rect, opts.scale, protect, onProtectError);
+    if (r.ok) {
+      fails = 0;
+      frames++;
+      broadcast(opts.event, { png: r.png, w: r.w, h: r.h, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h }, ms: r.ms });
+      set(trimmed
+        ? { ok: true, ms: r.ms, reason: `${opts.label} is blurring a live picture of what is behind it${trimmed}` }
+        : { ok: true, ms: r.ms });
+      return true;
+    }
+    if (Sidecar.isOldExeError(r.err)) {
+      off = `the sidecar exe has no "backdrop" command yet, so ${opts.label} falls back to its flat tint: run npm run build:sidecar`;
+      set({ on: false, ok: false, ms: 0, reason: off });
+      return false;
+    }
+    fails++;
+    set({ ok: fails < BACKDROP_MAX_FAILS, reason: `${opts.label}: a backdrop capture failed (${fails} of ${BACKDROP_MAX_FAILS}): ${r.err.message}` });
+    return false;
+  }
+
+  async function tick() {
+    timer = null;
+    if (shuttingDown) return;
+    const ok = await frame(true);
+    if (!ok) {
+      if (off) { stop(off); return; }
+      if (fails >= BACKDROP_MAX_FAILS) {
+        stop(`${BACKDROP_MAX_FAILS} captures in a row failed, so ${opts.label} falls back to its flat tint`);
+        return;
+      }
+    } else if (frames === 1) {
+      process.stdout.write(`mantle: ${opts.key} backdrop capture on: ${fps} fps, first frame ${state.get().backdrop[opts.key].ms} ms\n`);
+    }
+    if (!shuttingDown && timer === null && opts.ms) {
+      timer = setTimeout(() => { tick().catch(() => {}); }, opts.ms);
+      if (timer.unref) timer.unref();
+    }
+  }
+
+  return {
+    /** One frame with the window still HIDDEN: no protection, nothing to exclude. */
+    async once(why) {
+      if (off) { set({ on: false, ok: false, reason: off }); return false; }
+      const ok = await frame(false);
+      // A failure has already written its own reason (which names this window);
+      // leave it alone rather than paper over it with a cheerful one.
+      if (ok) set({ on: !!timer, ok: true, reason: `${opts.label} has a fresh picture of what is behind it (${why})` });
+      return ok;
+    },
+    start(why) {
+      if (timer || shuttingDown || !opts.ms) return;
+      if (off) { set({ on: false, ok: false, reason: off }); return; }
+      fails = 0;
+      frames = 0;
+      set({ on: true, ok: true, reason: `starting: ${why}` });
+      tick().catch(() => {});
+    },
+    stop(why) { stop(why); },
+    peek: () => ({ timer: !!timer, fails, frames, off }),
+  };
+
+  function stop(why) {
+    const wasRunning = !!timer || frames > 0;
+    if (timer) clearTimeout(timer);
+    timer = null;
+    const win = opts.win();
+    if (win && !win.isDestroyed()) {
+      try { win.setContentProtection(false); } catch (_) { /* the window is going anyway */ }
+    }
+    const failed = fails >= BACKDROP_MAX_FAILS || !!off;
+    set({ on: false, ok: !failed, ms: 0, reason: why });
+    if (wasRunning) process.stdout.write(`mantle: ${opts.key} backdrop capture off after ${frames} frame${frames === 1 ? '' : 's'}: ${why}\n`);
   }
 }
 
-/** Start capturing once the reveal has LANDED -- a shot mid-morph is a smear. */
-function startBackdrop(why) {
-  if (backdropTimer || shuttingDown || !barRevealed) return;
-  if (backdropOff) { setBackdrop({ on: false, ok: false, reason: backdropOff }); return; }
-  backdropFails = 0;
-  backdropFrames = 0;
-  setBackdrop({ on: true, ok: true, reason: `starting: ${why}` });
-  backdropTick().catch(() => {});
+// The bar: the resting rectangle (never the window's current one -- a popover
+// makes the window taller and the popover paints its own strong fill).
+const barBackdrop = makeBackdrop({
+  key: 'bar',
+  label: 'the bar',
+  event: 'bar.backdrop',
+  ms: BACKDROP_MS,
+  scale: BACKDROP_SCALE,
+  win: () => barWin,
+  // The PILL, not the window: the page attaches this image to the pill, and the
+  // window also covers the transparent strip under it (17 px of wrong scenery).
+  rect: () => barGeometry().pill.phys,
+});
+
+// The launcher: same loop, same 4 fps, its own window rectangle.
+const launcherBackdrop = makeBackdrop({
+  key: 'launcher',
+  label: 'the launcher',
+  event: 'launcher.backdrop',
+  ms: BACKDROP_MS,
+  scale: BACKDROP_SCALE,
+  win: () => launcherWin,
+  rect: () => windowPhysRect(launcherWin),
+});
+
+/*
+ * The desktop layer: ONE shot, no loop, no protection.
+ *
+ * It sits UNDER the wallpaper and covers the whole screen, so what is behind it
+ * is the wallpaper and nothing else -- a picture that changes when the wallpaper
+ * or the display does, and at no other time. Scale 8 makes it 240x135 on this
+ * display, which is more than enough under a heavy blur and costs nothing.
+ */
+const desktopBackdrop = makeBackdrop({
+  key: 'desktop',
+  label: 'the desktop layer',
+  event: 'desktop.backdrop',
+  ms: 0,
+  scale: DESKTOP_BACKDROP_SCALE,
+  win: () => desktopWin,
+  rect: () => windowPhysRect(desktopWin),
+});
+
+/** A window's bounds in physical pixels, or null. */
+function windowPhysRect(win) {
+  if (!win || win.isDestroyed()) return null;
+  try {
+    const b = win.getBounds();
+    return toPhys({ x: b.x, y: b.y, width: b.width, height: b.height });
+  } catch (_) {
+    return null;
+  }
 }
 
-function stopBackdrop(why) {
-  const wasRunning = !!backdropTimer || backdropFrames > 0;
-  if (backdropTimer) clearTimeout(backdropTimer);
-  backdropTimer = null;
-  if (barWin && !barWin.isDestroyed()) {
-    try { barWin.setContentProtection(false); } catch (_) { /* window is going anyway */ }
+/**
+ * Re-shoot the desktop layer's wallpaper picture with the window HIDDEN, then put
+ * it back. It covers the whole screen, so leaving it up would photograph itself.
+ */
+async function reshootDesktopBackdrop(why) {
+  if (!desktopWin || desktopWin.isDestroyed()) return;
+  const wasVisible = desktopWin.isVisible();
+  try { if (wasVisible) desktopWin.hide(); } catch (_) { /* carry on: the shot is worth more than the hide */ }
+  await wait(60);
+  await desktopBackdrop.once(why);
+  if (wasVisible) {
+    try { desktopWin.showInactive(); } catch (err) {
+      process.stderr.write(`mantle: the desktop layer was hidden for a backdrop capture and would not come back: ${err.message}\n`);
+    }
   }
-  const failed = backdropFails >= BACKDROP_MAX_FAILS || !!backdropOff;
-  setBackdrop({ on: false, ok: !failed, ms: 0, reason: why });
-  if (wasRunning) process.stdout.write(`mantle: backdrop capture off after ${backdropFrames} frame${backdropFrames === 1 ? '' : 's'}: ${why}\n`);
 }
+
+// Names the rest of this file already uses, kept so the bar's call sites read the
+// same as they did when it was the only window with a backdrop.
+function startBackdrop(why) { barBackdrop.start(why); }
+function stopBackdrop(why) { barBackdrop.stop(why); }
 
 /** Only the bar's own process polls; the launcher and desktop windows do not. */
 function startHoverWatch() {
@@ -1067,19 +1386,30 @@ function stopHoverWatch() {
 // ---------------------------------------------------------------------------
 function showLauncher() {
   if (!launcherWin || launcherWin.isDestroyed()) return;
-  if (flags.test) {
-    // A test run must never take focus from whoever is at the machine.
-    launcherWin.showInactive();
-  } else {
-    launcherWin.show();
-    launcherWin.focus();
-  }
-  broadcast('launcher:visible', true);
+  // The FIRST frame is captured while the window is still hidden -- no content
+  // protection needed, and nothing to photograph itself -- so the launcher's
+  // frost is real on the frame it appears in rather than a flat tint that pops a
+  // quarter of a second later. Then the same 4 fps loop the bar runs.
+  const show = () => {
+    if (!launcherWin || launcherWin.isDestroyed()) return;
+    if (flags.test) {
+      // A test run must never take focus from whoever is at the machine.
+      launcherWin.showInactive();
+    } else {
+      launcherWin.show();
+      launcherWin.focus();
+    }
+    broadcast('launcher:visible', true);
+    launcherBackdrop.start('the launcher is open');
+  };
+  if (launcherWin.isVisible()) { show(); return; }
+  launcherBackdrop.once('the launcher is opening').then(show, show);
 }
 
 function hideLauncher() {
   if (!launcherWin || launcherWin.isDestroyed()) return;
   if (!launcherWin.isVisible()) return;
+  launcherBackdrop.stop('the launcher closed');
   launcherWin.hide();
   broadcast('launcher:visible', false);
 }
@@ -1147,15 +1477,37 @@ function groupRunning(list) {
   const groups = new Map();
   for (const w of Array.isArray(list) ? list : []) {
     if (!w || w.hwnd === undefined || w.hwnd === null) continue;
+    /*
+     * AUMID FIRST, exe second (2026-09-21). Owen: "i want the apps when i have
+     * them running to work the same as before". Grouping by exe path alone never
+     * managed it for three whole classes of app:
+     *   - Discord: the PIN points at Update.exe, the WINDOWS are Discord.exe.
+     *   - Edge: the pin and the windows disagree about which exe path it is.
+     *   - Any Store app: every window belongs to ApplicationFrameHost.exe.
+     * The Application User Model ID is the one identifier Windows itself uses to
+     * decide what belongs under which taskbar button, so it is the one we use.
+     * The exe stays as the fallback key for everything that has no aumid.
+     */
+    const aumid = w.aumid ? String(w.aumid).toLowerCase() : null;
     const exe = w.exe ? String(w.exe).toLowerCase() : null;
-    const key = exe || `hwnd:${w.hwnd}`;
+    const key = aumid || exe || `hwnd:${w.hwnd}`;
     let g = groups.get(key);
     if (!g) {
-      g = { key, exe, exeRaw: w.exe || null, icon: w.icon || null, title: w.title || '', windows: [] };
+      g = { key, aumid, exe, exeRaw: w.exe || null, host: w.host || null, icon: w.icon || null, title: w.title || '', windows: [] };
       groups.set(key, g);
     }
     if (!g.icon && w.icon) g.icon = w.icon;
-    g.windows.push({ hwnd: String(w.hwnd), title: String(w.title || ''), active: !!w.foreground });
+    // A group can learn its other identifier from a later window: one window of an
+    // app may carry an aumid and the next only an exe.
+    if (!g.aumid && aumid) g.aumid = aumid;
+    if (!g.exe && exe) { g.exe = exe; g.exeRaw = w.exe; }
+    if (!g.host && w.host) g.host = w.host;
+    g.windows.push({
+      hwnd: String(w.hwnd),
+      title: String(w.title || ''),
+      active: !!w.foreground,
+      minimized: !!w.minimized,
+    });
   }
   return groups;
 }
@@ -1212,12 +1564,34 @@ async function buildPinned() {
   const claimed = new Set();
   pinById.clear();
 
+  // Two ways into the same groups: by aumid and by exe. A group keyed on its
+  // aumid still has to be findable by a pin that only knows an exe, and vice
+  // versa -- that asymmetry is exactly what left Discord's windows orphaned.
+  const byAumid = new Map();
+  const byExe = new Map();
+  for (const g of groups.values()) {
+    if (g.aumid && !byAumid.has(g.aumid)) byAumid.set(g.aumid, g);
+    if (g.exe && !byExe.has(g.exe)) byExe.set(g.exe, g);
+  }
+  // Claims are namespaced: an aumid and an exe are different kinds of name and
+  // must never collide in one Set.
+  const claimAumid = (v) => { if (v) claimed.add('a:' + v); };
+  const claimExe = (v) => { if (v) claimed.add('e:' + v); };
+  const isClaimed = (g) => !!((g.aumid && claimed.has('a:' + g.aumid)) || (g.exe && claimed.has('e:' + g.exe)));
+
   for (const pin of pins) {
     if (!pin) continue;
+    const pinAumid = pin.aumid ? String(pin.aumid).toLowerCase() : null;
     const exe = pin.exe ? String(pin.exe).toLowerCase() : null;
-    if (exe && claimed.has(exe)) continue;          // one Item per exe, first pin wins
-    if (exe) claimed.add(exe);
-    const g = exe ? groups.get(exe) : null;
+    // one Item per app, first pin wins
+    if ((pinAumid && claimed.has('a:' + pinAumid)) || (exe && claimed.has('e:' + exe))) continue;
+    const g = (pinAumid && byAumid.get(pinAumid)) || (exe && byExe.get(exe)) || null;
+    // Claim the PIN's names and the MATCHED GROUP's names: Discord's pin is
+    // Update.exe and its windows are Discord.exe, so claiming only the pin's
+    // side would list Discord twice -- once pinned, once running.
+    claimAumid(pinAumid);
+    claimExe(exe);
+    if (g) { claimAumid(g.aumid); claimExe(g.exe); }
     const ico = pin.iconPng ? { icon: pin.iconPng, reason: null } : await iconFor([pin.iconPath, pin.target, pin.exe, g && g.exeRaw], pin.iconIndex);
     const id = String(pin.id || pin.lnkPath || pin.name || `pin:${items.length}`);
     pinById.set(id, pin);
@@ -1236,6 +1610,7 @@ async function buildPinned() {
       name: String(pin.name || nameForExe(pin.exe, pin.lnkPath)),
       kind: 'pinned',
       exe: exe,
+      aumid: pinAumid || (g && g.aumid) || null,
       icon: ico.icon,
       iconReason: ico.icon ? null : [pinNote, ico.reason].filter(Boolean).join(' -- '),
       windows: g ? g.windows : [],
@@ -1244,13 +1619,14 @@ async function buildPinned() {
 
   // 3. Everything running that no pin claimed, in the order Windows enumerated it.
   for (const [key, g] of groups) {
-    if (g.exe && claimed.has(g.exe)) continue;
+    if (isClaimed(g)) continue;
     const ico = g.icon ? { icon: g.icon, reason: null } : await iconFor([g.exeRaw]);
     items.push({
       id: `running:${key}`,
       name: nameForExe(g.exeRaw, g.title),
       kind: 'running',
       exe: g.exe,
+      aumid: g.aumid || null,
       icon: ico.icon,
       iconReason: ico.icon ? null : ico.reason,
       windows: g.windows,
@@ -1303,6 +1679,54 @@ function schedulePinnedPush(why) {
   if (pinnedPushTimer.unref) pinnedPushTimer.unref();
 }
 
+/**
+ * Start an item: a .lnk pin through the shell, a Store-app pin through its AUMID.
+ *
+ * Five of Owen's fourteen taskbar pins are Store apps with NO shortcut file at
+ * all -- there is no path to open, only an Application User Model ID, and the
+ * only way to start one is ShellExecute on shell:AppsFolder\<aumid>, which is
+ * what the sidecar's `launch` does. A running-only entry can be started the same
+ * way if Windows gave its windows an aumid.
+ */
+async function launchItem(item, fresh) {
+  const pin = pinById.get(item.id);
+  const lnk = pin && (pin.lnkPath || pin.target || pin.exe);
+  const aumid = (pin && pin.aumid) || item.aumid || null;
+  const again = fresh ? ' another copy of' : '';
+
+  if (lnk) {
+    try {
+      const err = await shell.openPath(String(lnk));
+      if (err) return { ok: false, reason: `Windows would not start${again} ${item.name} from ${lnk}: ${err}` };
+      return { ok: true, reason: null, action: 'launched', path: String(lnk) };
+    } catch (err) {
+      return { ok: false, reason: `Windows would not start${again} ${item.name} from ${lnk}: ${err.message}` };
+    }
+  }
+
+  if (aumid) {
+    try {
+      const r = await sidecar.call('launch', { aumid }, 8000);
+      if (r && r.ok === false) {
+        return { ok: false, reason: `Windows would not start${again} ${item.name}: ${r.reason || 'the sidecar did not say why'}` };
+      }
+      return { ok: true, reason: null, action: 'launched', aumid };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: Sidecar.isOldExeError(err)
+          ? `${item.name} is a Store app with no shortcut file, and the sidecar exe has no "launch" command yet: run npm run build:sidecar`
+          : `Windows would not start${again} ${item.name} (${aumid}): ${err.message}`,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    reason: `${item.name} is not running and Mantle has nothing to start it from -- no shortcut and no app id (it is a running-apps entry, not a pin)`,
+  };
+}
+
 /** Watch Windows' pinned-shortcuts folder through lane C's module, if it is there. */
 function startPinWatch() {
   if (!pinnedModule || typeof pinnedModule.watchPins !== 'function') {
@@ -1315,6 +1739,147 @@ function startPinWatch() {
     process.stderr.write(`mantle: the pinned shortcuts could not be watched, so a new pin only appears when the window list changes: ${err.message}\n`);
   }
 }
+
+/*
+ * QUICK SETTINGS: the right-hand cluster, done as Mantle's own panel.
+ *
+ * Owen: "these buttons need to go to a wrapper version of where they used to go
+ * ... some of them just go to settings now". Clicking volume or Wi-Fi should
+ * change volume or Wi-Fi, not dump him in the Windows Settings app -- so every
+ * control is read and written here, through the sidecar, and the Settings app is
+ * not in the path at all.
+ *
+ * EVERY PART IS ASKED INDEPENDENTLY (Promise.allSettled). A machine with no
+ * Bluetooth radio, or a sidecar too old to know `nightlight`, must still show a
+ * working volume slider: one dead part carries its own ok:false and its own
+ * reason, and sinks nothing else. That is the whole shape of this reply.
+ */
+const QS_PARTS = [
+  ['volume', 'volume', 'the volume'],
+  ['wifi', 'wifi', 'Wi-Fi'],
+  ['bluetooth', 'bluetooth', 'Bluetooth'],
+  ['brightness', 'brightness', 'the screen brightness'],
+  ['nightlight', 'nightlight', 'Night light'],
+  ['power', 'power', 'the battery'],
+];
+
+/** One part, never throwing: a refusal becomes {ok:false, reason}. */
+async function qsPart(cmd, label, args) {
+  try {
+    const r = await sidecar.call(cmd, args || {}, 4000);
+    return Object.assign({}, r, { ok: true, reason: null });
+  } catch (err) {
+    return {
+      ok: false,
+      reason: Sidecar.isOldExeError(err)
+        ? `${label} cannot be read: the sidecar exe has no "${cmd}" command yet, so run npm run build:sidecar`
+        : `${label} cannot be read: ${err.message}`,
+    };
+  }
+}
+
+async function qsRead() {
+  const results = await Promise.allSettled(QS_PARTS.map(([, cmd, label]) => qsPart(cmd, label)));
+  const out = { ok: false, reason: null };
+  const dead = [];
+  results.forEach((res, i) => {
+    const key = QS_PARTS[i][0];
+    const label = QS_PARTS[i][2];
+    // allSettled cannot reject here (qsPart swallows), but a thrown TypeError
+    // inside it would still land as `rejected` rather than as a missing key.
+    out[key] = res.status === 'fulfilled'
+      ? res.value
+      : { ok: false, reason: `${label} cannot be read: ${(res.reason && res.reason.message) || res.reason}` };
+    if (!out[key].ok) dead.push(out[key].reason);
+  });
+  // The panel is worth opening if the two things it is mostly for answered.
+  // Anything else missing is a control that draws itself disabled with a reason.
+  out.ok = !!(out.volume.ok && out.power.ok);
+  out.reason = dead.length ? dead.join('; ') : null;
+  return out;
+}
+
+/** part -> how to validate it and what to send. */
+const QS_WRITE = {
+  volume: {
+    cmd: 'volume',
+    label: 'the volume',
+    args: (v) => ({ level: v }),
+    check: (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100
+      ? null : 'volume must be a number from 0 to 100'),
+  },
+  mute: {
+    cmd: 'volume',
+    label: 'mute',
+    args: (v) => ({ muted: !!v }),
+    check: (v) => (typeof v === 'boolean' ? null : 'mute must be true or false'),
+  },
+  wifi: {
+    cmd: 'wifi',
+    label: 'Wi-Fi',
+    args: (v) => ({ on: !!v }),
+    check: (v) => (typeof v === 'boolean' ? null : 'wifi must be true or false'),
+  },
+  bluetooth: {
+    cmd: 'bluetooth',
+    label: 'Bluetooth',
+    args: (v) => ({ on: !!v }),
+    check: (v) => (typeof v === 'boolean' ? null : 'bluetooth must be true or false'),
+  },
+  brightness: {
+    cmd: 'brightness',
+    label: 'the screen brightness',
+    args: (v) => ({ level: Number(v) }),
+    check: (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100
+      ? null : 'brightness must be a number from 0 to 100'),
+  },
+};
+
+// The watcher: one, ever. Two would double every sidecar call for a panel that
+// can only be open once.
+let qsTimer = null;
+let qsWatching = false;
+const QS_WATCH_MS = 2000;
+
+function qsPush(why) {
+  return qsRead().then((snap) => {
+    broadcast('qs', snap);
+    return snap;
+  }).catch((err) => {
+    process.stderr.write(`mantle: the quick-settings push (${why}) threw: ${err.message}\n`);
+    return null;
+  });
+}
+
+function qsWatchStart() {
+  // The guard is `qsWatching`, NOT `qsTimer`: the timer is null for as long as a
+  // push is in flight, so a second qs.watch arriving in that window used to start
+  // a SECOND chain -- two pushes per tick, two sets of sidecar calls, and a stop
+  // that only cancelled one of them. Caught by the harness, 2026-09-21.
+  if (qsWatching) return false;      // already watching: not an error, just nothing to do
+  const tick = () => {
+    qsTimer = null;
+    qsPush('the quick-settings panel is open').then(() => {
+      if (!shuttingDown && qsWatching) {
+        qsTimer = setTimeout(tick, QS_WATCH_MS);
+        if (qsTimer.unref) qsTimer.unref();
+      }
+    });
+  };
+  qsWatching = true;
+  tick();
+  return true;
+}
+
+function qsWatchStop(why) {
+  if (!qsWatching && !qsTimer) return false;
+  qsWatching = false;
+  if (qsTimer) clearTimeout(qsTimer);
+  qsTimer = null;
+  process.stdout.write(`mantle: quick-settings watch off: ${why}\n`);
+  return true;
+}
+
 
 // ---------------------------------------------------------------------------
 // The command table behind mantle.call(). Every one of these either resolves
@@ -1353,30 +1918,38 @@ const COMMANDS = {
     const item = (list.items || []).find((i) => i.id === id);
     if (!item) return { ok: false, reason: `the bar asked to open "${id}", which is not in the list Mantle last built` };
 
+    /*
+     * EXACTLY WHAT THE WINDOWS TASKBAR DOES, because Owen asked for the apps to
+     * "work the same as before just on mantle":
+     *   middle-click (fresh:true) -- a NEW instance, however many are running.
+     *   nothing running            -- launch it.
+     *   one window                 -- the one you are in minimises; any other one
+     *                                 is focused, which also RESTORES it if it was
+     *                                 minimised (verified in the sidecar:
+     *                                 Windows.cs Focus() does SW_RESTORE on an
+     *                                 iconic window before it raises it).
+     *   two or more                -- Windows shows thumbnails and picks nothing.
+     *                                 So does Mantle: it answers action:'list'
+     *                                 with the windows and touches no window at
+     *                                 all; the bar opens its own window list.
+     */
+    const fresh = !!(a && a.fresh);
     const wins = Array.isArray(item.windows) ? item.windows : [];
-    if (wins.length) {
-      // The Windows toggle: click the app you are already in and it minimises.
-      const next = wins.find((w) => !w.active);
-      const target = next || wins[0];
-      const action = next ? 'focus' : 'minimize';
+
+    if (!fresh && wins.length >= 2) {
+      return { ok: true, reason: null, action: 'list', windows: wins };
+    }
+    if (!fresh && wins.length === 1) {
+      const w = wins[0];
+      const action = w.active ? 'minimize' : 'focus';
       try {
-        await sidecar.call(action, { hwnd: String(target.hwnd) }, 4000);
-        return { ok: true, reason: null, action, hwnd: String(target.hwnd) };
+        await sidecar.call(action, { hwnd: String(w.hwnd) }, 4000);
+        return { ok: true, reason: null, action, hwnd: String(w.hwnd) };
       } catch (err) {
         return { ok: false, reason: `${item.name} is running but Mantle could not ${action} it: ${err.message}` };
       }
     }
-
-    const pin = pinById.get(id);
-    const launch = pin && (pin.lnkPath || pin.target || pin.exe);
-    if (!launch) return { ok: false, reason: `${item.name} is not running and Mantle has no shortcut to start it from (it is a running-apps entry, not a pin)` };
-    try {
-      const err = await shell.openPath(String(launch));
-      if (err) return { ok: false, reason: `Windows would not start ${item.name} from ${launch}: ${err}` };
-      return { ok: true, reason: null, action: 'launched', path: String(launch) };
-    } catch (err) {
-      return { ok: false, reason: `Windows would not start ${item.name} from ${launch}: ${err.message}` };
-    }
+    return launchItem(item, fresh);
   },
 
   'bar.window': async (a) => {
@@ -1478,8 +2051,11 @@ const COMMANDS = {
       } else if (sidecarDpiAware === true && !sidecar.blockedReason()) {
         // Through the sidecar, not setBounds: see placeBar() -- setBounds clamps
         // into the work area, which would shove the bar up by its own height.
-        const ph = screen.dipToScreenRect(null, dip);
-        await sidecar.call('place', { hwnd: hwndOf(barWin), x: ph.x, y: ph.y, w: ph.width, h: ph.height }, 4000);
+        // Same rule as the resting rect: the BOTTOM is the screen edge, computed,
+        // never a rounded height that can land a pixel past it.
+        const ph = toPhys(dip);
+        if (flags.barEdge !== 'top') ph.h = barGeometry().bottomPhys - ph.y;
+        await sidecar.call('place', { hwnd: hwndOf(barWin), x: ph.x, y: ph.y, w: ph.w, h: ph.h }, 4000);
       } else if (sidecarDpiAware === false) {
         barWin.setBounds(dip);
       } else {
@@ -1515,6 +2091,47 @@ const COMMANDS = {
     if (a && a.muted !== undefined) args.muted = a.muted;
     if (!Object.keys(args).length) throw new Error('volume.set needs a level or a muted flag');
     return sidecar.call('volume', args);
+  },
+
+  // ---- Quick Settings: the bar's own panel, not a trip to the Settings app ----
+  'qs.get': async () => qsRead(),
+
+  'qs.set': async (a) => {
+    const part = String((a && a.part) || '');
+    const spec = QS_WRITE[part];
+    if (!spec) {
+      return { ok: false, part, value: null, reason: `qs.set does not know the part "${part}" (it does ${Object.keys(QS_WRITE).join(', ')})` };
+    }
+    const bad = spec.check(a && a.value);
+    if (bad) return { ok: false, part, value: null, reason: bad };
+    try {
+      await sidecar.call(spec.cmd, spec.args(a.value), 4000);
+    } catch (err) {
+      return {
+        ok: false,
+        part,
+        value: null,
+        reason: Sidecar.isOldExeError(err)
+          ? `${spec.label} could not be changed: the sidecar exe has no "${spec.cmd}" command yet, so run npm run build:sidecar`
+          : `${spec.label} could not be changed: ${err.message}`,
+      };
+    }
+    // READ IT BACK rather than echoing what was asked for: a slider that springs
+    // back is the truth about a control that refused, and a slider that lies
+    // about where it is is the silent failure this rule exists to stop.
+    const now = await qsPart(spec.cmd, spec.label);
+    if (qsWatching) qsPush(`${part} was changed`);
+    return { ok: !!now.ok, part, value: now, reason: now.ok ? null : now.reason };
+  },
+
+  'qs.watch': async (a) => {
+    const on = !!(a && a.on);
+    if (on) {
+      const started = qsWatchStart();
+      return { ok: true, watching: true, everyMs: QS_WATCH_MS, reason: started ? null : 'the quick-settings watch was already running, so nothing was started twice' };
+    }
+    qsWatchStop('the panel asked');
+    return { ok: true, watching: false, everyMs: QS_WATCH_MS, reason: null };
   },
 
   'open': async (a) => openTarget(a && a.target),
@@ -1867,9 +2484,13 @@ async function applyMode() {
 // wanted -- the wallpaper behind the island has to READ through it. 35 %, with
 // lane B's CSS fill down to .20: the blur still does the work, the colour behind
 // it still comes through.
-const GLASS_TINT = '#1C1E2259';   // 35% neutral dark grey. THE LAUNCHER'S tint only (DWM acrylic): the bar has no DWM
-                                    // glass since 2026-09-21 -- measured live, acrylic ignores this alpha (a fixed frost) and
-                                    // blur-behind paints a black slab -- so the bar blurs its own backdrop (see the backdrop loop).
+/*
+ * GLASS_TINT is GONE (2026-09-21). Every Mantle window now blurs its OWN captured
+ * backdrop, because no DWM mode could give Owen what he asked for: acrylic ignores
+ * the alpha in its tint (a fixed, near-opaque frost) and blur-behind paints a black
+ * slab -- both measured live. A tint constant that no call passes any more would
+ * only be a thing to wonder about, so it is deleted rather than left at 0.
+ */
 // Whether the running sidecar reports rectangles in physical pixels (set once
 // applyLive has asked it); the popover resize needs it to pick its placement path.
 let sidecarDpiAware = null;
@@ -1908,10 +2529,15 @@ async function applyGlass() {
    * main captures what is behind the bar and hands the page a picture of it, and
    * the page blurs that with CSS, where translucency is an actual number.
    *
-   * The launcher keeps DWM acrylic: it is a panel over the desktop, it is not
-   * where the complaint was, and it costs nothing there.
+   * AND NOW THE LAUNCHER TOO (Owen: "everything that we build for this wrapper,
+   * their UI needs to be this exact same theme as the taskbar"). The theme is not
+   * a colour, it is this mechanism -- a live picture of the screen behind the
+   * window, blurred in CSS -- so the launcher is on the same path rather than
+   * being a lookalike in a different technology that drifts from it. The desktop
+   * layer has no DWM glass to turn off: it sits UNDER the wallpaper, so there is
+   * nothing behind it to blur but the wallpaper, which it gets as one still.
    */
-  const targets = [['the bar', barWin, 'off'], ['the launcher', launcherWin, 'acrylic']];
+  const targets = [['the bar', barWin, 'off'], ['the launcher', launcherWin, 'off']];
   const applied = [];
   const problems = [];
   let oldExe = false;
@@ -1922,7 +2548,7 @@ async function applyGlass() {
       continue;
     }
     try {
-      const r = await sidecar.call('glass', { hwnd: hwndOf(win), mode, tint: GLASS_TINT });
+      const r = await sidecar.call('glass', { hwnd: hwndOf(win), mode });
       // For mode 'off' the question is only "did the call go through": the
       // sidecar's `applied` flag describes an effect being turned ON, and reading
       // a disable's false as a failure would put a problem on screen for the one
@@ -1942,13 +2568,10 @@ async function applyGlass() {
     return;
   }
   if (!problems.length) {
-    const corners = await roundBarCorners();
+    const corners = `${await roundBarCorners()} ${await squareCorners('the launcher', launcherWin)}`;
     state.set('glass', {
       material: 'acrylic-blur-behind',
-      // The tint belongs to the LAUNCHER now: the bar has DWM glass turned off
-      // and blurs its own captured backdrop instead, so naming one tint for both
-      // would describe a window that is not using it.
-      reason: `${applied.join(' and ')} -- the launcher's DWM tint is ${GLASS_TINT} and stays on while it is inactive, which is why this is not Electron's backgroundMaterial. ${corners}`,
+      reason: `${applied.join(' and ')}. No window uses a DWM backdrop any more: each one captures what is behind it and blurs that in CSS, which is the only way Mantle could be translucent by a settable amount. ${corners}`,
     });
     return;
   }
@@ -1970,6 +2593,27 @@ async function applyGlass() {
  * Returns a sentence for State.glass.reason either way. A missing command is a
  * look, not a failure, but it is never a MYSTERY: it says which command to build.
  */
+/**
+ * Turn DWM's corner rounding OFF for a window whose shape is its CSS radius.
+ *
+ * Same reason as the bar's: on a transparent window with no DWM glass there is
+ * nothing for DWM to round, but Windows 11 still draws its 1 px window border
+ * with the small rounding around the WINDOW RECT -- which shows up as a faint
+ * square outline outside the page's own rounded corners.
+ */
+async function squareCorners(label, win) {
+  if (!win || win.isDestroyed()) return `${label} has no window to square off.`;
+  try {
+    const r = await sidecar.call('corners', { hwnd: hwndOf(win), mode: 'none' }, 4000);
+    if (r && r.ok === false) return `${label} may show Windows' own rounded border outside its CSS corners: ${r.reason || 'the sidecar did not say why'}.`;
+    return `${label}'s window border is squared off, so its CSS radius is the only shape.`;
+  } catch (err) {
+    return Sidecar.isOldExeError(err)
+      ? `${label} may show Windows' own rounded border outside its CSS corners: the sidecar exe has no "corners" command yet, so run npm run build:sidecar.`
+      : `${label} may show Windows' own rounded border outside its CSS corners: ${err.message}.`;
+  }
+}
+
 async function roundBarCorners() {
   if (!barWin || barWin.isDestroyed()) return 'its corners were not rounded: there is no bar window.';
   /*
@@ -2005,7 +2649,7 @@ function reapplyGlass(label, win, mode) {
   // `mode` is the SAME value applyGlass() used for this window: the bar is 'off'
   // (it blurs its own backdrop) and a reload that put DWM blur-behind back on
   // it would paint the black slab Owen already rejected.
-  sidecar.call('glass', { hwnd: hwndOf(win), mode, tint: GLASS_TINT }).then((r) => {
+  sidecar.call('glass', { hwnd: hwndOf(win), mode }).then((r) => {
     if (mode !== 'off' && !(r && r.applied)) {
       state.set('glass', { material: 'none', reason: `${label} reloaded and the sidecar did not put its glass back` });
     }
@@ -2627,6 +3271,7 @@ function shutdown(why) {
   // ...and with it the capture loop, which is the one thing that can leave a
   // window excluded from Owen's screenshots if it is stopped carelessly.
   stopBackdrop('Mantle is shutting down');
+  qsWatchStop('Mantle is shutting down');
   if (pinnedPushTimer) { clearTimeout(pinnedPushTimer); pinnedPushTimer = null; }
   if (unwatchPins) {
     try { unwatchPins(); } catch (err) { process.stderr.write(`mantle: the pinned-shortcuts watcher would not stop: ${err.message}\n`); }
@@ -2926,7 +3571,14 @@ app.whenReady().then(() => {
     const desktop = createDesktop({ root: ROOT, test: flags.test });
     desktopWin = desktop.win;
     watchPage(desktopWin, 'The desktop layer');
-    desktopWin.once('ready-to-show', () => desktopWin.showInactive());
+    // One capture of the wallpaper BEFORE the layer covers the screen. It is
+    // still hidden here, so there is nothing to exclude from the shot, and the
+    // picture it gets is the only thing behind it that will ever be there.
+    desktopWin.once('ready-to-show', () => {
+      desktopBackdrop.once('the desktop layer is starting')
+        .catch(() => {})
+        .then(() => { if (desktopWin && !desktopWin.isDestroyed()) desktopWin.showInactive(); });
+    });
     if (!desktop.load.loaded) process.stderr.write(`mantle: ${desktop.load.reason}\n`);
   } else {
     state.set('desktop', { attached: false, mode: null, reason: '--no-desktop: the desktop layer was not created' });
@@ -2945,6 +3597,9 @@ app.whenReady().then(() => {
   // add another listener each time it did.
   screen.on('display-metrics-changed', () => {
     if (rePlaceBar) rePlaceBar('display metrics changed');
+    // The desktop layer's picture is the wallpaper, which a resolution or scale
+    // change reflows. It is a still, so this is the only thing that redates it.
+    reshootDesktopBackdrop('the display metrics changed').catch(() => {});
   });
 
   if (flags.dock) {
