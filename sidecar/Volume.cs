@@ -10,6 +10,13 @@
 // wrong function - usually with a crash rather than an error. Every method of
 // each interface is declared here even though we call three of them, precisely
 // so the order cannot drift.
+//
+// [PreserveSig] (2026-09-23) is on the four methods whose HRESULT the code checks. Without it the
+// CLR treats an `int` return as an extra out-parameter the native method never writes (so `hr`
+// never carried the HRESULT), and turns a failing HRESULT into a COMException instead: the checks
+// and their messages ("no default playback device ... nothing is plugged in") were dead code. The two
+// reads at the end keep the default ON PURPOSE: nothing checks their HRESULT, so a failure there
+// must go on throwing rather than hand back a level of 0 that nobody looked at.
 using System;
 using System.Runtime.InteropServices;
 
@@ -24,7 +31,7 @@ namespace Mantle {
     [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IMMDeviceEnumerator {
       int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
-      int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
+      [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
       int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out IMMDevice device);
       int RegisterEndpointNotificationCallback(IntPtr client);
       int UnregisterEndpointNotificationCallback(IntPtr client);
@@ -32,8 +39,8 @@ namespace Mantle {
 
     [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IMMDevice {
-      int Activate(ref Guid iid, int clsCtx, IntPtr activationParams,
-                   [MarshalAs(UnmanagedType.IUnknown)] out object iface);
+      [PreserveSig] int Activate(ref Guid iid, int clsCtx, IntPtr activationParams,
+                                 [MarshalAs(UnmanagedType.IUnknown)] out object iface);
       int OpenPropertyStore(int access, out IntPtr store);
       int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
       int GetState(out int state);
@@ -45,14 +52,14 @@ namespace Mantle {
       int UnregisterControlChangeNotify(IntPtr notify);
       int GetChannelCount(out uint count);
       int SetMasterVolumeLevel(float db, ref Guid eventContext);
-      int SetMasterVolumeLevelScalar(float level, ref Guid eventContext);
+      [PreserveSig] int SetMasterVolumeLevelScalar(float level, ref Guid eventContext);
       int GetMasterVolumeLevel(out float db);
       int GetMasterVolumeLevelScalar(out float level);
       int SetChannelVolumeLevel(uint channel, float db, ref Guid eventContext);
       int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid eventContext);
       int GetChannelVolumeLevel(uint channel, out float db);
       int GetChannelVolumeLevelScalar(uint channel, out float level);
-      int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid eventContext);
+      [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid eventContext);
       int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
       int GetVolumeStepInfo(out uint step, out uint stepCount);
       int VolumeStepUp(ref Guid eventContext);

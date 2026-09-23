@@ -75,6 +75,9 @@ html, body {
   box-shadow: var(--lg-shadow);
 }
 body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
+/* A notice and the empty pane carry nothing but text, so they get a real surface (the popovers'
+   token): over a dark screen the glass tint alone left the notice's first line at 3.1:1. */
+body.noting .panel, body.is-empty .panel { --pane-fill: var(--lg-fill-strong); }
 
 /* the tint and the hairlines, drawn once on top of the blurred backdrop (the launcher's recipe) */
 .panel::after {
@@ -173,16 +176,24 @@ body.snap .bdrop, body.snap .panel::after { transition: none; }
   text-align: center;
   font-size: 11.5px;
   line-height: 1.35;
-  color: var(--lg-ink-3);
+  color: var(--lg-ink-2);
 }
+.pv-why:not(:empty) { background: var(--lg-fill-strong); }
 
+/* The caption sits on its own frosted strip. The pane's tint alone is glass, and over a dark window
+   or wallpaper glass turns mid-grey, where grey ink measured 2.6-3.3:1 (shoot.js on a dark desktop,
+   2026-09-23). On the strip it reads the same whatever is behind. 3px above it, 4px below: the
+   selection ring stays clear of it. */
 .cap {
-  height: var(--caph);
+  height: calc(var(--caph) - 7px);
+  margin-top: 3px;
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 0 3px;
+  padding: 0 6px;
   min-width: 0;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-fill-strong);
 }
 .ico {
   flex: none;
@@ -221,9 +232,11 @@ body.snap .bdrop, body.snap .panel::after { transition: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   background: var(--lg-sunk);
-  color: var(--lg-ink-3);
+  color: var(--lg-ink-2);            /* the chip IS the message here, so not the quiet ink */
 }
-.chip.warn { background: var(--lg-warn-soft); color: var(--lg-warn); }
+/* Solid, the one warning a tile can carry: brown ink on the soft brown measured 3.4-4.4:1 on the
+   strip; white on the warn fill is 7:1 (the accent's on-colour, on the warn colour). */
+.chip.warn { background: var(--lg-warn); color: var(--lg-acc-on); }
 
 /* ---- the other faces of the panel ----------------------------------------------------------- */
 
@@ -251,22 +264,38 @@ body.noting .note {
   gap: 4px;
   padding: 12px 20px;
 }
+/* One plain sentence first, in the reading ink; the machinery under it, smaller (lib/switcher.js
+   noticeWords). The warn dot is the only colour: a notice is news, not an alarm. */
 .note-t {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
-  color: var(--lg-warn);
-  white-space: nowrap;
+  line-height: 1.35;
+  color: var(--lg-ink);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+.note-t::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--lg-warn);
+  vertical-align: 1px;
 }
 .note-x {
+  font-size: 11px;
   color: var(--lg-ink-2);
   line-height: 1.4;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   overflow: hidden;
 }
+.note-x:empty { display: none; }
 
 /* sits in the panel's bottom padding: said, never in the way of a tile */
 .foot {
@@ -277,8 +306,13 @@ body.noting .note {
   max-width: 70%;
   font-size: 10px;
   line-height: 12px;
-  color: var(--lg-ink-3);
+  padding: 0 6px;
+  border-radius: 999px;
+  /* on a frosted pill for the same reason as the captions: grey ink on glass over a dark screen */
+  background: var(--lg-fill-strong);
+  color: var(--lg-ink-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.foot:empty { display: none; }

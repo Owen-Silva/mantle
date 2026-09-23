@@ -16,6 +16,9 @@
  *
  *   node ui/bar/check-reveal.js     one line per check, then "REVEAL FIT CHECK: N passed, M failed"
  *
+ * The EDGE cases at the end (2026-09-23) check the docked shape: the icons stop short of the chip
+ * strip, and "apps hidden" is raised there at all.
+ *
  * LINE 1 below is not optional, for the same reason as in shoot.js: one pinned, low-priority
  * headless browser at a time on Owen's machine.
  */
@@ -187,12 +190,61 @@ async function runCase(browser, c) {
   }
 }
 
+/* EDGE MODE (2026-09-23). The docked bar draws its chip strip, so the icons must stop short of it
+   (they were painted over "hotkey off" in bar-1280.png), and "apps hidden" must actually be raised
+   there: its judgement was made silently while the bar was down and, a reveal changing nothing
+   in edge mode, never made again. The mock's own chips are real ones: "hotkey off" always (test
+   mode has no hook), "sidecar down" with ?state=down. */
+const EDGE = [
+  { name: 'edge, 14 icons, 1280', q: '?apps=12', w: 1280, fits: true },
+  { name: 'edge, 15 icons, 1000, two chips', q: '?apps=13&state=down', w: 1000, fits: false }
+];
+
+async function runEdge(browser, c) {
+  console.log(c.name + ':');
+  const ctx = await browser.newContext({ colorScheme: 'dark', deviceScaleFactor: 1.25, viewport: { width: c.w, height: 44 } });
+  const page = await ctx.newPage();
+  const warns = [], problems = [];
+  const t0 = Date.now();
+  page.on('console', m => {
+    const t = m.text();
+    if (/apps? hidden/.test(t)) warns.push({ ms: Date.now() - t0, text: t });
+    if (m.type() === 'error') problems.push('console: ' + t);
+  });
+  page.on('pageerror', e => problems.push('pageerror: ' + e.message));
+  try {
+    await page.goto(PAGE + c.q, { waitUntil: 'load' });
+    await page.waitForTimeout(3500);                 // reveal at 300 ms, then the chip and its settles
+    const s = await page.evaluate(() => {
+      const d = document.getElementById('dock'), ch = document.getElementById('chips');
+      const cells = [...d.querySelectorAll('.cell')].map(x => x.getBoundingClientRect());
+      const box = d.getBoundingClientRect(), cap = parseFloat(d.style.getPropertyValue('--dock-max'));
+      const shownR = cells.length ? Math.min(cells[cells.length - 1].right, isNaN(cap) ? Infinity : box.left + cap) : 0;
+      return { up: document.body.classList.contains('up'), edge: document.body.classList.contains('edge'),
+        shownR: Math.round(shownR), chipsL: Math.round(ch.getBoundingClientRect().left),
+        chips: [...ch.querySelectorAll('.chip .lbl')].map(x => x.textContent) };
+    });
+    check(s.up && s.edge && s.shownR <= s.chipsL, 'the icons stop short of the chip strip', JSON.stringify(s));
+    const hid = s.chips.filter(t => /apps? hidden/.test(t));
+    if (c.fits) check(!hid.length && !warns.length, 'everything fits: no "apps hidden"', JSON.stringify(s.chips));
+    else {
+      check(hid.length === 1, 'too many: the "apps hidden" chip is raised in edge mode too', JSON.stringify(s.chips));
+      check(warns.length > 0 && warns.every(w => w.ms < 2500), 'and it settles (no report after 2.5 s)',
+        JSON.stringify(warns.map(w => w.ms + 'ms ' + w.text.slice(6, 26))));
+    }
+    check(!problems.length, 'no page or console errors', problems.join(' | '));
+  } finally {
+    await ctx.close();
+  }
+}
+
 (async () => {
   const exe = findChrome();
   if (!exe) { console.error('REVEAL FIT CHECK: could not run: no ms-playwright chromium under AppData/Local/ms-playwright'); process.exit(1); }
   const browser = await chromium.launch({ headless: true, executablePath: exe });
   try {
     for (const c of CASES) await runCase(browser, c);
+    for (const c of EDGE) await runEdge(browser, c);
   } finally {
     await browser.close();
   }

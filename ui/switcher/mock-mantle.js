@@ -19,6 +19,7 @@
  *   ?thumbs=fail     every preview fails, so the reasons inside the boxes can be looked at
  *   ?notice=1        the "could not switch" notice instead of a session
  *   ?bg=0            no fake desktop (transparent, like the real window)
+ *   ?dark=1          a DARK desktop: dark wallpaper, dark app windows (the caption-contrast case)
  */
 (function () {
   'use strict';
@@ -43,7 +44,10 @@
   (function paintDesk() {
     var g = desk.getContext('2d');
     var grad = g.createLinearGradient(0, 0, SW, SH);
-    var stops = ['#2f6fe0', '#b23fd0', '#d64545', '#e0a059', '#1f8f4e', '#2f6fe0'];
+    var dark = flags.get('dark') === '1';
+    var stops = dark
+      ? ['#0d1117', '#141a2a', '#1b1430', '#0f1a1c', '#0d1117']
+      : ['#2f6fe0', '#b23fd0', '#d64545', '#e0a059', '#1f8f4e', '#2f6fe0'];
     for (var i = 0; i < stops.length; i++) grad.addColorStop(i / (stops.length - 1), stops[i]);
     g.fillStyle = grad; g.fillRect(0, 0, SW, SH);
     // hard edges: what a blur is judged on
@@ -56,7 +60,7 @@
       g.fillStyle = 'rgba(0,0,0,.18)';
       for (var r = 0; r < 6; r++) g.fillRect(x + 20, y + 50 + r * 26, w * (0.4 + (r % 3) * 0.15), 12);
     }
-    win(SW * 0.06, SH * 0.08, SW * 0.46, SH * 0.62, '#dfe3ea', '#f7f8fa');
+    win(SW * 0.06, SH * 0.08, SW * 0.46, SH * 0.62, dark ? '#181a1f' : '#dfe3ea', dark ? '#1e1e1e' : '#f7f8fa');
     win(SW * 0.48, SH * 0.30, SW * 0.44, SH * 0.58, '#202226', '#2b2d31');
   })();
   if (flags.get('bg') !== '0') {
@@ -217,8 +221,9 @@
     st.right = 'auto'; st.bottom = 'auto';
     emit('switcher.notice', {
       id: 1,
-      title: 'Could not switch to "Task Manager"',
-      text: 'Windows refused to bring it to the front (SetForegroundWindow and the focus ladder both failed); Windows also reports that window as not responding',
+      // what lib/switcher.js noticeWords() makes of a hung Task Manager
+      title: "Task Manager isn't responding, so Windows wouldn't bring it to the front.",
+      text: 'SetForegroundWindow was refused, then the focus ladder: could not raise window 1312: Windows refused the foreground change (another app holds the foreground lock); Windows also reports that window as not responding',
       lay: n,
     });
   }

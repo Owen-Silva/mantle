@@ -2078,11 +2078,20 @@ const QS_PARTS = [
   ['power', 'power', 'the battery'],
 ];
 
-/** One part, never throwing: a refusal becomes {ok:false, reason}. */
+/** One part, never throwing: a refusal becomes {ok:false, reason}.
+ *
+ * The sidecar's OWN ok/reason win whenever it gave them (2026-09-23). This used to force ok:true
+ * and reason:null over every answer, so a part the sidecar was still reading for the first time
+ * (QuickSettings.Pending: ok:false, pending:true, placeholder values and a reason) was drawn as a
+ * real reading -- Wi-Fi "Off" in the seconds after a start -- and its reason never reached the
+ * panel. A bare answer with no ok (volume's {level, muted}) is a reading, so it is ok. */
 async function qsPart(cmd, label, args) {
   try {
     const r = await sidecar.call(cmd, args || {}, 4000);
-    return Object.assign({}, r, { ok: true, reason: null });
+    if (!r || typeof r !== 'object') return { ok: false, reason: `${label} cannot be read: the sidecar answered with nothing` };
+    const part = Object.assign({ ok: true, reason: null }, r);
+    if (part.ok === false && !part.reason) part.reason = `${label} cannot be read, and the sidecar gave no reason`;
+    return part;
   } catch (err) {
     return {
       ok: false,
@@ -2114,39 +2123,50 @@ async function qsRead() {
   return out;
 }
 
-/** part -> how to validate it and what to send. */
+/** part -> how to validate it, what to send, and which value of the read-back part it set.
+ *
+ * LEVELS ARE WHOLE PERCENTAGES, 0 to 100, the sidecar's own scale. Until 2026-09-23 the panel's
+ * sliders sent 0-1 fractions (bar.js divided by 100 before calling), these checks let 0.42
+ * through, and the sidecar rounded it to 0: dragging Volume or Brightness in the panel set
+ * Windows to 0 or 1 %. A fraction is now refused WITH that reason instead of rounding silently. */
+const QS_LEVEL = (what) => (v) => (Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 100
+  ? null
+  : `${what} must be a whole number from 0 to 100` + (Number(v) > 0 && Number(v) < 1 ? ` (${v} looks like a 0-1 fraction)` : ''));
 const QS_WRITE = {
   volume: {
     cmd: 'volume',
     label: 'the volume',
-    args: (v) => ({ level: v }),
-    check: (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100
-      ? null : 'volume must be a number from 0 to 100'),
+    args: (v) => ({ level: Number(v) }),
+    check: QS_LEVEL('volume'),
+    read: (p) => p.level,
   },
   mute: {
     cmd: 'volume',
     label: 'mute',
     args: (v) => ({ muted: !!v }),
     check: (v) => (typeof v === 'boolean' ? null : 'mute must be true or false'),
+    read: (p) => !!p.muted,
   },
   wifi: {
     cmd: 'wifi',
     label: 'Wi-Fi',
     args: (v) => ({ on: !!v }),
     check: (v) => (typeof v === 'boolean' ? null : 'wifi must be true or false'),
+    read: (p) => !!p.on,
   },
   bluetooth: {
     cmd: 'bluetooth',
     label: 'Bluetooth',
     args: (v) => ({ on: !!v }),
     check: (v) => (typeof v === 'boolean' ? null : 'bluetooth must be true or false'),
+    read: (p) => !!p.on,
   },
   brightness: {
     cmd: 'brightness',
     label: 'the screen brightness',
     args: (v) => ({ level: Number(v) }),
-    check: (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100
-      ? null : 'brightness must be a number from 0 to 100'),
+    check: QS_LEVEL('brightness'),
+    read: (p) => p.level,
   },
 };
 
@@ -2844,17 +2864,19 @@ const COMMANDS = {
     const part = String((a && a.part) || '');
     const spec = QS_WRITE[part];
     if (!spec) {
-      return { ok: false, part, value: null, reason: `qs.set does not know the part "${part}" (it does ${Object.keys(QS_WRITE).join(', ')})` };
+      return { ok: false, part, value: null, state: null, reason: `qs.set does not know the part "${part}" (it does ${Object.keys(QS_WRITE).join(', ')})` };
     }
     const bad = spec.check(a && a.value);
-    if (bad) return { ok: false, part, value: null, reason: bad };
+    if (bad) return { ok: false, part, value: null, state: null, reason: bad };
+    let set;
     try {
-      await sidecar.call(spec.cmd, spec.args(a.value), 4000);
+      set = await sidecar.call(spec.cmd, spec.args(a.value), 4000);
     } catch (err) {
       return {
         ok: false,
         part,
         value: null,
+        state: null,
         reason: Sidecar.isOldExeError(err)
           ? `${spec.label} could not be changed: the sidecar exe has no "${spec.cmd}" command yet, so run npm run build:sidecar`
           : `${spec.label} could not be changed: ${err.message}`,
@@ -2865,7 +2887,21 @@ const COMMANDS = {
     // about where it is is the silent failure this rule exists to stop.
     const now = await qsPart(spec.cmd, spec.label);
     if (qsWatching) qsPush(`${part} was changed`);
-    return { ok: !!now.ok, part, value: now, reason: now.ok ? null : now.reason };
+    // A switch Windows refused comes back from the sidecar as a RESULT, ok:false with its reason
+    // (Network.Set: "Windows refused to switch the Wi-Fi radio (error 5 ...)"), not as an error.
+    // That answer was dropped here, so the tile just did not move and nothing said why. It wins.
+    const refused = !!(set && typeof set === 'object' && set.ok === false);
+    // `value` is the one number or switch the part reads now, in the units it was set in; `state`
+    // is the whole part as qs.get shows it. `value` used to BE the whole part, and the panel wrote
+    // that object into the slider's level: its number read '—' until the next push (2026-09-23).
+    return {
+      ok: !refused && !!now.ok,
+      part,
+      value: now.ok ? spec.read(now) : null,
+      state: now,
+      reason: refused ? (set.reason || `${spec.label} was not changed, and the sidecar gave no reason`)
+        : now.ok ? null : now.reason,
+    };
   },
 
   'qs.watch': async (a) => {
@@ -4767,7 +4803,7 @@ async function logMemory(tag) {
     const fmt = (p) => `private ${Math.round((p.memory.privateBytes || 0) / 1024)} MB, ws ${Math.round(p.memory.workingSetSize / 1024)} MB`;
     let privateTotal = 0;
     for (const p of byPid.values()) privateTotal += (p.memory.privateBytes || 0);
-    for (const [name, w] of [['bar', barWin], ['launcher', launcherWin], ['desktop', desktopWin]]) {
+    for (const [name, w] of [['bar', barWin], ['launcher', launcherWin], ['desktop', desktopWin], ['switcher', switcher.overlayWindow()]]) {
       if (!w || w.isDestroyed()) { parts.push(`${name}: no window`); continue; }
       const pid = w.webContents.getOSProcessId();
       const p = byPid.get(pid);

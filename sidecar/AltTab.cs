@@ -591,11 +591,11 @@ namespace Mantle {
       KeyEvents.Enqueue(Json.Obj("ev", "switcher", "op", "commit", "seq", seq, "sel", sel,
                                  "hwnd", target.ToInt64().ToString(CultureInfo.InvariantCulture), "via", via));
       if (target == IntPtr.Zero) {
-        Activated(seq, target, title, via, false, null, "there was no window to switch to", 0);
+        Activated(seq, target, title, via, false, null, "there was no window to switch to", "none", 0);
         return;
       }
       if (target == from && RootOf(Win32.GetForegroundWindow()) == target) {
-        Activated(seq, target, title, via, true, "already", null, 0);
+        Activated(seq, target, title, via, true, "already", null, null, 0);
         return;
       }
       long ts = _commitTs;
@@ -684,11 +684,16 @@ namespace Mantle {
     // (WindowList.Focus: restore, AttachThreadInput, then the Alt nudge), the
     // exact code a taskbar click uses. `how` says which one landed, so the
     // first live run measures it instead of us guessing.
+    //
+    // `cause` is for the notice's plain sentence, `err` for the log and the notice's small print:
+    // "closed" (gone before the switch), "hung" (Windows reports it not responding and would not
+    // bring it forward), "refused" (Windows kept another window in front), "error" (this threw).
     static void Activate(int seq, IntPtr hwnd, string title, string via, long commitTs) {
-      string how = null, err = null;
+      string how = null, err = null, cause = null;
       try {
         if (!Win32.IsWindow(hwnd)) {
           err = "the window closed before Mantle could switch to it";
+          cause = "closed";
         } else {
           bool hung = KeysNative.IsHungAppWindow(hwnd);
           // A window with a modal dialog up is really the dialog: Windows'
@@ -706,20 +711,26 @@ namespace Mantle {
             string ferr = WindowList.Focus(hwnd);
             if (ferr == null && focusTo != hwnd) Win32.SetForegroundWindow(focusTo);
             if (ferr == null || RootOf(Win32.GetForegroundWindow()) == hwnd) how = "ladder";
-            else err = ferr + (hung ? "; Windows also reports that window as not responding" : "");
+            else {
+              err = "SetForegroundWindow was refused, then the focus ladder: " + ferr +
+                    (hung ? "; Windows also reports that window as not responding" : "");
+              cause = !Win32.IsWindow(hwnd) ? "closed" : hung ? "hung" : "refused";
+            }
           }
         }
       } catch (Exception ex) {
         err = "switching threw " + ex.GetType().Name + ": " + ex.Message;
+        cause = "error";
       }
-      Activated(seq, hwnd, title, via, err == null, how, err, Lanes.MsSince(commitTs));
+      Activated(seq, hwnd, title, via, err == null, how, err, cause, Lanes.MsSince(commitTs));
     }
 
-    static void Activated(int seq, IntPtr hwnd, string title, string via, bool ok, string how, string err, long ms) {
+    static void Activated(int seq, IntPtr hwnd, string title, string via, bool ok, string how, string err,
+                          string cause, long ms) {
       var d = Json.Obj("ev", "switcher", "op", "activated", "seq", seq,
                        "hwnd", hwnd.ToInt64().ToString(CultureInfo.InvariantCulture),
                        "title", title, "via", via, "ok", ok, "how", how, "ms", ms);
-      if (!ok) d["reason"] = err;
+      if (!ok) { d["reason"] = err; d["cause"] = cause ?? "error"; }
       KeyEvents.Enqueue(d);
     }
 

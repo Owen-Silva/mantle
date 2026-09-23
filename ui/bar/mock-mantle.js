@@ -688,25 +688,33 @@
       case 'qs.audio.session': return audioSession(payload || {});
 
       /* Every set answers with the value that actually took, and a part the mock cannot switch
-         answers ok:false WITH a reason — the panel must show that reason, not just fail to move. */
+         answers ok:false WITH a reason — the panel must show that reason, not just fail to move.
+         main.js's contract (2026-09-23): levels go in as WHOLE percentages 0-100 (a 0-1 fraction
+         is refused, as main refuses it), and the reply carries `value` in those units plus
+         `state`, the whole part read back as qs.get shows it. This mock used to take 0-1, which
+         is how the panel sending fractions to a 0-100 main went unnoticed. */
       case 'qs.set': {
         var part = payload && payload.part, val = payload && payload.value;
         var st = {
           volume: qsState.volume, mute: qsState.volume, wifi: qsState.wifi,
           bluetooth: qsState.bluetooth, brightness: qsState.brightness
         }[part];
-        if (!st) return { ok: false, part: part, reason: 'this shell does not know how to set "' + part + '"' };
-        if (st.ok === false) return { ok: false, part: part, reason: st.reason };
-        if (part === 'volume') { volume.level = Math.max(0, Math.min(1, val)); st.level = volume.level; val = st.level; }
+        if (!st) return { ok: false, part: part, value: null, state: null, reason: 'this shell does not know how to set "' + part + '"' };
+        if (st.ok === false) return { ok: false, part: part, value: null, state: null, reason: st.reason };
+        if ((part === 'volume' || part === 'brightness') &&
+            !(Number.isInteger(Number(val)) && Number(val) >= 0 && Number(val) <= 100))
+          return { ok: false, part: part, value: null, state: null, reason: part + ' must be a whole number from 0 to 100' };
+        if (part === 'volume') { volume.level = Number(val) / 100; st.level = volume.level; val = Math.round(st.level * 100); }
         else if (part === 'mute') { volume.muted = !!val; st.muted = volume.muted; val = st.muted; }
-        else if (part === 'brightness') { st.level = Math.max(0, Math.min(1, val)); val = st.level; }
+        else if (part === 'brightness') { st.level = Number(val) / 100; val = Math.round(st.level * 100); }
         else {
           st.on = !!val; val = st.on;
           if (part === 'wifi' && !st.on) { st.connected = false; st.ssid = ''; }
           else if (part === 'wifi') { st.connected = true; st.ssid = 'Maple-5G'; }
         }
         setTimeout(qsPush, 0);                       // main pushes after every set, so the mock does too
-        return { ok: true, part: part, value: val, reason: '' };
+        var back = qsSnapshot()[part === 'mute' ? 'volume' : part];
+        return { ok: true, part: part, value: val, state: back, reason: null };
       }
 
       case 'sys.keys':

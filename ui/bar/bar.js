@@ -558,15 +558,26 @@
     var r = el.bar.getBoundingClientRect();
     if (!r.width) return null;
     var leftEnd = el.left ? el.left.getBoundingClientRect().right : r.left + 8;
-    /* The chip strip is NOT part of the wall the dock measures against: chips are the bar talking
-       about problems, and the "apps clipped" chip was widening the very cluster it measured
-       (a 136 -> 0 -> 355 px loop, live 2026-09-21). The wall is the first real control. */
+    /* In PILL mode the chip strip is NOT part of the wall the dock measures against: chips are the
+       bar talking about problems, and the "apps clipped" chip was widening the very cluster it
+       measured (a 136 -> 0 -> 355 px loop, live 2026-09-21). The wall is the first real control.
+       Edge mode is the exception, below. */
     /* The now-playing chip IS a real control (2026-09-22), and it sits left of the tray, so while
        it shows it is the wall; it measured 0 wide (hidden) otherwise. Like the tray, its left edge
        never moves with the chips: the island is right-anchored and the chips are to its left. */
     var tray = $('tray'), vol = $('volume');
     var anchor = (el.media && el.media.getBoundingClientRect().width > 0) ? el.media
       : (tray && tray.getBoundingClientRect().width > 0) ? tray : (vol || el.right);
+    /* EDGE MODE COUNTS THE STRIP (2026-09-23). Pill mode hides the strip (bar.css), so the rule
+       above is all it needs. Edge mode DRAWS the strip, and with the wall at the tray the icons
+       were painted over it: in the mock at 1280 px, 14 icons (589 px) centred ended at x=938,
+       over the "hotkey off" chip at 857-942 (bar-1280.png); now they slide 85 px left and end at
+       853. So in edge mode a strip that shows anything is the wall, and pill mode measures exactly
+       as before (pixel-compared). The 2026-09-21 loop cannot come back: the rule now slides before it
+       clips and keys each decision to the wall, and a wider "N apps hidden" chip only ever means
+       more hidden, never fewer, so settle after settle converges (one more at most, per extra
+       digit or the plural "s"). The price is honest: that chip takes room from the icons too. */
+    if (barMode === 'edge' && el.chips && el.chips.getBoundingClientRect().width > 0) anchor = el.chips;
     var rightStart = anchor ? anchor.getBoundingClientRect().left : r.right - 8;
     var spanL = leftEnd + 8, spanR = rightStart - 8;
     return {
@@ -614,6 +625,16 @@
     };
   }
 
+  /* The settled answer's key. `revealed` is in it (2026-09-23) because the judgement made while
+     the bar is down is made SILENTLY (no chip while hidden, below), and in edge mode a reveal
+     changes nothing else: same width, same icons, same wall, so the key matched, the silent
+     answer stood, and "apps hidden" was never raised at all. Measured in the mock: a 900 px edge
+     bar with 15 icons capped the dock at 475 px and showed no chip (pill mode was spared only
+     because its reveal changes the width). Same geometry, same decision, so nothing visual moves. */
+  function dockKey(m, need) {
+    return (revealed ? 'up:' : 'down:') + m.w + ':' + need + ':' + Math.round(m.spanR);
+  }
+
   function applyDock(d) {
     el.dock.style.setProperty('--dock-max', d.cap);
     el.dock.style.setProperty('--dock-shift', Math.round(d.shift) + 'px');
@@ -625,8 +646,9 @@
     var need = needWidth();
     /* The wall is in the key since the media chip (2026-09-22): it can appear, or change width with
        every track, without the bar's width or the icon count changing, and the dock must move for
-       it. Safe from the old 136 -> 0 -> 355 loop because the chips never move the wall (above). */
-    var key = m.w + ':' + need + ':' + Math.round(m.spanR);
+       it. Safe from the old 136 -> 0 -> 355 loop: in pill mode the chips never move the wall, and
+       in edge mode, where they do, measure() says why it converges. */
+    var key = dockKey(m, need);
     /* Already settled at this width, with this many icons, against this wall? Then this resize is
        something INSIDE the bar changing width (our own status chips) and the settled answer stands. */
     applyDock(key === lastKey ? frozen : decide(m, need));
@@ -658,7 +680,7 @@
       m = measure();
       if (!m) return;
     }
-    var key = m.w + ':' + need + ':' + Math.round(m.spanR);
+    var key = dockKey(m, need);
     if (key !== lastKey) {
       lastKey = key;
       frozen = decide(m, need);
@@ -1521,14 +1543,25 @@
     });
   }
 
+  /* The reply is the part READ BACK after the set: `state` is the whole part as qs.get shows it
+     (so its reason and, for Wi-Fi, the network come with it), `value` the one level or switch in
+     the units it was set in. Until 2026-09-23 main sent the whole part as `value` and this wrote
+     that object into .level, so the slider's number read '—' until the next push. A level that
+     is not a number is not written at all. */
   function qsApplyReply(r) {
     if (!r || !r.part || !qs) return;
-    var v = r.value;
-    if (r.part === 'volume' && qs.volume) qs.volume.level = v;
-    else if (r.part === 'mute' && qs.volume) qs.volume.muted = !!v;
-    else if (r.part === 'wifi' && qs.wifi) qs.wifi.on = !!v;
-    else if (r.part === 'bluetooth' && qs.bluetooth) qs.bluetooth.on = !!v;
-    else if (r.part === 'brightness' && qs.brightness) qs.brightness.level = v;
+    var key = r.part === 'mute' ? 'volume' : r.part;
+    if (!qs[key]) return;
+    if (r.state && typeof r.state === 'object') qs[key] = r.state;
+    else {
+      var v = r.value;
+      if ((r.part === 'volume' || r.part === 'brightness') && typeof v === 'number') qs[key].level = v;
+      else if (r.part === 'mute') qs.volume.muted = !!v;
+      else if (r.part === 'wifi' || r.part === 'bluetooth') qs[key].on = !!v;
+    }
+    if (key === 'volume' && typeof qs.volume.level === 'number') {   // the readout's glyph too
+      vol.level = qs.volume.level / 100; vol.muted = !!qs.volume.muted; vol.reason = ''; volumeGlyph();
+    }
   }
 
   function qsSet(part, value) {
@@ -1576,6 +1609,9 @@
   var SAVER_GLYPH = svg('<rect x="1.4" y="5" width="10.8" height="6" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="13.2" y="6.8" width="1.4" height="2.4" rx=".7" fill="currentColor"/><path d="M7.4 5.9L5.6 8.4h1.6l-.4 1.8 2-2.4H7.1z" fill="currentColor"/>');
 
   function buildQsPop(pop) {
+    /* bar.css has sized this panel as .pop.qs (min-width 268, alongside .cal) since it was
+       written, but nothing ever added the class; closePop resets it with every other one. */
+    pop.classList.add('qs');
     var tiles = {}, notes = document.createElement('div'), sliders = {};
 
     var grid = document.createElement('div'); grid.className = 'qsgrid';
@@ -1616,13 +1652,15 @@
       line.appendChild(range);
       wrap.appendChild(head); wrap.appendChild(line);
       pop.appendChild(wrap);
-      var send = throttled(function (v) { qsSet(setPart, v / 100); }, 100);
+      /* Whole percentages, 0-100: the scale qs.set and the sidecar take. These divided by 100
+         until 2026-09-23, the sidecar rounded 0.42 to 0, and a drag set Windows to 0-1 %. */
+      var send = throttled(function (v) { qsSet(setPart, v); }, 100);
       range.addEventListener('input', function () {
         val.textContent = range.value + '%';
         if (setPart === 'volume') { vol.level = Number(range.value) / 100; volumeGlyph(); }
         send(Number(range.value));
       });
-      range.addEventListener('change', function () { qsSet(setPart, Number(range.value) / 100); });
+      range.addEventListener('change', function () { qsSet(setPart, Number(range.value)); });
       sliders[key] = { wrap: wrap, range: range, val: val, line: line, part: part };
       return sliders[key];
     }
