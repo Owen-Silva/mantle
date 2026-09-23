@@ -772,6 +772,14 @@ namespace Mantle {
             result = Json.Obj();
             return null;
           }
+          if (Json.GetBool(req, "recheck", false)) {
+            bool moved;
+            string covering;
+            string rerr = Desktop.Recheck(hwnd, out moved, out covering);
+            if (rerr != null) return rerr;
+            result = Json.Obj("moved", moved, "covering", covering);
+            return null;
+          }
           string mode;
           string aerr = Desktop.Attach(hwnd, out mode);
           if (aerr != null) return aerr;

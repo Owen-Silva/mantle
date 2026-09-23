@@ -3057,7 +3057,17 @@ function releaseEdgeClip(why) {
   });
 }
 
-async function armTrayWatch() {
+// A "traywatch" that times out is retried: the sidecar's one command thread is
+// often backed up for several seconds right after start (every piece asks for
+// something at once), and a single 4 s attempt lost the watch for the whole run
+// (2026-09-22). A refusal or an old exe is not retried -- asking again changes
+// nothing.
+const TRAYWATCH_RETRY_MS = [10000, 30000, 60000];
+let trayWatchRetry = null;
+
+async function armTrayWatch(attempt = 0) {
+  if (trayWatchRetry) { clearTimeout(trayWatchRetry); trayWatchRetry = null; }
+  if (shuttingDown) return;
   if (!barWin || barWin.isDestroyed()) {
     state.set('tray', { watch: 'off', watchReason: 'there is no bar window to keep above the Windows taskbar' });
     return;
@@ -3075,12 +3085,19 @@ async function armTrayWatch() {
     state.set('tray', { watch: 'on', watchReason: "the sidecar re-raises Mantle's bar whenever the Windows taskbar pops up on the same bottom edge (the Windows taskbar itself is never hidden, moved or reordered)" });
     process.stdout.write('mantle: traywatch armed on the bar window\n');
   } catch (err) {
+    const oldExe = Sidecar.isOldExeError(err);
+    const wait = oldExe ? null : TRAYWATCH_RETRY_MS[attempt];
     state.set('tray', {
       watch: 'off',
-      watchReason: Sidecar.isOldExeError(err)
+      watchReason: oldExe
         ? "the sidecar exe has no \"traywatch\" command yet, so the auto-hide Windows taskbar can come up OVER Mantle's bar: run npm run build:sidecar"
-        : `the Windows taskbar is not being watched, so it can come up over Mantle's bar: ${err.message}`,
+        : `the Windows taskbar is not being watched, so it can come up over Mantle's bar: ${err.message}` +
+          (wait ? ` (trying again in ${wait / 1000} s)` : ` (gave up after ${attempt + 1} tries)`),
     });
+    if (wait) {
+      trayWatchRetry = setTimeout(() => armTrayWatch(attempt + 1), wait);
+      if (trayWatchRetry.unref) trayWatchRetry.unref();
+    }
   }
 }
 
@@ -3229,11 +3246,15 @@ async function applyLive() {
   } else {
     try {
       const r = await sidecar.call('desktop', { hwnd: hwndOf(desktopWin) });
+      const mode = (r && r.mode) || null;
       state.set('desktop', {
         attached: true,
-        mode: (r && r.mode) || null,
-        reason: `the desktop layer is under the wallpaper (${(r && r.mode) || 'mode not reported'})`,
+        mode,
+        reason: mode === 'progman-front'
+          ? 'the desktop layer is behind the icons and in front of the wallpaper, including a video wallpaper (progman-front)'
+          : `the desktop layer is under the wallpaper (${mode || 'mode not reported'})`,
       });
+      armDesktopRecheck(mode);
     } catch (err) {
       state.set('desktop', { attached: false, mode: null, reason: `the desktop layer could not go under the wallpaper, so it is floating as an ordinary window: ${err.message}` });
     }
@@ -3251,6 +3272,48 @@ async function applyLive() {
   } catch (err) {
     state.set('hotkey', { winTap: false, reason: `the Win key still opens the Windows Start menu: ${err.message}` });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Keeping the desktop layer in front of a video wallpaper.
+//
+// progman-front puts the layer straight under the icons, above a wallpaper
+// app's player (Lively's mpv). That app re-inserts its player whenever it
+// restarts or changes wallpaper, which can cover the layer again, so every
+// DESKTOP_RECHECK_MS the sidecar looks at what sits between the icons and us
+// and puts us back. A move is logged with the window that had got in the way;
+// a failed check goes to the state strip, once per distinct reason.
+// ---------------------------------------------------------------------------
+const DESKTOP_RECHECK_MS = 5000;
+let desktopRecheckTimer = null;
+
+function stopDesktopRecheck() {
+  if (desktopRecheckTimer) clearInterval(desktopRecheckTimer);
+  desktopRecheckTimer = null;
+}
+
+function armDesktopRecheck(mode) {
+  stopDesktopRecheck();   // applyLive runs again on every sidecar restart
+  if (mode !== 'progman-front') return;
+  let lastErr = null;
+  desktopRecheckTimer = setInterval(async () => {
+    if (!desktopWin || desktopWin.isDestroyed()) { stopDesktopRecheck(); return; }
+    try {
+      const r = await sidecar.call('desktop', { hwnd: hwndOf(desktopWin), recheck: true }, 4000);
+      if (lastErr) {
+        lastErr = null;
+        state.set('desktop', { attached: true, mode, reason: 'the desktop layer is behind the icons and in front of the wallpaper again' });
+      }
+      if (r && r.moved) {
+        process.stdout.write(`mantle: desktop layer put back in front of the wallpaper: ${r.covering || 'a window'} had been placed over it\n`);
+      }
+    } catch (err) {
+      if (err.message === lastErr) return;
+      lastErr = err.message;
+      state.set('desktop', { attached: false, mode, reason: `the desktop layer may be covered by the wallpaper: its position check failed: ${err.message}` });
+    }
+  }, DESKTOP_RECHECK_MS);
+  if (desktopRecheckTimer.unref) desktopRecheckTimer.unref();
 }
 
 // ---------------------------------------------------------------------------
@@ -3409,6 +3472,7 @@ function restoreShell(why) {
 
     // 3. The pieces that were always safe: the hook and the wallpaper layer.
     const rest = [['the Win key hook', () => sidecar.call('hotkey', { winTap: false }, 4000)]];
+    stopDesktopRecheck();   // or it re-places the layer while it is being detached
     if (desktopWin && !desktopWin.isDestroyed()) {
       rest.push(['the desktop layer', () => sidecar.call('desktop', { hwnd: hwndOf(desktopWin), detach: true }, 4000)]);
     }

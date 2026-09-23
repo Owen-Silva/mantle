@@ -11,12 +11,22 @@
 // we got - a caller that gets "progman" knows it is on the fallback and can say
 // so in the UI instead of silently rendering in the wrong place.
 //
+//   progman-front    Win11 24H2/25H2: SHELLDLL_DefView (the icons), any
+//                    wallpaper app's player and the WorkerW are all CHILDREN of
+//                    Progman, top to bottom. We become a child of Progman placed
+//                    straight under the icons, so we sit IN FRONT of a video
+//                    wallpaper instead of inside the WorkerW behind it.
+//                    Expected on this box.
 //   workerw-sibling  classic Win10: a TOP-LEVEL WorkerW after the one hosting
 //                    SHELLDLL_DefView.
-//   workerw-child    Win11 24H2/25H2: SHELLDLL_DefView hangs off Progman and
-//                    the WorkerW is a CHILD of Progman. Expected on this box.
+//   workerw-child    the WorkerW is a CHILD of Progman but the icons are not
+//                    there. A wallpaper app's player covers us in this mode.
 //   progman          nothing else worked; parent straight to Progman. Icons may
 //                    draw over us, but we are still behind every app.
+//
+// Why progman-front exists (2026-09-22): Lively Wallpaper parents its mpv
+// player to Progman between the icons and the WorkerW, so a layer INSIDE the
+// WorkerW was drawn over by the video, the whole time, with every check green.
 using System;
 using System.Collections.Generic;
 
@@ -45,8 +55,20 @@ namespace Mantle {
       Win32.SendMessageTimeoutW(progman, WM_SPAWN_WORKER, new IntPtr(0xD), IntPtr.Zero, SMTO_NORMAL, 1000, out res);
       Win32.SendMessageTimeoutW(progman, WM_SPAWN_WORKER, new IntPtr(0xD), new IntPtr(1), SMTO_NORMAL, 1000, out res);
 
-      IntPtr target = FindSiblingWorkerW();
-      if (target != IntPtr.Zero) mode = "workerw-sibling";
+      // 24H2+: after the spawn message the icons STAY under Progman (on Win10
+      // they move out into a top-level WorkerW), so this test cannot pick up a
+      // classic desktop.
+      IntPtr defView = Win32.FindWindowExW(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
+      IntPtr target = IntPtr.Zero;
+      if (defView != IntPtr.Zero) {
+        target = progman;
+        mode = "progman-front";
+      }
+
+      if (target == IntPtr.Zero) {
+        target = FindSiblingWorkerW();
+        if (target != IntPtr.Zero) mode = "workerw-sibling";
+      }
 
       if (target == IntPtr.Zero) {
         target = Win32.FindWindowExW(progman, IntPtr.Zero, "WorkerW", null);
@@ -106,10 +128,55 @@ namespace Mantle {
         style |= Win32.WS_CHILD | Win32.WS_VISIBLE;
         Win32.SetWindowLongPtr(hwnd, Win32.GWL_STYLE, new IntPtr(style));
       }
-      Win32.SetWindowPos(hwnd, Win32.HWND_BOTTOM, 0, 0, 0, 0,
+      // progman-front: insert-after the icons = directly under them, above any
+      // wallpaper player. Every other mode: the bottom of whatever we joined.
+      Win32.SetWindowPos(hwnd, mode == "progman-front" ? defView : Win32.HWND_BOTTOM, 0, 0, 0, 0,
         Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE | Win32.SWP_FRAMECHANGED);
       return null;
     }
+
+    /// progman-front only: is the layer still straight under the icons? A
+    /// wallpaper app that (re)starts or changes wallpaper re-inserts its player,
+    /// which can land between the icons and us and cover us again. Puts the
+    /// layer back and says what had got in the way (class + process), or
+    /// returns covering=null when nothing had.
+    public static string Recheck(IntPtr hwnd, out bool moved, out string covering) {
+      moved = false;
+      covering = null;
+      if (hwnd == IntPtr.Zero) return "no hwnd given";
+      if (!Win32.IsWindow(hwnd)) return "window " + hwnd.ToInt64() + " no longer exists";
+      IntPtr progman = Win32.FindWindowW("Progman", null);
+      if (progman == IntPtr.Zero)
+        return "no Progman window: the desktop is not running (explorer may have crashed)";
+      if (Win32.GetAncestor(hwnd, Win32.GA_PARENT) != progman)
+        return "the desktop layer is no longer a child of Progman (explorer restarted?)";
+      IntPtr defView = Win32.FindWindowExW(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
+      if (defView == IntPtr.Zero)
+        return "Progman has no SHELLDLL_DefView any more, so there is no icon layer to sit under";
+
+      // Walk up from us to the icons: every VISIBLE sibling in between is
+      // drawn over us. Invisible ones cost nothing and are left alone.
+      IntPtr w = Win32.GetWindow(hwnd, GW_HWNDPREV);
+      while (w != IntPtr.Zero && w != defView) {
+        if (Win32.IsWindowVisible(w)) {
+          int pid;
+          Win32.GetWindowThreadProcessId(w, out pid);
+          string proc = "pid " + pid;
+          try { proc = System.Diagnostics.Process.GetProcessById(pid).ProcessName; } catch (Exception) { }
+          covering = Win32.GetClassName(w) + " (" + proc + ")";
+          break;
+        }
+        w = Win32.GetWindow(w, GW_HWNDPREV);
+      }
+      if (covering == null) return null;
+
+      Win32.SetWindowPos(hwnd, defView, 0, 0, 0, 0,
+        Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+      moved = true;
+      return null;
+    }
+
+    const uint GW_HWNDPREV = 3;
 
     /// Classic layout: walk the top-level windows; the one hosting
     /// SHELLDLL_DefView is followed in z-order by the WorkerW we want.
