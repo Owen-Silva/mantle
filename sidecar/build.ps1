@@ -13,16 +13,28 @@
 # is the only channel we use.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File sidecar/build.ps1
+#   powershell -NoProfile -ExecutionPolicy Bypass -File sidecar/build.ps1 -Out sidecar/bin-next/Mantle.Sidecar.exe
+#
+# -Out exists because a RUNNING Mantle holds bin\Mantle.Sidecar.exe open and
+# csc cannot overwrite it: build the next exe beside it, test that one
+# (MANTLE_SIDECAR_EXE=... npm run test:sidecar), and swap it in while Mantle
+# is stopped. A relative -Out is resolved from the current directory.
 #
 # Exits non-zero (and prints csc's own errors) when the build fails.
+param([string]$Out = '')
 
 $ErrorActionPreference = 'Continue'
 
 # Every path is resolved from THIS script's folder, so the build works from any
 # working directory (npm scripts, the test harness, or a bare shell).
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$bin  = Join-Path $here 'bin'
-$out  = Join-Path $bin 'Mantle.Sidecar.exe'
+if ($Out) {
+  $out = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine((Get-Location).Path, $Out))
+  $bin = Split-Path -Parent $out
+} else {
+  $bin = Join-Path $here 'bin'
+  $out = Join-Path $bin 'Mantle.Sidecar.exe'
+}
 $csc  = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 
 if (-not (Test-Path $csc)) {
@@ -50,7 +62,9 @@ $cscArgs = @(
   '/r:System.Core.dll',
   '/r:System.Drawing.dll',
   '/r:System.Management.dll',
-  '/r:System.Windows.Forms.dll'
+  '/r:System.Windows.Forms.dll',
+  '/r:System.Data.dll',            # Search.cs: OLE DB over the Windows Search index
+  '/r:System.ServiceProcess.dll'   # Search.cs: is the WSearch service running
 )
 
 # WinRT, for `bluetooth` ONLY. There is no Win32 API that can switch a
@@ -100,16 +114,48 @@ $facade = Get-ChildItem 'C:\Windows\Microsoft.NET\assembly\GAC_MSIL\System.Runti
         -Recurse -Filter 'System.Runtime.dll' -ErrorAction SilentlyContinue |
        Select-Object -First 1 -ExpandProperty FullName
 
+# THE SDK-FREE ROUTE (found by the media lane, 2026-09-22): the SPLIT winmds
+# that ship in System32\WinMetadata DO compile, as long as nothing uses
+# System.Runtime.WindowsRuntime's AsTask (that is what drags in the union
+# identity). The code awaits an IAsyncOperation through its own Completed
+# callback instead (WinRt.Await in Media.cs). References: the split winmds,
+# the System.Runtime facade, and System.Runtime.InteropServices.WindowsRuntime
+# from beside csc. It defines MANTLE_WINMD, which Media.cs needs and which
+# gives Bluetooth.cs the in-process route too.
+# NEVER BOTH: the union and the split winmds define every type twice.
+$wm = Join-Path $env:SystemRoot 'System32\WinMetadata'
+$interop = Join-Path (Split-Path -Parent $csc) 'System.Runtime.InteropServices.WindowsRuntime.dll'
+$split = @('Windows.Foundation.winmd', 'Windows.Media.winmd', 'Windows.Storage.winmd', 'Windows.Devices.winmd') |
+         ForEach-Object { Join-Path $wm $_ }
+$splitOk = $facade -and (Test-Path $interop) -and (@($split | Where-Object { -not (Test-Path $_) }).Count -eq 0)
+
 if ($unionWinmd -and $wrt -and $facade) {
   $cscArgs += @("/r:$unionWinmd", "/r:$wrt", "/r:$facade", '/define:MANTLE_WINRT')
   Write-Output "sidecar build note: bluetooth uses the in-process WinRT route ($unionWinmd)"
+  Write-Output '  (media needs MANTLE_WINMD, which is only defined without the union winmd)'
+} elseif ($splitOk) {
+  $cscArgs += ($split | ForEach-Object { "/r:$_" }) + @("/r:$facade", "/r:$interop", '/define:MANTLE_WINMD')
+  Write-Output 'sidecar build note: bluetooth and media use in-process WinRT through the split winmds in System32\WinMetadata'
 } else {
   # Single quotes: a backtick inside a double-quoted PowerShell string is an
   # ESCAPE character, so "`b" would become a backspace in this message.
-  Write-Output 'sidecar build note: bluetooth will use the slower PowerShell route (it says via:powershell in its reply)'
+  Write-Output 'sidecar build note: bluetooth will use the slower PowerShell route (it says via:powershell in its reply), and media is unavailable'
   if (-not $unionWinmd) { Write-Output '  missing: UnionMetadata\Windows.winmd - it comes with the Windows SDK, not with Windows' }
   if (-not $wrt) { Write-Output '  missing: System.Runtime.WindowsRuntime.dll in the GAC' }
   if (-not $facade) { Write-Output '  missing: the System.Runtime facade in the GAC' }
+  if (-not (Test-Path $interop)) { Write-Output "  missing: $interop" }
+  foreach ($f in $split) { if (-not (Test-Path $f)) { Write-Output "  missing: $f" } }
+}
+
+# UI Automation, for TrayUia.cs: Windows 11's tray is XAML, so the only way to
+# CLICK a shown tray icon is through UIA. The assemblies ship with .NET 4 (WPF
+# folder); without them the tray can still be listed but not clicked.
+$wpf = Join-Path (Split-Path -Parent $csc) 'WPF'
+$uia = @('UIAutomationClient.dll', 'UIAutomationTypes.dll', 'WindowsBase.dll') | ForEach-Object { Join-Path $wpf $_ }
+if (@($uia | Where-Object { -not (Test-Path $_) }).Count -eq 0) {
+  $cscArgs += @($uia | ForEach-Object { "/r:$_" }) + '/define:MANTLE_UIA'
+} else {
+  Write-Output 'sidecar build note: tray icons can be listed but not clicked (UI Automation assemblies missing)'
 }
 
 $cscArgs += $sources

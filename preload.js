@@ -1,5 +1,5 @@
 'use strict';
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 /*
  * The one and only bridge between Mantle's pages and the main process.
@@ -86,4 +86,14 @@ function on(event, cb) {
   };
 }
 
-contextBridge.exposeInMainWorld('mantle', { call, on });
+/*
+ * The disk path of a File the user dropped onto a page (the Wallpapers window takes videos,
+ * pictures and wallpaper folders by drag and drop). File.path is gone from Electron's renderers;
+ * webUtils is the supported way, and it only ever answers for a File the user handed the page,
+ * so it gives a page no way to name a path it was not given. '' when there is none.
+ */
+function pathForFile(file) {
+  try { return webUtils.getPathForFile(file) || ''; } catch (_) { return ''; }
+}
+
+contextBridge.exposeInMainWorld('mantle', { call, on, pathForFile });

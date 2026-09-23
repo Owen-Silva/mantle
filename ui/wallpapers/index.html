@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light">
+<!-- file:// is an opaque origin, so scheme sources, as on every Mantle page. file: images are the
+     thumbnails in the library folder; mantle-wp: media is a video this window reads ONE frame of
+     to make a thumbnail (lib/wallpaper.js serves it CORS-clean so the canvas can be read back). -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; media-src mantle-wp:; font-src file:">
+<title>Mantle wallpapers</title>
+<!-- tokens.css for geometry only; EVERY colour on this page comes from glass-light.css (--lg-*),
+     the taskbar island's theme, which every Mantle surface wears (Owen, 2026-09-21). -->
+<link rel="stylesheet" href="../shared/tokens.css">
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="wallpapers.css">
+</head>
+<body>
+  <!--
+    The window's material is the taskbar's, in the taskbar's order: the picture behind the glass
+    (.ground: the wallpaper on the desktop right now, blurred the same 12px / 150%), the tint, then
+    the panes and their ink. The window is an ordinary frameless one, so the "picture behind" is
+    the wallpaper it is about rather than a capture of the screen.
+  -->
+  <div class="ground" aria-hidden="true"><img id="ground-img" alt=""></div>
+
+  <header class="head">
+    <div class="head-title">
+      <h1>Wallpapers</h1>
+      <span class="head-sub" id="head-sub">Loading the library&hellip;</span>
+    </div>
+    <div class="head-actions">
+      <button class="btn" id="add-files" title="Videos (mp4, webm), GIFs, pictures, or a .zip of an HTML wallpaper">Add files&hellip;</button>
+      <button class="btn" id="add-folder" title="A folder holding an HTML wallpaper (a Lively web wallpaper, or any index.html)">Add folder&hellip;</button>
+      <span class="head-gap"></span>
+      <button class="win-btn" id="win-min" aria-label="Minimise" title="Minimise">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5h8" /></svg>
+      </button>
+      <button class="win-btn" id="win-close" aria-label="Close" title="Close">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" /></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- what the last add, remove or import did, including every file that could not be added -->
+  <div class="notice" id="notice" hidden>
+    <div class="notice-text" id="notice-text"></div>
+    <button class="notice-x" id="notice-x" aria-label="Dismiss">
+      <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" /></svg>
+    </button>
+  </div>
+
+  <main class="body">
+    <section class="pane grid-pane" aria-label="Library">
+      <div class="grid" id="grid" role="list"></div>
+      <p class="empty" id="empty" hidden></p>
+    </section>
+
+    <aside class="pane side" id="side" aria-label="Details">
+      <div class="detail" id="detail"></div>
+
+      <details class="sect" id="playback-sect" open>
+        <summary>Playback</summary>
+        <p class="play-line" id="play-line"></p>
+        <p class="sect-note">Carried over from Lively. Mantle applies each rule itself; where it cannot, the line says so.</p>
+        <dl class="rules" id="rules"></dl>
+      </details>
+
+      <details class="sect" id="lively-sect">
+        <summary>From Lively</summary>
+        <p class="sect-note" id="lively-line"></p>
+        <ul class="report" id="report"></ul>
+        <div class="sect-actions" id="lively-actions">
+          <button class="btn" id="reimport">Copy anything new</button>
+          <button class="btn" id="reimport-all" title="Also copies wallpapers you removed from Mantle">Restore removed ones</button>
+        </div>
+        <p class="sect-note" id="lib-dir"></p>
+      </details>
+    </aside>
+  </main>
+
+  <div class="drop" id="drop" hidden>
+    <div class="drop-card">
+      <b>Drop to add to your library</b>
+      <span>Videos, GIFs and pictures are copied in. A folder or .zip is added as an HTML wallpaper.</span>
+    </div>
+  </div>
+
+  <script src="wallpapers.js"></script>
+</body>
+</html>

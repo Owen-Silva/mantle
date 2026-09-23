@@ -20,6 +20,7 @@
     "test:sidecar": "node sidecar/test-sidecar.js"
   },
   "dependencies": {
-    "electron": "^44.3.0"
+    "electron": "^44.3.0",
+    "koffi": "^3.3.1"
   }
 }

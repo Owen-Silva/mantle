@@ -24,7 +24,10 @@ const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-co
 
 const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
 const PAGE = 'file:///C:/Users/user/mantle/ui/launcher/index.html';
-const OUT = 'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/edd3247c-6214-4642-9069-bbf7e50b1555/scratchpad/lanes/launcher';
+const OUT = process.env.MANTLE_SHOOT_OUT ||
+  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/edd3247c-6214-4642-9069-bbf7e50b1555/scratchpad/lanes/launcher';
+/* ONLY=06,07 shoots just the scenarios whose names start with those numbers */
+const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 const DPR = 1.25;
 
 /* The three text colours that sit on the glass, straight out of tokens.css. */
@@ -57,6 +60,7 @@ const SAMPLE = {
   const shots = [];
 
   async function shoot(name, url, prep) {
+    if (ONLY && !ONLY.some(p => name.startsWith(p))) return;
     const page = await ctx.newPage();
     const problems = [];
     page.on('pageerror', e => problems.push('pageerror: ' + e.message));
@@ -90,6 +94,12 @@ const SAMPLE = {
       out.rows = document.querySelectorAll('.row').length;
       out.why = (document.querySelector('.why') || {}).textContent || '';
       out.notice = document.getElementById('notice').hidden ? '' : document.getElementById('notice').textContent;
+      out.names = Array.from(document.querySelectorAll('.row .name')).map(n => n.textContent).slice(0, 10);
+      out.armed = (document.querySelector('.row.is-armed .name') || {}).textContent || '';
+      out.hint = (document.getElementById('hint') || {}).textContent || '';
+      out.counts = document.getElementById('counts').textContent;
+      out.srcErrors = document.getElementById('srcErrors').textContent;
+      out.hidden = document.documentElement.dataset.mockHidden === '1';
       return out;
     }, SAMPLE);
 
@@ -141,6 +151,46 @@ const SAMPLE = {
     await page.waitForTimeout(220);
   });
   await shoot('05-sidecar-down', PAGE + '?bg=1&state=down');
+
+  /* ---- power rows and file search (the mock bridge is ALWAYS a power dry run) ---- */
+  const typeQ = (q, wait) => async page => {
+    await page.click('#q');
+    await page.type('#q', q, { delay: 30 });
+    await page.waitForTimeout(wait || 420);                  // 40ms apps + 150ms files + 90ms mock index
+  };
+  await shoot('06-power-shut', PAGE + '?bg=1', typeQ('shut'));
+  await shoot('07-power-armed', PAGE + '?bg=1', async page => {
+    await typeQ('shut down')(page);
+    await page.keyboard.press('Enter');                      // arms: "Press Enter again to shut down"
+    await page.waitForTimeout(1200);                         // part-way through the countdown
+  });
+  await shoot('08-power-confirmed-dryrun', PAGE + '?bg=1', async page => {
+    await typeQ('shut down')(page);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(400);
+    await page.keyboard.press('Enter');                      // confirms -> the mock's dry-run answer
+    await page.waitForTimeout(250);
+  });
+  await shoot('09-power-armed-then-esc', PAGE + '?bg=1', async page => {
+    await typeQ('reboot')(page);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    await page.keyboard.press('Escape');                     // takes the arm back, stays open
+    await page.waitForTimeout(200);
+  });
+  await shoot('10-sleep-dryrun', PAGE + '?bg=1', async page => {
+    await typeQ('sleep')(page);
+    await page.keyboard.press('Enter');                      // no confirm step for Sleep
+    await page.waitForTimeout(250);
+  });
+  await shoot('11-one-letter-s', PAGE + '?bg=1', typeQ('s'));
+  await shoot('12-files-merged', PAGE + '?bg=1', typeQ('rep'));
+  await shoot('13-file-selected', PAGE + '?bg=1', async page => {
+    await typeQ('report')(page);
+    await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(150);
+  });
+  await shoot('14-files-down', PAGE + '?bg=1&files=down', typeQ('rep'));
 
   await browser.close();
 

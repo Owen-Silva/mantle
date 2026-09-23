@@ -25,6 +25,16 @@
  *                 path is on screen instead of having to be imagined
  *   ?state=down   sidecar reported down, so the amber status chip is on screen
  *   ?edge=top     pretend the bar is docked at the top (bar.js also honours this)
+ *   ?media=X      now playing, in main's 'media' payload shape (main.js NOW PLAYING): playing,
+ *                 paused, noctl (an app that refuses next/previous: greyed WITH reasons),
+ *                 lessonplayer (only an LessonPlayer lesson: the LessonPlayer rule, NO CHIP at all), both (LessonPlayer
+ *                 current AND a player: the chip shows the player), off (the old sidecar: a reason)
+ *   ?pick=lessonplayer with media=both: as if LessonPlayer had been picked in the card's source switcher,
+ *                 the one way left to see the LessonPlayer "controls off" card
+ *   ?tray=1       a readable tray: a white icon, a coloured one, two hidden ones. A page that
+ *                 sets window.__MOCK_TRAY__ before this file runs (ui/bar/shoot.js does, from a
+ *                 real sidecar listing) gets that list instead, so real icons can be eyeballed
+ *                 without committing anybody's tray to the repo.
  */
 (function () {
   'use strict';
@@ -139,7 +149,9 @@
         : { status: 'ok', reason: '' },
       taskbar: { hidden: true, reason: '' },        // test mode never touches the real taskbar
       desktop: { attached: true, reason: '' },
-      tray: { status: 'unavailable', watch: false, reason: 'explorer exposes 0 legacy tray buttons on this build' },
+      tray: TRAY
+        ? { status: 'ok', watch: true, reason: TRAY.length + ' notification-area items (mock)' }
+        : { status: 'unavailable', watch: false, reason: 'explorer exposes 0 legacy tray buttons on this build' },
       hotkey: { winTap: false, reason: 'test mode: hook not installed' },
       bar: { mode: MODE, revealed: revealed, reason: '' }
     };
@@ -189,6 +201,148 @@
     if (!qsWatching) return;
     qsTimer = setTimeout(function () { qsPush(); qsLoop(); }, 2000);
   }
+  /* ---- now playing ----------------------------------------------------
+     main's 'media' payload, built the way main.js builds it (NOW PLAYING): sessions, the one
+     shown (full, with `can`, timeline and artwork), the pick and why, and the LessonPlayer guard. The
+     art is painted on a canvas here, not shipped: it only has to be a real PNG data URL. */
+  var MEDIA = q.get('media') || '';
+  /* ?pick=lessonplayer starts as if Owen had picked LessonPlayer in the card's source switcher (the only
+     way to reach the controls-off card now that LessonPlayer alone shows no chip at all). */
+  var mediaPick = q.get('pick') === 'lessonplayer' ? 'Contoso.LessonPlayer_8wekyb3d8bbwe!App' : null;
+  var mediaAt = Date.now();
+
+  function tile(size, colors, glyph) {
+    var c = document.createElement('canvas'); c.width = size; c.height = size;
+    var g = c.getContext('2d');
+    var grad = g.createLinearGradient(0, 0, size, size);
+    grad.addColorStop(0, colors[0]); grad.addColorStop(1, colors[1]);
+    g.fillStyle = grad; g.fillRect(0, 0, size, size);
+    if (glyph) {
+      g.fillStyle = 'rgba(255,255,255,.9)';
+      g.font = '600 ' + Math.round(size * 0.55) + 'px Segoe UI, sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(glyph, size / 2, size / 2 + size * 0.04);
+    } else {
+      g.fillStyle = 'rgba(255,255,255,.22)';
+      g.beginPath(); g.arc(size * 0.68, size * 0.36, size * 0.26, 0, Math.PI * 2); g.fill();
+      g.fillStyle = 'rgba(11,14,26,.35)'; g.fillRect(0, size * 0.72, size, size * 0.28);
+    }
+    return c.toDataURL('image/png');
+  }
+  var SPOT_ICON = null, ACEL_ICON = null, ART = null;
+  function icons() {
+    if (ART) return;
+    SPOT_ICON = tile(32, ['#1ed760', '#169c46'], 'S');
+    ACEL_ICON = tile(32, ['#2b6cb0', '#1a4a80'], 'A');
+    ART = tile(96, ['#e0a059', '#b23fd0'], null);
+  }
+
+  var SPOTIFY = { aumid: 'Spotify.exe', app: { name: 'Spotify', icon: null }, title: 'Midnight City', artist: 'M83',
+    album: "Hurry Up, We're Dreaming", status: 'playing', playing: true, lessonplayer: false,
+    can: { play: true, pause: true, toggle: true, next: true, previous: true, stop: false, seek: true },
+    timeline: { available: true, durationMs: 243000, positionMs: 71000, positionNowMs: 71000 }, rate: 1 };
+  var LESSONPLAYER = { aumid: 'Contoso.LessonPlayer_8wekyb3d8bbwe!App', app: { name: 'LessonPlayer', icon: null }, title: 'LessonPlayer',
+    artist: 'Student', album: null, status: 'playing', playing: true, lessonplayer: true,
+    can: { play: true, pause: true, toggle: true, next: false, previous: false, stop: false, seek: false },
+    timeline: { available: false, reason: 'LessonPlayer does not publish a position or length' }, rate: 1 };
+  var RADIO = { aumid: 'Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic', app: { name: 'Media Player', icon: null },
+    title: 'Morning news bulletin', artist: 'BBC Radio 4', album: null, status: 'playing', playing: true, lessonplayer: false,
+    can: { play: false, pause: true, toggle: true, next: false, previous: false, stop: true, seek: false },
+    timeline: { available: false, reason: 'Media Player does not publish a position or length' }, rate: 1 };
+
+  function mediaSessions() {
+    icons();
+    SPOTIFY.app.icon = SPOT_ICON; SPOTIFY.artwork = ART;
+    LESSONPLAYER.app.icon = ACEL_ICON; LESSONPLAYER.artwork = null; LESSONPLAYER.artworkReason = 'LessonPlayer publishes no thumbnail';
+    if (MEDIA === 'playing') return [SPOTIFY];
+    if (MEDIA === 'paused') { SPOTIFY.status = 'paused'; SPOTIFY.playing = false; return [SPOTIFY]; }
+    if (MEDIA === 'noctl') return [RADIO];
+    if (MEDIA === 'lessonplayer') return [LESSONPLAYER];
+    if (MEDIA === 'both') return [LESSONPLAYER, SPOTIFY];
+    return [];
+  }
+
+  function mediaPayload() {
+    var guard = { on: true, reason: "LessonPlayer lesson \u00b7 controls off so a stray click can't pause it",
+      how: 'Mantle leaves LessonPlayer alone while you record lessons; start Mantle with --lessonplayer-media-controls to allow them' };
+    if (MEDIA === 'off')
+      return { ok: false, present: false, reason: 'this sidecar exe has no "media" command yet (run npm run build:sidecar)',
+        guard: guard, sessions: [], shown: null, pick: null, events: false };
+    var all = mediaSessions();
+    /* Owen's call (2026-09-22), as main.js makes it: when the only session is LessonPlayer there is no
+       chip at all, and a pick of LessonPlayer does not outlive the other player. */
+    if (all.length && all.every(function (s) { return s.lessonplayer; })) {
+      mediaPick = null;
+      return { ok: true, present: true, reason: 'only an LessonPlayer lesson has a media session, so the now-playing chip stays hidden (the LessonPlayer rule)',
+        rev: 1, guard: guard,
+        sessions: all.map(function (s) { return { aumid: s.aumid, app: s.app, title: s.title, artist: s.artist, status: s.status, playing: s.playing, current: true, lessonplayer: s.lessonplayer }; }),
+        shown: null, pick: { aumid: null, by: 'lessonplayer-only' }, events: true, eventsReason: null };
+    }
+    var cur = all[0] || null;               // Windows' current: the first, as the fixtures are ordered
+    var shown = null, by = null;
+    var picked = mediaPick && all.filter(function (s) { return s.aumid === mediaPick; })[0];
+    if (picked) { shown = picked; by = 'you'; }
+    else if (cur && !cur.lessonplayer) { shown = cur; by = 'current'; }
+    else if (all.some(function (s) { return !s.lessonplayer; })) { shown = all.filter(function (s) { return !s.lessonplayer; })[0]; by = 'lessonplayer-rule'; }
+    else if (cur) { shown = cur; by = 'current'; }
+    var full = null;
+    if (shown) {
+      full = JSON.parse(JSON.stringify(shown));
+      // the sidecar's estimate at read time: the mock's clock moves it the way the real one does
+      if (full.timeline && full.timeline.available && full.playing)
+        full.timeline.positionNowMs = Math.min(full.timeline.durationMs, full.timeline.positionMs + (Date.now() - mediaAt));
+      full.controls = full.lessonplayer ? { ok: false, reason: guard.reason, how: guard.how } : { ok: true, reason: null, how: null };
+    }
+    return {
+      ok: true, present: all.length > 0, reason: all.length ? null : 'nothing is playing: no app has a media session open',
+      rev: 1, guard: guard,
+      sessions: all.map(function (s) { return { aumid: s.aumid, app: s.app, title: s.title, artist: s.artist, status: s.status, playing: s.playing, current: s === cur, lessonplayer: s.lessonplayer }; }),
+      shown: full, pick: full ? { aumid: full.aumid, by: by } : null, events: true, eventsReason: null
+    };
+  }
+
+  /* Plays along for a player (flips play/pause, so the glyph can be watched changing) and refuses
+     what main refuses: an LessonPlayer target, a missing AUMID, a button the app does not accept. */
+  function mediaControl(p) {
+    var s = mediaSessions().filter(function (x) { return x.aumid === p.aumid; })[0];
+    if (!p.aumid) return { ok: false, reason: 'media.control needs the AUMID of the session the button belongs to, so a press can never land on a different app' };
+    if (!s) return { ok: false, reason: 'nothing to control: no media session from ' + p.aumid + ' is open' };
+    if (s.lessonplayer) return { ok: false, reason: "LessonPlayer lesson \u00b7 controls off so a stray click can't pause it. (mock: main refuses this whatever the page sends)" };
+    if (p.action === 'toggle') {
+      if (s.timeline && s.timeline.available && s.playing) s.timeline.positionMs = Math.min(s.timeline.durationMs, s.timeline.positionMs + (Date.now() - mediaAt));
+      mediaAt = Date.now();
+      s.playing = !s.playing; s.status = s.playing ? 'playing' : 'paused';
+      setTimeout(function () { emit('media', mediaPayload()); }, 60);
+      return { ok: true, action: p.action, via: 'toggle', aumid: s.aumid };
+    }
+    if (!s.can[p.action]) return { ok: false, reason: s.app.name + ' does not accept ' + p.action + ' right now' };
+    return { ok: true, action: p.action, aumid: s.aumid, mock: true };
+  }
+
+  /* ---- tray ------------------------------------------------------------
+     ?tray=1: the UIA tray's shape {id, title, icon, exe, promoted, clickable, reason}. The white
+     glyph is the case bar.js puts on a plate; the two hidden ones are what the overflow lists. */
+  var TRAY = null;
+  if (Array.isArray(window.__MOCK_TRAY__)) TRAY = window.__MOCK_TRAY__;
+  else if (q.get('tray') === '1') {
+    var glyph = function (fg, bg, shape) {
+      var c = document.createElement('canvas'); c.width = 20; c.height = 20;
+      var g = c.getContext('2d');
+      if (bg) { g.fillStyle = bg; g.beginPath(); g.arc(10, 10, 9, 0, Math.PI * 2); g.fill(); }
+      g.strokeStyle = fg; g.fillStyle = fg; g.lineWidth = 2;
+      if (shape === 'ring') { g.beginPath(); g.arc(10, 10, 6, 0.4, Math.PI * 1.8); g.stroke(); g.fillRect(13, 3, 4, 4); }
+      else { g.fillRect(5, 5, 10, 10); }
+      return c.toDataURL('image/png');
+    };
+    var HID = 'is in Windows\' hidden-icons flyout, which only exists while that flyout is open, and Mantle never opens it on your screen. Turn it On under Settings > Personalization > Taskbar > Other system tray icons and Mantle can click it (your own taskbar stays auto-hidden).';
+    TRAY = [
+      { id: 'n:1', title: 'Windows Update: restart required', icon: glyph('#ffffff', null, 'ring'), exe: 'C:\\WINDOWS\\UUS\\amd64\\MoNotificationUx.exe', promoted: true, clickable: true, reason: null },
+      { id: 'n:2', title: 'OneDrive', icon: glyph('#2f6fe0', null, 'box'), exe: 'OneDrive.exe', promoted: true, clickable: true, reason: null },
+      { id: 'n:3', title: 'Tailscale', icon: glyph('#ffffff', null, 'box'), exe: 'tailscale-ipn.exe', promoted: false, clickable: false, reason: 'Tailscale ' + HID },
+      { id: 'n:4', title: 'Windows Security', icon: glyph('#1f8f4e', '#e6f4ea', 'box'), exe: 'SecurityHealthSystray.exe', promoted: false, clickable: false, reason: 'Windows Security ' + HID }
+    ];
+  }
+
   var revealed = false;
   var listeners = Object.create(null);
 
@@ -299,6 +453,7 @@
         return { ok: false, reason: 'combo "' + (payload && payload.combo) + '" is not one this shell knows how to send' };
 
       case 'tray.list':
+        if (TRAY) return TRAY;
         // The unavailable case is the interesting one: the bar must say WHY the tray is empty.
         throw new Error(state().tray.reason);
 
@@ -317,12 +472,26 @@
         }, 0);
         return { ok: true, reason: '', mock: true };
 
+      case 'media.get': return mediaPayload();
+      case 'media.select':
+        mediaPick = (payload && payload.aumid) || null;
+        return mediaPayload();
+      case 'media.control': return mediaControl(payload || {});
       case 'tray.click':
       case 'open':
       case 'shell.restore':
       case 'shell.quit':
       case 'bar.popover':
         return { ok: true, reason: '', mock: true };
+      // The flyout's live previews are drawn by DWM from Electron main; a browser page has no
+      // compositor to ask. Every card says so, which is also how the reason text gets eyeballed.
+      case 'bar.thumbs':
+        return {
+          ok: true, reason: null, mock: true,
+          thumbs: ((payload && payload.items) || []).map(function (e) {
+            return { hwnd: String(e.hwnd), ok: false, reason: 'no live picture in the mock bridge: in Mantle, DWM draws the window here' };
+          }),
+        };
       default:
         throw new Error('unknown channel "' + channel + '" (mock bridge)');
     }
@@ -339,7 +508,8 @@
         if (channel === 'bar.backdrop') return;       // pushed only while the bar is up, never replayed
         if (channel === 'windows') cb(flatWindows());
         else if (channel === 'bar.pinned') cb({ ok: true, reason: '', items: items });
-        else if (channel === 'tray') cb([]);          // tray unavailable on this build
+        else if (channel === 'tray') cb(TRAY || []);  // [] = tray unavailable on this build
+        else if (channel === 'media') { if (MEDIA) cb(mediaPayload()); }   // main replays only once it has read
         else if (channel === 'state') cb(state());
       }, 30);
       return function off() {

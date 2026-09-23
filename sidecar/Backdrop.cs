@@ -38,6 +38,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace Mantle {
   static class Backdrop {
@@ -54,8 +55,21 @@ namespace Mantle {
 
     /// Returns null on success. Never leaves a GDI object behind on any path:
     /// the cached pair is reused or replaced, everything else is freed here.
+    ///
+    /// Runs on the CAPTURE lane (Lanes.cs), its own thread, so a grab can never
+    /// make a button wait. The lock is for the one other caller of the cached
+    /// pair: Release() on the shutdown path.
     public static string Capture(int x, int y, int w, int h, int scale,
                                  out string png, out int outW, out int outH, out double ms, out int usedScale) {
+      lock (_gdiLock) {
+        return CaptureLocked(x, y, w, h, scale, out png, out outW, out outH, out ms, out usedScale);
+      }
+    }
+
+    static readonly object _gdiLock = new object();
+
+    static string CaptureLocked(int x, int y, int w, int h, int scale,
+                                out string png, out int outW, out int outH, out double ms, out int usedScale) {
       png = null;
       outW = outH = 0;
       ms = 0;
@@ -147,7 +161,16 @@ namespace Mantle {
     }
 
     /// Frees the cached pair. Safe to call twice; safe to call when empty.
+    /// From the shutdown path it gives up after 200 ms rather than wait for a
+    /// capture in progress: the handles are process-owned and die with us, and
+    /// a restore must never queue behind a screen grab. (From inside Capture
+    /// the lock is already ours, so this is immediate.)
     public static void Release() {
+      if (!Monitor.TryEnter(_gdiLock, 200)) return;
+      try { ReleaseLocked(); } finally { Monitor.Exit(_gdiLock); }
+    }
+
+    static void ReleaseLocked() {
       try {
         if (_memDc != IntPtr.Zero && _oldBmp != IntPtr.Zero) Win32.SelectObject(_memDc, _oldBmp);
       } catch (Exception) { }

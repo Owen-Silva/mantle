@@ -12,9 +12,18 @@
 //                 timer MUST live here - Windows delivers hook callbacks to the
 //                 thread that installed them, and a thread with no message pump
 //                 simply never receives them.
-//   stdin thread  blocks on ReadLine and marshals each request onto the loop
-//                 thread with BeginInvoke, so command handlers run where the
-//                 hooks live and no Win32 state is touched from two threads.
+//   stdin thread  blocks on ReadLine, parses, stamps the arrival time and
+//                 hands each request to a LANE (Lanes.cs, since 2026-09-22):
+//     ui          the loop thread again, via BeginInvoke - every command that
+//                 touches hooks, windows or anything latency-critical.
+//     capture     a worker for `backdrop` alone.
+//     slow        a worker for icons, shortcuts, pins, launch, the tray and the
+//                 Quick Settings switches.
+//     audio       a worker for `volume`.
+//                 (Which command goes where: Lanes._laneOf. Unlisted = ui.)
+//                 A request that waits past the caller's `ttl` is answered
+//                 "expired" instead of being run, and the slow Quick Settings
+//                 READS never reach a lane at all (QuickSettings.cs).
 //   writing       one lock, one place (Emit). Replies and events interleave on
 //                 the same stream, so a half-written line would desync the
 //                 reader forever.
@@ -75,7 +84,11 @@ namespace Mantle {
     /// 0.2.0 (2026-09-21): added lnk, keys, foreground and traywatch, and
     /// `ping` now lists the commands it serves so a caller can feature-detect
     /// instead of guessing from a version number.
-    public const string Version = "0.2.0";
+    ///
+    /// 0.3.0 (2026-09-22): lanes, deadlines (`ttl`) and coalescing, and the
+    /// Quick Settings reads come from a background-refreshed cache with
+    /// `ageMs`. `ping` reports the lanes; `sleep` exists for the tests only.
+    public const string Version = "0.3.0";
 
     /// Everything Run() answers, in the order a reader would want them. This is
     /// the protocol's own index: if a command is added below it belongs here,
@@ -87,7 +100,7 @@ namespace Mantle {
       "glass", "corners", "place", "morph", "region",
       "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop",
       "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power",
-      "tray", "trayClick", "quit"
+      "tray", "trayClick", "media", "search", "session", "sleep", "quit"
     };
 
     public static bool Passive;        // --passive: never touch the live shell
@@ -189,8 +202,11 @@ namespace Mantle {
       if (ShellState.Enabled) ShellState.Write();
       else EmitLog("warn", "no --state-file: a recovery script cannot know the original shell state");
 
+      // The worker lanes exist before the first request can arrive.
+      Lanes.Start(Execute);
       StartStdinReader();
       WatchParent();
+      QuickSettings.WarmUp();
 
       Application.Run(new ApplicationContext());
       return 0;
@@ -354,11 +370,11 @@ namespace Mantle {
           while ((line = sin.ReadLine()) != null) {
             string trimmed = line.Trim();
             if (trimmed.Length == 0) continue;
-            try {
-              _loop.BeginInvoke(new Action<string>(HandleLine), trimmed);
-            } catch (Exception) {
-              return;   // the loop window is gone: we are already shutting down
-            }
+            // Stamped HERE, the moment the line arrives: a request's deadline
+            // runs from when the caller sent it, not from when a lane got round
+            // to it. That difference is the whole point of `ttl`.
+            long arrived = Stopwatch.GetTimestamp();
+            if (!Route(trimmed, arrived)) return;   // the loop window is gone: shutting down
           }
         } catch (Exception ex) {
           EmitLog("error", "stdin could not be read: " + ex.Message);
@@ -396,32 +412,138 @@ namespace Mantle {
 
     // ---------------------------------------------------------------- dispatch
 
-    static void HandleLine(string line) {
+    /// On the STDIN thread: parse, stamp, and hand the request to its lane (see
+    /// Lanes.cs for which is which and why). Parsing here is safe - Json.Parse
+    /// holds no state - and it has to happen here, because the lane depends on
+    /// the command. A line that cannot be parsed is answered straight away:
+    /// Emit is thread-safe and there is nothing to queue. Returns false only
+    /// when the message loop is gone.
+    static bool Route(string line, long arrivedTs) {
       object id = null;
+      Dictionary<string, object> req;
       try {
-        var req = Json.Parse(line) as Dictionary<string, object>;
-        if (req == null) { Reply(null, false, null, "bad request: expected one JSON object per line"); return; }
-        req.TryGetValue("id", out id);
-        string cmd = Json.GetString(req, "cmd");
-        if (string.IsNullOrEmpty(cmd)) { Reply(id, false, null, "bad request: no cmd field"); return; }
-
-        object result = null;
-        string err = Run(cmd, req, ref result);
-        if (err != null) Reply(id, false, null, err);
-        // `morph` answers from its own thread when the last frame lands, so the
-        // dispatcher must stay quiet or the caller would get two replies to one
-        // id and the correlation table would never settle.
-        else if (ReferenceEquals(result, Deferred)) { }
-        else Reply(id, true, result, null);
+        req = Json.Parse(line) as Dictionary<string, object>;
       } catch (FormatException fe) {
-        Reply(id, false, null, "bad request: " + fe.Message);
+        Reply(null, false, null, "bad request: " + fe.Message);
+        return true;
+      } catch (Exception ex) {
+        Reply(null, false, null, "bad request: " + ex.Message);
+        return true;
+      }
+      if (req == null) { Reply(null, false, null, "bad request: expected one JSON object per line"); return true; }
+      req.TryGetValue("id", out id);
+      string cmd = Json.GetString(req, "cmd");
+      if (string.IsNullOrEmpty(cmd)) { Reply(id, false, null, "bad request: no cmd field"); return true; }
+
+      var r = new Request();
+      r.Cmd = cmd;
+      r.Req = req;
+      r.Exempt = Lanes.IsExempt(cmd, req);
+      // ttl: the caller's own timeout in ms. Absent or <= 0 means "no deadline",
+      // which is what an older client (and the test harness's plain sends) get.
+      int ttl = 0;
+      object rawTtl;
+      if (req.TryGetValue("ttl", out rawTtl) && rawTtl is double) {
+        double d = (double)rawTtl;
+        if (d > 0 && d < int.MaxValue) ttl = (int)d;
+      }
+      var w = new Waiter();
+      w.Id = id;
+      w.ArrivedTs = arrivedTs;
+      w.TtlMs = ttl;
+      r.Waiters.Add(w);
+
+      string lane;
+      try {
+        lane = Lanes.For(cmd, req);
+        bool anywhere;
+        r.CoalesceKey = Lanes.CoalesceKey(cmd, req, out anywhere);
+        r.MergeAnywhere = anywhere;
+      } catch (Exception) {
+        // A malformed argument (x:"abc" on a backdrop): no merging, and Run
+        // on the command's own lane says what is wrong with it.
+        r.CoalesceKey = null;
+        try { lane = Lanes.For(cmd, req); } catch (Exception) { lane = Lanes.Ui; }
+      }
+      r.Lane = lane;
+      Lane worker = Lanes.Worker(lane);
+      if (worker != null) { worker.Post(r); return true; }
+
+      Interlocked.Increment(ref Lanes.UiQueued);
+      try {
+        _loop.BeginInvoke(new Action<Request>(Execute), r);
+        return true;
+      } catch (Exception) {
+        Interlocked.Decrement(ref Lanes.UiQueued);
+        return false;
+      }
+    }
+
+    /// Run one request on whatever lane it landed on, and answer every id that
+    /// is waiting for it. Called on the message loop (ui) and on the two worker
+    /// lanes; everything it touches for a given command belongs to that lane.
+    static void Execute(Request r) {
+      bool onUi = r.Lane == Lanes.Ui;
+      if (onUi) {
+        Interlocked.Decrement(ref Lanes.UiQueued);
+        Lanes.UiBusySinceTs = Stopwatch.GetTimestamp();
+        Lanes.UiBusyCmd = r.Cmd;
+      }
+      try {
+        ExecuteCore(r);
+      } finally {
+        if (onUi) Lanes.UiBusyCmd = null;
+      }
+    }
+
+    static void ExecuteCore(Request r) {
+      // LOAD SHEDDING. A caller that has already given up gets "expired" now,
+      // and the work is not done - doing it would only push every later
+      // request further past ITS deadline, which is exactly how the live
+      // sidecar ended up permanently behind on 2026-09-22.
+      long now = Stopwatch.GetTimestamp();
+      var alive = new List<Waiter>(r.Waiters.Count);
+      foreach (Waiter w in r.Waiters) {
+        if (!r.Exempt && w.Expired(now)) ReplyExpired(r.Cmd, w, now);
+        else alive.Add(w);
+      }
+      if (alive.Count == 0) return;
+
+      object id = alive[0].Id;
+      object result = null;
+      string err;
+      try {
+        err = Run(r.Cmd, r.Req, ref result);
+      } catch (FormatException fe) {
+        err = "bad request: " + fe.Message;
       } catch (InvalidOperationException ioe) {
         // Our own "this cannot work, and here is why" exceptions: pass the
         // wording through untouched.
-        Reply(id, false, null, ioe.Message);
+        err = ioe.Message;
       } catch (Exception ex) {
-        Reply(id, false, null, "command failed: " + ex.GetType().Name + ": " + ex.Message);
+        err = "command failed: " + ex.GetType().Name + ": " + ex.Message;
       }
+      // `morph` answers from its own thread when the last frame lands, so the
+      // dispatcher must stay quiet or the caller would get two replies to one
+      // id and the correlation table would never settle. (Morph is ui-only and
+      // never coalesced, so there is exactly one waiter.)
+      if (err == null && ReferenceEquals(result, Deferred)) return;
+      // A coalesced request: ONE execution, and every id that rode on it gets
+      // the same answer.
+      foreach (Waiter w in alive) {
+        if (err != null) Reply(w.Id, false, null, err);
+        else Reply(w.Id, true, result, null);
+      }
+    }
+
+    /// `error` AND `reason` both carry the word, like ReplyCancelled, so a
+    /// caller reading either can tell a skipped request from a failed one.
+    static void ReplyExpired(string cmd, Waiter w, long nowTs) {
+      Interlocked.Increment(ref Lanes.Expired);
+      Emit(Json.Obj("id", NormalizeId(w.Id), "ok", false,
+                    "error", "expired: \"" + cmd + "\" waited " + w.WaitedMs(nowTs) + " ms, past the caller's " +
+                             w.TtlMs + " ms deadline, so it was skipped rather than run for nobody",
+                    "reason", "expired"));
     }
 
     /// Returns null on success (with `result` filled), or a plain-words error.
@@ -443,7 +565,27 @@ namespace Mantle {
                               "selfHwnd", LoopHandle.ToInt64().ToString(CultureInfo.InvariantCulture),
                               "commands", Commands);
           if (!DpiAware || DpiReason != null) ping["dpiReason"] = DpiReason;
+          // What each lane is doing right now, how many requests were skipped
+          // for being late or merged into another, and how old each Quick
+          // Settings cache is: the first thing to read when "the buttons do
+          // nothing" comes back.
+          ping["load"] = Lanes.Snapshot();
+          ping["caches"] = QuickSettings.Snapshot();
           result = ping;
+          return null;
+        }
+
+        case "sleep": {
+          // TEST ONLY: parks a lane (`lane`: ui | capture | slow) for `ms` so the
+          // harness can prove the OTHER lanes still answer and that a late
+          // request is skipped. Refused outside --passive: a live sidecar has
+          // no reason to stall itself.
+          if (!Passive) return "sleep is a test command and only runs in --passive";
+          int sms = Json.GetInt(req, "ms", 0);
+          if (sms < 0 || sms > 20000) return "sleep: ms must be 0..20000";
+          Thread.Sleep(sms);
+          result = Json.Obj("slept", sms, "lane", Lanes.For(cmd, req),
+                            "thread", Thread.CurrentThread.Name ?? "ui");
           return null;
         }
 
@@ -813,10 +955,10 @@ namespace Mantle {
             string aerr = StrictBool(req, "on", out want);
             if (aerr != null) return aerr;
             if (Passive) return PassiveRefusal + ": wifi would switch the live radio";
-            result = Network.Set(want);
+            result = QuickSettings.SetWifi(want);      // slow lane
             return null;
           }
-          result = Network.Read();
+          result = QuickSettings.Wifi();               // ui lane, from the cache
           return null;
         }
 
@@ -826,10 +968,10 @@ namespace Mantle {
             string aerr = StrictBool(req, "on", out want);
             if (aerr != null) return aerr;
             if (Passive) return PassiveRefusal + ": bluetooth would switch the live radio";
-            result = Bluetooth.Set(want);
+            result = QuickSettings.SetBluetooth(want); // slow lane
             return null;
           }
-          result = Bluetooth.Read();
+          result = QuickSettings.Bluetooth();          // ui lane, from the cache
           return null;
         }
 
@@ -841,10 +983,10 @@ namespace Mantle {
             int want = (int)Math.Round((double)lv);
             if (want < 0 || want > 100) return "brightness: level must be a number from 0 to 100";
             if (Passive) return PassiveRefusal + ": brightness would dim the live display";
-            result = Display.SetBrightness(want);
+            result = QuickSettings.SetBrightness(want); // slow lane, coalesced
             return null;
           }
-          result = Display.Brightness();
+          result = QuickSettings.Brightness();          // ui lane, from the cache
           return null;
         }
 
@@ -932,13 +1074,50 @@ namespace Mantle {
           result = Tray.List();   // throws InvalidOperationException("tray unavailable: ...")
           return null;
 
+        case "media":
+          // Now-playing and transport controls (Media.cs, WinRT). Slow lane;
+          // Media.cs does the WinRT work on its own MTA thread.
+          return Media.Run(req, ref result);
+
         case "trayClick": {
+          // `icon`, NOT `id`: `id` is the PROTOCOL id. A caller that sent the
+          // tray icon's id as `id` overwrote its own request id, so the reply
+          // went out under the icon's id, the client dropped it, and the bar
+          // showed a timeout for a click that had worked (found 2026-09-22).
+          // A string `id` is still accepted so an old main.js clicks at all;
+          // its reply is lost exactly as before.
+          string id = Json.GetString(req, "icon");
+          if (string.IsNullOrEmpty(id) && req.ContainsKey("id") && req["id"] is string) id = (string)req["id"];
+          if (string.IsNullOrEmpty(id)) return "trayClick needs icon: the tray icon id from `tray`";
+          // The argument is checked before passive, as everywhere else here.
           if (Passive) return PassiveRefusal;
-          string id = Json.GetString(req, "id");
           string button = Json.GetString(req, "button") ?? "left";
           string terr = Tray.Click(id, button);
           if (terr != null) return terr;
           result = Json.Obj();
+          return null;
+        }
+
+        case "search": {
+          // Launcher file search over the Windows Search index (Search.cs). The
+          // ui lane only hands it off: Search.cs runs the query on its own
+          // threads (OleDbCommand.Cancel() does not interrupt this provider and
+          // blocked the caller for 16 s, so a superseded query is answered
+          // `cancelled` instead) and replies when it lands.
+          string qerr = Search.Enqueue(req, req.ContainsKey("id") ? req["id"] : null);
+          if (qerr != null) return qerr;
+          result = Deferred;
+          return null;
+        }
+
+        case "session": {
+          // Sleep for the launcher's power rows (Session.cs): SetSuspendState
+          // has no exe to run from main, and rundll32 powrprof hibernates this
+          // machine. Lock/restart/shut down/sign out run from main via exes.
+          IDictionary sres;
+          string sessErr = Session.Run(req, Passive, out sres);
+          if (sessErr != null) return sessErr;
+          result = sres;
           return null;
         }
 
@@ -1116,6 +1295,10 @@ namespace Mantle {
 
       try { Hotkey.Uninstall(); detail.Add("keyboard hook: uninstalled"); }
       catch (Exception ex) { done = false; detail.Add("keyboard hook: uninstall failed (" + ex.Message + "); it dies with the process anyway"); }
+
+      // The Bluetooth helper would exit on its own when our end of its stdin
+      // closes; killing it here just means it never outlives us by a moment.
+      try { Bluetooth.StopHost("the sidecar is shutting down"); } catch (Exception) { }
 
       // LAST, and SYNCHRONOUSLY ON THIS THREAD, with no stdout between here and
       // the steps above: this is the record that outlives the process, and the

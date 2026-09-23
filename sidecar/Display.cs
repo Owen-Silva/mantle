@@ -9,9 +9,11 @@
 // is the expected path here and the panel must render a disabled control with
 // an explanation rather than a broken slider.
 //
-// A WMI query costs tens of milliseconds, so the read is cached for two
-// seconds - long enough that opening the panel does not re-query per frame,
-// short enough that the slider is not stale after someone moves it.
+// A WMI query costs tens of milliseconds idle and a few hundred under Owen's
+// load, so Brightness() is a FRESH read that only ever runs on a background
+// thread or the slow lane: QuickSettings.cs caches it and answers the panel
+// from the cache (2026-09-22; it used to be a 2 s cache here, read on the
+// message-loop thread, where it queued behind Bluetooth).
 //
 // NIGHT LIGHT has no API at all. Its state lives in an UNDOCUMENTED CloudStore
 // blob, and this reads a byte pattern out of it - which is why it is READ-ONLY.
@@ -27,18 +29,9 @@ using Microsoft.Win32;
 
 namespace Mantle {
   static class Display {
-    const int CacheMs = 2000;
-    static int _cachedLevel = -1;
-    static bool _cachedPresent;
-    static string _cachedReason;
-    static int _cachedAt;
-
     // -------------------------------------------------------------- brightness
 
     public static IDictionary Brightness() {
-      if (_cachedLevel >= 0 && unchecked(Environment.TickCount - _cachedAt) < CacheMs)
-        return Json.Obj("ok", true, "present", _cachedPresent, "level", _cachedLevel, "reason", _cachedReason);
-
       int level = 0;
       bool present = false;
       string reason = null;
@@ -66,16 +59,13 @@ namespace Mantle {
 
       if (level < 0) level = 0;
       if (level > 100) level = 100;
-      _cachedLevel = level;
-      _cachedPresent = present;
-      _cachedReason = reason;
-      _cachedAt = Environment.TickCount;
       return Json.Obj("ok", true, "present", present, "level", level, "reason", reason);
     }
 
     /// WmiSetBrightness(timeout, level). The timeout is the fade in seconds; 0
-    /// means "now", which is what a slider wants.
-    public static IDictionary SetBrightness(int level) {
+    /// means "now", which is what a slider wants. `readBack` is the fresh read
+    /// taken afterwards, for the cache; the return value is the reply.
+    public static IDictionary SetBrightness(int level, out IDictionary readBack) {
       if (level < 0) level = 0;
       if (level > 100) level = 100;
       string reason = null;
@@ -99,8 +89,9 @@ namespace Mantle {
         reason = "the brightness could not be changed (" + ex.GetType().Name + ": " + ex.Message + ")";
       }
 
-      _cachedLevel = -1;   // force a fresh read
       var now = Brightness();
+      readBack = Json.Obj();
+      foreach (DictionaryEntry e in now) readBack[e.Key] = e.Value;
       if (!done) {
         now["ok"] = false;
         now["reason"] = reason;

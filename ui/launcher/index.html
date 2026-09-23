@@ -40,8 +40,8 @@
 
     <div class="slot">
       <input id="q" type="text" autocomplete="off" autocorrect="off" spellcheck="false"
-             placeholder="Apps, commands, settings, or a URL"
-             aria-label="Search apps, commands, settings, or a URL"
+             placeholder="Apps, files, settings, commands, or a URL"
+             aria-label="Search apps, files, settings, commands, power actions, or a URL"
              aria-controls="results" aria-autocomplete="list">
     </div>
 
@@ -53,7 +53,8 @@
       <div class="src-errors" id="srcErrors"></div>
       <div class="foot-row">
         <span class="counts" id="counts">indexing…</span>
-        <span class="hint">Enter opens &middot; Esc closes</span>
+        <!-- launcher.js rewrites this for an armed power row and for a file row (Ctrl+Enter) -->
+        <span class="hint" id="hint">Enter opens &middot; Esc closes</span>
       </div>
     </footer>
 

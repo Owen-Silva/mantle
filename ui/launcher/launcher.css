@@ -294,6 +294,33 @@ body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
 }
 .why.is-ok { color: var(--lg-ink-2); }
 
+/* AN ARMED POWER ROW: Restart, Shut down or Sign out after the first Enter. The row itself says
+   "Press Enter again to …" (launcher.js swaps the text), and it wears the warn tokens so it reads
+   as a question, not as the selection: the warn wash under it, the warn ink on the words, the
+   selection bar and the glyph in warn too. AFTER .is-sel on purpose, so it wins on the one row
+   that is both. No glow, no pulse - a hairline running out is the only motion. */
+.row.is-armed { background: var(--lg-warn-soft); }
+.row.is-armed .name { color: var(--lg-warn); font-weight: 600; }
+.row.is-armed .sub { color: var(--lg-warn); }
+.row.is-armed .ico { color: var(--lg-warn); }
+.row.is-armed.is-sel .row-main::before { background: var(--lg-warn); }
+
+/* the seconds left before it disarms: one hairline along the row's foot, shrinking to nothing */
+.arm-bar {
+  position: absolute;
+  left: 10px; right: 12px; bottom: 3px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--lg-warn);
+  opacity: .5;
+  transform-origin: left center;
+  animation-name: arm-run;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes arm-run { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .arm-bar { animation: none; } }
+
 .empty {
   padding: 16px 12px;
   font-size: 13px;

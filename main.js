@@ -15,6 +15,13 @@ const { openTarget } = require('./lib/open-target');
 const { probe } = require('./lib/net-probe');
 const { placeholderUrl } = require('./lib/placeholder');
 const { createBar, createLauncher, createDesktop, hwndOf, BAR_H } = require('./lib/windows');
+// The hover flyout's live window previews (DWM thumbnails through koffi). Requiring it is free:
+// koffi itself is only loaded the first time a flyout asks for a picture. See lib/thumbs.js.
+const thumbs = require('./lib/thumbs');
+// Mantle plays the desktop wallpaper itself (2026-09-22; Lively's player sat under the desktop
+// layer and its panes hid it). Required HERE, before app 'ready', because it registers the
+// mantle-wp:// scheme a web wallpaper is served on, which Electron only accepts before ready.
+const wallpaper = require('./lib/wallpaper');
 
 /*
  * The pinned-taskbar reader (lane C's file). It is REQUIRED IN A TRY on purpose:
@@ -197,6 +204,23 @@ flags.edgeclip = !ARGV.some((a) => a === '--no-edgeclip');
 flags.osMorph = ARGV.some((a) => a === '--os-morph');
 const REVEAL_BY = flags.osMorph ? 'morph' : 'page';
 
+/*
+ * --lessonplayer-media-controls: let the bar's play/pause/next reach an LESSONPLAYER media session.
+ *
+ * Absent by default, which means THE LESSONPLAYER RULE IS ON (Owen, 2026-09-22). He records his
+ * school lessons in LessonPlayer, and LessonPlayer publishes a system media session like any music player
+ * (measured: Contoso.LessonPlayer_8wekyb3d8bbwe!App, title "LessonPlayer", artist "Student").
+ * One stray click on a play/pause glyph would pause the lesson under the recording, and nothing
+ * on screen would say why. So by default:
+ *   - an LessonPlayer session gets NO transport controls anywhere in Mantle; the media card says
+ *     "LessonPlayer lesson · controls off so a stray click can't pause it" instead of drawing buttons,
+ *   - main REFUSES media.control aimed at one, whatever a page asks (the page is not the guard),
+ *   - the now-playing chip shows any other session in preference to it when both exist, and
+ *     there is NO chip at all when an LessonPlayer lesson is the only session (Owen, same day).
+ * Add this flag to the logon task's arguments to lift all three.
+ */
+flags.lessonplayerMediaControls = ARGV.some((a) => a === '--lessonplayer-media-controls');
+
 // A test instance gets its own userData directory, which is ALSO what keys
 // Electron's single-instance lock -- that is the whole reason the profile name
 // is mandatory. Without it a test run would take the live shell's lock and be
@@ -352,9 +376,37 @@ let dirtyStartNote = '';
 
 dirtyStartGuard();
 
+/*
+ * MANTLE_SIDECAR_EXE=<path>: TEST ONLY. Run this instance against another sidecar exe.
+ *
+ * WHY (2026-09-22): the live Mantle holds sidecar/bin/Mantle.Sidecar.exe open, so a newly
+ * built sidecar lands somewhere else (sidecar/bin-next/) and could not be tried from a test
+ * bar at all -- every --test instance spawned the old v0.2 exe and the new commands (media,
+ * the UIA tray) answered "unknown command". This lets one test instance point at the new exe
+ * without touching sidecar/bin, which other test instances may be running.
+ *
+ * Honoured ONLY with --test: a live shell that quietly swapped its sidecar because of an
+ * environment variable left over in some terminal is exactly the kind of surprise the --live
+ * rule exists to prevent. An override that names no file is refused out loud and never
+ * "fixed" by running build.ps1 into it (the default path's missing-exe build is kept).
+ */
+const SIDECAR_EXE_DEFAULT = path.join(ROOT, 'sidecar', 'bin', 'Mantle.Sidecar.exe');
+const SIDECAR_EXE_OVERRIDE = (() => {
+  const raw = process.env.MANTLE_SIDECAR_EXE;
+  if (!raw) return null;
+  if (!flags.test) {
+    process.stdout.write(`mantle: MANTLE_SIDECAR_EXE=${raw} is ignored: it is honoured only with --test, and this is a live run\n`);
+    return null;
+  }
+  const abs = path.resolve(ROOT, raw);
+  process.stdout.write(`mantle: test run using the sidecar at ${abs} (MANTLE_SIDECAR_EXE), not ${SIDECAR_EXE_DEFAULT}\n`);
+  return abs;
+})();
+
 const sidecar = new Sidecar({
-  exePath: path.join(ROOT, 'sidecar', 'bin', 'Mantle.Sidecar.exe'),
-  buildScript: path.join(ROOT, 'sidecar', 'build.ps1'),
+  exePath: SIDECAR_EXE_OVERRIDE || SIDECAR_EXE_DEFAULT,
+  // null = never build: an override path is someone else's build output, not build.ps1's
+  buildScript: SIDECAR_EXE_OVERRIDE ? null : path.join(ROOT, 'sidecar', 'build.ps1'),
   passive: flags.test,
   cwd: ROOT,
   stateFile: STATE_FILE,
@@ -437,6 +489,7 @@ let lastWindows = [];      // last window list the sidecar sent, for replay on s
 let lastTray = null;       // last notification-area list, or null if never read
 let trayTimer = null;
 let barPopover = null;     // {key, height} while the bar has borrowed extra room
+let lastThumbSync = null;  // the flyout's last bar.thumbs answer (lib/thumbs.js sync), for the --flyout capture
 let shuttingDown = false;
 // The hwnd we registered as an app bar, remembered rather than re-read: at
 // restore time the bar window may already be destroyed, and hwndOf() on a dead
@@ -965,6 +1018,44 @@ async function runMorph(from, to, ms, what) {
  * must never wait on a screenshot.
  */
 let revealLandTimer = null;
+/*
+ * TEST ONLY: give the framed test bar the live bar's PAGE, width and height (2026-09-22).
+ *
+ * The live bar window is frameless, so its page is the whole window: 1120 x 62 dip in pill mode
+ * (the pill's 48 plus the 14 of air under it). The test window keeps a frame (lib/windows.js),
+ * and a rectangle placed for the live window puts that frame INSIDE it. Measured on one run:
+ *   - width: a 1120 dip test window held a 1106 css px page. 14 px decides whether a pin fits
+ *     (a cell and its gap are 42), so the dock was judged on a bar the live shell never has;
+ *   - height: the 77 px live rectangle left a 2 px page under the title bar, so --screenshot's
+ *     bar.png came out 1400x2;
+ *   - popovers: the old test path grew the WINDOW by deltas through setBounds, and at 1.25x each
+ *     open or close rounded the frame up by 2 dip: the page crept 1120 -> 1132 over six popovers.
+ * So the test bar is sized by its CONTENT (setContentBounds), from fixed numbers rather than from
+ * whatever it was before, and nothing can accumulate: centre x kept, bottom kept (top at the top
+ * edge). Pill width is the live pill's; an edge-mode test bar keeps the width it was made with.
+ * Never on the live bar. Returns what changed, or null when nothing needed to.
+ */
+function testFitPage(heightDip) {
+  if (!flags.test || !barWin || barWin.isDestroyed()) return null;
+  try {
+    const cb = barWin.getContentBounds();
+    const width = BAR_SHAPE === 'pill' ? barGeometry().rest.dip.width : cb.width;
+    const height = Math.max(1, Math.round(heightDip));
+    if (cb.width === width && cb.height === height) return null;
+    barWin.setContentBounds({
+      x: Math.round(cb.x + (cb.width - width) / 2),
+      y: flags.barEdge === 'top' ? cb.y : cb.y + cb.height - height,
+      width,
+      height,
+    });
+    const [w, h] = barWin.getContentSize();
+    return { from: `${cb.width}x${cb.height}`, to: `${w}x${h}`, want: `${width}x${height}` };
+  } catch (err) {
+    process.stdout.write(`mantle: the test bar could not be given the live page size (${err.message}); its dock is judged on a different bar than the live one\n`);
+    return null;
+  }
+}
+
 async function revealByPage(geo, why, visible) {
   const rect = sideRect(geo.rest);
   // Capture the PILL, place the WINDOW: the page hangs this image on the pill, and
@@ -980,6 +1071,10 @@ async function revealByPage(geo, why, visible) {
     } catch (_) { /* the loop retries after landing; a reveal never waits on this */ }
     if (!barRevealed || !barWin || barWin.isDestroyed()) return;   // hidden again while we waited
     await placeBar([rect.x, rect.y, rect.x + rect.w, rect.y + rect.h], sidecarDpiAware, { quiet: true });
+    if (flags.test) {
+      const fit = testFitPage(geo.rest.dip.height);
+      if (fit) process.stdout.write(`mantle: test bar page fitted to the live bar's: ${fit.from} -> ${fit.to} css px (live ${fit.want})\n`);
+    }
     barParked = false;
   }
 
@@ -1026,6 +1121,10 @@ async function revealByPage(geo, why, visible) {
 let raiseComplaint = null;      // what was last found covering us, so it is logged once
 async function raiseBar(why) {
   if (!barWin || barWin.isDestroyed()) return;
+  // --test --flyout drives the bar with no one at it, possibly while Owen works (or records a
+  // lesson) in front: every "raise" becomes "send to the back", so the test bar never covers
+  // him. Its pictures are captured with PrintWindow, which does not need it on top.
+  if (flags.test && flags.flyout !== null) { thumbs.toBack(hwndOf(barWin)); return; }
   try { barWin.moveTop(); } catch (_) { /* free when it works, nothing when it does not */ }
   if (sidecar.blockedReason()) return;
 
@@ -1111,6 +1210,22 @@ function revealBar(why) {
  * Hiding immediately would make the bar vanish rather than leave.
  */
 /*
+ * Unregister every live preview in the bar window (lib/thumbs.js). Called from every road
+ * out of the flyout -- popover resize, hide, park, page reload, window gone, quit -- because
+ * a thumbnail nobody unregisters is drawn by DWM until Mantle exits. Cheap when there are
+ * none, so the callers never check first. One log line when it actually removed something,
+ * so a preview that vanished can be traced to the reason it was taken down.
+ */
+function clearThumbs(why) {
+  let n = 0;
+  try { n = thumbs.clear(why); } catch (err) {
+    process.stderr.write(`mantle: the flyout previews could not be removed (${why}): ${err.message}\n`);
+    return;
+  }
+  if (n) process.stdout.write(`mantle: removed ${n} flyout preview${n === 1 ? '' : 's'} (${why})\n`);
+}
+
+/*
  * Take the bar off the screen WITHOUT hiding the window: see barParked. The page
  * has already run its exit, so the window holds nothing but a transparent strip
  * when it goes below the edge. Only if the sidecar cannot place it does this fall
@@ -1118,6 +1233,9 @@ function revealBar(why) {
  * through the hide()/showInactive() cycle that costs the page its clicks.
  */
 function parkBar(geo, why) {
+  // Nothing may be drawn into a parked window: a preview left registered here would be the
+  // one thing on screen when the bar next comes up, sitting wherever its old box was.
+  clearThumbs(`the bar parked: ${why}`);
   const start = sideRect(geo.start);
   const fallback = (how) => {
     barParked = false;
@@ -1143,6 +1261,9 @@ function beginHide(why) {
   if (!barRevealed || hideTimer) return;
   process.stdout.write(`mantle: hide: ${why}\n`);
   const geo = barGeometry();
+  // The previews go FIRST: DWM draws them, not the page, so the page's 320 ms exit would slide
+  // everything else away and leave the pictures hanging in mid-air.
+  clearThumbs(`the bar is leaving: ${why}`);
   stopBackdrop(`the bar is leaving: ${why}`);
   // The panel goes with the bar: a 2 s poll for a panel nobody can see is pure cost.
   qsWatchStop(`the bar is hiding: ${why}`);
@@ -1622,6 +1743,32 @@ function nameForExe(exe, fallback) {
   return base ? base.charAt(0).toUpperCase() + base.slice(1) : (fallback || 'Unnamed');
 }
 
+/*
+ * MANTLE'S OWN WINDOWS ARE NEVER "RUNNING APPS" (2026-09-22). The sidecar already skips its
+ * parent's windows (--parent-pid), but that is only THIS instance's: measured the same day, a
+ * sidecar under any other parent lists the live shell's "Mantle bar" and "Mantle desktop" as
+ * ordinary app windows, so a test bar showed the live shell as a running app (with previews of
+ * it in the flyout), and the live bar would show a test instance's. Either mark is enough:
+ *   - the AUMID com.owensilva.mantle (app.setAppUserModelId above). Measured: it does NOT come
+ *     through on these windows today (the sidecar reads the per-window AUMID and Electron sets
+ *     only the process's, so aumid was null), but it is the right mark the day it does;
+ *   - an electron.exe window with one of the titles Mantle gives its windows (lib/windows.js,
+ *     lib/wallpaper.js). electron.exe alone is NOT enough: Owen's browser is electron.exe too.
+ * Filtered where the list comes IN (the sidecar push, windows.list, buildPinned's fallback), so
+ * the dock, the flyout and anything else reading lastWindows all agree.
+ */
+const MANTLE_AUMID = 'com.owensilva.mantle';
+const MANTLE_TITLES = new Set(['mantle bar', 'mantle desktop', 'mantle launcher', 'mantle wallpapers']);
+function isMantleWindow(w) {
+  if (!w) return false;
+  if (w.aumid && String(w.aumid).toLowerCase() === MANTLE_AUMID) return true;
+  const exe = w.exe ? path.basename(String(w.exe)).toLowerCase() : '';
+  return exe === 'electron.exe' && MANTLE_TITLES.has(String(w.title || '').trim().toLowerCase());
+}
+function withoutMantle(list) {
+  return Array.isArray(list) ? list.filter((w) => !isMantleWindow(w)) : [];
+}
+
 /** The running windows, grouped one bucket per exe, in the sidecar's order. */
 function groupRunning(list) {
   const groups = new Map();
@@ -1677,7 +1824,7 @@ async function buildPinned() {
   if (!running.length) {
     try {
       const listed = await sidecar.call('windows', {}, 4000);
-      running = Array.isArray(listed) ? listed : [];
+      running = withoutMantle(listed);
       lastWindows = running;
     } catch (err) {
       problems.push(`the running apps could not be read: ${err.message}`);
@@ -1781,6 +1928,18 @@ async function buildPinned() {
       iconReason: ico.icon ? null : ico.reason,
       windows: g.windows,
     });
+  }
+
+  /* TEST ONLY: --test-dock-extra=N adds N filler cells (2026-09-22). The dock's squeeze -- the
+     media chip compacting to art + glyph BEFORE any app is hidden -- depends on how many apps
+     are running, which a test run cannot arrange without launching apps on Owen's machine. The
+     fillers borrow a real icon, own no windows and no exe, and are named as what they are. */
+  const extraArg = flags.test && ARGV.find((x) => typeof x === 'string' && x.startsWith('--test-dock-extra='));
+  const extra = extraArg ? Math.max(0, Math.min(20, parseInt(extraArg.split('=')[1], 10) || 0)) : 0;
+  const donor = items.find((it) => it.icon) || null;
+  for (let k = 1; k <= extra; k++) {
+    items.push({ id: `test-filler:${k}`, name: `Test filler ${k}`, kind: 'running', exe: null, aumid: null,
+      icon: donor ? donor.icon : null, iconReason: donor ? null : 'test filler: no real icon to borrow', windows: [] });
   }
 
   const said = problems.concat(notes);
@@ -2030,6 +2189,222 @@ function qsWatchStop(why) {
   return true;
 }
 
+/*
+ * NOW PLAYING (2026-09-22): the bar's media chip and card, over the sidecar's `media` command
+ * (sidecar/Media.cs: get / control / watch, WinRT's system media sessions).
+ *
+ * EVENT-DRIVEN, NOT POLLED. The watch is armed once per sidecar start; the sidecar debounces
+ * WinRT's change events into one {ev:"media", rev} line per burst, and only then does main ask
+ * for the full picture (artwork is cached per track in the sidecar, so a repeat get is ~30 ms)
+ * and push it to the bar. Nothing plays -> no events -> zero cost. TIMELINE-ONLY events (some
+ * players republish their position every second) are skipped unless the media card is the open
+ * popover: the chip shows no position, and the card ticks the bar locally from positionNowMs.
+ * If the sidecar says its events could not be hooked, main falls back to a slow poll and the
+ * card says so and why.
+ *
+ * WHICH SESSION the chip shows, in order: the one Owen picked in the card's source switcher
+ * (until that session goes away), else Windows' current session, except that under the LessonPlayer
+ * rule (flags.lessonplayerMediaControls, top of this file) any non-LessonPlayer session wins over an
+ * LessonPlayer one, a playing one first, and an LessonPlayer lesson on its own shows no chip at all.
+ *
+ * CONTROL IS GUARDED HERE, not only in the page: media.control needs the target session's
+ * AUMID (so a press can never land on whichever app happens to be current a moment later), and
+ * under the LessonPlayer rule an LessonPlayer target is refused whatever the page asked. Measured:
+ * control has never been exercised on a real session; a --test instance's sidecar is --passive
+ * and refuses every control before it reaches WinRT.
+ */
+const MEDIA_POLL_MS = 10000;          // only when the sidecar could not hook the change events
+const MEDIA_ACTIONS = new Set(['play', 'pause', 'toggle', 'next', 'previous', 'seek']);
+const LESSONPLAYER_RE = /lessonplayer/i;
+const LESSONPLAYER_GUARD_REASON = "LessonPlayer lesson · controls off so a stray click can't pause it";
+const LESSONPLAYER_GUARD_HOW = 'Mantle leaves LessonPlayer alone while you record lessons; start Mantle with --lessonplayer-media-controls to allow them';
+let lastMedia = null;       // the last payload pushed to the bar, for replay and the guard
+let mediaPick = null;       // the AUMID Owen picked in the card's switcher, or null for automatic
+let mediaReading = null;    // the in-flight read, so a burst of triggers makes one read
+let mediaAgain = false;     // a trigger arrived during that read: read once more after it
+let mediaPollTimer = null;
+
+function sameAumid(a, b) { return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase(); }
+
+/** An LessonPlayer session, by AUMID (the Store app), app name, or title (its web player in a browser). */
+function isLessonPlayer(s) {
+  if (!s) return false;
+  return LESSONPLAYER_RE.test(String(s.aumid || '')) ||
+    LESSONPLAYER_RE.test(String((s.app && s.app.name) || '')) ||
+    LESSONPLAYER_RE.test(String(s.title || ''));
+}
+
+function mediaGuardOn() { return !flags.lessonplayerMediaControls; }
+
+/** Read the sessions and pick the one to show. Never throws: a failure is a payload with a reason. */
+async function mediaRead() {
+  const guard = mediaGuardOn()
+    ? { on: true, reason: LESSONPLAYER_GUARD_REASON, how: LESSONPLAYER_GUARD_HOW }
+    : { on: false, reason: 'LessonPlayer media controls are allowed (--lessonplayer-media-controls)', how: null };
+  // `retry`: whether reading again can help (mediaPollArm). An old exe will never grow the command.
+  const failed = (reason, retry) => ({ ok: false, present: false, reason, retry: retry !== false, rev: null, guard, sessions: [], shown: null, pick: null, events: false, eventsReason: null });
+  const ask = async (extra) => {
+    try {
+      return await sidecar.call('media', Object.assign({ op: 'get', art: true }, extra || {}));
+    } catch (err) {
+      const old = Sidecar.isOldExeError(err);
+      return {
+        ok: false,
+        old,
+        reason: old
+          ? 'this sidecar exe has no "media" command yet (run npm run build:sidecar)'
+          : `the sessions could not be read: ${err.message}`,
+      };
+    }
+  };
+  const snap = await ask();
+  if (!snap || snap.ok === false) return failed((snap && snap.reason) || 'the sidecar answered "media" with ok:false and gave no reason', !(snap && snap.old));
+
+  const sessions = (Array.isArray(snap.sessions) ? snap.sessions : []).map((s) => ({
+    aumid: s.aumid || null,
+    app: s.app ? { name: s.app.name || null, icon: s.app.icon || null } : null,
+    title: s.title || null,
+    artist: s.artist || null,
+    status: s.status || 'unknown',
+    playing: !!s.playing,
+    current: !!s.current,
+    lessonplayer: isLessonPlayer(s),
+  }));
+
+  /* LESSONPLAYER ALONE = NO CHIP (Owen's call, 2026-09-22). With the rule on and nothing but an
+     LessonPlayer lesson publishing a session, the bar shows no now-playing chip at all: a chip that
+     can only ever say "LessonPlayer · Student" and offer nothing is noise over every lesson. With a
+     player alongside it, the chip shows the player (below), and the card's source switcher still
+     lets Owen pick the lesson, which then shows with its controls off. A pick of the lesson does
+     not outlive the player: once LessonPlayer is alone again, this wins. Not a failure: ok stays true,
+     and the reason says what happened for anyone reading the payload. */
+  if (mediaGuardOn() && sessions.length && sessions.every((s) => s.lessonplayer)) {
+    mediaPick = null;
+    return {
+      ok: true,
+      present: true,
+      reason: 'only an LessonPlayer lesson has a media session, so the now-playing chip stays hidden (the LessonPlayer rule)',
+      rev: snap.rev === undefined ? null : snap.rev,
+      guard,
+      sessions,
+      shown: null,
+      pick: { aumid: null, by: 'lessonplayer-only' },
+      events: snap.events !== false,
+      eventsReason: snap.eventsReason || null,
+    };
+  }
+
+  // Which session to show, and why (the card says "picked by you" / "LessonPlayer rule" out loud).
+  let want = null;
+  let by = null;
+  if (mediaPick && sessions.some((s) => sameAumid(s.aumid, mediaPick))) {
+    want = mediaPick; by = 'you';
+  } else {
+    mediaPick = null;   // the session Owen picked has gone: back to automatic
+    const cur = snap.current || null;
+    const others = sessions.filter((s) => !s.lessonplayer);
+    if (cur && !(mediaGuardOn() && isLessonPlayer(cur))) {
+      by = 'current';
+    } else if (mediaGuardOn() && others.length) {
+      want = (others.find((s) => s.playing) || others[0]).aumid; by = 'lessonplayer-rule';
+    } else if (cur) {
+      by = 'current';
+    } else if (sessions.length) {
+      want = sessions[0].aumid; by = 'first';   // Windows has not picked one; show the first rather than nothing
+    }
+  }
+
+  let shown = snap.current || null;
+  let shownReason = null;
+  if (want && !(shown && sameAumid(shown.aumid, want))) {
+    const s2 = await ask({ aumid: want });
+    if (s2 && s2.ok !== false && s2.session) shown = s2.session;
+    else shownReason = (s2 && (s2.sessionReason || s2.reason)) || `the session from ${want} could not be read`;
+  }
+  if (shown) {
+    shown = Object.assign({}, shown, { lessonplayer: isLessonPlayer(shown) });
+    shown.controls = shown.lessonplayer && mediaGuardOn()
+      ? { ok: false, reason: LESSONPLAYER_GUARD_REASON, how: LESSONPLAYER_GUARD_HOW }
+      : { ok: true, reason: null, how: null };
+  }
+  return {
+    ok: true,
+    present: !!snap.present,
+    reason: snap.reason || shownReason || null,
+    rev: snap.rev === undefined ? null : snap.rev,
+    guard,
+    sessions,
+    shown,
+    pick: shown ? { aumid: shown.aumid, by } : null,
+    events: snap.events !== false,
+    eventsReason: snap.eventsReason || null,
+  };
+}
+
+/** Read and push to the bar. Coalesces: triggers during a read cause exactly one more read. */
+function mediaPush(why) {
+  if (mediaReading) { mediaAgain = true; return mediaReading; }
+  mediaReading = (async () => {
+    try {
+      do {
+        mediaAgain = false;
+        const payload = await mediaRead();
+        payload.why = why;
+        lastMedia = payload;
+        broadcast('media', payload);
+        mediaPollArm(payload);
+      } while (mediaAgain && !shuttingDown);
+    } catch (err) {
+      process.stderr.write(`mantle: the media push (${why}) threw: ${err && err.stack ? err.stack : err}\n`);
+    } finally {
+      mediaReading = null;
+    }
+    return lastMedia;
+  })();
+  return mediaReading;
+}
+
+/* The fallback poll runs ONLY while the sidecar says its change events are not hooked -- or,
+   every MEDIA_RETRY_MS, while the last read FAILED in a way a retry can fix (2026-09-22). A
+   test run on a loaded machine had its one read time out ("did not answer media within 8s")
+   and nothing ever asked again: a paused session sends no events, so the chip stayed off for
+   the run's whole life. Change events cannot rescue a read that never happened. */
+const MEDIA_RETRY_MS = 5000;
+function mediaPollArm(payload) {
+  const failedRead = !!(payload && payload.ok === false && payload.retry !== false);
+  const need = failedRead || !!(payload && payload.ok && payload.events === false);
+  if (!need) {
+    if (mediaPollTimer) { clearTimeout(mediaPollTimer); mediaPollTimer = null; }
+    return;
+  }
+  if (mediaPollTimer || shuttingDown) return;
+  mediaPollTimer = setTimeout(() => {
+    mediaPollTimer = null;
+    mediaPush(failedRead ? 'a retry after a failed media read' : 'the slow media poll (no change events)');
+  }, failedRead ? MEDIA_RETRY_MS : MEDIA_POLL_MS);
+  if (mediaPollTimer.unref) mediaPollTimer.unref();
+}
+
+// Armed on EVERY sidecar start: a restarted sidecar has forgotten the watch.
+sidecar.on('ready', () => {
+  sidecar.call('media', { op: 'watch', on: true }).then((r) => {
+    if (r && r.ok === false) process.stdout.write(`mantle: media watch: ${r.reason || 'refused without a reason'}; the bar polls instead\n`);
+    mediaPush('the sidecar is ready');
+  }, (err) => {
+    // The old exe has no media command: say so once in the log; the payload carries it to the bar.
+    process.stdout.write(`mantle: media watch not armed: ${err.message}\n`);
+    mediaPush('the sidecar is ready (no media watch)');
+  });
+});
+
+sidecar.on('media', (ev) => {
+  if (lastMedia && ev && ev.rev !== undefined && ev.rev === lastMedia.rev) return;
+  const reasons = Array.isArray(ev && ev.reasons) ? ev.reasons : [];
+  const timelineOnly = reasons.length > 0 && reasons.every((r) => r === 'timeline');
+  if (timelineOnly && !(barPopover && barPopover.key === 'media')) return;
+  mediaPush(`media changed (${reasons.join(', ') || 'no reason given'})`);
+});
+
 
 // ---------------------------------------------------------------------------
 // The command table behind mantle.call(). Every one of these either resolves
@@ -2041,12 +2416,56 @@ function needHwnd(args) {
   return String(h);
 }
 
+/*
+ * How a restart brings Mantle back (shell.restart). Never throws.
+ *
+ *   LIVE, started by the "Mantle" logon task -> via 'task': a DETACHED PowerShell waits for this
+ *     process to exit, then runs `schtasks /Run /TN Mantle`. Not app.relaunch(): the relaunched
+ *     Mantle would be OUR child rather than the Task Scheduler's, so it would lose the task's
+ *     crash restarts and could be reaped along with whatever session it ended up under. And it
+ *     has to WAIT for the pid: the task is MultipleInstancesPolicy IgnoreNew
+ *     (tools/mantle-logon-task.xml), so a /Run while this instance is still alive is ignored.
+ *   LIVE otherwise (`npm run live`, or no task registered) -> via 'relaunch', same argv.
+ *   TEST -> via 'relaunch', same argv, so a --test --profile-name lane proves the round trip.
+ *
+ * "Started by the task" = the task exists AND this process's parent is svchost.exe (the Task
+ * Scheduler service runs an Exec action as its own child; checked on the live instance
+ * 2026-09-22: parent svchost.exe). Either half missing -> relaunch, with the reason.
+ * { assumeTask: true } skips both checks: that is the test run's dry-run log of the live command.
+ */
+async function restartPlan(opts) {
+  const args = process.argv.slice(1);
+  const helper = (why) => ({
+    via: 'task',
+    why,
+    file: 'powershell.exe',
+    args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command',
+      // -ErrorAction SilentlyContinue: if this pid is already gone Wait-Process throws, and the
+      // /Run must still happen. 90 s is well past shutdown()'s own 12 s hard stop.
+      `Wait-Process -Id ${process.pid} -Timeout 90 -ErrorAction SilentlyContinue; schtasks /Run /TN Mantle`],
+  });
+  if (opts && opts.assumeTask) return helper('dry run');
+  if (flags.test) return { via: 'relaunch', args, why: 'test mode restarts itself' };
+  const { execFile } = require('child_process');
+  const run = (file, argv) => new Promise((resolve) => {
+    execFile(file, argv, { windowsHide: true, timeout: 8000 }, (err, stdout) => resolve({ err, out: String(stdout || '') }));
+  });
+  const task = await run('schtasks', ['/Query', '/TN', 'Mantle']);
+  if (task.err) return { via: 'relaunch', args, why: 'there is no "Mantle" scheduled task to start it from' };
+  const parent = await run('tasklist', ['/FI', `PID eq ${process.ppid}`, '/FO', 'CSV', '/NH']);
+  const name = (parent.out.match(/^"([^"]+)"/m) || [])[1] || '';
+  if (!/^svchost\.exe$/i.test(name)) {
+    return { via: 'relaunch', args, why: `this Mantle was not started by the "Mantle" task (its parent is ${name || `pid ${process.ppid}, which tasklist could not name`})` };
+  }
+  return helper('started by the "Mantle" logon task');
+}
+
 const COMMANDS = {
   'state.get': async () => state.get(),
 
   'windows.list': async () => {
     const list = await sidecar.call('windows');
-    lastWindows = Array.isArray(list) ? list : [];
+    lastWindows = withoutMantle(list);
     return lastWindows;
   },
   'win.toggle': async (a) => sidecar.call('toggle', { hwnd: needHwnd(a) }),
@@ -2168,24 +2587,21 @@ const COMMANDS = {
     // as it is open (the hover poll checks barPopover on every tick) and brings
     // it back if something raced it into hiding.
     if (open && !flags.dock) revealBar('a bar popover opened');
+    // Previews go BEFORE the window changes size. Their rectangles are relative to the window's
+    // top-left, and the window grows and shrinks from the top, so a preview left registered
+    // across a resize slides down over the bar's own icons. The flyout re-sends its rectangles
+    // once this call has resolved and the window has settled.
+    clearThumbs(open ? `the bar popover is resizing (${(a && a.key) || 'unnamed'})` : 'the bar popover closed');
     const asked = Number(a && a.height);
     const extra = open ? Math.max(0, Math.min(POPOVER_MAX, Number.isFinite(asked) ? Math.round(asked) : 0)) : 0;
     const total = BAR_H + extra;
 
     if (flags.test) {
-      // A framed test window: work in deltas off the current content size, so the
-      // frame's own height stays out of the arithmetic.
-      const [, contentH] = barWin.getContentSize();
-      const delta = total - contentH;
-      if (delta !== 0) {
-        const b = barWin.getBounds();
-        barWin.setBounds({
-          x: b.x,
-          y: flags.barEdge === 'top' ? b.y : b.y - delta,
-          width: b.width,
-          height: b.height + delta,
-        });
-      }
+      // A framed test window: sized by its CONTENT from fixed numbers (testFitPage), so the
+      // frame stays out of the arithmetic and repeated popovers cannot creep the page wider.
+      // Pill mode gets the live window's height (rest.height + extra, popoverDipRect's), so the
+      // popover has the same room under it that it has live; edge mode keeps BAR_H + extra.
+      testFitPage(BAR_SHAPE === 'pill' ? barGeometry().rest.dip.height + extra : total);
     } else {
       // Live: anchor to the BAR'S OWN resting rectangle rather than to the
       // window's current bounds, so a popover that opens twice cannot drift the
@@ -2236,6 +2652,46 @@ const COMMANDS = {
     return { height: extra, total, capped: open && extra < asked, max: POPOVER_MAX };
   },
 
+  /*
+   * The hover flyout's live previews: {items:[{hwnd, x, y, w, h}], dpr} makes the set of DWM
+   * thumbnails in the bar window EXACTLY those boxes (CSS px, viewport-relative), and
+   * {items:[]} removes them all. Answers {ok, reason, thumbs:[{hwnd, ok, reason, ...}]} and
+   * never rejects: every card whose picture cannot be drawn gets its own reason to print.
+   *
+   * It refuses unless a popover is holding room open AND the bar is up. Both are about the
+   * leak: a preview drawn with no popover room sits over the bar itself, and one drawn into a
+   * bar that is leaving stays on screen while the page's own content slides away under it.
+   */
+  'bar.thumbs': async (a) => {
+    const items = Array.isArray(a && a.items) ? a.items : [];
+    if (!items.length) {
+      clearThumbs('the flyout asked for no previews');
+      return { ok: true, reason: null, thumbs: [] };
+    }
+    const refuse = (reason) => {
+      clearThumbs(reason);
+      return { ok: false, reason, thumbs: items.map((e) => ({ hwnd: String(e && e.hwnd), ok: false, reason })) };
+    };
+    if (!barWin || barWin.isDestroyed()) return refuse('no live picture: the bar window is gone');
+    if (!barPopover) return refuse('no live picture: the flyout has no room open in the bar window yet');
+    if (!flags.dock && (!barRevealed || hideTimer)) return refuse('no live picture: the bar is leaving the screen');
+    // Where the page starts on screen, in physical px: lib/thumbs.js subtracts the Win32 client
+    // origin to find the page inside the client area (0 for the frameless live bar; the menu
+    // bar for the framed --test bar). Without it the pictures are drawn as if it were 0.
+    let contentOrigin = null;
+    try {
+      const cb = barWin.getContentBounds();
+      contentOrigin = screen.dipToScreenPoint({ x: cb.x, y: cb.y });
+    } catch (_) { /* thumbs.sync says so in its reason */ }
+    const res = thumbs.sync(hwndOf(barWin), items, Number(a && a.dpr), contentOrigin);
+    lastThumbSync = res;   // for the --test --flyout capture, which pastes these rectangles
+    // (ok:false is logged by the IPC handler already; this is the "drawn, but" note, and one line
+    // per card that got no picture, so "the flyout was empty" can be answered from the log.)
+    if (res.ok && res.reason) process.stdout.write(`mantle: bar.thumbs: ${res.reason}\n`);
+    for (const t of res.thumbs || []) if (!t.ok) process.stdout.write(`mantle: bar.thumbs: ${t.hwnd}: ${t.reason}\n`);
+    return res;
+  },
+
   'launcher.show': async () => { showLauncher(); return { visible: true }; },
   'launcher.hide': async () => { hideLauncher(); return { visible: false }; },
 
@@ -2243,6 +2699,20 @@ const COMMANDS = {
   'apps.search': async (a) => apps.search(a && a.q),
   'apps.launch': async (a) => {
     const res = await apps.launch(a && a.id);
+    if (res && res.ok) hideLauncher();
+    return res;
+  },
+  // The launcher's power rows and Windows Search file rows. lib/launcher-index.js does the work;
+  // main only lends it the sidecar (Sleep and file search live there), which lib/apps.js never
+  // hands the index module. A --test instance is ALWAYS a power dry run.
+  'launcher.power': async (a) => {
+    const res = await require(modulePathFor(ROOT)).power(a, { sidecar: (c, x, ms) => sidecar.call(c, x, ms), dryRun: !!flags.test });
+    if (res && res.ok && !res.dryRun) hideLauncher();
+    return res;
+  },
+  'launcher.files': async (a) => require(modulePathFor(ROOT)).files(a, { sidecar: (c, x, ms) => sidecar.call(c, x, ms) }),
+  'launcher.openFile': async (a) => {
+    const res = await require(modulePathFor(ROOT)).openFile(a);
     if (res && res.ok) hideLauncher();
     return res;
   },
@@ -2310,16 +2780,117 @@ const COMMANDS = {
     return { quitting: true };
   },
 
+  /*
+   * "Restart Mantle", from the bar's overflow menu (Owen, 2026-09-22). The SAME clean quit as
+   * shell.quit and `electron . --quit` -- shutdown(), which puts Windows back exactly as a quit
+   * does -- and then Mantle comes back. How it comes back is the whole design (restartPlan).
+   * If the way back cannot be arranged this answers ok:false with the reason and does NOT quit:
+   * half a restart is a quit Owen did not ask for.
+   */
+  'shell.restart': async () => {
+    if (shuttingDown) return { ok: false, reason: 'Mantle is already shutting down' };
+    const plan = await restartPlan();
+    if (flags.test) {
+      // The live road is never taken from a test run; its exact command line is logged instead,
+      // so it can be read and checked without schtasks /Run ever being called.
+      const dry = await restartPlan({ assumeTask: true });
+      process.stdout.write(`mantle: restart dry run: a task-started live Mantle would spawn (detached): ${dry.file} ${dry.args.map((x) => (/\s/.test(x) ? `"${x}"` : x)).join(' ')}\n`);
+    }
+    if (plan.via === 'task') {
+      const { spawn } = require('child_process');
+      const started = await new Promise((resolve) => {
+        let child;
+        try {
+          child = spawn(plan.file, plan.args, { detached: true, stdio: 'ignore', windowsHide: true });
+        } catch (err) {
+          resolve({ ok: false, reason: err.message });
+          return;
+        }
+        child.once('error', (err) => resolve({ ok: false, reason: err.message }));
+        child.once('spawn', () => { child.unref(); resolve({ ok: true, pid: child.pid }); });
+      });
+      if (!started.ok) {
+        return { ok: false, reason: `Mantle was not restarted, and is still running: the helper that brings it back through the "Mantle" task would not start (${started.reason})` };
+      }
+      process.stdout.write(`mantle: restart helper pid ${started.pid} is waiting for pid ${process.pid} to exit, then runs the "Mantle" task\n`);
+    } else {
+      try {
+        app.relaunch({ args: plan.args });
+      } catch (err) {
+        return { ok: false, reason: `Mantle was not restarted, and is still running: Electron would not arrange the relaunch (${err.message})` };
+      }
+    }
+    process.stdout.write(`mantle: restart requested from the bar menu (via ${plan.via})${plan.why ? `: ${plan.why}` : ''}\n`);
+    // Answer first, quit on the next tick (same reason as shell.quit).
+    setTimeout(() => shutdown('a restart was requested from the bar menu'), 0);
+    return { ok: true, reason: null, via: plan.via };
+  },
+
   'sys.stats': async () => stats(),
 
   'tray.list': async () => {
     const list = await sidecar.call('tray');
-    lastTray = Array.isArray(list) ? list : [];
+    lastTray = trayForBar(list);
     return lastTray;
   },
   'tray.click': async (a) => {
     if (!a || !a.id) throw new Error('tray.click needs the id of a notification-area item');
-    return sidecar.call('trayClick', { id: a.id, button: a.button || 'left' });
+    /* An icon the sidecar already said it cannot click (a hidden one, in Windows' hidden-icons
+       flyout) is refused HERE with the sidecar's own reason, which names the Settings switch that
+       fixes it, instead of being sent down to fail more vaguely. */
+    const known = (lastTray || []).find((t) => t && t.id === a.id);
+    if (known && known.clickable === false) {
+      throw new Error(known.reason || `${known.title || a.id} cannot be clicked from Mantle, and the sidecar did not say why`);
+    }
+    // `icon`, NOT `id` (fixed 2026-09-22): `id` is the sidecar protocol's request id. Sent as
+    // `id`, the icon's id overwrote the request's own, the reply came back under an id nobody
+    // was waiting for, and a click that had worked showed as a timeout. lib/sidecar.js now
+    // refuses a reserved `id` argument outright; Program.cs's trayClick reads `icon`.
+    return sidecar.call('trayClick', { icon: a.id, button: a.button || 'left' });
+  },
+
+  // ---- now playing (the NOW PLAYING block above says how and why) ----
+  // Every one answers the whole payload ({ok, reason, sessions, shown, guard, ...}) and never
+  // rejects, like the quick-settings calls: the bar draws the reason.
+  'media.get': async () => mediaPush('the bar asked'),
+  'media.select': async (a) => {
+    // null / missing = back to automatic (Windows' current session, under the LessonPlayer rule)
+    mediaPick = a && a.aumid ? String(a.aumid) : null;
+    return mediaPush(mediaPick ? `a source was picked in the media card (${mediaPick})` : 'the media card went back to automatic');
+  },
+  'media.control': async (a) => {
+    const action = String((a && a.action) || '');
+    const aumid = a && a.aumid ? String(a.aumid) : '';
+    if (!MEDIA_ACTIONS.has(action)) {
+      return { ok: false, action, reason: `media.control does not know the action "${action}" (it does ${Array.from(MEDIA_ACTIONS).join(', ')})` };
+    }
+    if (!aumid) {
+      return { ok: false, action, reason: 'media.control needs the AUMID of the session the button belongs to, so a press can never land on a different app' };
+    }
+    // THE LESSONPLAYER RULE, enforced here and not only in the page. Judged on main's own last read
+    // (title and app name included, for LessonPlayer's web player), then on the AUMID alone.
+    if (mediaGuardOn()) {
+      const known = ((lastMedia && lastMedia.sessions) || []).find((s) => sameAumid(s.aumid, aumid));
+      if (isLessonPlayer(known || { aumid })) return { ok: false, action, aumid, reason: `${LESSONPLAYER_GUARD_REASON}. ${LESSONPLAYER_GUARD_HOW}.` };
+    }
+    const args = { op: 'control', action, aumid };
+    if (action === 'seek') args.positionMs = Number(a && a.positionMs);
+    let r;
+    try {
+      r = await sidecar.call('media', args);
+    } catch (err) {
+      return {
+        ok: false,
+        action,
+        aumid,
+        reason: Sidecar.isOldExeError(err)
+          ? 'this sidecar exe has no "media" command yet, so nothing can be played or paused (run npm run build:sidecar)'
+          : err.message,
+      };
+    }
+    // The watch will report the change too; this makes the card catch up without waiting for it.
+    mediaPush(`media ${action} was sent`);
+    return r && typeof r === 'object' ? r : { ok: true, action, aumid, reason: null };
   },
 
   // Not part of the original four-lane contract: the desktop page needs to know
@@ -2354,6 +2925,7 @@ ipcMain.handle('mantle:replay', async (_e, name) => {
     case 'windows': return { has: true, payload: lastWindows };
     case 'launcher:visible': return { has: true, payload: !!(launcherWin && !launcherWin.isDestroyed() && launcherWin.isVisible()) };
     case 'tray': return lastTray ? { has: true, payload: lastTray } : { has: false };
+    case 'media': return lastMedia ? { has: true, payload: lastMedia } : { has: false };
     // The bar subscribes before it calls, and an empty first frame in a taskbar
     // looks exactly like a broken one. Build the list if nothing has yet.
     case 'bar.pinned': return { has: true, payload: lastPinned || await pinnedOnce() };
@@ -2362,7 +2934,8 @@ ipcMain.handle('mantle:replay', async (_e, name) => {
     case 'bar.reveal': return barRevealed
       ? { has: true, payload: { why: 'the bar was already up when this page subscribed', mode: BAR_SHAPE, ms: 0 } }
       : { has: false };
-    default: return { has: false };
+    // 'wallpaper', 'wallpaper.library', 'wallpaper.pause': lib/wallpaper.js answers for its own.
+    default: return wallpaper.replay(name);
   }
 });
 
@@ -2446,8 +3019,14 @@ sidecar.on('ready', () => {
 });
 
 sidecar.on('windows', (msg) => {
-  lastWindows = Array.isArray(msg.list) ? msg.list : [];
+  lastWindows = withoutMantle(msg.list);
   broadcast('windows', lastWindows);
+  // A preview whose window has closed draws nothing but still holds its box; drop it now and
+  // tell the flyout which cards lost their window (it says so in the card, then rebuilds).
+  if (thumbs.count()) {
+    const gone = thumbs.prune(new Set(lastWindows.map((w) => String(w.hwnd))));
+    if (gone.length) broadcast('bar.thumbs.gone', { hwnds: gone });
+  }
   // The same change, in the shape the hover bar draws: which apps are running,
   // which of them a pin already covers, and which window is in front.
   schedulePinnedPush('the running windows changed');
@@ -2601,14 +3180,24 @@ async function applyMode() {
     }
     // One probe, not a poll: the tray list is worth knowing about in a test run,
     // but a five-second poll is not worth the CPU for a window nobody is watching.
-    try {
-      const list = await sidecar.call('tray');
-      lastTray = Array.isArray(list) ? list : [];
-      state.set('tray', { status: 'ok', reason: `test mode: probed once, ${lastTray.length} notification-area items (not polled)` });
-      broadcast('tray', lastTray);
-    } catch (err) {
-      state.set('tray', { status: 'unavailable', reason: `${err.message} (test mode: probed once, not polled)` });
+    // Up to three TRIES of that one probe (2026-09-22): on a loaded machine the first
+    // answer came 2.9 s after its 8 s timeout and was dropped, and a single miss left
+    // the whole screenshot run with no tray. Not in the background: glass waits, as before.
+    let trayErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const list = await sidecar.call('tray');
+        lastTray = trayForBar(list);
+        state.set('tray', { status: 'ok', reason: `test mode: probed once, ${lastTray.length} notification-area items (not polled)${attempt > 1 ? `; it took ${attempt} tries` : ''}` });
+        broadcast('tray', lastTray);
+        trayErr = null;
+        break;
+      } catch (err) {
+        trayErr = err;
+        if (attempt < 3) await wait(2000);
+      }
     }
+    if (trayErr) state.set('tray', { status: 'unavailable', reason: `${trayErr.message} (test mode: probed three times, not polled)` });
     // Glass runs in test mode too: it only ever touches Mantle's own two windows,
     // so passive allows it, and a test run is the only place this lane can see
     // whether it worked at all.
@@ -3284,7 +3873,7 @@ async function applyLive() {
 // and puts us back. A move is logged with the window that had got in the way;
 // a failed check goes to the state strip, once per distinct reason.
 // ---------------------------------------------------------------------------
-const DESKTOP_RECHECK_MS = 5000;
+const DESKTOP_RECHECK_MS = 30000;
 let desktopRecheckTimer = null;
 
 function stopDesktopRecheck() {
@@ -3319,13 +3908,37 @@ function armDesktopRecheck(mode) {
 // ---------------------------------------------------------------------------
 // The notification-area mirror the bar renders.
 // ---------------------------------------------------------------------------
+/*
+ * The notification area as the bar draws it: the sidecar's list minus MANTLE'S OWN icon.
+ *
+ * Mantle's Electron Tray icon (createTray, the no-keyboard escape hatch) sits in Windows'
+ * notification area like any other, so the sidecar lists it, and the bar drew a button for the
+ * shell it is part of (or, in a test instance, for the LIVE shell). Measured 2026-09-22 through
+ * the UIA tray: it lists as title "Electron", exe
+ * C:\Users\user\mantle\node_modules\electron\dist\electron.exe, hidden. Owen's own browser is
+ * ALSO electron.exe (C:\Users\user\browser\...), so the exe NAME alone would hide his browser's
+ * icon too. The match is an electron.exe that lives in a mantle checkout (mantle, mantle-live,
+ * any mantle-*), this process's own exe, or a live tooltip in the "Mantle (live|test)" form
+ * updateTray() writes.
+ */
+const MANTLE_ELECTRON_RE = /[\\/]mantle(?:-[^\\/]*)?[\\/]node_modules[\\/]electron[\\/]dist[\\/]electron\.exe$/i;
+function isMantleTrayIcon(t) {
+  if (!t) return false;
+  const exe = t.exe ? String(t.exe) : '';
+  if (exe && (MANTLE_ELECTRON_RE.test(exe) || path.resolve(exe).toLowerCase() === path.resolve(process.execPath).toLowerCase())) return true;
+  return /^Mantle \((live|test)\)/.test(String(t.title || t.tooltip || ''));
+}
+function trayForBar(list) {
+  return Array.isArray(list) ? list.filter((t) => !isMantleTrayIcon(t)) : [];
+}
+
 function startTrayPoll() {
   stopTrayPoll();
   const tick = async () => {
     let delay = 5000;
     try {
       const list = await sidecar.call('tray');
-      lastTray = Array.isArray(list) ? list : [];
+      lastTray = trayForBar(list);
       state.set('tray', { status: 'ok', reason: `${lastTray.length} notification-area items` });
       broadcast('tray', lastTray);
     } catch (err) {
@@ -3503,10 +4116,14 @@ function shutdown(why) {
   // in Mantle that runs many times a second, and a poll still ticking through a
   // restore is a poll that can show a bar window mid-shutdown.
   stopHoverWatch();
+  // DWM drops a dead process's thumbnails on its own, but the restore below can take seconds
+  // and the bar is still on screen for all of them.
+  clearThumbs('Mantle is shutting down');
   // ...and with it the capture loop, which is the one thing that can leave a
   // window excluded from Owen's screenshots if it is stopped carelessly.
   stopBackdrop('Mantle is shutting down');
   qsWatchStop('Mantle is shutting down');
+  if (mediaPollTimer) { clearTimeout(mediaPollTimer); mediaPollTimer = null; }
   if (pinnedPushTimer) { clearTimeout(pinnedPushTimer); pinnedPushTimer = null; }
   if (unwatchPins) {
     try { unwatchPins(); } catch (err) { process.stderr.write(`mantle: the pinned-shortcuts watcher would not stop: ${err.message}\n`); }
@@ -3547,6 +4164,16 @@ function shutdown(why) {
 // menu and the kill switch.
 // ---------------------------------------------------------------------------
 app.on('second-instance', (_event, argv) => {
+  // TEST ONLY: `electron . --test --profile-name=<x> --test-click=restart` asks THIS test instance's
+  // bar to click its own "Restart Mantle" item (the real button, through the DOM), so the restart
+  // can be proven by script without a mouse. A live instance ignores it (no --profile-name reaches
+  // the live lock anyway), and the relaunched instance gets its own original argv, not this one.
+  const click = flags.test && Array.isArray(argv) ? argv.find((a) => typeof a === 'string' && a.startsWith('--test-click=')) : null;
+  if (click) {
+    process.stdout.write(`mantle: a second instance asked the bar to click "${click.slice('--test-click='.length)}" (test mode)\n`);
+    broadcast('bar.test.click', { what: click.slice('--test-click='.length) });
+    return;
+  }
   const asked = Array.isArray(argv) && argv.some((a) => a === '--quit');
   if (!asked) {
     process.stdout.write('mantle: another Mantle tried to start; this one is already running, so that one exited.\n');
@@ -3594,6 +4221,10 @@ function updateTray() {
     tray.setContextMenu(Menu.buildFromTemplate([
       { label: `Mantle — ${MODE}`, enabled: false },
       { label: summary, enabled: false },
+      { type: 'separator' },
+      // The desktop layer never gets a click (it is under the icons), so its wallpaper is chosen here
+      // or from the launcher's "Wallpapers" entry.
+      { label: 'Wallpapers…', click: () => { wallpaper.openLibrary(); } },
       { type: 'separator' },
       // Two items, and neither of them can make things worse. There is
       // deliberately NO "hide the Windows taskbar" any more: that item called the
@@ -3700,6 +4331,39 @@ async function runScreenshots(dir) {
   // Four seconds of settling: web fonts, the first stats tick, the Mission
   // Control probe and whatever the other lanes' pages do on load.
   await new Promise((r) => setTimeout(r, 4000));
+  /* --test-pops (below) photographs what the SIDECAR feeds (the tray probe, now playing), which on
+     a loaded machine can land after those four seconds: wait for both, up to 20 s more, and say so
+     if they never came. */
+  const popsArg = ARGV.find((x) => typeof x === 'string' && x.startsWith('--test-pops='));
+  const pops = popsArg ? popsArg.slice('--test-pops='.length).split(',').map((x) => x.trim()).filter(Boolean) : [];
+  if (pops.length) {
+    /* ...and for the PINS: on a loaded machine the pinned list has landed 35 s after start (one
+       run, 2026-09-22), and a dock photographed before it is an empty dock, which proves nothing
+       about whether the chip and the pins fit together. 60 s, then it says what was missing. */
+    const t0 = Date.now();
+    const until = t0 + 60000;
+    const pageW = () => (barWin && !barWin.isDestroyed() ? barWin.getContentSize()[0] : 0);
+    const liveW = barGeometry().rest.dip.width;
+    const pinsIn = () => !!(lastPinned && Array.isArray(lastPinned.items) && lastPinned.items.length);
+    while (Date.now() < until && !(lastMedia && lastMedia.ok && lastTray && pinsIn() && pageW() === liveW)) await wait(250);
+    process.stdout.write(`mantle: --test-pops: after ${((Date.now() - t0) / 1000).toFixed(1)} s: bar page ${pageW()} css px wide (the live pill's is ${liveW}), ` +
+      `pins ${pinsIn() ? `in (${lastPinned.items.length} items)` : 'NOT in'}\n`);
+    await wait(1500);   // the dock settles 50 ms after the resize, the media chip after the pill lands
+    // What the page decided, in words: the media chip's state and every status chip, so a pass
+    // ("no apps hidden while the chip shows") is read off the page rather than off a picture.
+    try {
+      const seen = await barWin.webContents.executeJavaScript(
+        "(function(){var m=document.getElementById('media');return JSON.stringify({page:innerWidth+'x'+innerHeight,media:m?(m.hidden?'hidden':m.className):'none'," +
+        "title:(document.querySelector('#mchip .mtxt')||{}).textContent||''," +
+        "cells:document.querySelectorAll('#dock .cell').length," +
+        "chips:Array.prototype.map.call(document.querySelectorAll('.chip'),function(c){return c.title;})});})()");
+      process.stdout.write(`mantle: --test-pops: page says ${seen}\n`);
+    } catch (err) {
+      process.stdout.write(`mantle: --test-pops: could not read the page's state: ${err.message}\n`);
+    }
+    process.stdout.write(`mantle: --test-pops: media ${lastMedia ? (lastMedia.ok ? 'read' : `read FAILED (${lastMedia.reason})`) : 'NOT read in time'}, tray ${lastTray ? `read (${lastTray.length} icons)` : 'NOT read in time'}\n`);
+    await wait(800);   // the pushes' paint
+  }
 
   // The directory is printed RESOLVED: a --screenshot path that lost its
   // backslashes on the way through a shell once wrote three PNGs into the repo
@@ -3728,7 +4392,115 @@ async function runScreenshots(dir) {
       process.stderr.write(`mantle: could not capture the ${name} window: ${err.message}\n`);
     }
   }
+
+  /* --test-pops=media,more,...: after the three windows, open each named bar popover through
+     the page's own test hook (bar.test.click, the real open path, no mouse) and capture the bar
+     window with it up, as bar-<name>.png. For photographing the media card and the overflow's
+     hidden tray icons from a real test instance. Test only: runScreenshots itself is. */
+  for (const what of pops) {
+    if (!barWin || barWin.isDestroyed()) break;
+    broadcast('bar.test.click', { what });
+    await new Promise((r) => setTimeout(r, 1800));   // the popover's room, its first read, a paint
+    const out = path.join(dir, `bar-${what}.png`);
+    try {
+      const img = await barWin.webContents.capturePage();
+      fs.writeFileSync(out, img.toPNG());
+      const size = img.getSize();
+      process.stdout.write(`mantle: wrote ${out} (${size.width}x${size.height})\n`);
+    } catch (err) {
+      process.stderr.write(`mantle: could not capture the bar with "${what}" open: ${err.message}\n`);
+    }
+    broadcast('bar.test.click', { what: 'close' });
+    await new Promise((r) => setTimeout(r, 500));
+  }
   shutdown('the screenshots are done');
+}
+
+/*
+ * --test --flyout=<app> [--screenshot=<dir>]: open the bar's window flyout for the first
+ * running app matching <app>, exactly as a 400 ms hover would, and (with a dir) photograph it
+ * WITH its live previews. Nobody's mouse moves and no input is injected: the page is sent
+ * 'bar.test.flyout', which runs the same openFly() the hover dwell runs, and the test bar is
+ * kept at the BACK of the z-order throughout (raiseBar sends it back instead of up).
+ *
+ * The photo takes two captures because no one capture has both halves: capturePage() has the
+ * page but not the previews (DWM draws those over the page from outside it), PrintWindow has
+ * the previews but not the page (see lib/thumbs.js capture). flyout-page.png and flyout-dwm.png
+ * are those two as they came; flyout.png is the page with every preview rectangle pasted in
+ * from the DWM capture, i.e. the flyout as it looks on screen.
+ */
+async function runFlyoutTest(match, dir) {
+  const { nativeImage } = require('electron');
+  const say = (s) => process.stdout.write(`mantle: --flyout: ${s}\n`);
+  stopHoverWatch();   // nobody is hovering the test bar, so the poll would only take it away mid-test
+  await settled(barWin);
+  // There is nothing to hover until the pinned list has arrived with a running app in it.
+  for (let i = 0; i < 90; i++) {
+    const items = lastPinned && Array.isArray(lastPinned.items) ? lastPinned.items : [];
+    if (items.some((it) => Array.isArray(it.windows) && it.windows.length)) break;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  revealBar('the --flyout test opened the bar');
+  await new Promise((r) => setTimeout(r, 2000));
+  say(`asking the bar page to open the flyout for "${match}"`);
+  broadcast('bar.test.flyout', { match });
+  // the popover's resize, the page's two-frame wait, the first bar.thumbs, and DWM's first frame
+  await new Promise((r) => setTimeout(r, 5000));
+  const res = lastThumbSync;
+  say(res
+    ? res.thumbs.map((t) => `${t.hwnd}: ${t.ok ? `live, source ${t.source.w}x${t.source.h}${t.minimized ? ', minimized' : ''}` : t.reason}`).join(' | ') || 'bar.thumbs was called with no cards'
+    : 'the bar page never asked for previews');
+  if (!dir) return;
+
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const page = await barWin.webContents.capturePage();
+    const dpr = screen.getDisplayMatching(barWin.getBounds()).scaleFactor;
+    const sz = page.getSize();
+    // The page at physical size, so the physical preview rectangles paste 1:1. capturePage()
+    // already answers in physical px on this machine (measured: 1383 px for 1106 DIP at 1.25);
+    // only if it ever answers in DIP is it scaled up.
+    const cb = barWin.getContentBounds();
+    const pw = Math.round(cb.width * dpr);
+    const ph = Math.round(cb.height * dpr);
+    const phys = Math.abs(sz.width - pw) <= 2 ? page : page.resize({ width: pw, height: ph, quality: 'best' });
+    const pbmp = Buffer.from(phys.toBitmap());
+    const pageW = phys.getSize().width;
+    const pageH = phys.getSize().height;
+    fs.writeFileSync(path.join(dir, 'flyout-page.png'), phys.toPNG());
+
+    const shot = thumbs.capture(hwndOf(barWin));
+    if (!shot.ok) {
+      say(`no DWM capture (${shot.reason}); flyout-page.png shows the cards without their pictures`);
+    } else {
+      fs.writeFileSync(path.join(dir, 'flyout-dwm.png'), nativeImage.createFromBitmap(shot.bgra, { width: shot.width, height: shot.height }).toPNG());
+      const off = (res && res.offset) || { x: 0, y: 0 };
+      // Where each picture SHOULD be in flyout-dwm.png (window px), to check against where DWM put it.
+      say(`client at ${shot.client.x},${shot.client.y} in the window, page at +${off.x},+${off.y} in the client; pictures expected at ${((res && res.thumbs) || []).filter((t) => t.ok).map((t) => `x ${shot.client.x + t.drawn.left}..${shot.client.x + t.drawn.right - 1} y ${shot.client.y + t.drawn.top}..${shot.client.y + t.drawn.bottom - 1}`).join(', ') || 'nowhere (none live)'}`);
+      let pasted = 0;
+      for (const t of (res && res.thumbs) || []) {
+        if (!t.ok || !t.drawn) continue;
+        const w = t.drawn.right - t.drawn.left;
+        const h = t.drawn.bottom - t.drawn.top;
+        for (let row = 0; row < h; row++) {
+          const sy = shot.client.y + t.drawn.top + row;
+          const dy = t.drawn.top - off.y + row;
+          if (sy < 0 || sy >= shot.height || dy < 0 || dy >= pageH) continue;
+          const sx = shot.client.x + t.drawn.left;
+          const dx = t.drawn.left - off.x;
+          const cols = Math.min(w, shot.width - sx, pageW - dx);
+          if (cols <= 0 || sx < 0 || dx < 0) continue;
+          shot.bgra.copy(pbmp, (dy * pageW + dx) * 4, (sy * shot.width + sx) * 4, (sy * shot.width + sx + cols) * 4);
+        }
+        pasted++;
+      }
+      fs.writeFileSync(path.join(dir, 'flyout.png'), nativeImage.createFromBitmap(pbmp, { width: pageW, height: pageH }).toPNG());
+      say(`wrote flyout.png (${pageW}x${pageH}, ${pasted} live preview${pasted === 1 ? '' : 's'} pasted in), flyout-page.png and flyout-dwm.png to ${dir}`);
+    }
+  } catch (err) {
+    say(`the capture failed: ${err.message}`);
+  }
+  shutdown('the --flyout screenshots are done');
 }
 
 // ---------------------------------------------------------------------------
@@ -3752,7 +4524,18 @@ function watchPage(win, label) {
   });
   wc.on('render-process-gone', (_e, details) => {
     process.stderr.write(`mantle: the ${label} renderer died: ${details.reason}\n`);
+    // The flyout that asked for the previews is gone, and nothing will ever ask to remove them.
+    if (win === barWin) clearThumbs(`the bar page died (${details.reason})`);
   });
+  if (win === barWin) {
+    // Same for a reload: the new page starts with no flyout open, over whatever the old one drew.
+    wc.on('did-start-navigation', (e, ...legacy) => {
+      const main = e && typeof e.isMainFrame === 'boolean' ? e.isMainFrame : legacy[2];
+      const same = e && typeof e.isSameDocument === 'boolean' ? e.isSameDocument : legacy[1];
+      if (main && !same) clearThumbs('the bar page is loading again');
+    });
+    win.on('closed', () => clearThumbs('the bar window closed'));
+  }
   // Electron moved console-message from (event, level, message, line, source) to
   // (event, details) partway through v3x, and the level went from a number to a
   // string. Accept both rather than silently logging nothing on one of them.
@@ -3864,6 +4647,8 @@ app.whenReady().then(() => {
   } else {
     state.set('desktop', { attached: false, mode: null, reason: '--no-desktop: the desktop layer was not created' });
   }
+  // The wallpaper library, its pause rules and the Wallpapers window: all in lib/wallpaper.js.
+  wallpaper.start({ root: ROOT, test: flags.test, state, sidecar, commands: COMMANDS, desktopWin });
 
   // Order matters: the shortcuts write their own state before the tray reads the
   // state to build its menu, and test mode's four "deliberately not done" reasons
@@ -3898,5 +4683,7 @@ app.whenReady().then(() => {
 
   sidecar.start();
 
-  if (flags.screenshot) runScreenshots(path.resolve(flags.screenshot));
+  // --flyout owns --screenshot when both are given: it photographs the flyout, not the three windows
+  if (flags.flyout !== null) runFlyoutTest(flags.flyout, flags.screenshot ? path.resolve(flags.screenshot) : null);
+  else if (flags.screenshot) runScreenshots(path.resolve(flags.screenshot));
 });

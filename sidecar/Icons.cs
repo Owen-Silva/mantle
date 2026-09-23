@@ -26,7 +26,9 @@ namespace Mantle {
     public static string ForPath(string path) {
       if (string.IsNullOrEmpty(path)) return null;
       string hit;
-      if (_cache.TryGetValue(path, out hit)) return hit;
+      // Locked: `icon` and `lnk` both land here, and a lane change must never
+      // turn into a corrupted Dictionary. The extraction stays outside it.
+      lock (_cache) { if (_cache.TryGetValue(path, out hit)) return hit; }
 
       string url = null;
       string why = null;
@@ -35,7 +37,7 @@ namespace Mantle {
       } catch (Exception ex) {
         why = ex.Message;
       }
-      _cache[path] = url;
+      lock (_cache) _cache[path] = url;
       if (url == null) {
         // Once per path, in the UI the Electron side can actually show.
         Program.EmitLog("warn", "no icon for " + path + (why == null ? "" : " (" + why + ")"));

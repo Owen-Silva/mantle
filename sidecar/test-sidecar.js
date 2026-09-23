@@ -28,7 +28,15 @@ const fs = require('fs');
 const os = require('os');
 
 const HERE = __dirname;
-const EXE = path.join(HERE, 'bin', 'Mantle.Sidecar.exe');
+// Which exe to test. Default: the one Mantle runs. A running Mantle holds that
+// file open, so a new build is made beside it (build.ps1 -Out ...) and tested
+// by path:  node sidecar/test-sidecar.js --exe=sidecar/bin-next/Mantle.Sidecar.exe
+//      or:  MANTLE_SIDECAR_EXE=... npm run test:sidecar
+// A custom exe is never auto-built: testing a stale file by accident is worse
+// than failing to find one.
+const EXE_ARG = (process.argv.find((a) => a.startsWith('--exe=')) || '').slice('--exe='.length) ||
+                process.env.MANTLE_SIDECAR_EXE || '';
+const EXE = EXE_ARG ? path.resolve(EXE_ARG) : path.join(HERE, 'bin', 'Mantle.Sidecar.exe');
 const BUILD = path.join(HERE, 'build.ps1');
 // Scratch, not the repo: the state file is a runtime artefact and a test run
 // must not leave one lying next to the source.
@@ -230,6 +238,12 @@ function start(args) {
 }
 
 async function main() {
+  if (EXE_ARG && !fs.existsSync(EXE)) {
+    console.log('SIDECAR TEST: 0 passed, 1 failed');
+    console.log('  no exe at ' + EXE + ' (--exe / MANTLE_SIDECAR_EXE); build it with build.ps1 -Out');
+    process.exit(1);
+  }
+  if (EXE_ARG) console.log('testing ' + EXE);
   if (!fs.existsSync(EXE)) {
     const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', BUILD], { encoding: 'utf8' });
     process.stdout.write(r.stdout || '');
@@ -727,6 +741,32 @@ async function main() {
   // Reads only. NOTHING in this block may toggle a radio or move the
   // brightness on the machine Owen is sitting at: every switch is expected to
   // REFUSE, and that refusal is the test.
+  // wifi, bluetooth and brightness answer from a background-refreshed cache
+  // (QuickSettings.cs): the first read right after start may be a placeholder
+  // with pending:true while the real read runs. Poll past it, and prove on
+  // the way that even that first answer was instant.
+  async function settledRead(cmd, maxMs) {
+    const t0 = Date.now();
+    let first = null;
+    for (;;) {
+      const a0 = Date.now();
+      const r = await s.send(cmd, {}, 4000);
+      if (first === null) first = Date.now() - a0;
+      if (!r.ok || !r.result || r.result.pending !== true || Date.now() - t0 > maxMs) return { r, firstMs: first };
+      await sleep(250);
+    }
+  }
+  for (const cmd of ['wifi', 'bluetooth', 'brightness']) {
+    try {
+      const { r, firstMs } = await settledRead(cmd, 25000);
+      check(cmd + ' read answers from its cache without waiting on the hardware (' + firstMs + ' ms)',
+        firstMs < 1000, 'first answer took ' + firstMs + ' ms');
+      check(cmd + ' read settles to a real reading with its age',
+        r.ok === true && r.result && r.result.pending !== true && typeof r.result.ageMs === 'number' &&
+        typeof r.result.stale === 'boolean', JSON.stringify(r).slice(0, 220));
+    } catch (e) { check(cmd + ' read settles to a real reading', false, e.message); }
+  }
+
   try {
     const r = await s.send('wifi', {}, 10000);
     const d = r.ok ? r.result : null;
@@ -751,6 +791,11 @@ async function main() {
       typeof d.on === 'boolean' && typeof d.via === 'string' &&
       (d.reason === null || typeof d.reason === 'string'),
       JSON.stringify(r).slice(0, 220));
+    // Before 2026-09-22 the PowerShell route never loaded
+    // System.Runtime.WindowsRuntime, so a machine WITH a radio always read
+    // "Windows listed no Bluetooth radio". A present radio must now be read.
+    check('bluetooth reads the radio when the machine has one',
+      d && (d.present === false || d.ok === true), JSON.stringify(d));
     if (d) quickNotes.push('bluetooth: present=' + d.present + ' on=' + d.on + ' via=' + d.via +
       (d.reason ? ' reason=' + JSON.stringify(d.reason) : ''));
   } catch (e) { check('bluetooth reads with the full shape', false, e.message); }
@@ -1165,6 +1210,17 @@ async function main() {
       r.ok === false && typeof r.error === 'string' && r.error.includes('acrylic'), JSON.stringify(r));
   } catch (e) { check('glass refuses an unknown mode with a reason', false, e.message); }
 
+  // ---- trayClick takes `icon` (never `id`, which is the protocol's) ------
+  try {
+    const none = await s.send('trayClick', {});
+    check('trayClick without icon names the argument, in any mode',
+      none.ok === false && typeof none.error === 'string' && none.error.includes('icon') &&
+      !none.error.includes('passive'), JSON.stringify(none));
+    const some = await s.send('trayClick', { icon: 'nope', button: 'left' });
+    check('trayClick {icon} is refused in passive (it would click a live icon)',
+      some.ok === false && typeof some.error === 'string' && some.error.includes('passive'), JSON.stringify(some));
+  } catch (e) { check('trayClick takes icon', false, e.message); }
+
   // ---- unknown command --------------------------------------------------
   try {
     const r = await s.send('nonsense-command');
@@ -1185,6 +1241,119 @@ async function main() {
         typeof r.error === 'string' && r.error.startsWith('tray unavailable:'), JSON.stringify(r));
     }
   } catch (e) { check('tray', false, e.message); trayNote = 'tray: ' + e.message; }
+
+  // ---- lanes, deadlines, coalescing (Lanes.cs, 2026-09-22) ---------------
+  // The live sidecar went permanently behind because every command shared one
+  // thread and late requests still ran. `sleep` (passive-only) parks one lane
+  // so these checks can prove the others do not care.
+  const laneNotes = [];
+  {
+    const pct = (a, q) => a.slice().sort((x, y) => x - y)[Math.min(a.length - 1, Math.floor(q * a.length))];
+    async function timed(cmd, extra, timeoutMs) {
+      const t0 = process.hrtime.bigint();
+      const r = await s.send(cmd, extra, timeoutMs);
+      return { r, ms: Number(process.hrtime.bigint() - t0) / 1e6 };
+    }
+
+    // 1. A slow lane busy for 3 s: ui commands still answer in milliseconds.
+    try {
+      const parked = s.send('sleep', { lane: 'slow', ms: 3000 }, 8000);
+      await sleep(50);
+      const ms = [];
+      for (let i = 0; i < 20; i++) {
+        const { r, ms: m } = await timed(i % 2 ? 'hittest' : 'ping', i % 2 ? { x: 5, y: 5 } : {}, 4000);
+        if (!r.ok) throw new Error('an interactive command failed: ' + JSON.stringify(r).slice(0, 160));
+        ms.push(m);
+        await sleep(40);
+      }
+      const bd = await timed('backdrop', { x: 0, y: 0, w: 64, h: 16, scale: 4 }, 4000);
+      const vol = await timed('volume', {}, 4000);
+      const bt = await timed('bluetooth', {}, 4000);
+      const pr = await parked;
+      laneNotes.push(`slow lane parked 3 s: ping/hittest p50 ${pct(ms, 0.5).toFixed(1)} ms, ` +
+        `max ${Math.max(...ms).toFixed(1)} ms; backdrop ${bd.ms.toFixed(0)} ms; volume ${vol.ms.toFixed(0)} ms; ` +
+        `bluetooth ${bt.ms.toFixed(0)} ms`);
+      check('ui answers in milliseconds while the slow lane is busy (max ' + Math.max(...ms).toFixed(0) + ' ms)',
+        Math.max(...ms) < 250, ms.map((x) => x.toFixed(0)).join(','));
+      check('backdrop (capture lane) answers while the slow lane is busy',
+        bd.r.ok === true && bd.ms < 1500, JSON.stringify({ ms: bd.ms, ok: bd.r.ok }));
+      check('volume (audio lane) answers while the slow lane is busy',
+        vol.r.ok === true && vol.ms < 1500, JSON.stringify({ ms: vol.ms, r: vol.r }).slice(0, 160));
+      check('a cached bluetooth read answers while the slow lane is busy',
+        bt.r.ok === true && bt.ms < 500, JSON.stringify({ ms: bt.ms }));
+      check('the parked slow lane itself finished', pr.ok === true && pr.result && pr.result.lane === 'slow',
+        JSON.stringify(pr));
+    } catch (e) { check('lanes: ui stays responsive while slow is busy', false, e.message); }
+
+    // 2. A request that waits past its caller's deadline is skipped, not run.
+    try {
+      const parked = s.send('sleep', { lane: 'slow', ms: 1500 }, 8000);
+      await sleep(50);
+      const t0 = Date.now();
+      const late = s.send('icon', { path: 'C:\\Windows\\explorer.exe', ttl: 300 }, 8000);
+      const fine = s.send('icon', { path: 'C:\\Windows\\explorer.exe', ttl: 6000 }, 8000);
+      const [lr, fr] = await Promise.all([late, fine]);
+      await parked;
+      check('a request past its ttl answers "expired" instead of running',
+        lr.ok === false && lr.reason === 'expired' && typeof lr.error === 'string' && lr.error.startsWith('expired'),
+        JSON.stringify(lr).slice(0, 200));
+      check('a request inside its ttl on the same lane still runs', fr.ok === true && fr.result && 'icon' in fr.result,
+        JSON.stringify(fr).slice(0, 160));
+      laneNotes.push(`expiry: the late icon was skipped after ${Date.now() - t0} ms`);
+    } catch (e) { check('lanes: expired requests are skipped', false, e.message); }
+
+    // Undo requests (quit, restore, remove, release, cancel) are never skipped
+    // for being late. Most of them are refused in passive, so the one tested
+    // here is `morph {cancel:true}`, which answers in passive and is an undo.
+    try {
+      const parked = s.send('sleep', { lane: 'ui', ms: 600 }, 8000);
+      await sleep(30);
+      const late = s.send('ping', { ttl: 100 }, 8000);
+      const undo = s.send('morph', { hwnd: selfHwnd || '1', cancel: true, ttl: 100 }, 8000);
+      const [lr, ur] = await Promise.all([late, undo]);
+      await parked;
+      check('the ui lane skips an expired request too', lr.ok === false && lr.reason === 'expired', JSON.stringify(lr));
+      check('an undo (morph cancel) runs even past its ttl', ur.ok === true, JSON.stringify(ur));
+    } catch (e) { check('lanes: ui expiry and undo exemption', false, e.message); }
+
+    // 3. Identical backdrop grabs queued behind a busy capture lane collapse
+    //    into ONE capture, and every caller gets the picture.
+    try {
+      const before = (await s.send('ping')).result.load.merged;
+      const parked = s.send('sleep', { lane: 'capture', ms: 800 }, 8000);
+      await sleep(30);
+      const rect = { x: 0, y: 0, w: 64, h: 16, scale: 4 };
+      const shots = await Promise.all([1, 2, 3, 4, 5].map(() => s.send('backdrop', rect, 8000)));
+      await parked;
+      const after = (await s.send('ping')).result.load.merged;
+      check('five identical queued backdrops all answer with a picture',
+        shots.every((r) => r.ok === true && r.result && typeof r.result.png === 'string'),
+        JSON.stringify(shots.map((r) => r.ok)));
+      check('five identical queued backdrops were captured once (4 merged)', after - before === 4,
+        'merged went from ' + before + ' to ' + after);
+      check('the merged callers got the same capture', shots.every((r) => r.result && r.result.png === shots[0].result.png),
+        'pngs differ');
+    } catch (e) { check('lanes: backdrop coalescing', false, e.message); }
+
+    // 4. After all that, nothing is left queued: the sidecar drained.
+    try {
+      await sleep(200);
+      const p = await s.send('ping', {}, 4000);
+      const lanes = p.ok && p.result && p.result.load ? p.result.load.lanes : null;
+      check('ping reports every lane', Array.isArray(lanes) &&
+        ['ui', 'capture', 'slow', 'audio'].every((n) => lanes.some((l) => l && l.name === n)), JSON.stringify(lanes));
+      check('every lane has drained', Array.isArray(lanes) && lanes.every((l) => l.queued === 0),
+        JSON.stringify(lanes));
+      check('ping reports the quick settings caches', p.result && p.result.caches && p.result.caches.bluetooth &&
+        'ageMs' in p.result.caches.bluetooth, JSON.stringify(p.result && p.result.caches));
+      laneNotes.push('after the burst: ' + JSON.stringify(p.result.load));
+    } catch (e) { check('lanes: drained', false, e.message); }
+
+    try {
+      const r = await s.send('sleep', { lane: 'slow', ms: 99999 });
+      check('sleep refuses an out-of-range ms', r.ok === false, JSON.stringify(r));
+    } catch (e) { check('sleep refuses an out-of-range ms', false, e.message); }
+  }
 
   // ---- unsolicited windows event ----------------------------------------
   try {
@@ -1303,6 +1472,7 @@ async function main() {
 
   for (const f of failures) console.log('  FAIL: ' + f);
   for (const n of quickNotes) console.log('  note: ' + n);
+  for (const n of laneNotes) console.log('  note: ' + n);
   if (hitNote) console.log('  note: ' + hitNote);
   if (windowsAppNote) console.log('  note: ' + windowsAppNote);
   if (pinsNote) console.log('  note: ' + pinsNote);

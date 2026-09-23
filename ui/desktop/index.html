@@ -5,9 +5,12 @@
   <!-- Scheme sources, not 'self': a file:// document is an opaque origin in
        Chromium, so 'self' matches nothing and would block this page's own CSS.
        data: is in img-src because the wallpaper picture main sends arrives as a
-       PNG data URL and is painted as a CSS background-image. -->
+       PNG data URL and is painted as a CSS background-image.
+       media-src/img-src file: are the wallpaper itself (a video, gif or picture
+       in Mantle's library, played straight off disk), and frame-src mantle-wp:
+       is a web wallpaper, which lib/wallpaper.js serves on its own origin. -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; frame-src http://127.0.0.1:7373">
+        content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; media-src file:; frame-src http://127.0.0.1:7373 mantle-wp:">
   <title>Mantle desktop</title>
   <!-- tokens.css first, for fonts and geometry only; glass-light.css after it,
        and EVERY colour on this page comes from that file (--lg-*). It is the
@@ -31,7 +34,15 @@
     wallpaper under THAT pane, blurred) first, the tint on its ::after above it,
     the content above that. The .bdrop divs are empty on purpose - the picture is
     one CSS background, parked on <html> as --desktop-backdrop by desktop.js.
+
+    THE WALLPAPER (2026-09-22) is the bottom of this stack: Mantle plays it here
+    now instead of Lively playing it in a window underneath, which the panes
+    covered. desktop.js puts ONE element in #wall - a <video>, an <img> or a web
+    wallpaper's sandboxed <iframe> - and while it is drawing (body.has-wall) the
+    panes frost it with a real backdrop-filter instead of the still picture.
   -->
+  <div class="wall" id="wall" aria-hidden="true"></div>
+
   <main class="cluster">
 
     <section class="pane time" aria-label="Clock">

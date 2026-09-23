@@ -222,8 +222,9 @@ namespace Mantle {
         if (item == null) return "the shell returned something that is not a shell item for '" + aumid + "'";
         name = DisplayName(item, Win32.SIGDN_NORMALDISPLAY);
         png = Image32(raw);
-        if (png == null) _iconCache[aumid] = null;
-        else _iconCache[aumid] = png;
+        // Locked: `app` fills this on the slow lane while the window list reads
+        // it on the ui lane (Lanes.cs). The shell calls stay outside the lock.
+        lock (_iconCache) _iconCache[aumid] = png;
         return null;
       } catch (COMException ce) {
         return "the shell refused the app id '" + aumid + "' (HRESULT 0x" + ce.ErrorCode.ToString("X8") + ")";
@@ -239,11 +240,11 @@ namespace Mantle {
     public static string IconFor(string aumid) {
       if (string.IsNullOrEmpty(aumid)) return null;
       string hit;
-      if (_iconCache.TryGetValue(aumid, out hit)) return hit;
+      lock (_iconCache) { if (_iconCache.TryGetValue(aumid, out hit)) return hit; }
       string name, png;
       string why = Info(aumid, out name, out png);
       if (why != null) {
-        _iconCache[aumid] = null;
+        lock (_iconCache) _iconCache[aumid] = null;
         Program.EmitLog("warn", "no app icon for " + aumid + " (" + why + ")");
         return null;
       }

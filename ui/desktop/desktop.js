@@ -17,6 +17,8 @@
                      the document is hidden
     the stats        every 5 seconds
     Mission Control  every 30 seconds
+  ...plus the wallpaper at the bottom of the page (THE WALLPAPER, below), which
+  is the one thing here that moves, and which main pauses by Owen's Lively rules.
 
   THE BACKDROP. Main sends 'desktop.backdrop' {png, w, h, rect, ms} ONCE at start
   and again after a display change: one capture of the whole screen, wallpaper
@@ -223,17 +225,31 @@
   // The state strip: every piece of Mantle that is not doing its job, with the
   // reason. Hidden entirely when everything is fine.
   // ---------------------------------------------------------------------
+  // Each rule gets (piece, whole state). Where lib/state.js problems() has a rule
+  // for the same piece (the terminal's and the tray tooltip's copy of this strip),
+  // this one must say the same thing -- two copies of a health rule drift, and by
+  // 2026-09-22 they had: this list flagged the hover bar's unreserved strip,
+  // which problems() had already been taught was the design.
   const PIECES = [
     ['sidecar', 'Sidecar', (p) => p.status === 'ok'],
     // 'taskbar' is healthy when Windows' own taskbar is on AUTO-HIDE -- Mantle
     // never hides that window any more; hiding it is what cost Owen a reboot on
-    // 2026-09-21. 'workarea' is healthy when Mantle's bar is registered as a real
-    // app bar, which is a reservation Explorer drops by itself if Mantle dies.
+    // 2026-09-21.
     ['taskbar', 'Windows taskbar', (p) => p.autohide === true],
-    ['workarea', 'Screen space for the bar', (p) => p.reserved === true],
+    // 'workarea': only --dock owes a reservation. In hover mode (the default)
+    // the bar reserving NO screen space is the whole design -- it is hidden until
+    // the cursor asks for it -- so reserved:false there is not a fault.
+    ['workarea', 'Screen space for the bar', (p, s) => p.reserved === true || !(s.bar && s.bar.mode === 'dock')],
     ['desktop', 'Desktop layer', (p) => p.attached === true],
     ['hotkey', 'Win key', (p) => p.winTap === true],
-    ['tray', 'Notification area', (p) => p.status === 'ok'],
+    // 'unavailable' is a permanent platform limit on this Windows build (the XAML
+    // notification area has no ToolbarWindow32 to read), not something Owen can
+    // act on, and the bar already says so as a quiet note in its overflow menu.
+    // Only a tray status that is neither ok nor that limit is a fault here.
+    ['tray', 'Notification area', (p) => p.status === 'ok' || p.status === 'unavailable'],
+    // Mantle's own wallpaper: not ok means the one on screen could not play (a
+    // missing file, a codec, a page that never loaded), and the reason says which.
+    ['wallpaper', 'Wallpaper', (p) => p.ok === true],
     // 'acrylic-blur-behind' is a real Windows backdrop blurring what is actually
     // behind the bar and launcher. 'none' means only whatever the pages paint in
     // CSS -- because --no-acrylic asked for it, or because the sidecar could not
@@ -286,7 +302,14 @@
       // main says there is no picture: the panes fall back whatever this page
       // thinks it is holding, because what it holds is now wrong or nothing.
       if (key === 'backdrop.desktop' && piece.ok !== true) document.body.classList.add('no-backdrop');
-      if (ok(piece)) continue;
+      // ...but while the wallpaper plays IN this page the panes frost it live,
+      // and the still picture is not under the glass at all, so its failure is
+      // not one Owen can see.
+      if (key === 'backdrop.desktop' && document.body.classList.contains('has-wall')) continue;
+      // The pause rules can fail on their own (no sidecar to ask what is in
+      // front): the wallpaper still plays, but a game would no longer pause it.
+      if (key === 'wallpaper' && piece.rulesOk === false) rows.push(row('Wallpaper pause rules', piece.rulesReason || 'not being checked, and no reason given'));
+      if (ok(piece, s)) continue;
       if (key === 'backdrop.desktop') saidBackdrop = true;
       rows.push(row(label, piece.reason || 'no reason given, which is itself a bug'));
     }
@@ -346,8 +369,263 @@
     renderState(null);
   }
 
+  // ---------------------------------------------------------------------
+  // THE WALLPAPER (2026-09-22). Mantle plays it here, at the bottom of this
+  // page, because Lively's player was a separate window under this one and the
+  // panes covered it. lib/wallpaper.js decides WHAT plays and WHEN it pauses;
+  // this page only draws it and says, every time, whether that worked:
+  //   'wallpaper'         {ok, reason, item:{id, type, url, look, props, ...}, paused, unload}
+  //   'wallpaper.pause'   {paused, unload, reason}   Owen's Lively rules, applied
+  //   'wallpaper.prop'    {id, name, value}          a web wallpaper's setting changed
+  //   'wallpaper.sysinfo' JSON string                for livelySystemInformation
+  //   'wallpaper.cursor'  {x, y}                     the mouse, for web wallpapers
+  // and it answers with 'wallpaper.status' {id, state, reason}: loading, playing,
+  // ready, error (with the reason, which lands on the card and in the strip) or
+  // note (a web wallpaper's own script error, kept on its card).
+  //
+  // A web wallpaper is a sandboxed iframe on its own origin (mantle-wp://<id>),
+  // so the only way in is postMessage to ui/wallpapers/lively-shim.js, which main
+  // put first in its <head>, and the only way out is a message from that frame.
+  // ---------------------------------------------------------------------
+  const wallEl = $('wall');
+  const WALL_LOAD_MS = 20000;
+  let wall = null;          // {id, url, type, item, el, ready, drawn, timer}
+  let wallLast = null;      // the last 'wallpaper' payload, to remount after an unload
+  let wallPause = { paused: false, unload: false };
+
+  function wallStatus(id, st, reason) {
+    window.mantle.call('wallpaper.status', { id, state: st, reason: reason || '' }).catch((err) => {
+      console.warn('[desktop] wallpaper.status could not be sent:', err.message);
+    });
+  }
+
+  function clearWall() {
+    if (!wall) return;
+    clearTimeout(wall.timer);
+    const el = wall.el;
+    if (el && el.tagName === 'VIDEO') {
+      try { el.pause(); el.removeAttribute('src'); el.load(); } catch (_) { /* releasing the decoder */ }
+    }
+    wall = null;
+    wallEl.replaceChildren();
+    document.body.classList.remove('has-wall');
+    renderState(null);
+  }
+
+  function failWall(reason) {
+    if (!wall) return;
+    const id = wall.id;
+    clearTimeout(wall.timer);
+    console.warn('[desktop] wallpaper', id, 'failed:', reason);
+    // Take it off the screen: the panes go back to the still picture of
+    // whatever Windows is showing, rather than frosting a black rectangle.
+    clearWall();
+    wallStatus(id, 'error', reason);
+  }
+
+  function drawn() {
+    if (!wall || wall.drawn) return;
+    wall.drawn = true;
+    wall.el.classList.add('on');
+    document.body.classList.add('has-wall');
+    renderState(null);
+  }
+
+  function mediaError(v) {
+    const e = v.error;
+    const code = e ? e.code : 0;
+    const what = {
+      1: 'loading was aborted',
+      2: 'the file could not be read from disk',
+      3: 'the video is damaged, or it uses a codec Chromium cannot decode',
+      4: 'Chromium cannot play this file: its format or codec is not supported, or the file is missing',
+    }[code] || 'the video element reported an error without a code';
+    return what + (e && e.message ? ' (' + e.message + ')' : '');
+  }
+
+  function playVideo() {
+    if (!wall || wall.type !== 'video') return;
+    const v = wall.el;
+    const pr = v.play();
+    if (pr && pr.catch) {
+      pr.catch((err) => {
+        // AbortError is a pause() or a new src landing mid-start: not a failure.
+        if (err && err.name === 'AbortError') return;
+        failWall('Chromium would not start it: ' + (err && err.message ? err.message : String(err)));
+      });
+    }
+  }
+
+  function applyLook(it) {
+    if (!wall || !wall.el || !it.look) return;
+    const el = wall.el;
+    if (wall.type === 'web') return;
+    el.style.objectFit = it.look.fit || 'cover';
+    // An identity filter is still a pass over every frame, so none at all unless asked.
+    el.style.filter = it.look.filter || '';
+    if (wall.type === 'video' && el.playbackRate !== it.look.rate) el.playbackRate = it.look.rate || 1;
+  }
+
+  function toFrame(msg) {
+    if (!wall || wall.type !== 'web' || !wall.el || !wall.el.contentWindow) return;
+    msg.mantle = 'wp';
+    try { wall.el.contentWindow.postMessage(msg, '*'); } catch (_) { /* the frame is navigating */ }
+  }
+
+  function mountVideo(it) {
+    const v = document.createElement('video');
+    v.className = 'wall-media';
+    // Muted and looped, always: a wallpaper is not a speaker. playsInline and no
+    // picture-in-picture keep Chromium from offering to pop it out anywhere.
+    v.muted = true;
+    v.defaultMuted = true;
+    v.loop = true;
+    v.playsInline = true;
+    v.disablePictureInPicture = true;
+    v.preload = 'auto';
+    v.addEventListener('loadeddata', drawn);
+    v.addEventListener('playing', () => {
+      if (!wall || wall.el !== v || wall.said === 'playing') return;
+      wall.said = 'playing';
+      clearTimeout(wall.timer);
+      wallStatus(wall.id, 'playing');
+    });
+    v.addEventListener('error', () => { if (wall && wall.el === v) failWall(mediaError(v)); });
+    wall.el = v;
+    wallEl.replaceChildren(v);
+    applyLook(it);
+    v.src = it.url;
+    // A video that never produces a frame and never errors (a stalled file) is
+    // still a failure, and gets a sentence rather than a black desktop forever.
+    wall.timer = setTimeout(() => {
+      if (wall && wall.el === v && !wall.drawn) failWall('it did not show a single frame within ' + (WALL_LOAD_MS / 1000) + ' seconds');
+    }, WALL_LOAD_MS);
+    if (!wallPause.paused) playVideo();
+  }
+
+  function mountImage(it) {
+    const img = document.createElement('img');
+    img.className = 'wall-media';
+    img.alt = '';
+    img.decoding = 'async';
+    img.addEventListener('load', () => {
+      if (!wall || wall.el !== img) return;
+      drawn();
+      wallStatus(wall.id, 'playing');
+    });
+    img.addEventListener('error', () => {
+      if (wall && wall.el === img) failWall('the picture could not be loaded: the file is missing or is not a picture Chromium can read');
+    });
+    wall.el = img;
+    wallEl.replaceChildren(img);
+    applyLook(it);
+    img.src = it.url;
+  }
+
+  function mountWeb(it) {
+    const f = document.createElement('iframe');
+    f.className = 'wall-media';
+    // allow-same-origin gives the page ITS OWN origin (mantle-wp://<id>), never
+    // this one: localStorage and relative fetch() work as they did in Lively,
+    // and it still cannot reach window.mantle or this document.
+    f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+    f.setAttribute('allow', 'autoplay');
+    f.setAttribute('scrolling', 'no');
+    f.setAttribute('tabindex', '-1');
+    f.title = it.title || 'Wallpaper';
+    f.addEventListener('load', () => {
+      // The shim says 'ready' from the page's own load event, which lands just
+      // before this one. No word shortly after means the bridge never ran: the
+      // page was not found, or it is not an HTML page.
+      if (!wall || wall.el !== f) return;
+      const w = wall;
+      setTimeout(() => {
+        if (wall === w && !w.readyOnce) failWall('the page loaded but Mantle\'s Lively bridge never started in it, so it is not a page Mantle can drive (was it found?)');
+      }, 4000);
+    });
+    // src BEFORE insertion: an iframe inserted without one loads about:blank
+    // first and fires 'load' for it, which would start the 4 s check above
+    // against a page that has not even been asked for yet.
+    f.src = it.url;
+    wall.el = f;
+    wallEl.replaceChildren(f);
+    wall.timer = setTimeout(() => {
+      if (wall && wall.el === f && !wall.readyOnce) failWall('the page did not finish loading within ' + (WALL_LOAD_MS / 1000) + ' seconds');
+    }, WALL_LOAD_MS);
+  }
+
+  window.addEventListener('message', (e) => {
+    if (!wall || wall.type !== 'web' || !wall.el || e.source !== wall.el.contentWindow) return;
+    const m = e.data;
+    if (!m || m.mantle !== 'wp') return;
+    if (m.kind === 'ready') {
+      // Every load, including a wallpaper that reloads itself on resize: its
+      // saved values go in again each time, as Lively does.
+      clearTimeout(wall.timer);
+      const first = !wall.readyOnce;
+      wall.readyOnce = true;
+      drawn();
+      toFrame({ kind: 'props', list: wall.item.props || [] });
+      if (wallPause.paused) toFrame({ kind: 'pause' });
+      if (first) {
+        const miss = [];
+        if ((wall.item.props || []).length && !m.listener) miss.push('it has settings but no livelyPropertyListener, so they cannot reach it');
+        if (wall.item.sysinfo && !m.sysinfo) miss.push('it asks for system information but has no livelySystemInformation to receive it');
+        wallStatus(wall.id, 'ready', miss.join('; '));
+      }
+    } else if (m.kind === 'error') {
+      wallStatus(wall.id, 'note', String(m.reason || 'an error without a message'));
+    }
+  });
+
+  function setWallpaper(p) {
+    wallLast = p;
+    if (p) wallPause = { paused: !!p.paused, unload: !!p.unload };
+    const it = p && p.ok && p.item && p.item.url ? p.item : null;
+    if (!it || wallPause.unload) { clearWall(); return; }
+    if (wall && wall.id === it.id && wall.url === it.url) {
+      // The same wallpaper with new settings: no reload, just the new look, or
+      // the new values posted in again.
+      wall.item = it;
+      applyLook(it);
+      if (it.type === 'web' && wall.readyOnce) toFrame({ kind: 'props', list: it.props || [] });
+      applyPause();
+      return;
+    }
+    clearWall();
+    wall = { id: it.id, url: it.url, type: it.type, item: it, el: null, drawn: false, readyOnce: false, timer: 0, said: '' };
+    wallStatus(it.id, 'loading');
+    if (it.type === 'video') mountVideo(it);
+    else if (it.type === 'web') mountWeb(it);
+    else mountImage(it);
+    applyPause();
+  }
+
+  function applyPause() {
+    if (!wall || !wall.el) return;
+    const paused = wallPause.paused;
+    if (wall.type === 'video') { if (paused) wall.el.pause(); else playVideo(); }
+    else if (wall.type === 'web') { if (wall.readyOnce) toFrame({ kind: paused ? 'pause' : 'resume' }); }
+    else if (wall.type === 'gif') wall.el.classList.toggle('held', paused);
+  }
+
+  function onWallPause(p) {
+    const was = wallPause;
+    wallPause = { paused: !!(p && p.paused), unload: !!(p && p.unload) };
+    // 'kill' in Lively's words: take it off entirely while the rule holds, and
+    // put it back from the last payload when it lets go.
+    if (wallPause.unload && !was.unload) { clearWall(); return; }
+    if (!wallPause.unload && was.unload && wallLast) { setWallpaper(Object.assign({}, wallLast, wallPause)); return; }
+    applyPause();
+  }
+
   // Fires immediately with the current state, then on every change.
   if (typeof window.mantle.on === 'function') {
+    window.mantle.on('wallpaper', setWallpaper);
+    window.mantle.on('wallpaper.pause', onWallPause);
+    window.mantle.on('wallpaper.prop', (m) => { if (wall && m && m.id === wall.id) toFrame({ kind: 'prop', name: m.name, value: m.value }); });
+    window.mantle.on('wallpaper.sysinfo', (json) => { if (!wallPause.paused) toFrame({ kind: 'sysinfo', json }); });
+    window.mantle.on('wallpaper.cursor', (pt) => { if (pt) toFrame({ kind: 'cursor', x: pt.x, y: pt.y }); });
     window.mantle.on('state', renderState);
     window.mantle.on('desktop.backdrop', setBackdrop);
   } else {

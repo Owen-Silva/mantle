@@ -5,7 +5,13 @@
  * runs at a time. Owen's machine has been pegged by unguarded Chromium before; a run that skips
  * this file is a rule break, not a shortcut.
  *
- *   node ui/bar/shoot.js
+ *   node ui/bar/shoot.js              every shot below
+ *   node ui/bar/shoot.js media tray   only the shots whose name contains one of the words
+ *
+ * BAR_TRAY_JSON=<file> hands the mock a REAL tray listing (a JSON array in the sidecar's `tray`
+ * shape, or a probe dump whose [1].result is one) through window.__MOCK_TRAY__, so real icons can
+ * be eyeballed without committing anybody's tray to the repo. BAR_EXTRA_CSS=<css> adds a style to
+ * every shot, for an A/B of a treatment that is not in bar.css (BAR_SUFFIX=-b names the files).
  */
 require('C:/Users/user/dev-tools/tools/lowcpu.js');
 
@@ -52,8 +58,31 @@ const SHOTS = [
   { name: 'bar-1920-bg', w: 1920, h: 44, q: '?bg=1' },   // loud wallpaper: is the glass actually letting it through?
   { name: 'bar-1280', w: 1280, h: 44, q: '' },
   { name: 'bar-1280-20win', w: 1280, h: 44, q: '?windows=20' },
-  { name: 'bar-1920-down', w: 1920, h: 44, q: '?state=down' }
+  { name: 'bar-1920-down', w: 1920, h: 44, q: '?state=down' },
+  /* now playing (2026-09-22): the chip, then the card open over a taller page (the popover floats
+     above the bar, so a 44px viewport would crop it), in each state the card has to get right */
+  { name: 'media-chip', w: 1280, h: 60, q: '?mode=pill&media=playing' },
+  { name: 'media-compact', w: 1000, h: 60, q: '?mode=pill&media=playing' },   // too narrow: the title gives way
+  { name: 'media-card', w: 1280, h: 330, q: '?mode=pill&media=playing', click: '#mchip' },
+  { name: 'media-noctl', w: 1280, h: 330, q: '?mode=pill&media=noctl', click: '#mchip' },
+  /* LessonPlayer alone: NO chip (Owen's call, 2026-09-22), so nothing is clicked: the shot proves absence */
+  { name: 'media-lessonplayer', w: 1280, h: 60, q: '?mode=pill&media=lessonplayer' },
+  { name: 'media-both', w: 1280, h: 400, q: '?mode=pill&media=both', click: '#mchip' },
+  /* LessonPlayer picked in the switcher while a player also plays: the controls-off card */
+  { name: 'media-lessonplayer-picked', w: 1280, h: 480, q: '?mode=pill&media=both&pick=lessonplayer', click: '#mchip' },
+  { name: 'media-off', w: 1280, h: 330, q: '?mode=pill&media=off', click: '#more' },   // the chip's reason, in words
+  /* the tray: the white-icon plate on the strip, and the hidden icons in the overflow */
+  { name: 'tray', w: 1280, h: 60, q: '?mode=pill&tray=1&media=playing' },
+  { name: 'tray-more', w: 1280, h: 330, q: '?mode=pill&tray=1', click: '#more' }
 ];
+const ONLY = process.argv.slice(2);
+const RUN = ONLY.length ? SHOTS.filter(s => ONLY.some(w => s.name.includes(w))) : SHOTS;
+let REAL_TRAY = null;
+if (process.env.BAR_TRAY_JSON) {
+  const raw = JSON.parse(fs.readFileSync(process.env.BAR_TRAY_JSON, 'utf8'));
+  REAL_TRAY = Array.isArray(raw) ? raw : (raw && raw[1] && raw[1].result) || null;
+  if (!Array.isArray(REAL_TRAY)) { console.error('FAILED: BAR_TRAY_JSON holds no tray array'); process.exit(1); }
+}
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
@@ -64,8 +93,9 @@ const SHOTS = [
   const ctx = await browser.newContext({ colorScheme: 'dark', deviceScaleFactor: 1.25, viewport: { width: 1920, height: 44 } });
   const problems = [];
   try {
-    for (const s of SHOTS) {
+    for (const s of RUN) {
       const page = await ctx.newPage();
+      if (REAL_TRAY && /tray/.test(s.q)) await page.addInitScript((t) => { window.__MOCK_TRAY__ = t; }, REAL_TRAY);
       await page.setViewportSize({ width: s.w, height: s.h });
       page.on('pageerror', e => problems.push(s.name + ' pageerror: ' + e.message));
       page.on('console', m => { if (m.type() === 'error') problems.push(s.name + ' console: ' + m.text()); });
@@ -76,9 +106,12 @@ const SHOTS = [
          its own (much louder) wallpaper from the mock, so leave that one alone. */
       if (!s.q.includes('bg=1'))
         await page.addStyleTag({ content: 'html{background:#141619 !important;}' });
+      if (process.env.BAR_EXTRA_CSS) await page.addStyleTag({ content: process.env.BAR_EXTRA_CSS });
       await page.evaluate(() => document.fonts.ready);
       await page.waitForTimeout(350);           // the mock bridge answers at 30ms; this is slack, not a race
-      const file = path.join(OUT, s.name + '.png');
+      if (s.click) { await page.click(s.click); await page.waitForTimeout(400); }
+      await page.mouse.move(0, 0);              // no hover state left on whatever was clicked
+      const file = path.join(OUT, s.name + (process.env.BAR_SUFFIX || '') + '.png');
       await page.screenshot({ path: file });
       console.log(file);
       await page.close();

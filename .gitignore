@@ -1,7 +1,9 @@
 node_modules/
 sidecar/bin/
+sidecar/bin-next/
 sidecar/obj/
 shots/
 *.log
 .DS_Store
 Thumbs.db
+sidecar/bin-int/

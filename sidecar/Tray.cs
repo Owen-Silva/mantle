@@ -71,7 +71,9 @@ namespace Mantle {
     public static List<object> List() {
       string why;
       var toolbars = Toolbars(out why);
-      if (toolbars.Count == 0) throw new InvalidOperationException("tray unavailable: " + why);
+      // No legacy toolbar (Windows 11 26200, measured): answer from the XAML
+      // tray instead - see TrayUia.cs. If that fails too, name both failures.
+      if (toolbars.Count == 0) return FromXaml(why);
 
       var result = new List<object>();
       _entries.Clear();
@@ -85,9 +87,15 @@ namespace Mantle {
       }
 
       if (totalButtons == 0)
-        throw new InvalidOperationException(
-          "tray unavailable: explorer exposes 0 legacy tray buttons on this build (Windows 11 draws the tray in XAML)");
+        return FromXaml("explorer exposes 0 legacy tray buttons on this build (Windows 11 draws the tray in XAML)");
       return result;
+    }
+
+    static List<object> FromXaml(string legacyWhy) {
+      try { return TrayUia.List(); }
+      catch (Exception ex) {
+        throw new InvalidOperationException("tray unavailable: " + ex.Message + " (legacy route: " + legacyWhy + ")");
+      }
     }
 
     const int TBBUTTON_SIZE = 32;   // x64
@@ -173,6 +181,7 @@ namespace Mantle {
 
     public static string Click(string id, string button) {
       if (string.IsNullOrEmpty(id)) return "no tray id given";
+      if (TrayUia.Owns(id)) return TrayUia.Click(id, button);
       Entry e;
       if (!_entries.TryGetValue(id, out e)) {
         // The caller may not have listed yet (or explorer re-created the icons).

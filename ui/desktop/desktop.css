@@ -35,11 +35,25 @@
   Each .bdrop overhangs its pane by 14px on every side and the pane clips it: a 12px blur pulls
   transparency in from the edges of whatever it is blurring, and that fringe would read as a pale
   rim just inside the glass. The overhang puts the fringe outside the clip.
-  NO CSS backdrop-filter anywhere, for the same reason the bar has none: in a transparent Electron
-  window it samples this page and nothing else, so it costs GPU time and blurs nothing.
+  NO CSS backdrop-filter over the OS, for the same reason the bar has none: in a transparent
+  Electron window it samples this page and nothing else, so over Windows' own wallpaper it costs
+  GPU time and blurs nothing.
   body.no-backdrop is the honest fallback — no picture has arrived yet, or main said it could not
   take one — and thickens the tint to --lg-fill-fb so a pane is still a pane. The reason itself
   goes in the "Needs attention" strip; nothing about the failure is silent.
+
+  THE WALLPAPER IS IN THIS PAGE NOW (2026-09-22), and that changes the rule above for exactly one
+  case. Mantle plays the wallpaper itself (lib/wallpaper.js; Lively's player was a window under
+  this one, and the panes hid it), in #wall at the bottom of this page. backdrop-filter samples
+  "this page and nothing else" — which now INCLUDES the moving wallpaper. So while it is drawing
+  (body.has-wall) every pane frosts the live video with a real backdrop-filter, the .bdrop still
+  picture is switched off, and the frozen screenshot stops being the thing under the glass. The
+  cost is one blur of each pane's own area per video frame, on the GPU. Measured 2026-09-22 on the
+  test window (962x544, the 1080p portal video, four frosted panes, a busy machine): the whole
+  test instance used 3.1% of the machine playing and 0.3% paused, about 60 fps, private memory
+  about 430 MB for all of Mantle. The old reason for no backdrop-filter did not come back: the
+  panes visibly frost the moving video. With no wallpaper, or one that failed, has-wall is off and the
+  panes are back on the still picture of whatever Windows is showing — the fallback above.
 
   NO ANIMATION AT ALL, unchanged and non-negotiable: no transitions, no keyframes, no gradients
   that move. This window is on screen every waking hour; at rest it must cost nothing. The tint
@@ -63,10 +77,37 @@ html, body {
   user-select: none;
 }
 
+/* --- the wallpaper ---------------------------------------------------------
+   One element, the whole window, under everything. It is the ONE thing on this page allowed to
+   paint the full screen, because in live mode it IS the wallpaper. Nothing here animates: the
+   motion is the video's own, and a pause (lib/wallpaper.js's rules) stops it dead. The element is
+   invisible until it has a frame to show (.on), so a loading video is the fallback picture behind
+   it rather than a black rectangle. */
+.wall {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;           /* the desktop layer takes no input; the icons are above it */
+}
+.wall > .wall-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  object-fit: cover;              /* overwritten per wallpaper from its "Fit" property */
+  visibility: hidden;
+}
+.wall > .wall-media.on { visibility: visible; }
+.wall > .wall-media.held { display: none; }   /* a paused GIF: not drawn means not decoded */
+
 .cluster {
   /* Top-left, clear of the screen edges. The bar owns the bottom 44px, so the
      cluster is kept well above it even on a short window. */
   position: absolute;
+  z-index: 1;                     /* above the wallpaper */
   top: 38px;
   left: 44px;
   width: 420px;
@@ -125,6 +166,15 @@ html, body {
 
 /* nothing blurred underneath: the tint has to carry the pane on its own, so it thickens */
 body.no-backdrop .pane::after { background-color: var(--lg-fill-fb); }
+
+/* THE LIVE FROST: the wallpaper is in this page and drawing, so the pane blurs IT, moving, with
+   the same 12px / 150% the still picture used. The still picture goes, and so does the thicker
+   fallback tint — there is something real under the glass. backdrop-filter respects the pane's
+   radius and overflow clip, and Chromium mirrors the edge pixels, so there is no pale fringe to
+   hide and no overhang is needed. */
+body.has-wall .pane { -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur); }
+body.has-wall .pane > .bdrop { display: none; }
+body.has-wall .pane::after { background-color: var(--lg-fill); }
 
 /* the content, above both layers */
 .pane > :not(.bdrop) { position: relative; z-index: 2; }

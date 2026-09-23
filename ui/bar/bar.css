@@ -394,8 +394,16 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
 
 .tray { display: flex; align-items: center; gap: 2px; }
 .tray:empty { display: none; }
-.tray .ti { width: 26px; height: 26px; padding: 0; justify-content: center; border-radius: var(--lg-r-ctl); }
-.tray .ti img { width: 16px; height: 16px; display: block; }
+/* .ti is a tray icon on the strip OR in the overflow's hidden row, so it is not scoped to .tray */
+.ti { width: 26px; height: 26px; padding: 0; justify-content: center; border-radius: var(--lg-r-ctl); }
+.ti .tico { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 5px; }
+.ti .tico img { width: 16px; height: 16px; display: block; }
+.ti .tico.letter { background: var(--lg-tile); color: var(--lg-ink); font-size: 11px; font-weight: 600; }
+/* A WHITE icon (drawn for Windows' dark taskbar) on a small dark plate, so it reads on the light
+   glass. bar.js toneOf() measures each icon once and says why a plate rather than a dark tint. */
+.ti.light .tico { background: var(--lg-ink-2); }
+/* Not clickable (hidden in Windows' flyout, or UIA unavailable): there, dimmed, reason on hover. */
+.ti.off .tico { opacity: .42; }
 
 /* the state strip: one chip per thing that is not ok, label short, reason in the tooltip */
 .chips { display: flex; align-items: center; gap: var(--gap); }
@@ -554,12 +562,109 @@ body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
 }
 .pop .x:hover { background: var(--lg-warn-soft); color: var(--lg-warn); }
 
+/* ---------------------------------------------------------------- the window flyout
+   One card per window of the hovered app (bar.js, THE WINDOW FLYOUT). The picture in each card is
+   NOT drawn by this page: DWM paints the live window over .card-shot from outside the page, so
+   nothing may overlap a .card-shot (the close button lives in the header row), and the box's own
+   fill only shows around a letterboxed picture or behind the words that explain a missing one.
+   Same glass, same tokens as every other popover; the only accent is the active window's mark. */
+.pop.fly { max-width: none; padding: 7px; }
+.pop.fly.list { max-width: 340px; padding: 11px 12px; }   /* the too-many-windows fallback is the old list */
+.pop.fly.list .sub { margin: -2px 0 6px; }
+.fly-row { display: flex; gap: 6px; }                      /* CARD_GAP in bar.js */
+.card {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;                                             /* CARD_PAD in bar.js */
+  border-radius: var(--lg-r);
+  cursor: default;
+  transition: background-color 120ms steps(2);
+}
+.card:hover { background: var(--lg-hover); }
+.card:active { background: var(--lg-press); }
+.card-head { display: flex; align-items: center; gap: 7px; height: 24px; min-width: 0; }
+.card-ico { flex: 0 0 16px; width: 16px; height: 16px; display: grid; place-items: center; }
+.card-ico img { width: 16px; height: 16px; object-fit: contain; }
+.card-ico.tile { border-radius: 4px; background: var(--lg-tile); color: var(--lg-ink); font-size: 10px; font-weight: 600; }
+.card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--lg-ink);
+  font-size: 12px;
+}
+.card.min .card-title { color: var(--lg-ink-3); }         /* minimized: present, but asleep */
+/* ...and SAID, not only dimmed: a minimized window's picture is whatever Windows kept from before
+   it went down (for some apps only the frame on a dark body), so the card owns up to it */
+.card.min .card-title::before { content: 'Minimized \00b7  '; }
+.card.closing .card-title { color: var(--lg-ink-3); }
+/* asked to close 4 s ago and still here (a "save changes?" prompt, usually): said up front, where
+   the ellipsis cannot eat it */
+.card.stillopen .card-title::before { content: 'Still open \00b7  '; color: var(--lg-warn); }
+.card .x { flex: 0 0 22px; height: 22px; font-size: 14px; line-height: 1; }
+.card .x:disabled { opacity: .45; }
+.card-shot {
+  position: relative;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
+  overflow: hidden;
+}
+.card-why {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px;
+  text-align: center;
+  color: var(--lg-ink-3);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.card.live .card-why { visibility: hidden; }               /* DWM's picture is over it anyway */
+.card.fail .card-why { color: var(--lg-warn); }
+.card.gone { opacity: .55; }
+/* the active window: the same short accent line the icon's indicator uses, under its picture */
+.card::after {
+  content: '';
+  align-self: center;
+  width: 16px; height: 3px;
+  margin-top: -1px;
+  border-radius: 2px;
+  background: transparent;
+}
+.card.on::after { background: var(--lg-acc); }
+
 /* Pill mode: the island has no room for sentences. A chip is a pip; its label and reason live in
    its tooltip and in the overflow menu, so nothing is silent and nothing widens the right cluster
    that the centred dock measures against. */
 body.pill .chip .lbl { display: none; }
 body.pill .chip { padding: 0 5px; }
 .chips { max-width: 30%; min-width: 0; overflow: hidden; }
+/* ...and since 2026-09-22 the pips are gone from the island too. The dock does not measure
+   against the strip (bar.js measure(): a strip it counted fed back into its own width), so on a
+   full island the right-most pins were drawn straight OVER the pips: the "dots" between Obsidian
+   and Xbox in the first --test run with a real media session were four status pips under the icons.
+   One pip on the ⋯ button stands in for the strip (bar.js renderChips), warn-coloured when any
+   chip is a warning; its tooltip and its menu say every one in words. Edge mode keeps the strip. */
+body.pill .chips { display: none; }
+.more { position: relative; }
+.more .mpip {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--lg-ink-2);
+  box-shadow: 0 0 0 2px var(--lg-fill-strong);   /* a gap between the pip and the ⋯ glyph */
+}
+.more .mpip.warn { background: var(--lg-warn); }
+.more .mpip[hidden], body:not(.pill) .more .mpip { display: none; }
 
 /* ---------------------------------------------------------------- quick settings
 
@@ -732,3 +837,162 @@ body.pill .chip { padding: 0 5px; }
   padding-top: 9px;
   border-top: 1px solid var(--lg-edge-out);
 }
+
+/* ---------------------------------------------------------------- the overflow's hidden tray icons */
+.pop .hidhead { margin: 2px 0 3px; color: var(--lg-ink-2); }
+.pop .hidtray { display: flex; flex-wrap: wrap; gap: 2px; margin: 0 -4px 3px; }
+.pop .hidwhy { margin: 0 0 9px; }
+.pop .hidwhy.said { color: var(--lg-warn); }
+
+/* ---------------------------------------------------------------- now playing: the chip */
+.media { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; }
+.media[hidden] { display: none; }
+.mchip { min-width: 0; max-width: 200px; padding: 0 6px 0 5px; gap: 7px; }
+.mart {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--lg-tile);
+  color: var(--lg-ink-2);
+}
+.mart img { width: 20px; height: 20px; object-fit: cover; display: block; }
+.mart[data-kind="app"] img { width: 14px; height: 14px; object-fit: contain; }
+/* line-height above 1 wherever text is clipped (overflow:hidden): body's 1 cuts the descenders off */
+.mtxt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; line-height: 1.35; color: var(--lg-ink); }
+.media.paused .mtxt { color: var(--lg-ink-3); }       /* there, but not playing */
+/* compact: the icons did not fit, so the title gives way (bar.js mediaFit). max-width, not
+   display:none, so scrollWidth still measures the title for the way back. */
+.media.compact .mchip { gap: 0; }
+.media.compact .mtxt { max-width: 0; }
+.mtog { width: 26px; height: 26px; padding: 0; justify-content: center; margin-left: -3px; }
+.mtog[hidden] { display: none; }                      /* .btn's display:flex would beat [hidden] */
+.mtog.off { color: var(--lg-ink-3); }
+.mtog.off svg { opacity: .5; }
+
+/* ---------------------------------------------------------------- now playing: the card */
+.pop.mcard { width: 300px; max-width: 300px; }
+.mc-head { display: flex; align-items: flex-start; gap: 12px; }
+.mc-art {
+  flex: 0 0 72px;
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--lg-tile);
+  color: var(--lg-ink-2);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+}
+.mc-art img { width: 72px; height: 72px; object-fit: cover; display: block; }
+.mc-art[data-kind="app"] img { width: 32px; height: 32px; object-fit: contain; }
+.mc-art[data-kind="none"] svg { width: 26px; height: 26px; }
+.mc-meta { flex: 1 1 auto; min-width: 0; padding-top: 2px; }
+.mc-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--lg-ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mc-artist { margin-top: 2px; color: var(--lg-ink-2); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-artist.why { color: var(--lg-ink-3); white-space: normal; }
+.mc-app { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 6px; color: var(--lg-ink-3); }
+.mc-appico {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--lg-ink);
+}
+.mc-appico img { width: 14px; height: 14px; display: block; }
+.mc-apptxt { min-width: 0; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.mc-prog[hidden], .mc-progwhy[hidden], .mc-ctl[hidden], .mc-lock[hidden], .mc-note[hidden],
+.mc-src[hidden], .mc-foot[hidden], .mc-lock .sub[hidden] { display: none; }
+.mc-prog { margin-top: 12px; }
+.mc-bar { height: 2px; border-radius: 1px; overflow: hidden; background: var(--lg-edge-out); }   /* a hairline, not a slider */
+.mc-fill { width: 0; height: 100%; background: var(--lg-ink-2); }
+.mc-times { display: flex; justify-content: space-between; margin-top: 5px; color: var(--lg-ink-3); font-variant-numeric: tabular-nums; }
+.mc-progwhy { margin-top: 10px; line-height: 1.45; }
+
+.mc-ctl { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 8px; }
+.mc-btn {
+  width: 36px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink);
+  cursor: default;
+  transition: background-color 120ms steps(2), opacity 120ms steps(2);
+}
+.mc-btn:hover { background: var(--lg-hover); }
+.mc-btn:active { background: var(--lg-press); }
+.mc-btn.main { width: 44px; height: 36px; background: var(--lg-sunk); }
+.mc-btn.main:hover { background: var(--lg-press); }
+/* greyed WITH a reason: the tooltip says why, and a click says it in the card's note */
+.mc-btn.off { color: var(--lg-ink-3); }
+.mc-btn.off svg { opacity: .45; }
+.mc-btn.off:hover, .mc-btn.off:active { background: transparent; }
+.mc-btn.main.off:hover, .mc-btn.main.off:active { background: var(--lg-sunk); }
+.mc-btn.busy { opacity: .55; }
+.mc-btn:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+
+/* the LessonPlayer rule: said in place of the buttons, never a row of dead ones */
+.mc-lock { margin-top: 12px; padding: 9px 10px; border-radius: var(--lg-r); background: var(--lg-sunk); line-height: 1.45; }
+.mc-lockhead { color: var(--lg-ink); }
+.mc-lock .sub { margin-top: 3px; }
+.mc-flag { white-space: nowrap; }                     /* a --flag is one word: never broken at its hyphens */
+
+.mc-src { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--lg-edge-out); }
+.mc-srcwhy { margin-bottom: 5px; }
+.mc-srclist { display: flex; flex-direction: column; gap: 1px; }
+.mc-s {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  transition: background-color 120ms steps(2), color 120ms steps(2);
+}
+.mc-s:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.mc-s.on { background: var(--lg-acc-soft); color: var(--lg-acc); }
+.mc-sico {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: var(--lg-tile);
+  color: var(--lg-ink);
+  font-size: 10px;
+  font-weight: 600;
+}
+.mc-sico:has(img) { background: transparent; }
+.mc-sico img { width: 16px; height: 16px; display: block; }
+.mc-stxt { min-width: 0; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-auto { color: var(--lg-ink-3); }
+.mc-foot { margin-top: 8px; }

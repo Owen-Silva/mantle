@@ -41,11 +41,19 @@
     backdrop: $('backdrop'), bdrop: document.querySelector('.bdrop'),
     left: document.querySelector('.left'), right: document.querySelector('.right'),
     chips: $('chips'), tray: $('tray'),
+    media: $('media'), mchip: $('mchip'), mtog: $('mtog'),
+    mart: document.querySelector('#mchip .mart'), mtxt: document.querySelector('#mchip .mtxt'),
     volume: $('volume'), network: $('network'), battery: $('battery'), clock: $('clock'),
     more: $('more'), pop: $('pop')
   };
   var clkT = el.clock.querySelector('.t');
   var clkD = el.clock.querySelector('.d');
+  /* The ⋯ button's pip: in pill mode it stands in for the status strip (see renderChips). */
+  var morePip = document.createElement('span');
+  morePip.className = 'mpip';
+  morePip.hidden = true;
+  morePip.setAttribute('aria-hidden', 'true');
+  el.more.appendChild(morePip);
 
   /* ================================================================= the bridge */
 
@@ -163,6 +171,16 @@
       n.appendChild(pip); n.appendChild(lbl);
       el.chips.appendChild(n);
     });
+    /* PILL MODE HAS NO STRIP (2026-09-22, bar.css): the dock never measured against it, so on a
+       full island the right-most pins were drawn over the pips. One pip on the ⋯ button stands
+       in for all of them, warn-coloured if any is a warning, and its tooltip and its menu say
+       every one in words. In edge mode the strip is shown and the pip is hidden by CSS. */
+    morePip.hidden = !data.length;
+    morePip.classList.toggle('warn', data.some(function (c) { return c.tone === 'warn'; }));
+    el.more.title = data.length
+      ? 'More — ' + data.length + (data.length === 1 ? ' thing needs' : ' things need') + ' attention:\n' +
+        data.map(function (c) { return c.label + ': ' + c.reason; }).join('\n')
+      : 'More';
     layoutDock();      // the strip just changed width, so the centred dock may have less room
   }
 
@@ -215,6 +233,14 @@
        skipped when nothing actually moved. */
     var wasUp = el.body.classList.contains('up');
     revealed = on;
+    /* The media chip's fit is judged only on the LANDED pill: mid-entrance the pill is still
+       narrowing in from 62 % and every measurement says "does not fit" (measured in the mock: a
+       923 px bar at 512 ms of a 1000 px one), which would drop the title on every reveal and bring
+       it back 500 ms later. So it waits for the entrance, and is looked at once more when it ends. */
+    if (on) {
+      mediaFitAfter = Date.now() + d + 40;
+      setTimeout(layoutDock, d + 60);
+    }
     if (wasUp === on) {
       /* A reveal while we are already up means main hid the window under us and is showing it
          again: rewind to the down state with transitions off, then let the entry play from there.
@@ -349,6 +375,9 @@
     var ico = document.createElement('span'); ico.className = 'ico';
     var ind = document.createElement('span'); ind.className = 'ind';   // the running line, see bar.css
     b.appendChild(ico); b.appendChild(ind);
+    // the window flyout's hover dwell (see THE WINDOW FLYOUT below); cells are reused, so once each
+    b.addEventListener('mouseenter', function () { flyCellEnter(b); });
+    b.addEventListener('mouseleave', function () { flyCellLeave(b); });
     return b;
   }
 
@@ -374,7 +403,11 @@
     if (!it.icon) tip += '\n(no icon: ' + (it.iconReason || 'the sidecar gave no reason') + ')';
     if (wins.length > 1) tip += '\n(right-click: the window list)';
     if (it.kind === 'pinned') tip += '\n(middle-click: new window)';
-    if (b.title !== tip) { b.title = tip; b.setAttribute('aria-label', name); }
+    /* While this icon's window flyout is up the tooltip is held back (b._fly): Chromium's tooltip
+       is a window of its own and would open on top of the live previews. It comes back on close. */
+    b._tip = tip;
+    var shown = b._fly ? '' : tip;
+    if (b.title !== shown) { b.title = shown; b.setAttribute('aria-label', name); }
 
     var ico = b.firstChild;
     var want = it.icon || '';
@@ -467,6 +500,8 @@
 
     // the app whose windows are listed has gone away: its popover would be lying
     if (popKey && popKey.indexOf('app:') === 0 && !cells[popKey.slice(4)]) closePop();
+    // ...and one whose windows changed (one closed, one opened, a title moved on) is redrawn
+    flyRefresh();
 
     layoutDock();
   }
@@ -526,8 +561,12 @@
     /* The chip strip is NOT part of the wall the dock measures against: chips are the bar talking
        about problems, and the "apps clipped" chip was widening the very cluster it measured
        (a 136 -> 0 -> 355 px loop, live 2026-09-21). The wall is the first real control. */
+    /* The now-playing chip IS a real control (2026-09-22), and it sits left of the tray, so while
+       it shows it is the wall; it measured 0 wide (hidden) otherwise. Like the tray, its left edge
+       never moves with the chips: the island is right-anchored and the chips are to its left. */
     var tray = $('tray'), vol = $('volume');
-    var anchor = (tray && tray.getBoundingClientRect().width > 0) ? tray : (vol || el.right);
+    var anchor = (el.media && el.media.getBoundingClientRect().width > 0) ? el.media
+      : (tray && tray.getBoundingClientRect().width > 0) ? tray : (vol || el.right);
     var rightStart = anchor ? anchor.getBoundingClientRect().left : r.right - 8;
     var spanL = leftEnd + 8, spanR = rightStart - 8;
     return {
@@ -584,9 +623,12 @@
     var m = measure();
     if (!m) return;
     var need = needWidth();
-    var key = m.w + ':' + need;
-    /* Already settled at this width with this many icons? Then this resize is something INSIDE
-       the bar changing width — our own chip, a new tray icon — and the settled answer stands. */
+    /* The wall is in the key since the media chip (2026-09-22): it can appear, or change width with
+       every track, without the bar's width or the icon count changing, and the dock must move for
+       it. Safe from the old 136 -> 0 -> 355 loop because the chips never move the wall (above). */
+    var key = m.w + ':' + need + ':' + Math.round(m.spanR);
+    /* Already settled at this width, with this many icons, against this wall? Then this resize is
+       something INSIDE the bar changing width (our own status chips) and the settled answer stands. */
     applyDock(key === lastKey ? frozen : decide(m, need));
     if (settleTimer) clearTimeout(settleTimer);
     settleTimer = setTimeout(settleDock, 50);
@@ -597,7 +639,13 @@
     var m = measure();
     if (!m) return;
     var need = needWidth();
-    var key = m.w + ':' + need;
+    /* The media chip is judged FIRST: if it gives up its title, the wall moves and the dock is
+       judged against the new one, so "apps hidden" is never raised for the instant between. */
+    if (revealed && Date.now() >= mediaFitAfter && mediaFit(m, need)) {
+      m = measure();
+      if (!m) return;
+    }
+    var key = m.w + ':' + need + ':' + Math.round(m.spanR);
     if (key !== lastKey) {
       lastKey = key;
       frozen = decide(m, need);
@@ -612,6 +660,23 @@
     }
     applyDock(frozen);
   }
+  var mediaFitAfter = 0;               // set by slide(): not before the pill has landed
+
+  /* THE MEDIA CHIP GIVES WAY TO THE APPS (2026-09-22). Measured in the first --test run with a
+     real session: a 1106 px island with 13 pins had a 494 px span for 540 px of icons once the
+     chip's title took its ~160 px, so two pinned apps went. An app Owen launches from matters more
+     than a song title he can see in the card, so when the icons do not fit the chip drops to art +
+     glyph (the title stays in its tooltip), and it takes the title back only when the icons would
+     still fit WITH it. Both sides of that test are the same geometry, so it cannot flap. The ~7 px
+     is the art-to-title gap, which goes with the title. */
+  function mediaFit(m, need) {       // true = it changed the chip, so the wall moved
+    if (!el.media || el.media.hidden) return false;
+    var compact = el.media.classList.contains('compact');
+    var textW = Math.min(el.mtxt.scrollWidth, 162) + 7;   // .mchip's 200 max - art, gap, padding
+    if (!compact && need > m.span) { el.media.classList.add('compact'); return true; }
+    if (compact && need <= m.span - textW) { el.media.classList.remove('compact'); return true; }
+    return false;
+  }
 
   /* act(): fire a bridge call for a click and, if it fails, put the reason in the bar.
      Every user action goes through here, so no click can ever do nothing without saying why. */
@@ -621,30 +686,409 @@
     });
   }
 
-  /* THE WINDOW LIST, and one function for it: the right-click opens it directly, and a left click
-     opens it when main replies action:'list'. Two callers, one popover \u2014 if they were built
-     separately they would drift, and a taskbar where the two ways of reaching the same list look
-     different is worse than one that only has one way. */
+  /* ================================================================= THE WINDOW FLYOUT
+
+     Windows 11's taskbar previews (2026-09-22). Owen: "if you hover your mouse over an app that is
+     open you can see the tabs that are open and choose between them ... and you can see what's
+     happening in that app on a small screen". Hover a RUNNING app's icon for 400 ms and a flyout
+     rises above it with one card per window of that app: the app's icon, the window's title, a
+     close button, and a LIVE picture of the window. Click a card to go to that window; the X sends
+     the window its own close (WM_CLOSE through the sidecar), never a process kill.
+
+     PER WINDOW, NOT PER TAB: Windows only knows windows. A browser's tabs are drawn inside one
+     window and the OS has no handle, title or picture for a background tab, so a browser with
+     three windows gets three cards, and a browser with one window and thirty tabs gets one.
+
+     THE PICTURES ARE NOT IN THIS PAGE. Main asks DWM to draw each window straight into the bar
+     window, on top of the card's empty box (lib/thumbs.js, 'bar.thumbs'), so all this page does
+     is measure the boxes and send them. DWM paints OVER the page, which is why nothing may sit on
+     top of a box (the X lives in the header row) and why every road that moves or removes the
+     boxes also takes the pictures down (main does that on every bar.popover, hide and park).
+     Whatever DWM cannot draw comes back with a reason and the box says it in words.
+
+     ONE POPOVER, THREE WAYS IN: the hover dwell, a left click when main answers action:'list'
+     (two or more windows, where Windows shows these same previews), and the right-click. They
+     used to open a plain list of titles; if the ways in were built separately they would drift,
+     and a taskbar where two routes to the same windows look different is worse than one route.
+     A flyout that the HOVER opened closes when the pointer leaves the icon and the flyout; one a
+     click opened stays until a click elsewhere or Escape, like every other popover here. */
+
+  var FLY_DWELL_MS = 400;              // Windows' own hover delay is about this
+  var FLY_LEAVE_MS = 350;              // long enough to cross the 7px gap between icon and flyout
+  var SHOT_W = 200, SHOT_H = 112;      // the preview box at full size (16:9-ish, like Windows')
+  var SHOT_MIN_W = 128;                // below this a picture says nothing; show the list instead
+  var CARD_PAD = 6, CARD_GAP = 6;      // keep in step with .card / .fly-row in bar.css
+
+  var fly = null;                      // the open flyout: {key, cell, by, gen, sig, ready}
+  var flyGen = 0;                      // bumps on every build, so a late reply for an old one is dropped
+  var flyDwell = 0, flyLeave = 0, flyHover = null, flySyncQueued = false;
+
   function cellOf(ev) { return ev.target.closest ? ev.target.closest('.cell') : null; }
   function popKeyOf(b) { return 'app:' + b.dataset.key; }
+  function isFlyKey(k) { return !!(k && k.indexOf('app:') === 0); }
+  function winSig(wins) { return wins.map(function (w) { return String(w.hwnd); }).join(','); }
+
+  function flyCancelLeave() { if (flyLeave) { clearTimeout(flyLeave); flyLeave = 0; } }
+  function flyScheduleLeave() {
+    if (!fly || fly.by !== 'hover') return;
+    flyCancelLeave();
+    flyLeave = setTimeout(function () { flyLeave = 0; if (fly && fly.by === 'hover') closePop(); }, FLY_LEAVE_MS);
+  }
+
+  function flyCellEnter(b) {
+    flyHover = b;
+    flyCancelLeave();
+    if (flyDwell) { clearTimeout(flyDwell); flyDwell = 0; }
+    var running = winsOf(b._item).length > 0;
+    /* A flyout is already up: follow the pointer across the icons with no dwell, the way Windows
+       swaps its previews. A pinned app that is not running has no windows to show, so crossing it
+       starts the same close a leave would (and entering a running one after it cancels that). */
+    if (isFlyKey(popKey)) {
+      if (popKey === popKeyOf(b)) return;
+      if (running) openFly(b, 'hover');
+      else flyScheduleLeave();
+      return;
+    }
+    // Pinned-only apps get their tooltip and no flyout; and a hover never replaces Quick Settings,
+    // the calendar or the overflow menu, which the user opened on purpose.
+    if (!running || popKey || b._noFly) return;
+    flyDwell = setTimeout(function () {
+      flyDwell = 0;
+      if (flyHover === b && !popKey && b.isConnected && winsOf(b._item).length) openFly(b, 'hover');
+    }, FLY_DWELL_MS);
+  }
+
+  function flyCellLeave(b) {
+    if (flyHover === b) flyHover = null;
+    b._noFly = false;
+    if (flyDwell) { clearTimeout(flyDwell); flyDwell = 0; }
+    flyScheduleLeave();
+  }
+
+  el.pop.addEventListener('mouseenter', flyCancelLeave);
+  el.pop.addEventListener('mouseleave', flyScheduleLeave);
+
+  /* Tear down this page's half of a flyout. The pictures are main's half: they go on the
+     bar.popover call that always follows (closePop's shrink, or the next flyout's resize). */
+  function flyTeardown() {
+    if (flyDwell) { clearTimeout(flyDwell); flyDwell = 0; }
+    flyCancelLeave();
+    if (fly && fly.cell) {
+      fly.cell._fly = false;
+      if (fly.cell._tip && fly.cell.title !== fly.cell._tip) fly.cell.title = fly.cell._tip;
+    }
+    fly = null;
+  }
 
   function openAppPop(b, it) {
     if (!it || !winsOf(it).length) return;       // nothing to list; the click itself was the action
-    openPop(popKeyOf(b), b, function (pop) { buildAppPop(pop, it); });
+    openFly(b, 'click');
+  }
+
+  function openFly(b, by) {
+    var it = b._item;
+    if (!it || !winsOf(it).length) return;
+    var key = popKeyOf(b);
+    if (popKey === key && fly) { fly.by = by === 'click' ? 'click' : fly.by; return; }   // already up: a click only takes ownership
+    openPop(key, b, function (pop) { flyBuild(pop, b, it, by); }, { swap: isFlyKey(popKey) })
+      .then(function () { flyRoomReady(key); });
+  }
+
+  /* The window has grown (or failed to, which the popover has already said in a note). Only now
+     are the boxes where they will stay, so this is the first moment their rectangles mean anything. */
+  function flyRoomReady(key) {
+    if (!fly || popKey !== key) return;
+    fly.ready = true;
+    flyQueueSync();
+  }
+
+  /* Measure after layout: two frames, so a resize the window just went through has reached the
+     page's own geometry. Coalesced, because a resize, a transition end and a rebuild can all ask
+     in the same frame. */
+  function flyQueueSync() {
+    if (flySyncQueued) return;
+    flySyncQueued = true;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { flySyncQueued = false; flySync(); });
+    });
+  }
+  /* A resize while the flyout is up: taller (the popover room arriving) only moves the boxes, so
+     re-send them; a different WIDTH means the placement and the number of cards that fit are both
+     stale, so rebuild. Measured 2026-09-22 in test mode: the bar window went 1282 -> 1106 css px
+     wide AFTER the flyout had been placed (the sidecar's move of the window landed late), which
+     left the flyout hanging off the right edge. */
+  window.addEventListener('resize', function () {
+    if (!fly || !fly.ready) return;
+    if (window.innerWidth !== fly.iw) flyRebuild();
+    else flyQueueSync();
+  });
+  /* The pill's own movement (its entrance, or re-centring after the window changed width) moves the
+     icons: put the flyout back over its icon, then re-send the boxes. Measured 2026-09-22 in test
+     mode: placed mid-transition, the flyout sat 41 css px to the right of its icon. */
+  el.bar.addEventListener('transitionend', function (ev) {
+    if (ev.target !== el.bar || !fly || !fly.ready || !isFlyKey(popKey)) return;
+    if (fly.cell && fly.cell.isConnected) popPlace(fly.cell);
+    flyQueueSync();
+  });
+
+  function flyBuild(pop, b, it, by) {
+    var wins = winsOf(it);
+    fly = { key: popKeyOf(b), cell: b, by: by, gen: ++flyGen, sig: winSig(wins), ready: false, iw: window.innerWidth };
+    b._fly = true;
+    if (b.title) b.title = '';          // see updateCell: no tooltip window over the previews
+    pop.classList.add('fly');
+
+    /* As many full-size cards as fit across the bar window; past that they shrink, and past the
+       smallest useful size the flyout falls back to the list of titles -- a row of postage
+       stamps would be a picture of nothing, and a row that ran off the window would hide
+       windows without saying so. */
+    var avail = window.innerWidth - 16 - 2 * 9;   // .pop's 8px inset each side, its padding and border
+    var n = wins.length, sw = SHOT_W;
+    function need(w) { return n * (w + 2 * CARD_PAD) + (n - 1) * CARD_GAP; }
+    while (sw > SHOT_MIN_W && need(sw) > avail) sw -= 8;
+    if (need(sw) > avail) {
+      flyList(pop, it, n + ' windows are too many to preview side by side in this bar, so this is the list');
+      return;
+    }
+    var sh = Math.round(sw * SHOT_H / SHOT_W);
+    var row = document.createElement('div');
+    row.className = 'fly-row';
+    wins.forEach(function (w) { row.appendChild(flyCard(w, it, sw, sh)); });
+    pop.appendChild(row);
+  }
+
+  function flyCard(w, it, sw, sh) {
+    var title = w.title || '(untitled window)';
+    var card = document.createElement('div');
+    card.className = 'card' + (isActive(w) ? ' on' : '') + (w.minimized ? ' min' : '');
+    card.dataset.hwnd = String(w.hwnd);
+    // A FIXED width (border-box): left to itself a card is as wide as its title's max-content,
+    // and one long window title would push the row past the window's edge.
+    card.style.width = (sw + 2 * CARD_PAD) + 'px';
+
+    var head = document.createElement('div'); head.className = 'card-head';
+    var ico = document.createElement('span'); ico.className = 'card-ico';
+    if (it.icon) {
+      var img = document.createElement('img'); img.alt = '';
+      img.onerror = function () { ico.className = 'card-ico tile'; ico.textContent = letterOf(it.name || title); };
+      img.src = it.icon;
+      ico.appendChild(img);
+    } else {
+      ico.className = 'card-ico tile';
+      ico.textContent = letterOf(it.name || title);
+    }
+    // the full title on the TITLE only: a tooltip anywhere else would open over the picture
+    var name = document.createElement('span'); name.className = 'card-title'; name.textContent = title;
+    name.title = title + (w.minimized ? '\n(minimized)' : '');
+    var x = document.createElement('button');
+    x.type = 'button'; x.className = 'x'; x.title = 'Close this window'; x.textContent = '×';
+    head.appendChild(ico); head.appendChild(name); head.appendChild(x);
+
+    // The box DWM draws into. Until main answers it says what is happening; if main answers
+    // without a picture it says why. It is never an unexplained grey rectangle.
+    var shot = document.createElement('div'); shot.className = 'card-shot';
+    shot.style.width = sw + 'px'; shot.style.height = sh + 'px';
+    var why = document.createElement('span'); why.className = 'card-why';
+    why.textContent = 'asking Windows for a live picture…';
+    shot.appendChild(why);
+
+    card.appendChild(head); card.appendChild(shot);
+
+    card.addEventListener('click', function (ev) {
+      if (ev.target.closest && ev.target.closest('.x')) return;
+      closePop();
+      // the one you are in minimises, like clicking its taskbar icon; any other one comes forward
+      act('bar.window', { hwnd: w.hwnd, action: isActive(w) ? 'toggle' : 'focus' }, 'window');
+    });
+    x.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      flyClose(card, w, why, x);
+    });
+    return card;
+  }
+
+  /* The X: ask the WINDOW to close (WM_CLOSE), and keep the flyout up the way Windows does, so the
+     card goes when the window actually goes (the windows push rebuilds the flyout). A window that
+     answers with a "save changes?" prompt stays open: its card says "still open" and its live
+     picture shows the prompt. A close the sidecar REFUSED is held in words (.held): the picture
+     comes off so the reason can be read. */
+  function flyClose(card, w, why, x) {
+    x.disabled = true;
+    card.classList.add('closing');
+    callR('bar.window', { hwnd: w.hwnd, action: 'close' }).then(function () {
+      clearFail('act');
+      setTimeout(function () {
+        if (!card.isConnected || card.classList.contains('gone')) return;
+        card.classList.remove('closing');
+        card.classList.add('stillopen');
+        x.disabled = false;
+      }, 4000);
+    }, function (e) {
+      card.classList.remove('closing', 'live');
+      card.classList.add('fail', 'held');
+      x.disabled = false;
+      fail('act', 'close failed', 'bar.window close was refused: ' + msg(e), 'warn');
+      why.textContent = 'not closed: ' + msg(e);
+      flyQueueSync();   // resend without this card, so main takes its picture off the words
+    });
+  }
+
+  /* Send main the box of every card that should carry a picture: all of them except a window
+     that has gone and a card held in words (above). A card whose picture failed IS sent again,
+     so a failure that was only momentary heals on the next resize or rebuild. */
+  function flySync() {
+    if (!fly || !fly.ready || !isFlyKey(popKey)) return;
+    if (window.innerWidth !== fly.iw) { flyRebuild(); return; }   // see the resize listener
+    var gen = fly.gen, items = [], vh = window.innerHeight, vw = window.innerWidth;
+    var cards = el.pop.querySelectorAll('.card');
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      if (c.classList.contains('gone') || c.classList.contains('held')) continue;
+      var r = c.querySelector('.card-shot').getBoundingClientRect();
+      /* A box outside the window cannot carry a picture (DWM would draw it over the bar or off
+         the window). It says so, and the next resize -- the room still arriving -- asks again. */
+      if (r.top < 0 || r.left < 0 || r.bottom > vh + 1 || r.right > vw + 1) {
+        c.classList.remove('live');
+        c.classList.add('fail');
+        c.querySelector('.card-why').textContent = 'no live picture yet: this card is outside the bar window, which is still being resized';
+        continue;
+      }
+      items.push({ hwnd: c.dataset.hwnd, x: r.left, y: r.top, w: r.width, h: r.height });
+    }
+    call('bar.thumbs', { items: items, dpr: window.devicePixelRatio || 1 }).then(function (res) {
+      if (fly && fly.gen === gen) flyPaint(res);
+    }, function (e) {
+      if (fly && fly.gen === gen) flyPaint({ ok: false, reason: 'no live picture: bar.thumbs was refused: ' + msg(e), thumbs: [] });
+    });
+  }
+
+  function flyPaint(res) {
+    var by = Object.create(null);
+    ((res && res.thumbs) || []).forEach(function (t) { by[String(t.hwnd)] = t; });
+    var cards = el.pop.querySelectorAll('.card');
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i], t = by[c.dataset.hwnd];
+      if (!t) continue;                                  // not sent (gone, or held in words)
+      var why = c.querySelector('.card-why');
+      c.classList.toggle('live', !!t.ok);
+      c.classList.toggle('fail', !t.ok);
+      if (t.gone) c.classList.add('gone');
+      why.textContent = t.ok ? '' : (t.reason || (res && res.reason) || 'no live picture, and Mantle was not told why');
+    }
+    if (res && res.ok === false && res.reason && !Object.keys(by).length) {
+      // refused before any card was looked at: every box says it
+      for (var j = 0; j < cards.length; j++) {
+        cards[j].classList.add('fail');
+        cards[j].querySelector('.card-why').textContent = res.reason;
+      }
+    }
+  }
+
+  /* main dropped the pictures of windows that just closed; say so in their cards at once (the
+     rebuild follows with the next pinned push, a few hundred ms later) */
+  on('bar.thumbs.gone', function (p) {
+    if (!fly || !p || !Array.isArray(p.hwnds)) return;
+    p.hwnds.forEach(function (h) {
+      var c = el.pop.querySelector('.card[data-hwnd="' + String(h).replace(/[^0-9]/g, '') + '"]');
+      if (!c) return;
+      c.classList.remove('live', 'closing');
+      c.classList.add('gone');
+      c.querySelector('.card-why').textContent = 'this window has closed';
+    });
+  });
+
+  /* The pinned list was pushed again. Same windows: update titles and the active mark in place,
+     no rebuild, no flicker. Different windows: rebuild the flyout where it stands. No windows left:
+     close it. */
+  function flyRefresh() {
+    if (!fly || !isFlyKey(popKey)) return;
+    var b = cells[popKey.slice(4)];
+    var wins = b ? winsOf(b._item) : [];
+    if (!b || !wins.length) { closePop(); return; }
+    if (winSig(wins) === fly.sig) {
+      wins.forEach(function (w) {
+        var c = el.pop.querySelector('.card[data-hwnd="' + String(w.hwnd).replace(/[^0-9]/g, '') + '"]');
+        if (!c) return;
+        var t = w.title || '(untitled window)';
+        var n = c.querySelector('.card-title');
+        if (n && n.textContent !== t) { n.textContent = t; c.title = t + (w.minimized ? '\n(minimized)' : ''); }
+        c.classList.toggle('on', isActive(w));
+        c.classList.toggle('min', !!w.minimized);
+      });
+      return;
+    }
+    flyRebuild();
+  }
+
+  /* Build the open flyout again where it stands (its windows changed, or the bar window changed
+     width). Same key, same owner; openPop's swap path keeps the window grown. */
+  function flyRebuild() {
+    if (!fly || !isFlyKey(popKey)) return;
+    var b = cells[popKey.slice(4)];
+    if (!b || !winsOf(b._item).length) { closePop(); return; }
+    var by = fly.by;
+    openPop(popKey, b, function (pop) { flyBuild(pop, b, b._item, by); }, { swap: true, rebuild: true })
+      .then(function () { flyRoomReady(popKeyOf(b)); });
+  }
+
+  /* The fallback for more windows than fit as pictures: the plain list of titles this popover
+     was before it had previews, with the reason it is a list on top. */
+  function flyList(pop, it, why) {
+    pop.classList.add('list');
+    var h = document.createElement('h3');
+    h.textContent = it.name || it.exe || 'windows';
+    pop.appendChild(h);
+    var note = document.createElement('div');
+    note.className = 'sub';
+    note.textContent = why;
+    pop.appendChild(note);
+    winsOf(it).forEach(function (w) {
+      var title = w.title || '(untitled window)';
+      var row = document.createElement('div'); row.className = 'wrow';
+      var open = document.createElement('button');
+      open.type = 'button';
+      /* .on carries the accent bar (the active window); .min mutes a minimized one to --lg-ink-3,
+         so the list reads at a glance the way the taskbar itself does. */
+      open.className = 'item' + (isActive(w) ? ' on' : '') + (w.minimized ? ' min' : '');
+      open.textContent = title;
+      open.title = title + (w.minimized ? '\n(minimized)' : '');
+      open.addEventListener('click', function () {
+        closePop();
+        act('bar.window', { hwnd: w.hwnd, action: isActive(w) ? 'toggle' : 'focus' }, 'window');
+      });
+      var x = document.createElement('button');
+      x.type = 'button'; x.className = 'x'; x.title = 'Close this window'; x.textContent = '×';
+      x.addEventListener('click', function () {
+        closePop();
+        act('bar.window', { hwnd: w.hwnd, action: 'close' }, 'window');
+      });
+      row.appendChild(open); row.appendChild(x);
+      pop.appendChild(row);
+    });
   }
 
   /* LEFT CLICK = Windows 11's own semantics, and main decides which one applies: focus a window,
-     minimize the one that is already focused, launch the app if it is not running \u2014 or, when
+     minimize the one that is already focused, launch the app if it is not running — or, when
      there are two or more windows, hand the decision back with action:'list', because only the
      renderer can put a popover under the icon that was clicked. */
   el.dock.addEventListener('click', function (ev) {
     var b = cellOf(ev);
     if (!b) return;
-    /* Clicking the icon whose list is already open just closes it (closePop() below clears popKey,
-       so the toggle has to be read first). */
-    var wasOpen = (popKey === popKeyOf(b));
-    closePop();
-    if (wasOpen) return;
+    b._noFly = true;                 // no dwell-opened flyout on the icon just clicked, until the pointer leaves it
+    if (flyDwell) { clearTimeout(flyDwell); flyDwell = 0; }
+    /* The HOVER flyout for this icon is already showing the previews. Two or more windows: that
+       is exactly what the click would open, so the click just keeps it (it stops closing on
+       leave). One window: fall through, and the click does what it always did. */
+    if (fly && popKey === popKeyOf(b) && fly.by === 'hover') {
+      if (winsOf(b._item).length >= 2) { fly.by = 'click'; return; }
+      closePop();
+    } else {
+      /* Clicking the icon whose list is already open just closes it (closePop() below clears popKey,
+         so the toggle has to be read first). */
+      var wasOpen = (popKey === popKeyOf(b));
+      closePop();
+      if (wasOpen) return;
+    }
     act('bar.open', { id: b.dataset.id }, 'open').then(function (r) {
       if (r && r.action === 'list') openAppPop(b, b._item);
     });
@@ -662,42 +1106,34 @@
     act('bar.open', { id: b.dataset.id, fresh: true }, 'open');
   });
 
-  /* RIGHT CLICK = the list, always, whatever main would have done with a left click. */
+  /* RIGHT CLICK = the window flyout, always, whatever main would have done with a left click. If
+     the hover already opened it, the right-click keeps it open instead of toggling it shut. */
   el.dock.addEventListener('contextmenu', function (ev) {
     var b = cellOf(ev);
     if (!b) return;
     ev.preventDefault();
+    if (flyDwell) { clearTimeout(flyDwell); flyDwell = 0; }
+    if (fly && popKey === popKeyOf(b)) { fly.by = 'click'; return; }
     openAppPop(b, b._item);
   });
 
-  function buildAppPop(pop, it) {
-    var h = document.createElement('h3');
-    h.textContent = it.name || it.exe || 'windows';
-    pop.appendChild(h);
-    winsOf(it).forEach(function (w) {
-      var title = w.title || '(untitled window)';
-      var row = document.createElement('div'); row.className = 'wrow';
-      var open = document.createElement('button');
-      open.type = 'button';
-      /* .on carries the accent bar (the active window); .min mutes a minimized one to --lg-ink-3,
-         so the list reads at a glance the way the taskbar itself does. */
-      open.className = 'item' + (isActive(w) ? ' on' : '') + (w.minimized ? ' min' : '');
-      open.textContent = title;
-      open.title = title + (w.minimized ? '\n(minimized)' : '');
-      open.addEventListener('click', function () {
-        closePop();
-        act('bar.window', { hwnd: w.hwnd, action: isActive(w) ? 'toggle' : 'focus' }, 'window');
-      });
-      var x = document.createElement('button');
-      x.type = 'button'; x.className = 'x'; x.title = 'Close this window'; x.textContent = '\u00d7';
-      x.addEventListener('click', function () {
-        closePop();
-        act('bar.window', { hwnd: w.hwnd, action: 'close' }, 'window');
-      });
-      row.appendChild(open); row.appendChild(x);
-      pop.appendChild(row);
+  /* TEST HOOK (--test only: main sends this only in test mode). Opens the flyout of the first
+     running app whose name or exe contains `match`, through the same openFly the hover dwell uses,
+     so a test run can photograph the real flyout without anyone's mouse moving. */
+  on('bar.test.flyout', function (p) {
+    var match = String((p && p.match) || '').toLowerCase();
+    var keys = Object.keys(cells), hit = null;
+    // the NAME first, then the exe: several apps can share an exe (every Electron app is electron.exe)
+    ['name', 'exe'].forEach(function (field) {
+      for (var i = 0; i < keys.length && !hit; i++) {
+        var it = cells[keys[i]]._item;
+        if (!it || !winsOf(it).length) continue;
+        if (!match || String(it[field] || '').toLowerCase().indexOf(match) !== -1) hit = cells[keys[i]];
+      }
     });
-  }
+    if (!hit) { fail('flytest', 'no flyout', 'the test hook found no running app matching "' + match + '"', 'warn'); return; }
+    openFly(hit, 'hover');
+  });
 
   if (window.ResizeObserver) {
     var ro = new ResizeObserver(layoutDock);
@@ -746,9 +1182,29 @@
 
   /* ================================================================= tray */
 
+  /* THE LIST (2026-09-22) comes from the sidecar's UI Automation tray (sidecar/TrayUia.cs):
+     {id, title, icon, exe, promoted, clickable, reason}. Promoted icons are the ones on Windows'
+     own taskbar and are the only ones UIA can click; HIDDEN ones (promoted:false) live in Windows'
+     "show hidden icons" flyout, which does not exist until someone opens it on the real screen, so
+     they cannot be clicked from here at all. They are not dropped: they are listed dimmed in the
+     overflow menu (buildMorePop) with the sidecar's reason on hover, which names the Settings
+     switch that makes them clickable. promoted:null means UIA was unavailable, so nothing is
+     known to be clickable: those stay on the strip, dimmed, with that reason. Main has already
+     left Mantle's own icon out (trayForBar in main.js). */
+  var trayHidden = [];                  // promoted:false icons, for the overflow menu
+  var traySig = null;
+
   function renderTray(list) {
-    el.tray.textContent = '';
     var unavailable = (state && state.tray && state.tray.status === 'unavailable') || trayThrew;
+    /* applyState() calls this on every state push: rebuild only when what is drawn would change,
+       so tray icons never blink (rule 3 at the top). */
+    var sig = (unavailable ? 'U' : 'A') + '\u0001' + (list || []).map(function (it) {
+      return [it.id, it.title, it.clickable, it.promoted, it.reason, (it.icon || '').length, (it.icon || '').slice(-24)].join('\u0002');
+    }).join('\u0001');
+    if (sig === traySig) return;
+    traySig = sig;
+    el.tray.textContent = '';
+    trayHidden = [];
     if (unavailable) {
       /* Nothing on the strip: on this Windows build the notification area cannot be read at all
          (TrayNotifyWnd has no ToolbarWindow32), so a permanent chip would be noise, not news.
@@ -757,23 +1213,97 @@
       return;
     }
     (list || []).forEach(function (it) {
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'btn ti';
-      b.title = it.title || it.id || 'tray icon';
-      if (it.icon) {
-        var img = document.createElement('img'); img.alt = '';
-        img.onerror = function () { b.textContent = letterOf(it.title || it.id); };
-        img.src = it.icon;
-        b.appendChild(img);
-      } else {
-        b.textContent = letterOf(it.title || it.id);
-      }
-      b.addEventListener('click', function () { act('tray.click', { id: it.id, button: 'left' }, 'tray'); });
-      b.addEventListener('contextmenu', function (ev) { ev.preventDefault(); act('tray.click', { id: it.id, button: 'right' }, 'tray'); });
-      el.tray.appendChild(b);
+      if (it.promoted === false) { trayHidden.push(it); return; }
+      el.tray.appendChild(trayButton(it, function (reason) {
+        fail('trayclick', 'can’t click ' + (it.title || 'that icon'), reason, 'warn');
+      }));
     });
     layoutDock();
+  }
+
+  /* One tray icon as a button, on the strip or in the overflow. `onRefuse(reason)` is how the
+     caller says "this one cannot be clicked" out loud; nothing is ever sent for such an icon. */
+  function trayButton(it, onRefuse) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    var name = it.title || it.tooltip || it.id || 'tray icon';
+    var can = it.clickable !== false;
+    b.className = 'btn ti' + (can ? '' : ' off');
+    b.title = can ? name : name + '\n\n' + (it.reason || 'Mantle cannot click this icon, and the sidecar did not say why');
+    b.setAttribute('aria-label', name);
+    if (!can) b.setAttribute('aria-disabled', 'true');
+    var ico = document.createElement('span');
+    ico.className = 'tico';
+    b.appendChild(ico);
+    if (it.icon) {
+      var img = document.createElement('img'); img.alt = '';
+      img.onerror = function () { ico.textContent = letterOf(name); ico.classList.add('letter'); };
+      img.src = it.icon;
+      ico.appendChild(img);
+      toneOf(it.icon, function (tone, why) {
+        if (tone === 'light') b.classList.add('light');
+        if (why) b.title += '\n(its contrast could not be checked, so it is drawn as it came: ' + why + ')';
+      });
+    } else {
+      ico.textContent = letterOf(name);
+      ico.classList.add('letter');
+    }
+    b.addEventListener('click', function () {
+      if (!can) { onRefuse(it.reason || 'Mantle cannot click ' + name + ', and the sidecar did not say why'); return; }
+      act('tray.click', { id: it.id, button: 'left' }, 'tray');
+    });
+    b.addEventListener('contextmenu', function (ev) {
+      ev.preventDefault();
+      if (!can) { onRefuse(it.reason || 'Mantle cannot click ' + name + ', and the sidecar did not say why'); return; }
+      act('tray.click', { id: it.id, button: 'right' }, 'tray');    // the sidecar says why menus are unreachable
+    });
+    return b;
+  }
+
+  /* WHITE TRAY ICONS (2026-09-22). Windows Update's and Tailscale's icons are drawn white, for
+     Windows' DARK taskbar, and on this light glass they all but vanish. Each icon is measured once
+     (cached by its data URL, so the 5 s tray poll costs nothing): the mean luminance of its pixels
+     WEIGHTED BY ALPHA. Not "opaque pixels only": measured on Owen's tray the same day, Tailscale's
+     disconnected icon is nine white dots with NO pixel above alpha 128, so an opaque-only mean saw
+     nothing at all (alpha-weighted it is 1.00; Windows Update's restart icon 0.54, Lively 0.34,
+     Windhawk 0.41, Windows Security 0.53). A light one sits on a small dark plate (bar.css .ti.light). A plate rather than
+     tinting the icon dark, because a tint repaints EVERY pixel one colour: it would erase the
+     coloured badge Windows Update puts on its icon when a restart is due, which is the part that
+     carries the news. data: URLs never taint a canvas, so getImageData is allowed here. */
+  var LIGHT_LUMA = 0.75;                // 0..1; a white glyph measures ~1.0, every coloured icon here 0.34-0.54
+  var tones = Object.create(null);      // icon data URL -> {v, why}, or an array of waiters
+  function toneOf(src, done) {
+    var t = tones[src];
+    if (t && !Array.isArray(t)) { done(t.v, t.why); return; }
+    if (t) { t.push(done); return; }
+    tones[src] = [done];
+    var img = new Image();
+    function settle(v, why) {
+      var waiters = tones[src];
+      tones[src] = { v: v, why: why || null };
+      (Array.isArray(waiters) ? waiters : []).forEach(function (f) { try { f(v, why || null); } catch (e) { /* one caller's bug is not another's */ } });
+    }
+    img.onload = function () {
+      var v = 'normal', why = null;
+      try {
+        var w = img.naturalWidth || 16, h = img.naturalHeight || 16;
+        var c = document.createElement('canvas'); c.width = w; c.height = h;
+        var g = c.getContext('2d', { willReadFrequently: true });
+        g.drawImage(img, 0, 0);
+        var d = g.getImageData(0, 0, w, h).data, cover = 0, sum = 0;
+        for (var i = 0; i < d.length; i += 4) {
+          var a = d[i + 3] / 255;
+          cover += a;
+          sum += a * (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+        }
+        if (cover >= 6 && sum / cover > LIGHT_LUMA) v = 'light';
+      } catch (e) {
+        why = msg(e);
+      }
+      settle(v, why);
+    };
+    img.onerror = function () { settle('normal'); };   // the <img> itself falls back to a letter
+    img.src = src;
   }
   var trayThrew = '';
 
@@ -787,6 +1317,8 @@
        pushing the whole system state at a closed popover every 2 seconds, on a bar whose entire
        point is that it costs nothing at rest. */
     if (popKey === 'qs') { qsPaint = null; qsWatch(false); }
+    if (popKey === 'media') { mediaPaint = null; mediaNote = ''; mediaRoom = 0; }
+    if (isFlyKey(popKey)) flyTeardown();
     popKey = null;
     el.pop.hidden = true;
     el.pop.className = 'pop';          // drop any per-panel class (.cal)
@@ -797,11 +1329,21 @@
     if (!pointerIn) hover(false);
   }
 
-  function openPop(key, anchor, build) {
-    if (popKey === key) { closePop(); return; }
-    closePop();
+  /* Returns the bar.popover promise, so a popover that needs the grown window (the flyout's live
+     previews measure their boxes in it) can wait for the room to be there. */
+  function openPop(key, anchor, build, opts) {
+    var o = opts || {};
+    if (popKey === key && !o.rebuild) { closePop(); return Promise.resolve(null); }
+    /* A flyout replacing a flyout (the pointer moved on to the next running icon, or that app's
+       windows changed) keeps the window grown: closing first would shrink it and grow it straight
+       back, a visible jump on every icon crossed. The one bar.popover call below resizes it only if
+       the height changed, and main takes the old pictures down on that call. */
+    if (o.swap && isFlyKey(popKey)) { flyTeardown(); el.pop.className = 'pop'; }
+    else closePop();
     popKey = key;
     el.pop.textContent = '';
+    // measured from the left edge: a stale left from the previous popover would squeeze this one
+    el.pop.style.left = '8px';
     el.pop.hidden = false;
     build(el.pop);
 
@@ -809,7 +1351,7 @@
        not by CSS. Ask the main process for room. If that channel does not exist yet, SAY SO in
        the popover instead of letting it silently disappear off the edge of the window. */
     var h = el.pop.offsetHeight + 16;
-    callR('bar.popover', { open: true, height: h, key: key }).catch(function (e) {
+    var room = callR('bar.popover', { open: true, height: h, key: key }).catch(function (e) {
       if (popKey !== key) return;
       var note = document.createElement('div');
       note.className = 'note';
@@ -817,7 +1359,14 @@
       el.pop.appendChild(note);
     });
 
-    /* Horizontal placement: centred under its button, clamped into the bar. */
+    popPlace(anchor);
+    return room;
+  }
+
+  /* Horizontal placement: centred under its button, clamped into the bar. Also run again for an
+     open flyout when the pill finishes moving (see the .bar transitionend listener), because a
+     button measured mid-transition puts the flyout beside its icon instead of over it. */
+  function popPlace(anchor) {
     var a = anchor.getBoundingClientRect();
     var w = el.pop.offsetWidth;
     var left = Math.round(a.left + a.width / 2 - w / 2);
@@ -831,7 +1380,7 @@
     if (!popKey) return;
     if (el.pop.contains(ev.target)) return;
     // the anchors toggle themselves, so a click on one must not also be an outside click
-    if (ev.target.closest && ev.target.closest('#volume, #network, #battery, #clock, #more, .cell')) return;
+    if (ev.target.closest && ev.target.closest('#volume, #network, #battery, #clock, #more, #media, .cell')) return;
     closePop();
   }, true);
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closePop(); });
@@ -1391,6 +1940,349 @@
   el.clock.addEventListener('click', function () { openPop('cal', el.clock, buildCalPop); });
   el.clock.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openPop('cal', el.clock, buildCalPop); });
 
+  /* ================================================================= now playing
+
+     The chip in the right island and the card behind it (2026-09-22). MAIN does the choosing
+     and the guarding (main.js, NOW PLAYING): which session is shown, whether the LessonPlayer rule has
+     taken its controls away, and main refuses a control aimed at an LessonPlayer session whatever this
+     page sends. This page draws what it is given, and every button names its session by AUMID.
+
+     Idle cost stays ~0: the chip changes only when main pushes 'media' (the sidecar's change
+     events, never a poll), and the card's progress bar ticks from a local clock ONLY while the
+     card is open and the session is playing. */
+  var media = null;              // main's last 'media' payload
+  var mediaAt = 0;               // when it arrived: positionNowMs was true at about this moment
+  var mediaPaint = null;         // repaints the open card in place, or null
+  var mediaNote = '';            // the last refusal, said in the card until the next success
+  var mediaBusy = '';            // the action in flight, so a double click sends one
+  var mediaRoom = 0;             // the popover height last asked of main for the card
+
+  var MEDIA_SVG = {
+    play: '<path d="M5 3.2v9.6a.6.6 0 0 0 .92.5l7.3-4.8a.6.6 0 0 0 0-1l-7.3-4.8A.6.6 0 0 0 5 3.2z" fill="currentColor"/>',
+    pause: '<rect x="4" y="3" width="2.8" height="10" rx=".7" fill="currentColor"/><rect x="9.2" y="3" width="2.8" height="10" rx=".7" fill="currentColor"/>',
+    next: '<path d="M3 3.6v8.8a.55.55 0 0 0 .85.46L10 8.46a.55.55 0 0 0 0-.92L3.85 3.14A.55.55 0 0 0 3 3.6z" fill="currentColor"/><rect x="11.2" y="3" width="1.8" height="10" rx=".6" fill="currentColor"/>',
+    previous: '<path d="M13 3.6v8.8a.55.55 0 0 1-.85.46L6 8.46a.55.55 0 0 1 0-.92l6.15-4.4A.55.55 0 0 1 13 3.6z" fill="currentColor"/><rect x="3" y="3" width="1.8" height="10" rx=".6" fill="currentColor"/>',
+    note: '<path d="M6 11.6V3.9l6.4-1.4v7.3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="4.6" cy="11.8" r="1.6" fill="currentColor"/><circle cx="11" cy="10.2" r="1.6" fill="currentColor"/>'
+  };
+  var VERB = { toggle: 'play/pause', play: 'play', pause: 'pause', next: 'next track', previous: 'previous track' };
+
+  function mediaShown() { return media && media.ok !== false && media.shown ? media.shown : null; }
+  function mediaApp(s) { return (s && s.app && s.app.name) || (s && s.aumid) || 'this app'; }
+  function mediaLine(s) {
+    var t = s.title || mediaApp(s);
+    return s.artist ? t + ' · ' + s.artist : t;
+  }
+  function mediaStatus(s) {
+    var st = String((s && s.status) || 'unknown');
+    return st.charAt(0).toUpperCase() + st.slice(1);
+  }
+  function mediaGuarded(s) { return !!(s && s.controls && s.controls.ok === false); }
+
+  /* {ok, why}: may this button be pressed for this session, and if not, why not, in words. */
+  function mediaCan(s, action) {
+    if (!s) return { ok: false, why: 'nothing is playing' };
+    if (mediaGuarded(s)) return { ok: false, why: s.controls.reason || 'controls are off for this session' };
+    var c = s.can;
+    if (!c) return { ok: false, why: mediaApp(s) + ' did not say which buttons it accepts' };
+    var yes = action === 'toggle' ? (c.toggle || (s.playing ? c.pause : c.play)) : !!c[action];
+    return yes ? { ok: true, why: null } : { ok: false, why: mediaApp(s) + ' does not accept ' + VERB[action] + ' right now' };
+  }
+
+  /* A refusal goes where the eye is: into the open card, or a chip when it came from the bar. */
+  function mediaSay(text, where) {
+    if (where === 'card' && popKey === 'media') { mediaNote = text; if (mediaPaint) mediaPaint(); }
+    else fail('mediactl', 'play/pause refused', text, 'warn');
+  }
+
+  function mediaDo(action, where) {
+    var s = mediaShown();
+    var can = mediaCan(s, action);
+    if (!can.ok) { mediaSay(can.why, where); return; }
+    if (mediaBusy) return;
+    mediaBusy = action;
+    if (mediaPaint) mediaPaint();
+    callR('media.control', { aumid: s.aumid, action: action }).then(function () {
+      mediaNote = '';
+      clearFail('mediactl');
+    }, function (e) {
+      mediaSay(VERB[action] + ' did not happen: ' + msg(e), where);
+    }).then(function () {
+      mediaBusy = '';
+      if (mediaPaint) mediaPaint();
+    });
+  }
+
+  /* The artwork, else the app's own icon on a tile, else a note glyph. Keyed on the source so a
+     push that changed only the position never re-creates the <img>. */
+  function paintArt(box, s) {
+    var src = s.artwork || (s.app && s.app.icon) || null;
+    var kind = s.artwork ? 'art' : (src ? 'app' : 'none');
+    box.title = s.artwork ? '' : (s.artworkReason ? 'no artwork: ' + s.artworkReason : '');
+    if (box._src === src && box.dataset.kind === kind) return;
+    box._src = src;
+    box.dataset.kind = kind;
+    box.textContent = '';
+    if (src) {
+      var img = document.createElement('img'); img.alt = '';
+      img.onerror = function () { box.dataset.kind = 'none'; box.innerHTML = svg(MEDIA_SVG.note, 12); };
+      img.src = src;
+      box.appendChild(img);
+    } else {
+      box.innerHTML = svg(MEDIA_SVG.note, 12);
+    }
+  }
+
+  function renderMedia(p) {
+    media = p || null;
+    mediaAt = Date.now();
+    if (media && media.ok === false) fail('media', 'now playing off', media.reason || 'now playing could not be read, and main gave no reason', 'warn');
+    else clearFail('media');
+    var s = mediaShown();
+    el.media.hidden = !s;
+    if (!s) {
+      if (popKey === 'media') closePop();
+      layoutDock();
+      return;
+    }
+    el.media.classList.toggle('paused', !s.playing);
+    paintArt(el.mart, s);
+    el.mtxt.textContent = mediaLine(s);
+    el.mchip.title = mediaLine(s) + '\n' + mediaApp(s) + ' · ' + mediaStatus(s) +
+      (mediaGuarded(s) ? '\n' + s.controls.reason : '') + '\nClick for the media card';
+    /* Under the LessonPlayer rule there is no glyph at all, not a greyed one: a button that is there
+       invites exactly the stray click the rule exists to stop. The card says why. */
+    var guarded = mediaGuarded(s);
+    el.mtog.hidden = guarded;
+    if (!guarded) {
+      var can = mediaCan(s, 'toggle');
+      var glyph = s.playing ? 'pause' : 'play';
+      if (el.mtog.dataset.glyph !== glyph) { el.mtog.innerHTML = svg(MEDIA_SVG[glyph], 12); el.mtog.dataset.glyph = glyph; }
+      el.mtog.classList.toggle('off', !can.ok);
+      el.mtog.title = can.ok ? (s.playing ? 'Pause ' : 'Play ') + mediaApp(s) : can.why;
+      el.mtog.setAttribute('aria-label', el.mtog.title);
+    }
+    layoutDock();
+    if (popKey === 'media' && mediaPaint) mediaPaint();
+  }
+
+  function fmtMs(ms) {
+    var t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60;
+    return (h ? h + ':' + pad(m) : String(m)) + ':' + pad(x);
+  }
+  /* Where the track is NOW: the sidecar's estimate at read time, moved on by the local clock
+     while playing. Null when the app publishes no position (the card says so instead). */
+  function mediaPos(s) {
+    var t = s && s.timeline;
+    if (!t || !t.available || !(t.durationMs > 0)) return null;
+    var pos = Number(t.positionNowMs != null ? t.positionNowMs : t.positionMs) || 0;
+    if (s.playing) pos += (Date.now() - mediaAt) * (Number(s.rate) || 1);
+    return { pos: Math.max(0, Math.min(t.durationMs, pos)), dur: t.durationMs };
+  }
+
+  function mk(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function buildMediaPop(pop) {
+    pop.classList.add('mcard');
+    var head = mk('div', 'mc-head'), art = mk('div', 'mc-art'), meta = mk('div', 'mc-meta');
+    var title = mk('div', 'mc-title'), artist = mk('div', 'mc-artist');
+    var app = mk('div', 'mc-app'), appIco = mk('span', 'mc-appico'), appTxt = mk('span', 'mc-apptxt');
+    app.appendChild(appIco); app.appendChild(appTxt);
+    meta.appendChild(title); meta.appendChild(artist); meta.appendChild(app);
+    head.appendChild(art); head.appendChild(meta);
+    pop.appendChild(head);
+
+    var prog = mk('div', 'mc-prog'), track = mk('div', 'mc-bar'), fill = mk('div', 'mc-fill');
+    var times = mk('div', 'mc-times'), tNow = mk('span'), tDur = mk('span');
+    track.appendChild(fill); times.appendChild(tNow); times.appendChild(tDur);
+    prog.appendChild(track); prog.appendChild(times);
+    var progWhy = mk('div', 'sub mc-progwhy');
+    pop.appendChild(prog); pop.appendChild(progWhy);
+
+    var ctl = mk('div', 'mc-ctl'), btns = {};
+    ['previous', 'toggle', 'next'].forEach(function (a) {
+      var b = mk('button', 'mc-btn' + (a === 'toggle' ? ' main' : ''));
+      b.type = 'button';
+      /* aria-disabled, not disabled: a disabled button swallows the click, and a greyed button
+         that is clicked must still say why it did nothing. */
+      b.addEventListener('click', function () { mediaDo(a, 'card'); });
+      btns[a] = b;
+      ctl.appendChild(b);
+    });
+    pop.appendChild(ctl);
+
+    var lock = mk('div', 'mc-lock'), lockHead = mk('div', 'mc-lockhead'), lockHow = mk('div', 'sub');
+    lock.appendChild(lockHead); lock.appendChild(lockHow);
+    pop.appendChild(lock);
+
+    var note = mk('div', 'note mc-note');
+    pop.appendChild(note);
+
+    var src = mk('div', 'mc-src'), srcWhy = mk('div', 'sub mc-srcwhy'), srcList = mk('div', 'mc-srclist');
+    src.appendChild(srcWhy); src.appendChild(srcList);
+    pop.appendChild(src);
+    var foot = mk('div', 'sub mc-foot');
+    pop.appendChild(foot);
+
+    function paintProgress(s) {
+      var p = mediaPos(s);
+      prog.hidden = !p;
+      progWhy.hidden = !!p;
+      if (p) {
+        fill.style.width = (100 * p.pos / p.dur).toFixed(2) + '%';
+        tNow.textContent = fmtMs(p.pos);
+        tDur.textContent = fmtMs(p.dur);
+      } else {
+        progWhy.textContent = (s.timeline && s.timeline.reason) || 'no position: ' + mediaApp(s) + ' does not publish one';
+      }
+      return p;
+    }
+
+    function arm(s) {
+      if (popTimer || popKey !== 'media' || !s.playing || !mediaPos(s)) return;
+      popTimer = setTimeout(function () {
+        popTimer = 0;
+        var cur = mediaShown();
+        if (popKey !== 'media' || !cur) return;
+        paintProgress(cur);
+        arm(cur);
+      }, 1000);
+    }
+
+    var srcSig = '';
+    mediaPaint = function () {
+      var s = mediaShown();
+      if (!s) return;
+      paintArt(art, s);
+      title.textContent = s.title || mediaApp(s);
+      title.title = s.title || '';
+      artist.textContent = s.artist ? (s.album ? s.artist + ' · ' + s.album : s.artist)
+        : (s.detailsReason ? 'no track details: ' + s.detailsReason : (s.title ? '' : 'no track details'));
+      artist.classList.toggle('why', !s.artist && !!s.detailsReason);
+      appTxt.textContent = mediaApp(s) + ' · ' + mediaStatus(s);
+      if (appIco._src !== ((s.app && s.app.icon) || '')) {
+        appIco._src = (s.app && s.app.icon) || '';
+        appIco.textContent = '';
+        if (appIco._src) { var ai = document.createElement('img'); ai.alt = ''; ai.src = appIco._src; appIco.appendChild(ai); }
+        else appIco.textContent = letterOf(mediaApp(s));
+      }
+      paintProgress(s);
+
+      var guarded = mediaGuarded(s);
+      ctl.hidden = guarded;
+      lock.hidden = !guarded;
+      if (guarded) {
+        lockHead.textContent = s.controls.reason || 'controls are off for this session';
+        // text nodes, with the --flag in a no-wrap span: the card must never split it at a hyphen
+        lockHow.textContent = '';
+        String(s.controls.how || '').split(/(--[a-z][a-z-]*)/).forEach(function (part, i) {
+          if (!part) return;
+          lockHow.appendChild(i % 2 ? mk('span', 'mc-flag', part) : document.createTextNode(part));
+        });
+        lockHow.hidden = !s.controls.how;
+      } else {
+        ['previous', 'toggle', 'next'].forEach(function (a) {
+          var b = btns[a], can = mediaCan(s, a);
+          var g = a === 'toggle' ? (s.playing ? 'pause' : 'play') : a;
+          if (b.dataset.glyph !== g) { b.innerHTML = svg(MEDIA_SVG[g], a === 'toggle' ? 16 : 14); b.dataset.glyph = g; }
+          b.classList.toggle('off', !can.ok);
+          b.classList.toggle('busy', mediaBusy === a);
+          b.setAttribute('aria-disabled', can.ok ? 'false' : 'true');
+          var label = a === 'toggle' ? (s.playing ? 'Pause' : 'Play') : (a === 'next' ? 'Next track' : 'Previous track');
+          b.title = can.ok ? label : label + ': ' + can.why;
+          b.setAttribute('aria-label', b.title);
+        });
+      }
+      note.textContent = mediaNote;
+      note.hidden = !mediaNote;
+
+      /* The source switcher: one row per app with a session, when there is more than one. Sessions
+         are told apart by AUMID, which is all Windows gives a control to aim at; two sessions from
+         one app (two browser tabs) share it, so they are one row, said out loud. */
+      var seen = Object.create(null), rows = [], dup = 0;
+      (media.sessions || []).forEach(function (x) {
+        var k = String(x.aumid || '').toLowerCase();
+        if (seen[k]) { dup++; return; }
+        seen[k] = true;
+        rows.push(x);
+      });
+      var by = media.pick && media.pick.by;
+      var sig = rows.map(function (x) { return [x.aumid, x.title, x.playing, x.lessonplayer].join('|'); }).join('\u0001') + '|' + s.aumid + '|' + by + '|' + dup;
+      src.hidden = rows.length < 2;
+      if (rows.length >= 2 && sig !== srcSig) {
+        srcSig = sig;
+        srcList.textContent = '';
+        rows.forEach(function (x) {
+          var on = String(x.aumid || '').toLowerCase() === String(s.aumid || '').toLowerCase();
+          var b = mk('button', 'mc-s' + (on ? ' on' : ''));
+          b.type = 'button';
+          var ic = mk('span', 'mc-sico');
+          if (x.app && x.app.icon) { var im = document.createElement('img'); im.alt = ''; im.src = x.app.icon; ic.appendChild(im); }
+          else ic.textContent = letterOf((x.app && x.app.name) || x.aumid);
+          b.appendChild(ic);
+          b.appendChild(mk('span', 'mc-stxt', ((x.app && x.app.name) || x.aumid || 'an app') + (x.lessonplayer ? ' · lesson' : (x.title ? ' · ' + x.title : ''))));
+          b.title = ((x.app && x.app.name) || x.aumid) + (x.title ? ': ' + x.title : '') + ' (' + mediaStatus(x) + ')';
+          b.addEventListener('click', function () {
+            if (on) return;
+            callR('media.select', { aumid: x.aumid }).then(renderMedia, function (e) { mediaSay('could not switch to ' + ((x.app && x.app.name) || x.aumid) + ': ' + msg(e), 'card'); });
+          });
+          srcList.appendChild(b);
+        });
+        if (by === 'you') {
+          var auto = mk('button', 'mc-s mc-auto', 'Automatic');
+          auto.type = 'button';
+          auto.title = 'Go back to the session Windows calls current (under the LessonPlayer rule, anything but LessonPlayer first)';
+          auto.addEventListener('click', function () {
+            callR('media.select', { aumid: null }).then(renderMedia, function (e) { mediaSay('could not go back to automatic: ' + msg(e), 'card'); });
+          });
+          srcList.appendChild(auto);
+        }
+      }
+      srcWhy.textContent = by === 'you' ? 'Showing the source you picked'
+        : by === 'lessonplayer-rule' ? 'Showing ' + mediaApp(s) + ' rather than your LessonPlayer lesson (the LessonPlayer rule)'
+        : 'Showing the session Windows calls current';
+      if (dup) srcWhy.textContent += ' · ' + dup + ' more from the same app' + (dup > 1 ? 's' : '') + ' (Windows gives them one address, so they share a row)';
+
+      foot.textContent = media.events === false
+        ? 'Updates every 10 s instead of live: ' + (media.eventsReason || 'the change events could not be hooked')
+        : '';
+      foot.hidden = !foot.textContent;
+
+      /* The card can change height after it opened (a refusal note, a second source): ask main
+         for the room again so nothing is cut off by the window's edge. */
+      var h = el.pop.offsetHeight + 16;
+      if (mediaRoom && h !== mediaRoom && popKey === 'media') {
+        callR('bar.popover', { open: true, height: h, key: 'media' }).catch(function (e) {
+          note.textContent = 'this card may be clipped: bar.popover — ' + msg(e);
+          note.hidden = false;
+        });
+      }
+      mediaRoom = h;
+      arm(s);
+    };
+    mediaRoom = 0;
+    mediaNote = '';
+    mediaPaint();
+  }
+
+  function openMedia() {
+    openPop('media', el.media, buildMediaPop);
+    if (popKey !== 'media') return;       // it was open, and that click closed it
+    /* Fresh on open: the position and the buttons as of now, not as of the last change event
+       (main skips position-only events while the card is shut, so the chip stays quiet). */
+    call('media.get').then(renderMedia, function (e) {
+      mediaSay('could not refresh: ' + msg(e), 'card');
+    });
+  }
+
+  el.mchip.addEventListener('click', openMedia);
+  el.mchip.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openMedia(); });
+  el.mtog.addEventListener('click', function () { mediaDo('toggle', popKey === 'media' ? 'card' : 'chip'); });
+
   /* ================================================================= overflow menu */
 
   function buildMorePop(pop) {
@@ -1416,6 +2308,25 @@
       trayNote.textContent = 'notification area: ' + ((state && state.tray && state.tray.reason) || trayThrew || 'unavailable, and no reason was given');
       pop.appendChild(trayNote);
     }
+    /* The tray icons Windows keeps in its hidden-icons flyout: listed, dimmed, never clicked.
+       Hover says why per icon (the sidecar's words, which name the Settings switch); a click says
+       it in the line under the row, so a click on one is never a silent nothing. */
+    if (trayHidden.length) {
+      var hh = document.createElement('div');
+      hh.className = 'hidhead';
+      hh.textContent = 'Hidden tray icons';
+      pop.appendChild(hh);
+      var row = document.createElement('div');
+      row.className = 'hidtray';
+      var why = document.createElement('div');
+      why.className = 'sub hidwhy';
+      why.textContent = 'Windows keeps these in its hidden-icons flyout, which Mantle cannot reach. Turn one On under Settings › Personalization › Taskbar › Other system tray icons and it becomes clickable here.';
+      trayHidden.forEach(function (it) {
+        row.appendChild(trayButton(it, function (reason) { why.textContent = reason; why.classList.add('said'); }));
+      });
+      pop.appendChild(row);
+      pop.appendChild(why);
+    }
     /* every chip, in words: in pill mode the strip shows pips only */
     chipData().forEach(function (c) {
       var line = document.createElement('div'); line.className = 'sub'; line.style.margin = '-2px 0 8px';
@@ -1434,6 +2345,29 @@
     });
     pop.appendChild(restore);
 
+    /* Restart (Owen, 2026-09-22): the same clean quit as Quit, then Mantle comes back by itself --
+       through the "Mantle" logon task when that is what started it, app.relaunch() otherwise
+       (main decides; see shell.restart). No second click: unlike Quit it does not leave Owen
+       without a bar. If main cannot arrange the way back it refuses, says why here, and Mantle
+       keeps running. */
+    var restart = document.createElement('button');
+    restart.type = 'button'; restart.className = 'item';
+    restart.textContent = 'Restart Mantle';
+    restart.addEventListener('click', function () {
+      if (restart.disabled) return;
+      restart.disabled = true;
+      restart.classList.remove('armed');
+      restart.textContent = 'Restarting…';
+      callR('shell.restart').then(function (r) {
+        restart.textContent = 'Restarting (' + ((r && r.via) || 'relaunch') + ')…';
+      }, function (e) {
+        restart.disabled = false;
+        restart.textContent = 'Restart failed — ' + msg(e);
+        restart.classList.add('armed');
+      });
+    });
+    pop.appendChild(restart);
+
     /* Quit is behind a second click: the bar is the only way back to a normal desktop, so a
        stray click must not take the shell down. */
     var quit = document.createElement('button');
@@ -1449,6 +2383,44 @@
     pop.appendChild(quit);
   }
   el.more.addEventListener('click', function () { openPop('more', el.more, buildMorePop); });
+
+  /* TEST HOOK (main sends this only to a --test instance, from `electron . --test
+     --profile-name=<x> --test-click=restart` run as a second instance): open this menu and
+     click its Restart item through the DOM, i.e. the real button and the real handler, with no
+     mouse involved. */
+  on('bar.test.click', function (p) {
+    /* 'media' / 'more' / 'close': main's --test-pops screenshot run opening a popover through
+       the same open path a click takes, then closing it again. */
+    if (p && p.what === 'close') { closePop(); return; }
+    if (p && p.what === 'more') { if (popKey !== 'more') openPop('more', el.more, buildMorePop); return; }
+    if (p && (p.what === 'media' || p.what === 'media-play')) {
+      if (el.media.hidden) { fail('testclick', 'no media chip', 'the test hook was asked to open the media card, but nothing is playing so there is no chip', 'warn'); return; }
+      if (popKey !== 'media') openMedia();
+      /* 'media-play' presses the card's own play/pause button through the DOM, so the refusal a
+         --test sidecar gives (it is --passive: no control ever reaches WinRT) is photographed in
+         the card. main.js aims it at the shown session's AUMID, i.e. the test's own session. */
+      if (p.what === 'media-play') {
+        /* ...and ONLY on a test's own silent session: the passive sidecar would refuse anything
+           else too, but a test hook that could press Owen's music is one bug away from doing it. */
+        var ms = mediaShown();
+        if (!ms || !/^Mantle probe/.test(ms.title || '')) {
+          fail('testclick', 'not a probe', 'the test hook presses play only on a "Mantle probe" test session, and the card is showing ' + (ms ? mediaLine(ms) : 'nothing'), 'warn');
+          return;
+        }
+        var b = el.pop.querySelector('.mc-btn.main');
+        if (b) b.click();
+        else fail('testclick', 'no play button', 'the test hook opened the media card and found no play/pause button (LessonPlayer rule, or no session)', 'warn');
+      }
+      return;
+    }
+    if (!p || p.what !== 'restart') return;
+    if (popKey !== 'more') openPop('more', el.more, buildMorePop);
+    var items = el.pop.querySelectorAll('.item');
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].textContent === 'Restart Mantle') { items[i].click(); return; }
+    }
+    fail('testclick', 'no restart item', 'the test hook opened the menu and found no "Restart Mantle" item', 'warn');
+  });
 
   /* ================================================================= start */
 
@@ -1513,15 +2485,27 @@
       if (popKey === 'qs' && qsPaint) qsPaint();
     });
     on('windows', renderWindows);
-    on('tray', function (list) { lastTray = list || []; renderTray(lastTray); },
+    /* Now playing: pushed by main on every media change (and replayed on subscribe), so the chip
+       is right from the first frame without a call of its own. */
+    on('media', renderMedia);
+    /* A pushed list CLEARS trayThrew (2026-09-22). The boot-time tray.list below can lose the race
+       with the sidecar ("sidecar started, waiting for its ready line"), and trayThrew then stuck
+       for the page's whole life: main's first real list arrived a few seconds later and was
+       drawn as "unavailable", so the strip had no icons and the overflow no hidden row while
+       its note read "6 notification-area items". Measured in a --test run. A list that arrived
+       is the proof the tray can be read. */
+    var trayPushed = false;   // main has pushed a list: a late boot-call failure is stale news
+    on('tray', function (list) { trayPushed = true; trayThrew = ''; lastTray = list || []; renderTray(lastTray); },
       function (reason) { trayThrew = reason; renderTray(lastTray); });   // the tray says it in its own chip
 
     /* tray.list is called once on boot purely to catch the "explorer exposes no tray" case with
-       its reason, which is the form the failure takes on Windows 11 26200. */
+       its reason, which is the form the failure takes on Windows 11 26200. If it fails AFTER main
+       has already pushed a list, the list wins: the failure is older than what is on screen. */
     call('tray.list').then(function (list) {
       trayThrew = '';
       if (Array.isArray(list) && list.length) { lastTray = list; renderTray(lastTray); }
     }, function (e) {
+      if (trayPushed) return;
       trayThrew = msg(e);
       renderTray(lastTray);
     });

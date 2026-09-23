@@ -16,6 +16,12 @@
  *   ?blur=0      no backdrop is ever sent and the State piece says it is not ok,
  *                which is the fallback pane (--lg-fill-fb) plus the "no blur: …"
  *                line in the footer — the failure must be visible, not silent
+ *   ?files=down  launcher.files answers the way it does when the WSearch service is
+ *                stopped, so the reason line in the footer can be looked at
+ *
+ * Power rows (Lock, Sleep, Hibernate, Restart, Shut down, Sign out) are in the fake
+ * index, and launcher.power here is ALWAYS a dry run: it answers the command the real
+ * one would run, exactly as a --test Mantle does, and never runs anything.
  */
 (function () {
   'use strict';
@@ -25,6 +31,7 @@
   var SIDECAR_DOWN = flags.get('state') === 'down';
   var ALWAYS_FAIL = flags.get('fail') === '1';
   var NO_BLUR = flags.get('blur') === '0';
+  var FILES_DOWN = flags.get('files') === 'down';
 
   /* The page itself paints nothing outside the panel — html and body stay
      transparent so DWM's blur-behind is what you see. In MOCK MODE ONLY there
@@ -95,6 +102,58 @@
     mk('setting', 'Windows Security', 'Settings', null, 'ms-settings:windowsdefender'),
   ];
 
+  /* the power rows, shaped like lib/launcher-index.js source 4 builds them */
+  function pw(action, name, subtitle, glyph, keywords, confirm) {
+    var it = mk('power', name, subtitle, null, action);
+    it.glyph = glyph; it.keywords = keywords; it.confirm = confirm || null;
+    return it;
+  }
+  ITEMS.push(
+    pw('lock', 'Lock', 'Session', 'lock', ['lock screen', 'lock computer', 'lock pc']),
+    pw('sleep', 'Sleep', 'Power', 'sleep', ['suspend', 'standby']),
+    pw('hibernate', 'Hibernate', 'Power', 'hibernate', ['hibernation']),
+    pw('restart', 'Restart', 'Power · asks first', 'restart', ['reboot', 'restart computer', 'restart pc'], 'Press Enter again to restart'),
+    pw('shutdown', 'Shut down', 'Power · asks first', 'power', ['shutdown', 'turn off', 'power off', 'switch off'], 'Press Enter again to shut down'),
+    pw('signout', 'Sign out', 'Session · asks first', 'signout', ['log out', 'logout', 'log off', 'logoff', 'sign off', 'signout'], 'Press Enter again to sign out')
+  );
+  var POWER_RUN = {
+    lock: '"C:\\WINDOWS\\System32\\rundll32.exe" user32.dll,LockWorkStation',
+    restart: '"C:\\WINDOWS\\System32\\shutdown.exe" /r /t 0',
+    shutdown: '"C:\\WINDOWS\\System32\\shutdown.exe" /s /t 0',
+    signout: '"C:\\WINDOWS\\System32\\shutdown.exe" /l',
+    hibernate: '"C:\\WINDOWS\\System32\\shutdown.exe" /h',
+  };
+
+  /* A fake slice of the Windows Search index: what launcher.files would hand back, already
+     scored on lib/launcher-index.js's file scale (500 + name score / 5, so at most 700). */
+  var FILES = [
+    ['report.docx', '~\\Documents', 'file'],
+    ['Report - term 1 budget.pdf', '~\\Documents\\taxes', 'file'],
+    ['repos', '~', 'folder'],
+    ['final report draft.docx', '~\\OneDrive\\Documents', 'file'],
+    ['school', '~\\Documents', 'folder'],
+    ['tax-notes.md', '~\\Documents\\taxes\\2025', 'file'],
+    ['chrome-profile', '~\\other-app', 'folder'],
+    ['Steam screenshots', '~\\Pictures', 'folder'],
+  ];
+  function fileSearch(q) {
+    var query = String(q || '').trim().toLowerCase();
+    var out = [];
+    FILES.forEach(function (f) {
+      var s = score({ name: f[0].replace(/\.[^.]{1,8}$/, ''), subtitle: '' }, query);
+      if (s < 0) return;
+      out.push({
+        id: 'file:' + f[0].toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        kind: 'file', name: f[0], subtitle: f[1],
+        path: 'C:\\Users\\user' + f[1].slice(1) + '\\' + f[0],
+        icon: null, glyph: f[2], isDir: f[2] === 'folder',
+        score: 500 + Math.round(s / 5),
+      });
+    });
+    out.sort(function (a, b) { return b.score - a.score; });
+    return out.slice(0, 8);
+  }
+
   /* The counts are the ones a real machine reports, not the length of the fake
      list: the footer's job is to look like the real footer, numbers and all. */
   var SOURCES = [
@@ -104,9 +163,28 @@
       reason: 'profile not found at C:\\Users\\user\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1',
     },
     { name: 'settings', count: 26, status: 'ok', reason: '' },
+    { name: 'power', count: 6, status: 'ok', reason: '' },
   ];
 
-  var KIND_ORDER = { app: 0, command: 1, setting: 2, url: 3 };
+  var KIND_ORDER = { app: 0, command: 1, setting: 2, power: 3, url: 4, file: 5 };
+
+  /* lib/launcher-index.js's scorePower, same numbers: whole name/keyword 1000, nothing under
+     three letters, a prefix 700-760 (below an app that starts the same way), a word 690, the
+     group word 650. */
+  function scorePower(item, q) {
+    var words = [item.name.toLowerCase()].concat(item.keywords || []);
+    var i;
+    for (i = 0; i < words.length; i++) if (words[i] === q) return 1000;
+    if (q.length < 3) return -1;
+    var best = -1;
+    for (i = 0; i < words.length; i++) {
+      if (words[i].indexOf(q) === 0) best = Math.max(best, 760 - Math.min(60, words[i].length - q.length));
+      else if (words[i].split(/\s+/).some(function (p) { return p.indexOf(q) === 0; })) best = Math.max(best, 690);
+    }
+    if (best >= 0) return best;
+    var group = (item.subtitle || '').toLowerCase().split(/[^a-z]+/)[0];
+    return (group === 'power' || group === 'session') && group.indexOf(q) === 0 ? 650 : -1;
+  }
 
   function looksLikeUrl(q) {
     if (/^https?:\/\//i.test(q)) return true;
@@ -115,6 +193,7 @@
   }
 
   function score(item, q) {
+    if (item.kind === 'power') return scorePower(item, q);
     var name = item.name.toLowerCase(), sub = (item.subtitle || '').toLowerCase();
     if (name === q) return 1000;
     if (name.indexOf(q) === 0) return 900 - Math.min(80, name.length - q.length);
@@ -151,10 +230,12 @@
         (KIND_ORDER[a.it.kind] - KIND_ORDER[b.it.kind]) ||
         a.it.name.localeCompare(b.it.name);
     });
-    var out = scored.map(function (x) { return x.it; });
+    var out = scored.map(function (x) { return Object.assign({}, x.it, { score: x.s }); });
     if (looksLikeUrl(query)) {
-      out.unshift(mk('url', 'Open ' + String(q).trim(), 'in your browser', null,
-        /^https?:/i.test(q) ? q : 'https://' + q));
+      var u = mk('url', 'Open ' + String(q).trim(), 'in your browser', null,
+        /^https?:/i.test(q) ? q : 'https://' + q);
+      u.score = 1100;
+      out.unshift(u);
     }
     return out.slice(0, 12);
   }
@@ -218,6 +299,32 @@
           document.documentElement.dataset.mockHidden = '1';   // visible to a test, invisible on screen
           return Promise.resolve();
         case 'open': return Promise.resolve({ ok: true });
+        case 'launcher.power': {
+          var p = ITEMS.filter(function (i) { return i.kind === 'power' && i.path === args.action; })[0];
+          if (!p) return Promise.resolve({ ok: false, reason: 'there is no power action called "' + args.action + '"' });
+          if (p.confirm && args.confirmed !== true) return Promise.resolve({ ok: false, reason: p.name + ' asks first: press Enter on it twice' });
+          if (args.action === 'sleep') {
+            return Promise.resolve({ ok: true, dryRun: true,
+              reason: 'dry run: would call SetSuspendState(FALSE, FALSE, FALSE) in the sidecar after 400 ms (Modern Standby (S0 low power idle))' });
+          }
+          return Promise.resolve({ ok: true, dryRun: true, reason: 'dry run: would run ' + POWER_RUN[args.action] });
+        }
+        case 'launcher.files':
+          // a real index answers in 50-300 ms on Owen's machine; 90 keeps the merge visible
+          return new Promise(function (resolve) {
+            setTimeout(function () {
+              if (FILES_DOWN) {
+                resolve({ ok: false, q: args.q, items: [],
+                  reason: 'the Windows Search service (WSearch) is Stopped (start type Automatic (delayed)), so there is no file index to ask. Start it in services.msc' });
+                return;
+              }
+              var hits = fileSearch(args.q);
+              resolve({ ok: true, q: args.q, items: hits, ms: 84, reason: '' });
+            }, 90);
+          });
+        case 'launcher.openFile':
+          return Promise.resolve({ ok: true, dryRun: true,
+            reason: 'dry run: would ' + (args.reveal ? 'show ' + args.path + ' in its folder' : 'open ' + args.path) });
         default: return Promise.reject(new Error('the mock bridge has no "' + name + '"'));
       }
     },

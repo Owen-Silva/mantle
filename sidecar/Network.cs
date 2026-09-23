@@ -93,7 +93,8 @@ namespace Mantle {
     /// the machine says afterwards rather than what we asked for - a hardware
     /// switch or a group policy can refuse, and a UI that shows the requested
     /// state instead of the real one is lying to the user.
-    public static IDictionary Set(bool want) {
+    public static IDictionary Set(bool want, out IDictionary readBack) {
+      readBack = null;
       IntPtr h = IntPtr.Zero;
       string reason = null;
       int changed = 0, refused = 0;
@@ -141,8 +142,11 @@ namespace Mantle {
         if (h != IntPtr.Zero) { try { Win32.WlanCloseHandle(h, IntPtr.Zero); } catch (Exception) { } }
       }
 
-      // Read it back: the reply is the STATE, not the request.
+      // Read it back: the reply is the STATE, not the request. The plain copy
+      // goes to QuickSettings' cache, so the panel's next read is this one.
       var now = Read();
+      readBack = Json.Obj();
+      foreach (DictionaryEntry e in now) readBack[e.Key] = e.Value;
       if (reason != null) {
         now["ok"] = false;
         now["reason"] = reason;
