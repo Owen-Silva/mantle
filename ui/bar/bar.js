@@ -639,6 +639,19 @@
     var m = measure();
     if (!m) return;
     var need = needWidth();
+    /* THE PILL MUST HAVE LANDED (2026-09-23). Live on 09344ef, 3 reveals in ~30 raised "5 apps
+       hidden -- 13 app icons need 540px and the free span ... is only 348px in a 694px bar" the
+       moment the bar came up. 694 dip is 62 % of the 1120 dip pill window: the entrance's FIRST
+       width, read after main had already put the window at its pill rect. This settle runs 50 ms
+       after the last resize it saw, and when the frames after a reveal come late, nothing resizes
+       in those 50 ms, so it judged a width the pill was only passing through. ui/bar/check-reveal.js
+       reproduces it by freezing the animation clock across a reveal from parked ("in a 694px bar"
+       every time), and under its CPU cap it also caught an ordinary reveal mid-entrance ("in a
+       881px bar"). So while the pill's width is still on its way (the transition running, or
+       created and not yet started), nothing is judged and the media chip is left alone. The dock
+       still tracks every frame in layoutDock; the judgement waits for the transition to finish and
+       is made against the width the pill lands at. */
+    if (revealed && widthInFlight()) return;
     /* The media chip is judged FIRST: if it gives up its title, the wall moves and the dock is
        judged against the new one, so "apps hidden" is never raised for the instant between. */
     if (revealed && Date.now() >= mediaFitAfter && mediaFit(m, need)) {
@@ -661,6 +674,26 @@
     applyDock(frozen);
   }
   var mediaFitAfter = 0;               // set by slide(): not before the pill has landed
+
+  /* Is .bar's width transition (the entrance: settleDock asks only while revealed) still running, or
+     waiting for its first frame? Then the settle is re-run once it finishes, so a late entrance is
+     still judged the moment it lands. `finished` REJECTS when the transition is cancelled (a hide
+     mid-entrance, or a re-reveal restarting it); that is not a failure and nothing is lost: whatever
+     cancelled it changes the bar's width again, and that change brings its own settle. */
+  var landing = null;                  // the transition a judgement is waiting for
+  function widthInFlight() {
+    if (!el.bar.getAnimations) return false;          // an engine without it keeps the old timing
+    var list = el.bar.getAnimations(), a = null;
+    for (var i = 0; i < list.length && !a; i++)
+      if (list[i].transitionProperty === 'width' && list[i].playState !== 'finished' && list[i].playState !== 'idle') a = list[i];
+    if (!a) return false;
+    if (a !== landing) {
+      landing = a;
+      a.finished.then(function () { if (landing === a) landing = null; layoutDock(); },
+        function () { if (landing === a) landing = null; });
+    }
+    return true;
+  }
 
   /* THE MEDIA CHIP GIVES WAY TO THE APPS (2026-09-22). Measured in the first --test run with a
      real session: a 1106 px island with 13 pins had a 494 px span for 540 px of icons once the
@@ -1316,7 +1349,10 @@
     /* The quick-settings watch exists only for the open panel: leaving it on would have main
        pushing the whole system state at a closed popover every 2 seconds, on a bar whose entire
        point is that it costs nothing at rest. */
-    if (popKey === 'qs') { qsPaint = null; qsWatch(false); }
+    if (popKey === 'qs') {
+      qsPaint = null; qsWatch(false);
+      if (window.MantleQsMore) MantleQsMore.closed();   // its polls stop and the keyboard goes back
+    }
     if (popKey === 'media') { mediaPaint = null; mediaNote = ''; mediaRoom = 0; }
     if (isFlyKey(popKey)) flyTeardown();
     popKey = null;
@@ -1726,6 +1762,8 @@
       });
     }
 
+    // The two '>' buttons (Wi-Fi networks; sound output and mixer) and their views: ui/bar/qs-more.js
+    if (window.MantleQsMore) MantleQsMore.attach(pop, { wifiTile: tiles.wifi.b, volumeLine: v.line, repaint: paint });
     qsPaint = paint;
     paint();                                    // draw from whatever we already know, immediately
     qsSnapshot().then(function () { if (popKey === 'qs') paint(); },
@@ -2462,6 +2500,17 @@
   /* The notification centre (ui/bar/notifications.js) is handed the bar's own popover, bridge and
      failure helpers, so its panel opens, sizes, closes and reports problems like every other one.
      If that file did not load, the bell still works: it opens Windows' centre, and says why. */
+  /* The quick-settings sub-views (ui/bar/qs-more.js): the Wi-Fi list, the output picker and the
+     mixer. Without that file the panel still works, minus its two '>' buttons, and says why. */
+  if (window.MantleQsMore) {
+    MantleQsMore.init({
+      call: call, callR: callR, msg: msg, fail: fail, closePop: closePop,
+      svg: svg, wifiGlyph: wifiGlyph, volumeSvg: volumeSvg, throttled: throttled
+    });
+  } else {
+    fail('qsmore', 'Wi-Fi list missing', 'ui/bar/qs-more.js did not load, so quick settings has no Wi-Fi list, output picker or mixer', 'warn');
+  }
+
   if (window.MantleNotifs) {
     MantleNotifs.init({
       call: call, callR: callR, on: on, msg: msg, fail: fail, clearFail: clearFail, keys: keys,
@@ -2535,4 +2584,17 @@
     readStats();
     readVolume().catch(function () { /* already reported on the glyph tooltip and the chip */ });
   }
+
+  /* Win+N / Win+A (the alttab lane, 2026-09-23). The sidecar's hook swallows the LETTER, never
+     Win (so Windows' own panels stay shut and Start does not open), and main passes it on as
+     'bar.winkey'. Both toggle, as Windows' own do; opening a popover is what brings a hidden bar
+     up (main's bar.popover). With no panel of our own, Windows' is pressed on purpose instead. */
+  on('bar.winkey', function (p) {
+    var key = p && p.key;
+    if (key === 'a') { openQs(); return; }
+    if (key !== 'n') return;
+    if (popKey === 'notifs') { closePop(); return; }
+    if (window.MantleNotifs) MantleNotifs.open();
+    else keys('win+n', 'notifications');
+  });
 })();

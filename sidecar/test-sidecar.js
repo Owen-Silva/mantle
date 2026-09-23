@@ -237,6 +237,380 @@ function start(args) {
   return { proc, send, waitEvent, waitExit, events, get stderr() { return stderr; } };
 }
 
+/*
+ * WI-FI NETWORKS, OUTPUT DEVICES, THE MIXER (qsx lane, 2026-09-23: Wlan.cs, AudioMixer.cs).
+ *
+ * Owen is at the machine and may be recording lessons with audio, so against his machine this is
+ * READ ONLY: listing and scanning networks, listing devices and apps. Nothing here connects,
+ * disconnects or saves a Wi-Fi profile: the passive sidecar refuses all three, and the profile XML
+ * is built by a passive-only test op that writes nothing. The write entry points are proved to
+ * load by aiming them at an interface GUID that does not exist (`wlan probe`), which answers with
+ * Windows' documented error codes. The only audio writes land on a session this harness creates
+ * and ends itself: a PowerShell child looping a silent WAV, put back to its starting level and
+ * mute before it is killed, because Windows remembers an app's mixer level between runs.
+ *
+ * MANTLE_TEST_AUDIO_DEFAULT=1 adds the one live call the brief allows: making the current default
+ * device the default again. It is off by default because, measured 2026-09-23 with a read-only
+ * IMMNotificationClient, even that no-op makes Windows announce a default-device change to every
+ * app (OnDefaultDeviceChanged five times in ~35 ms, then ~150 property changes over ~480 ms), and
+ * an app that follows the default may reopen its stream mid-recording.
+ */
+const QSX_PASSIVE = 'refused: sidecar is passive (test mode)';
+const QSX_ACTIONS = ['disconnect', 'connect', 'open', 'password', 'settings'];
+
+/** One second (or n) of 16-bit mono silence at 8 kHz, as a WAV file's bytes. */
+function silentWav(seconds) {
+  const rate = 8000;
+  const n = rate * seconds * 2;
+  const b = Buffer.alloc(44 + n);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n, 4); b.write('WAVE', 8);
+  b.write('fmt ', 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34);
+  b.write('data', 36); b.writeUInt32LE(n, 40);
+  return b;
+}
+
+async function qsxChecks(s) {
+  // A made-up key that must never come back: not in an error, not in a log line.
+  const secret = 'qsx-never-echo-' + process.pid;
+  const notes = [];        // measurements, printed with the other notes (counts only, never a network's name)
+
+  try {
+    const r = await s.send('ping');
+    const cmds = r.ok && r.result ? r.result.commands : null;
+    check('ping lists wlan and audio', Array.isArray(cmds) && cmds.indexOf('wlan') >= 0 && cmds.indexOf('audio') >= 0, JSON.stringify(cmds));
+  } catch (e) { check('ping lists wlan and audio', false, e.message); }
+
+  // ---- wlan list ----------------------------------------------------------
+  let wl = null;
+  try {
+    const r = await s.send('wlan', { op: 'list' }, 10000);
+    wl = r.ok ? r.result : null;
+    const nets = wl && Array.isArray(wl.networks) ? wl.networks : null;
+    check('wlan list answers with present, on and the networks',
+      !!wl && typeof wl.present === 'boolean' && typeof wl.on === 'boolean' && !!nets &&
+      (wl.ok === true || (typeof wl.reason === 'string' && wl.reason.length > 0)),
+      JSON.stringify(r).slice(0, 300));
+    if (wl && (!wl.present || !wl.on)) {
+      check('wlan list says why when there is no adapter or the radio is off',
+        typeof wl.reason === 'string' && wl.reason.length > 0, JSON.stringify(wl).slice(0, 200));
+    }
+    if (nets) {
+      const bad = nets.filter((n) => !(
+        (n.ssid === null || typeof n.ssid === 'string') && typeof n.hex === 'string' &&
+        typeof n.signal === 'number' && n.signal >= 0 && n.signal <= 100 &&
+        typeof n.secure === 'boolean' && typeof n.security === 'string' && n.security.length > 0 &&
+        typeof n.known === 'boolean' && typeof n.connected === 'boolean' && typeof n.connecting === 'boolean' &&
+        QSX_ACTIONS.indexOf(n.action) >= 0 &&
+        (n.action !== 'settings' || (typeof n.why === 'string' && n.why.length > 0))));
+      check('every wlan row has its fields and an action, and a reason when the action is Windows settings',
+        bad.length === 0, JSON.stringify(bad[0] || null).slice(0, 300));
+      // connected first, then saved, then the rest, the hidden row last; each group by signal
+      const rank = (n) => (n.connected ? 0 : n.hidden ? 3 : n.known ? 1 : 2);
+      let sorted = true;
+      for (let i = 1; i < nets.length; i++) {
+        const a = nets[i - 1], b = nets[i];
+        if (rank(a) > rank(b) || (rank(a) === rank(b) && a.signal < b.signal)) sorted = false;
+      }
+      check('wlan rows come connected, saved, others, hidden, each by signal', sorted,
+        nets.map((n) => rank(n) + ':' + n.signal).join(' '));
+      check('at most one wlan row is connected, and hidden networks fold into one row',
+        nets.filter((n) => n.connected).length <= 1 && nets.filter((n) => n.hidden).length <= 1,
+        nets.map((n) => n.ssid).join(', '));
+    }
+  } catch (e) { check('wlan list', false, e.message); }
+
+  // ---- wlan scan: one real WlanScan (read-only), the list read after the scan completes --
+  try {
+    const t0 = Date.now();
+    const r = await s.send('wlan', { op: 'scan' }, 15000);
+    const ms = Date.now() - t0;
+    const res = r.ok ? r.result : null;
+    const sc = res && res.scan;
+    check('wlan scan answers with the list and the scan\'s own outcome',
+      !!res && Array.isArray(res.networks) && !!sc && typeof sc.ok === 'boolean' &&
+      (sc.ok || (typeof sc.reason === 'string' && sc.reason.length > 0)),
+      JSON.stringify(r).slice(0, 300));
+    if (wl && wl.present && wl.on) {
+      check('wlan scan waited for Windows and still answered in time', sc && sc.ok === true && ms < 9000,
+        ms + ' ms, ' + JSON.stringify(sc));
+    }
+    const nets = res && Array.isArray(res.networks) ? res.networks : [];
+    notes.push('wlan: ' + nets.length + ' network row(s), ' + nets.filter((n) => n.known).length + ' saved, ' +
+      nets.filter((n) => n.connected).length + ' connected; list read ' + (wl ? wl.readMs : '?') + ' ms; scan ' + ms +
+      ' ms end to end (' + (sc ? (sc.ok ? 'completed' : 'failed: ' + sc.reason) : 'no outcome') + ')');
+  } catch (e) { check('wlan scan', false, e.message); }
+
+  // ---- wlan reason: WLAN_REASON_CODE -> WlanReasonCodeToString -----------
+  try {
+    const ok0 = await s.send('wlan', { op: 'reason', code: 0 });
+    const psk = await s.send('wlan', { op: 'reason', code: 0x48014 });
+    const neg = await s.send('wlan', { op: 'reason', code: -1 });
+    const none = await s.send('wlan', { op: 'reason' });
+    check('wlan reason turns a WLAN_REASON_CODE into Windows\' text',
+      ok0.ok === true && typeof ok0.result.text === 'string' && ok0.result.text.length > 0 &&
+      psk.ok === true && psk.result.hex === '0x48014' && psk.result.text.length > 0 && !/no text/.test(psk.result.text),
+      JSON.stringify([ok0, psk]).slice(0, 300));
+    check('wlan reason refuses a missing code and one that is not a whole number in range',
+      neg.ok === false && /whole number/.test(neg.error) && none.ok === false && /needs code/.test(none.error),
+      JSON.stringify([neg, none]).slice(0, 300));
+  } catch (e) { check('wlan reason', false, e.message); }
+
+  // ---- the profile XML a connect would hand WlanSetProfile (built, never written) --
+  const prof = (extra) => s.send('wlan', Object.assign({ op: 'profile' }, extra));
+  try {
+    const open = await prof({ ssid: 'Test Open', security: 'open' });
+    const x = open.ok ? open.result.xml : '';
+    check('profile XML for an open network: open/none, no key, the SSID as hex and name, auto',
+      open.ok === true && open.result.wellFormed === true &&
+      x.includes('<authentication>open</authentication>') && x.includes('<encryption>none</encryption>') &&
+      !x.includes('sharedKey') && x.toLowerCase().includes('<hex>' + Buffer.from('Test Open').toString('hex') + '</hex>') &&
+      x.includes('<name>Test Open</name>') && x.includes('<connectionMode>auto</connectionMode>') &&
+      x.includes('<useOneX>false</useOneX>'),
+      JSON.stringify(open).slice(0, 400));
+
+    const w2 = await prof({ ssid: 'Cafe WiFi', security: 'wpa2', password: 'correct horse', auto: false });
+    const x2 = w2.ok ? w2.result.xml : '';
+    check('profile XML for WPA2-Personal: WPA2PSK/AES, a passphrase key, manual when auto is off',
+      w2.ok === true && w2.result.wellFormed === true && x2.includes('<authentication>WPA2PSK</authentication>') &&
+      x2.includes('<encryption>AES</encryption>') && x2.includes('<keyType>passPhrase</keyType>') &&
+      x2.includes('<protected>false</protected>') && x2.includes('<keyMaterial>correct horse</keyMaterial>') &&
+      x2.includes('<connectionMode>manual</connectionMode>'),
+      JSON.stringify(w2).slice(0, 400));
+
+    const w3 = await prof({ ssid: 'Cafe WiFi', security: 'wpa3', password: 'correct horse' });
+    const w1 = await prof({ ssid: 'Old Router', security: 'wpa', password: 'correct horse' });
+    check('profile XML for WPA3-Personal (WPA3SAE/AES) and WPA-Personal (WPAPSK/TKIP)',
+      w3.ok === true && w3.result.wellFormed === true && w3.result.xml.includes('<authentication>WPA3SAE</authentication>') &&
+      w3.result.xml.includes('<encryption>AES</encryption>') &&
+      w1.ok === true && w1.result.xml.includes('<authentication>WPAPSK</authentication>') &&
+      w1.result.xml.includes('<encryption>TKIP</encryption>'),
+      JSON.stringify([w3, w1]).slice(0, 400));
+
+    const raw = await prof({ ssid: 'Raw Key', security: 'wpa2', password: 'a1'.repeat(32) });
+    check('profile XML takes exactly 64 hex digits as the raw key (networkKey)',
+      raw.ok === true && raw.result.xml.includes('<keyType>networkKey</keyType>'), JSON.stringify(raw).slice(0, 300));
+
+    const name = 'A&B <"x">\'';
+    const esc = await prof({ ssid: name, security: 'wpa2', password: 'p&ss<w>rd"\'' });
+    const xe = esc.ok ? esc.result.xml : '';
+    check('profile XML escapes the name and the key and stays well formed',
+      esc.ok === true && esc.result.wellFormed === true &&
+      xe.includes('<name>A&amp;B &lt;&quot;x&quot;&gt;&apos;</name>') &&
+      xe.includes('<keyMaterial>p&amp;ss&lt;w&gt;rd&quot;&apos;</keyMaterial>') &&
+      xe.toLowerCase().includes('<hex>' + Buffer.from(name).toString('hex') + '</hex>'),
+      JSON.stringify(esc).slice(0, 500));
+  } catch (e) { check('profile XML', false, e.message); }
+
+  try {
+    const cases = [
+      [{ ssid: 'N', security: 'wpa2', password: 'short1' }, /at least 8/],
+      [{ ssid: 'N', security: 'wpa2', password: 'x'.repeat(64) }, /at most 63/],
+      [{ ssid: 'N', security: 'wpa2', password: 'café-café' }, /printable ASCII/],
+      [{ ssid: 'N', security: 'open', password: 'something9' }, /takes no password/],
+      [{ ssid: 'N', security: 'wpa2' }, /needs a password/],
+      [{ ssid: 'N', security: 'wep', password: 'something9' }, /security must be/],
+      [{ ssid: 'x'.repeat(33), security: 'open' }, /at most 32 bytes/],
+    ];
+    const bad = [];
+    for (const [args, re] of cases) {
+      const r = await prof(args);
+      const err = r.error || '';
+      if (!(r.ok === false && re.test(err) && (!args.password || !err.includes(args.password)))) bad.push(JSON.stringify(r).slice(0, 160));
+    }
+    check('profile refuses a bad key, security word or name in words, never quoting the key', bad.length === 0, bad.join(' | '));
+  } catch (e) { check('profile refusals', false, e.message); }
+
+  // ---- every write entry point, aimed at an interface that does not exist --
+  try {
+    const r = await s.send('wlan', { op: 'probe' }, 10000);
+    const res = r.ok ? r.result : null;
+    const c = res && res.codes;
+    if (res && res.ok === false) {
+      check('wlan probe says why it could not run', typeof res.reason === 'string' && res.reason.length > 0, JSON.stringify(r));
+    } else {
+      // 1168 ERROR_NOT_FOUND for an unknown interface, 87 ERROR_INVALID_PARAMETER where Windows checks
+      // the arguments first (measured 2026-09-23); a wrong signature would crash or return garbage.
+      check('wlan write entry points load and give their documented errors for a bogus interface',
+        !!c && c.scan === 1168 && c.connect === 1168 && c.disconnect === 1168 && c.setProfile === 87 &&
+        c.deleteProfile === 87 && c.profileList === 87 && c.networkList === 1168 && c.notify === 0 && c.reasonText === 0,
+        JSON.stringify(r).slice(0, 400));
+    }
+  } catch (e) { check('wlan probe', false, e.message); }
+
+  // ---- connect and disconnect: arguments first, then the passive refusal --
+  try {
+    const noName = await s.send('wlan', { op: 'connect' });
+    const short = await s.send('wlan', { op: 'connect', ssid: 'Somewhere', password: 'short1' });
+    const long = await s.send('wlan', { op: 'connect', ssid: 'x'.repeat(33) });
+    const badHex = await s.send('wlan', { op: 'connect', hex: 'zz' });
+    const numPw = await s.send('wlan', { op: 'connect', ssid: 'Somewhere', password: 12345678 });
+    check('wlan connect checks its arguments before the passive refusal, without quoting the key',
+      noName.ok === false && /needs ssid/.test(noName.error) && !noName.error.includes('passive') &&
+      short.ok === false && /at least 8/.test(short.error) && !short.error.includes('passive') && !short.error.includes('short1') &&
+      long.ok === false && /32 bytes/.test(long.error) && badHex.ok === false && /hex/.test(badHex.error) &&
+      numPw.ok === false && /must be a string/.test(numPw.error),
+      JSON.stringify([noName, short, long, badHex, numPw]).slice(0, 500));
+    const c = await s.send('wlan', { op: 'connect', ssid: 'Somewhere', password: secret });
+    check('wlan connect is refused in passive, and the refusal does not quote the key',
+      c.ok === false && c.error.startsWith(QSX_PASSIVE) && /join a network/.test(c.error) && !c.error.includes(secret),
+      JSON.stringify(c).slice(0, 300));
+    const d = await s.send('wlan', { op: 'disconnect' });
+    check('wlan disconnect is refused in passive', d.ok === false && d.error.startsWith(QSX_PASSIVE), JSON.stringify(d));
+    const u = await s.send('wlan', { op: 'nope' });
+    check('wlan names its ops for an unknown one', u.ok === false && /unknown op/.test(u.error), JSON.stringify(u));
+  } catch (e) { check('wlan connect/disconnect refusals', false, e.message); }
+
+  // ---- audio devices ------------------------------------------------------
+  let devs = null;
+  try {
+    const r = await s.send('audio', { op: 'devices' });
+    const d = r.ok ? r.result : null;
+    devs = d && Array.isArray(d.devices) ? d.devices : null;
+    const shapeOk = !!devs && devs.every((x) => typeof x.id === 'string' && x.id.length > 0 &&
+      typeof x.name === 'string' && x.name.length > 0 && typeof x.isDefault === 'boolean' && !!x.roles &&
+      ['console', 'multimedia', 'communications'].every((k) => typeof x.roles[k] === 'boolean'));
+    check('audio devices lists the active playback devices with their three roles', !!d && d.ok === true && shapeOk,
+      JSON.stringify(r).slice(0, 300));
+    if (devs && devs.length) {
+      const defs = devs.filter((x) => x.isDefault);
+      check('exactly one playback device is the default, and defaultId names it',
+        defs.length === 1 && defs[0].id === d.defaultId, JSON.stringify(d).slice(0, 300));
+    }
+  } catch (e) { check('audio devices', false, e.message); }
+
+  // ---- audio sessions (the mixer) ------------------------------------------
+  try {
+    const r = await s.send('audio', { op: 'sessions' });
+    const res = r.ok ? r.result : null;
+    const ss = res && Array.isArray(res.sessions) ? res.sessions : null;
+    check('audio sessions answers with the default device and its apps',
+      !!res && !!ss && (res.ok === true || (typeof res.reason === 'string' && res.reason.length > 0)),
+      JSON.stringify(r).slice(0, 300));
+    if (ss) {
+      const bad = ss.filter((x) => !(typeof x.key === 'string' && /^(system|pid:\d+|sid:\d+)$/.test(x.key) &&
+        typeof x.name === 'string' && x.name.length > 0 && typeof x.system === 'boolean' && typeof x.active === 'boolean' &&
+        Number.isInteger(x.level) && x.level >= 0 && x.level <= 100 && typeof x.muted === 'boolean' && x.sessions >= 1));
+      check('every mixer row has a key, a name, a 0-100 level and a mute flag', bad.length === 0, JSON.stringify(bad[0] || null));
+      const sys = ss.filter((x) => x.system);
+      check('system sounds are one row keyed "system", and it comes first',
+        sys.length <= 1 && (sys.length === 0 || (ss[0].system === true && ss[0].key === 'system')),
+        JSON.stringify(ss.map((x) => x.key)));
+    }
+    // The open mixer polls every 1.5 s, so a read has to stay cheap (5-10 ms warm, 2026-09-23).
+    const times = [];
+    for (let i = 0; i < 5; i++) {
+      const t0 = Date.now();
+      await s.send('audio', { op: 'sessions' });
+      times.push(Date.now() - t0);
+    }
+    times.sort((a, b) => a - b);
+    check('an audio sessions read is cheap enough to poll (median of 5 under 250 ms)', times[2] < 250, times.join(','));
+    notes.push('audio: ' + (devs ? devs.length : '?') + ' playback device(s); ' + (ss ? ss.length : '?') +
+      ' mixer row(s); sessions read round trips ' + times.join('/') + ' ms (median ' + times[2] + ')');
+  } catch (e) { check('audio sessions', false, e.message); }
+
+  // ---- audio default: refusals, and the no-op only when asked for ----------
+  try {
+    const none = await s.send('audio', { op: 'default' });
+    const bogus = await s.send('audio', { op: 'default', device: '{0.0.0.00000000}.{not-a-device}' });
+    check('audio default needs a device and refuses one that is not active, before any passive check',
+      none.ok === false && /needs device/.test(none.error) &&
+      bogus.ok === false && /no active playback device/.test(bogus.error) && !bogus.error.includes('passive'),
+      JSON.stringify([none, bogus]).slice(0, 300));
+    const other = devs && devs.find((x) => !x.isDefault);
+    if (other) {
+      const r = await s.send('audio', { op: 'default', device: other.id });
+      check('audio default to another device is refused in passive',
+        r.ok === false && r.error.startsWith(QSX_PASSIVE), JSON.stringify(r).slice(0, 200));
+    }
+    const cur = devs && devs.find((x) => x.isDefault);
+    if (process.env.MANTLE_TEST_AUDIO_DEFAULT !== '1') {
+      notes.push('audio default no-op: not run (MANTLE_TEST_AUDIO_DEFAULT=1 runs it; Windows announces even a no-op to every app)');
+    } else if (cur) {
+      const r = await s.send('audio', { op: 'default', device: cur.id });
+      const res = r.ok ? r.result : null;
+      notes.push('audio default no-op: ' + JSON.stringify(res ? { ok: res.ok, noop: res.noop, hr: res.hr, ms: res.ms } : r));
+      check('audio default: the current default made default again through IPolicyConfig reads back all three roles',
+        !!res && res.ok === true && res.noop === true && !!res.roles &&
+        res.roles.console === true && res.roles.multimedia === true && res.roles.communications === true &&
+        !!res.hr && res.hr.console === '0x00000000' && res.hr.multimedia === '0x00000000' && res.hr.communications === '0x00000000',
+        JSON.stringify(r).slice(0, 400));
+    }
+  } catch (e) { check('audio default', false, e.message); }
+
+  // ---- audio session: arguments, then the fence ------------------------------
+  try {
+    const noKey = await s.send('audio', { op: 'session', level: 10 });
+    const badKey = await s.send('audio', { op: 'session', key: 'chrome', level: 10 });
+    const range = await s.send('audio', { op: 'session', key: 'pid:4', level: 101 });
+    const nothing = await s.send('audio', { op: 'session', key: 'pid:4' });
+    check('audio session checks key, level and muted before anything else',
+      noKey.ok === false && /needs key/.test(noKey.error) && badKey.ok === false && /key must be/.test(badKey.error) &&
+      range.ok === false && /0 to 100/.test(range.error) && nothing.ok === false && /needs level/.test(nothing.error),
+      JSON.stringify([noKey, badKey, range, nothing]).slice(0, 400));
+    const sys = await s.send('audio', { op: 'session', key: 'system', muted: true });
+    const notOurs = await s.send('audio', { op: 'session', key: 'pid:4', level: 50 });
+    check('audio session refuses system sounds and any app this harness did not start',
+      sys.ok === false && sys.error.startsWith(QSX_PASSIVE) && notOurs.ok === false && notOurs.error.startsWith(QSX_PASSIVE),
+      JSON.stringify([sys, notOurs]).slice(0, 300));
+  } catch (e) { check('audio session refusals', false, e.message); }
+
+  // ---- audio session on a session of our own ---------------------------------
+  const wav = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '-silence.wav');
+  let child = null;
+  try {
+    fs.writeFileSync(wav, silentWav(1));
+    // This harness is the child's parent: that is exactly what the passive fence checks.
+    // Start-Sleep bounds it even if the harness dies before it can kill it.
+    child = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      "$p = New-Object System.Media.SoundPlayer '" + wav.replace(/'/g, "''") + "'; $p.PlayLooping(); Start-Sleep -Seconds 40"],
+      { stdio: 'ignore', windowsHide: true });
+    const key = 'pid:' + child.pid;
+    const t0 = Date.now();
+    let row = null;
+    for (let i = 0; i < 40 && !row; i++) {
+      await sleep(250);
+      const r = await s.send('audio', { op: 'sessions' });
+      row = (r.ok && r.result && Array.isArray(r.result.sessions) && r.result.sessions.find((x) => x.key === key)) || null;
+    }
+    if (row) notes.push('own session: ' + key + ' ("' + row.name + '") appeared after ' + (Date.now() - t0) + ' ms at level ' + row.level + (row.muted ? ', muted' : ''));
+    if (check('the harness\'s own silent PowerShell shows up as a mixer row', !!row, key)) {
+      const startLevel = row.level, startMuted = row.muted;
+      const l = await s.send('audio', { op: 'session', key, level: 37 });
+      check('audio session sets the harness\'s own session to 37 and reads 37 back',
+        l.ok === true && l.result.ok === true && l.result.session && l.result.session.level === 37,
+        JSON.stringify(l).slice(0, 300));
+      const m = await s.send('audio', { op: 'session', key, muted: true });
+      const u = await s.send('audio', { op: 'session', key, muted: false });
+      check('audio session mutes and unmutes it, reading each back',
+        m.ok === true && m.result.session && m.result.session.muted === true &&
+        u.ok === true && u.result.session && u.result.session.muted === false,
+        JSON.stringify([m, u]).slice(0, 400));
+      const back = await s.send('audio', { op: 'session', key, level: startLevel, muted: startMuted });
+      check('and puts it back where it started (Windows remembers an app\'s mixer level)',
+        back.ok === true && back.result.session && back.result.session.level === startLevel &&
+        back.result.session.muted === startMuted,
+        JSON.stringify(back).slice(0, 300));
+    }
+  } catch (e) {
+    check('audio session on the harness\'s own session', false, e.message);
+  } finally {
+    if (child && child.exitCode === null) {
+      const gone = new Promise((r) => child.once('exit', r));
+      try { child.kill(); } catch (_) { /* already gone */ }
+      await Promise.race([gone, sleep(3000)]);
+    }
+    try { fs.unlinkSync(wav); } catch (_) { /* never written, or already gone */ }
+  }
+
+  // ---- nothing secret in anything the sidecar printed -------------------------
+  const printed = JSON.stringify(s.events) + s.stderr;
+  check('no Wi-Fi key from these tests appears in the sidecar\'s logs or events',
+    !printed.includes(secret) && !printed.includes('correct horse') && !printed.includes('short1'));
+  return notes;
+}
+
 async function main() {
   if (EXE_ARG && !fs.existsSync(EXE)) {
     console.log('SIDECAR TEST: 0 passed, 1 failed');
@@ -1152,6 +1526,11 @@ async function main() {
       JSON.stringify(r).slice(0, 200));
   } catch (e) { check('volume', false, e.message); }
 
+  // ---- Wi-Fi networks, output devices, the mixer (qsx lane, 2026-09-23) --
+  // See qsxChecks: reads, refusals and profile XML only, plus writes to a
+  // silent audio session this harness starts and stops itself.
+  const qsxNotes = await qsxChecks(s);
+
   // ---- notifications (READ ONLY: no toast of Owen's is ever touched) -----
   // Only reads and refusals here. remove/open are exercised end to end on
   // toasts posted under Notifications.TestAumid by the notif lane's scratch
@@ -1199,6 +1578,9 @@ async function main() {
     ['workarea', { reset: true }],
     ['desktop', { hwnd: '1' }],
     ['hotkey', { winTap: true }],
+    // Alt+Tab and Win+N / Win+A ride the same hook (Hotkey.cs, AltTab.cs; lib/switcher.test.js)
+    ['hotkey', { altTab: true }],
+    ['hotkey', { winKeys: true }],
     ['focus', { hwnd: '1' }]
   ];
   const REFUSAL = 'refused: sidecar is passive (test mode)';
@@ -1519,6 +1901,7 @@ async function main() {
   if (trayNote) console.log('  note: ' + trayNote);
   if (shellLnkNote) console.log('  note: ' + shellLnkNote);
   if (explorerPinNote) console.log('  note: ' + explorerPinNote);
+  for (const n of qsxNotes) console.log('  note: ' + n);
   console.log(`SIDECAR TEST: ${passed} passed, ${failures.length} failed`);
   process.exit(failures.length === 0 ? 0 : 1);
 }

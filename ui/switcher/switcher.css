@@ -1,0 +1,284 @@
+/* switcher.css — Mantle's Alt+Tab overlay, in the taskbar island's glass.
+ *
+ * EVERY colour is a --lg-* token from ../shared/glass-light.css: light frost, dark ink, plain
+ * hairlines, one accent. No backdrop-filter (in a transparent Electron window it would blur this
+ * page and nothing else), no text-shadow, no glow.
+ *
+ * THE LAYERS, bottom to top, all clipped to the panel's radius:
+ *   .bdrop (z0)    a PNG of the screen behind the panel, blurred here
+ *   ::after (z1)   the tint and the two hairlines
+ *   content (z2)   the tiles, the empty line, the notice, the foot line
+ *   DWM            the window pictures, which the compositor draws OVER this page inside each
+ *                  preview box. Nothing in a .pv box is ever seen while its picture is up; what
+ *                  is in there (.pv-why) is the reason when there is no picture.
+ *
+ * NO MOTION ON THE WAY IN: the window arrives on screen already drawn (main moves it there in one
+ * SetWindowPos), and DWM puts the pictures up at full opacity in that same frame. A CSS entrance
+ * would only fade the glass in under pictures that are already there. Windows' own Alt+Tab
+ * appears the same way: at once.
+ *
+ * All the geometry is main's (ui/switcher/layout.js) and arrives as custom properties on :root;
+ * the values below are only what the page looks like before the first Alt+Tab.
+ */
+:root {
+  --panel-r: 20px;      /* the launcher's panel radius: the same family of floating panes */
+  --tile-r: 12px;
+  --m: 18px;            /* the transparent margin round the panel, for its drop shadow */
+  --pw: 380px;          /* the panel */
+  --ph: 64px;
+  --pad: 14px;
+  --gap: 8px;
+  --cols: 1;
+  --tw: 240px;          /* a tile */
+  --th: 179px;
+  --pvw: 228px;         /* its preview box */
+  --pvh: 143px;
+  --inset: 6px;
+  --caph: 30px;
+  --gw: 240px;          /* the visible grid */
+  --gh: 179px;
+  --first: 0;           /* the first visible row, when there are too many to show */
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  /* the window is transparent: anything painted here would be a rectangle of fog round the pane */
+  background: transparent;
+  overflow: hidden;
+  /* the bar's face and size, so the two surfaces set text the same way */
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px;
+  -webkit-font-smoothing: antialiased;
+  color: var(--lg-ink-2);
+  user-select: none;
+  cursor: default;
+}
+
+#stage { position: fixed; inset: 0; }
+
+/* ---- the pane ------------------------------------------------------------------------------- */
+
+.panel {
+  position: absolute;
+  left: var(--m);
+  top: var(--m);
+  width: var(--pw);
+  height: var(--ph);
+  border-radius: var(--panel-r);
+  overflow: hidden;
+  --pane-fill: var(--lg-fill);
+  /* paints nothing but the drop shadow: a fill here would be buried under the backdrop <img> */
+  background: transparent;
+  box-shadow: var(--lg-shadow);
+}
+body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
+
+/* the tint and the hairlines, drawn once on top of the blurred backdrop (the launcher's recipe) */
+.panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border: 1px solid var(--lg-edge-out);
+  border-radius: inherit;
+  background-color: var(--pane-fill);
+  background-clip: padding-box;
+  box-shadow: var(--lg-lip-up);
+  transition: background-color 150ms var(--lg-ease);
+}
+
+/* ---- the backdrop: 14px of overscan on every side so the blur's pale fringe falls outside the
+   clip. Main captures exactly that bigger rectangle (lib/switcher.js OVERSCAN). */
+.bdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms var(--lg-ease);
+}
+.bdrop.on { opacity: 1; }
+/* While the window is parked nothing fades: a fade still running when it comes on screen shows the
+   screen through a half-made pane. Only a picture that lands after the reveal cross-fades. */
+body.snap .bdrop, body.snap .panel::after { transition: none; }
+/* Blurred by switcher.js into the canvas at the capture's own (quarter) size, with --lg-blur scaled
+   to match, and only stretched here: the GPU blurs a picture a sixteenth of the size once, rather
+   than the whole stretched layer under a CSS filter whenever it is drawn. */
+.bdrop canvas {
+  position: absolute;
+  left: -14px;
+  top: -14px;
+  width: calc(100% + 28px);
+  height: calc(100% + 28px);
+  display: block;
+  transform: translateZ(0);
+}
+
+/* ---- the tiles ------------------------------------------------------------------------------ */
+
+.grid {
+  position: absolute;
+  left: var(--pad);
+  top: var(--pad);
+  width: var(--gw);
+  height: var(--gh);
+  overflow: hidden;          /* whole rows only; see layout.js 3. */
+  z-index: 2;
+}
+.rows {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), var(--tw));
+  grid-auto-rows: var(--th);
+  gap: var(--gap);
+  transform: translateY(calc(var(--first) * (var(--th) + var(--gap)) * -1));
+}
+
+.tile {
+  position: relative;
+  border-radius: var(--tile-r);
+  padding: var(--inset) var(--inset) 0;
+  /* the selection ring is an INSET shadow, not a border: a border would take 2px off the preview
+     box and main's rectangles (layout.js previewW) would no longer be the box on screen */
+  transition: background-color 90ms steps(2);
+}
+.tile:hover { background: var(--lg-hover); }
+.tile.is-sel {
+  background: var(--lg-acc-soft);
+  box-shadow: inset 0 0 0 2px var(--lg-acc);
+}
+
+.pv {
+  position: relative;
+  width: var(--pvw);
+  height: var(--pvh);
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+  overflow: hidden;
+}
+/* why there is no picture (cloaked, closed, DWM refused): only ever seen when DWM draws nothing */
+.pv-why {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--lg-ink-3);
+}
+
+.cap {
+  height: var(--caph);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 3px;
+  min-width: 0;
+}
+.ico {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+.ico.letter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: var(--lg-tile);
+  color: var(--lg-ink-2);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.ttl {
+  flex: 1 1 auto;
+  /* the title keeps a readable stub even on the narrowest tile: a chip may shrink, it may not */
+  min-width: 40px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--lg-ink-2);
+}
+.tile.is-sel .ttl { color: var(--lg-ink); font-weight: 600; }
+.chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--lg-sunk);
+  color: var(--lg-ink-3);
+}
+.chip.warn { background: var(--lg-warn-soft); color: var(--lg-warn); }
+
+/* ---- the other faces of the panel ----------------------------------------------------------- */
+
+.empty, .note { display: none; }
+body.is-empty .grid { display: none; }
+body.is-empty .empty {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--lg-ink-2);
+}
+
+body.noting .grid, body.noting .empty { display: none; }
+body.noting .note {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 20px;
+}
+.note-t {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--lg-warn);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.note-x {
+  color: var(--lg-ink-2);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+/* sits in the panel's bottom padding: said, never in the way of a tile */
+.foot {
+  position: absolute;
+  right: 14px;
+  bottom: 1px;
+  z-index: 2;
+  max-width: 70%;
+  font-size: 10px;
+  line-height: 12px;
+  color: var(--lg-ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

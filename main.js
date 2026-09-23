@@ -24,6 +24,10 @@ const thumbs = require('./lib/thumbs');
 const wallpaper = require('./lib/wallpaper');
 // Mantle's notification centre (2026-09-22): the bar's bell, over the sidecar's `notifications`.
 const notifications = require('./lib/notifications');
+// Mantle's Alt+Tab (2026-09-23): the overlay window and its off switch. The keys and the switch
+// itself are the sidecar's (Hotkey.cs + AltTab.cs), so Alt+Tab works even when this process
+// or the overlay page is stuck; lib/switcher.js only draws it.
+const switcher = require('./lib/switcher');
 
 /*
  * The pinned-taskbar reader (lane C's file). It is REQUIRED IN A TRY on purpose:
@@ -1760,7 +1764,7 @@ function nameForExe(exe, fallback) {
  * the dock, the flyout and anything else reading lastWindows all agree.
  */
 const MANTLE_AUMID = 'com.owensilva.mantle';
-const MANTLE_TITLES = new Set(['mantle bar', 'mantle desktop', 'mantle launcher', 'mantle wallpapers']);
+const MANTLE_TITLES = new Set(['mantle bar', 'mantle desktop', 'mantle launcher', 'mantle wallpapers', 'mantle switcher']);
 function isMantleWindow(w) {
   if (!w) return false;
   if (w.aumid && String(w.aumid).toLowerCase() === MANTLE_AUMID) return true;
@@ -2189,6 +2193,111 @@ function qsWatchStop(why) {
   qsTimer = null;
   process.stdout.write(`mantle: quick-settings watch off: ${why}\n`);
   return true;
+}
+
+/*
+ * QUICK SETTINGS, ONE LEVEL DOWN (qsx lane, 2026-09-23): the Wi-Fi network list,
+ * the output-device picker and the volume mixer, so Owen never needs Windows' own
+ * flyouts for them. The work is the sidecar's (sidecar/Wlan.cs, AudioMixer.cs);
+ * these commands give every reply the same never-throwing {ok, reason} shape as
+ * qs.get, and push a fresh qs snapshot after anything that moves a main-panel tile.
+ *
+ * Measured 2026-09-23 on Owen's machine: list 23-34 ms warm, a scan 3.6 s end to
+ * end (Wlan.cs waits up to 6 s for Windows' scan-complete), a connect up to 25 s
+ * for Windows' verdict, devices 4-5 ms, sessions 5-10 ms. Timeouts sit well past.
+ */
+const QS_MORE_MS = { list: 8000, scan: 15000, connect: 40000, disconnect: 15000, audio: 6000 };
+
+async function qsMore(cmd, args, label, ms) {
+  try {
+    const r = await sidecar.call(cmd, args, ms);
+    // Unlike qsPart, the sidecar's own ok/reason WIN: a list read with the radio
+    // off is ok:true with its reason; a failed connect is ok:false in Windows' words.
+    return Object.assign({ ok: true, reason: null }, r);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: Sidecar.isOldExeError(err)
+        ? `${label}: the sidecar exe has no "${cmd}" command yet, so run npm run build:sidecar`
+        : `${label}: ${err.message}`,
+    };
+  }
+}
+
+/*
+ * THE WI-FI PASSWORD FIELD NEEDS THE KEYBOARD, AND THE BAR NEVER HAS IT. The bar
+ * is focusable:false (lib/windows.js) so a click on it never takes focus from the
+ * app Owen is in -- which also means a text field in it receives NO keys: they go
+ * to whatever app is in front. A password typed there would land, keystroke by
+ * keystroke, in that app. So the panel shows its password field only after
+ * qs.keyboard {on:true} has read back barWin.isFocused() === true, and says why
+ * when it cannot. {on:false} makes the bar unfocusable again and, if the bar still
+ * holds focus (nothing else was clicked meanwhile), hands focus back to the window
+ * that had it, through the same sidecar `focus` a taskbar click uses.
+ * NOT verified live (2026-09-23): a test instance must never take focus, so this
+ * path waits for Owen's go; see the qsx report's live-test steps.
+ */
+let qsKbPrev = null;       // the hwnd that was in front before the password field took the keyboard
+let qsKbBlur = null;       // the bar's blur listener while it holds the keyboard
+
+/* The bar lost focus on its own (Owen clicked another app, or a game took the
+   screen): it goes back to focusable:false at once, and focus is NOT dragged back
+   to the old window, because Owen went somewhere on purpose. */
+function qsKbDisarm() {
+  if (qsKbBlur && barWin && !barWin.isDestroyed()) barWin.removeListener('blur', qsKbBlur);
+  qsKbBlur = null;
+}
+
+async function qsKeyboard(on) {
+  if (!barWin || barWin.isDestroyed()) return { ok: false, focused: false, reason: 'the bar window is gone' };
+  qsKbDisarm();
+  if (on) {
+    if (flags.test) {
+      return { ok: false, focused: false, reason: 'a test instance never takes the keyboard from whoever is at the machine, so a password cannot be typed here' };
+    }
+    let note = null;
+    try {
+      const fg = await sidecar.call('foreground', {}, 1500);
+      const h = fg && fg.hwnd ? String(fg.hwnd) : '';
+      qsKbPrev = h && h !== '0' && h !== hwndOf(barWin) ? h : null;
+    } catch (err) {
+      qsKbPrev = null;
+      note = `focus will not be handed back afterwards: the window in front could not be read (${err.message})`;
+    }
+    barWin.setFocusable(true);
+    barWin.setSkipTaskbar(true);           // Electron's setFocusable(true) also un-skips the taskbar on Windows
+    barWin.focus();
+    barWin.webContents.focus();
+    const focused = barWin.isFocused();
+    if (!focused) {
+      barWin.setFocusable(false);
+      barWin.setSkipTaskbar(true);
+      qsKbPrev = null;
+      return { ok: false, focused: false, reason: 'Windows did not give the bar the keyboard (another window kept focus), so the password cannot be typed here' };
+    }
+    qsKbBlur = () => {
+      qsKbDisarm();
+      if (!barWin || barWin.isDestroyed()) return;
+      barWin.setFocusable(false);
+      barWin.setSkipTaskbar(true);
+      qsKbPrev = null;
+      process.stdout.write('mantle: the bar lost the keyboard (another window took focus); it is unfocusable again\n');
+    };
+    barWin.on('blur', qsKbBlur);
+    return { ok: true, focused: true, note, reason: null };
+  }
+  const had = barWin.isFocused();
+  barWin.setFocusable(false);
+  barWin.setSkipTaskbar(true);
+  const prev = qsKbPrev;
+  qsKbPrev = null;
+  if (!had || !prev) return { ok: true, focused: false, restored: null, reason: null };
+  try {
+    await sidecar.call('focus', { hwnd: prev }, 4000);
+    return { ok: true, focused: false, restored: prev, reason: null };
+  } catch (err) {
+    return { ok: false, focused: false, restored: null, reason: `the keyboard was released, but focus could not go back to the window that had it (${err.message})` };
+  }
 }
 
 /*
@@ -2768,6 +2877,82 @@ const COMMANDS = {
     qsWatchStop('the panel asked');
     return { ok: true, watching: false, everyMs: QS_WATCH_MS, reason: null };
   },
+
+  // ---- Quick Settings, one level down: Wi-Fi networks, output device, mixer ----
+  'qs.wifi.list': async () => qsMore('wlan', { op: 'list' }, 'the Wi-Fi networks cannot be read', QS_MORE_MS.list),
+  'qs.wifi.scan': async () => qsMore('wlan', { op: 'scan' }, 'the Wi-Fi scan did not finish', QS_MORE_MS.scan),
+
+  'qs.wifi.connect': async (a) => {
+    // THE PASSWORD LEAVES `a` BEFORE ANYTHING CAN FAIL OR AWAIT: the IPC handler
+    // logs a failed call's args with JSON.stringify(args), and `a` IS that object.
+    // From here it lives in one local, then in the one line written to the
+    // sidecar's stdin, and nowhere else: no log, no state file, no error text.
+    let password = null;
+    if (a && Object.prototype.hasOwnProperty.call(a, 'password')) {
+      password = a.password;
+      delete a.password;
+    }
+    const ssid = a && typeof a.ssid === 'string' && a.ssid ? a.ssid : null;
+    const hex = a && typeof a.hex === 'string' && a.hex ? a.hex : null;
+    if (!ssid && !hex) return { ok: false, reason: "qs.wifi.connect needs ssid (the network's name) or hex" };
+    if (password !== null && typeof password !== 'string') return { ok: false, ssid, reason: 'the Wi-Fi password must be text' };
+    const args = { op: 'connect', auto: !(a && a.auto === false) };
+    if (hex) args.hex = hex;
+    else args.ssid = ssid;
+    if (password) args.password = password;
+    password = null;
+    const pending = qsMore('wlan', args, `Mantle could not connect to "${ssid || 'that network'}"`, QS_MORE_MS.connect);
+    delete args.password;                  // already serialized by sidecar.call
+    const r = await pending;
+    if (qsWatching) qsPush(`Wi-Fi ${r.ok ? 'joined' : 'did not join'} ${ssid || hex}`);
+    return r;
+  },
+
+  'qs.wifi.disconnect': async () => {
+    const r = await qsMore('wlan', { op: 'disconnect' }, 'Wi-Fi could not be disconnected', QS_MORE_MS.disconnect);
+    if (qsWatching) qsPush('Wi-Fi was disconnected');
+    return r;
+  },
+
+  'qs.audio.devices': async () => qsMore('audio', { op: 'devices' }, 'the playback devices cannot be read', QS_MORE_MS.audio),
+
+  'qs.audio.default': async (a) => {
+    // "device", not "id": lib/sidecar.js refuses an argument named id (the protocol's own).
+    const device = a && typeof a.device === 'string' ? a.device : '';
+    if (!device) return { ok: false, reason: "qs.audio.default needs device: a playback device's id from qs.audio.devices" };
+    const r = await qsMore('audio', { op: 'default', device }, 'the output device could not be changed', QS_MORE_MS.audio);
+    // The main slider follows the default device, so repaint it from a fresh read.
+    if (qsWatching) qsPush('the output device was changed');
+    return r;
+  },
+
+  'qs.audio.sessions': async () => {
+    const r = await qsMore('audio', { op: 'sessions' }, 'the apps playing sound cannot be read', QS_MORE_MS.audio);
+    if (r.ok && Array.isArray(r.sessions)) {
+      // Icons from each app's exe, cached per path by iconFor: one sidecar call per
+      // app ever, so a 1.5 s refresh of an open mixer costs the session read only.
+      await Promise.all(r.sessions.map(async (s) => {
+        if (s.system) { s.icon = null; s.iconReason = null; return; }
+        if (!s.path) { s.icon = null; s.iconReason = 'no icon: Windows gave no program path for this app'; return; }
+        const got = await iconFor([s.path]);
+        s.icon = got.icon;
+        s.iconReason = got.reason;
+      }));
+    }
+    return r;
+  },
+
+  'qs.audio.session': async (a) => {
+    const key = a && typeof a.key === 'string' ? a.key : '';
+    if (!key) return { ok: false, reason: "qs.audio.session needs key: a row's key from qs.audio.sessions" };
+    const args = { op: 'session', key };
+    if (a.level !== undefined) args.level = Number(a.level);
+    if (a.muted !== undefined) args.muted = a.muted;
+    return qsMore('audio', args, "that app's volume could not be changed", QS_MORE_MS.audio);
+  },
+
+  // The Wi-Fi password field's keyboard: see qsKeyboard for why the bar must ask.
+  'qs.keyboard': async (a) => qsKeyboard(!!(a && a.on)),
 
   'open': async (a) => openTarget(a && a.target),
 
@@ -3864,6 +4049,9 @@ async function applyLive() {
   } catch (err) {
     state.set('hotkey', { winTap: false, reason: `the Win key still opens the Windows Start menu: ${err.message}` });
   }
+
+  // 5. Alt+Tab, Win+N and Win+A, on the same hook, as the tray menu's switches say (lib/switcher.js).
+  await switcher.applyLive('the sidecar is up and Mantle owns the shell');
 }
 
 // ---------------------------------------------------------------------------
@@ -3971,6 +4159,7 @@ function markRestored(why) {
   state.set('workarea', { reserved: false, reason: `the app bar is gone and the whole screen is available again: ${why}` });
   state.set('desktop', { attached: false, mode: null, reason: `the desktop layer is detached: ${why}` });
   state.set('hotkey', { winTap: false, reason: `the Win key opens the Windows Start menu again: ${why}` });
+  switcher.released(why);
 }
 
 /**
@@ -4087,7 +4276,8 @@ function restoreShell(why) {
     }
 
     // 3. The pieces that were always safe: the hook and the wallpaper layer.
-    const rest = [['the Win key hook', () => sidecar.call('hotkey', { winTap: false }, 4000)]];
+    // ALL of the hook's features, or Alt+Tab would stay Mantle's after Windows was "put back".
+    const rest = [['the keyboard hook (Win key, Alt+Tab, Win+N, Win+A)', () => sidecar.call('hotkey', { winTap: false, altTab: false, winKeys: false }, 4000)]];
     stopDesktopRecheck();   // or it re-places the layer while it is being detached
     if (desktopWin && !desktopWin.isDestroyed()) {
       rest.push(['the desktop layer', () => sidecar.call('desktop', { hwnd: hwndOf(desktopWin), detach: true }, 4000)]);
@@ -4122,6 +4312,7 @@ function shutdown(why) {
   // DWM drops a dead process's thumbnails on its own, but the restore below can take seconds
   // and the bar is still on screen for all of them.
   clearThumbs('Mantle is shutting down');
+  switcher.stop('Mantle is shutting down');   // the Alt+Tab overlay's previews and timers
   // ...and with it the capture loop, which is the one thing that can leave a
   // window excluded from Owen's screenshots if it is stopped carelessly.
   stopBackdrop('Mantle is shutting down');
@@ -4228,6 +4419,10 @@ function updateTray() {
       // The desktop layer never gets a click (it is under the icons), so its wallpaper is chosen here
       // or from the launcher's "Wallpapers" entry.
       { label: 'Wallpapers…', click: () => { wallpaper.openLibrary(); } },
+      { type: 'separator' },
+      // Alt+Tab and Win+N / Win+A: the off switches (off = Windows' own), each with the
+      // state piece's sentence under it, so "why is it Windows' Alt+Tab" is answered right here.
+      ...switcher.trayItems(),
       { type: 'separator' },
       // Two items, and neither of them can make things worse. There is
       // deliberately NO "hide the Windows taskbar" any more: that item called the
@@ -4654,6 +4849,19 @@ app.whenReady().then(() => {
   wallpaper.start({ root: ROOT, test: flags.test, state, sidecar, commands: COMMANDS, desktopWin });
   // The notification centre's list, watch and commands (notifs.*): all in lib/notifications.js.
   notifications.start({ test: flags.test, state, sidecar, commands: COMMANDS, broadcast });
+  // Alt+Tab's overlay window (parked off screen, never shown in a test run) and switcher.*.
+  // Win+N / Win+A arrive through it too, and the bar opens its own panel for them.
+  switcher.start({
+    root: ROOT,
+    test: flags.test,
+    state,
+    sidecar,
+    commands: COMMANDS,
+    pinned: () => lastPinned,
+    windows: () => lastWindows,
+    iconFor: (candidates) => iconFor(candidates),
+    onWinKey: (key) => broadcast('bar.winkey', { key }),
+  });
 
   // Order matters: the shortcuts write their own state before the tray reads the
   // state to build its menu, and test mode's four "deliberately not done" reasons

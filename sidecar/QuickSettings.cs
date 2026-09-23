@@ -109,6 +109,17 @@ namespace Mantle {
       return Settle(_brightness, reply, back);
     }
 
+    /// A Wi-Fi connect or disconnect from the network list (Wlan.cs) has just
+    /// read the state back: the tile's next read is that state, not a cached
+    /// answer from before the switch (a tile still naming the old network
+    /// would be lying for up to WifiFreshMs).
+    public static void WifiChanged(IDictionary readBack) {
+      if (readBack == null) { _wifi.Refresh(); return; }
+      var copy = Json.Obj();
+      foreach (DictionaryEntry e in readBack) copy[e.Key] = e.Value;
+      _wifi.Put(copy);
+    }
+
     static IDictionary Settle(Cached c, IDictionary reply, IDictionary back) {
       if (back != null) c.Put(back);
       else c.Refresh();          // the switch failed before it could read back

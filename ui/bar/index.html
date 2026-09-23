@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="bar.css">
 <link rel="stylesheet" href="notifications.css">
+<link rel="stylesheet" href="qs-more.css">
 </head>
 <!-- data-edge says which screen edge the bar is docked to. bar.js overwrites it from State.edge.
      class="pre edge": the flush, fully transparent state with NO transition, which is how the
@@ -107,6 +108,8 @@
 <script src="mock-mantle.js"></script>
 <!-- the notification centre defines window.MantleNotifs; bar.js hands it the popover helpers -->
 <script src="notifications.js"></script>
+<!-- quick settings one level down (Wi-Fi list, output picker, mixer) defines window.MantleQsMore -->
+<script src="qs-more.js"></script>
 <script src="bar.js"></script>
 </body>
 </html>

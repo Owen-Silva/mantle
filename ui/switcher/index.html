@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- light frosted glass, so the UA's own bits are drawn for a light surface -->
+<meta name="color-scheme" content="light">
+<!-- the launcher's policy, for the launcher's reasons: file:// is an opaque origin, so scheme sources;
+     data: is for the backdrop PNG and the icon bitmaps main sends. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle switcher</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette (one theme for
+     every Mantle surface, Owen 2026-09-21). Nothing here reads tokens.css. -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="switcher.css">
+</head>
+<!-- no-backdrop until this Alt+Tab's picture of the screen arrives: the thicker fallback tint
+     carries the pane alone, honestly, rather than a thin tint over nothing. -->
+<body class="no-backdrop">
+  <!-- The window. Main sizes it to the panel plus its shadow margin for every Alt+Tab and parks
+       it off screen between them; the mock harness moves #stage around a fake screen instead. -->
+  <div id="stage">
+    <main class="panel" id="panel">
+      <!-- FIRST child, so it paints under everything: a PNG of the screen behind the panel,
+           blurred ONCE, at the capture's quarter size, into this canvas (switcher.js), which is
+           then only stretched. The window is parked when it is taken, so it is never in its own
+           picture. -->
+      <div class="bdrop" id="bdrop" aria-hidden="true"><canvas id="backdrop"></canvas></div>
+
+      <!-- The tiles. Each has a preview box that DWM draws the window into (main registers the
+           thumbnails at the boxes this page measures) and a caption. Whole rows only: a DWM
+           picture cannot be clipped by CSS. -->
+      <div class="grid" id="grid" role="listbox" aria-label="Open windows">
+        <div class="rows" id="rows"></div>
+      </div>
+
+      <div class="empty" id="empty">No windows to switch to</div>
+
+      <!-- "Could not switch to ...": the reason a switch failed, on screen for a few seconds. -->
+      <div class="note" id="note" role="alert">
+        <div class="note-t" id="noteTitle"></div>
+        <div class="note-x" id="noteText"></div>
+      </div>
+
+      <!-- what is degraded in THIS Alt+Tab (no blur, no previews), in words -->
+      <div class="foot" id="foot"></div>
+    </main>
+  </div>
+<script src="mock-mantle.js"></script>
+<script src="layout.js"></script>
+<script src="switcher.js"></script>
+</body>
+</html>

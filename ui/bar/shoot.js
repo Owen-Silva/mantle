@@ -52,6 +52,13 @@ const OUT = process.env.BAR_SHOTS ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/edd3247c-6214-4642-9069-bbf7e50b1555/scratchpad/lanes/bar';
 const PAGE = 'file:///C:/Users/user/mantle/ui/bar/index.html';
 
+/* Step sequences for the quick-settings sub-views (qs-more.js): open the panel from the Wi-Fi
+   readout, take the tile's '>' and let the mock's scan finish; or take the volume row's '>'. */
+const WIFI = ['#network', '.qsx-chev', { wait: 1300 }];
+const net = (ssid) => '.qsx-net[data-ssid="' + ssid + '"] .qsx-nethead';
+const PASSWORD = WIFI.concat([net('Cafe WiFi'), '.qsx-net.open .qsx-btn.acc', { fill: '#qsxpw', text: 'not-a-real-key' }]);
+const SOUND = ['#volume', '.qsx-more', { wait: 600 }];
+
 /* Each shot is one state worth looking at, not one size for its own sake. */
 const SHOTS = [
   { name: 'bar-1920', w: 1920, h: 44, q: '' },
@@ -81,7 +88,33 @@ const SHOTS = [
   { name: 'notifs-plain', w: 1280, h: 540, q: '?mode=pill&notifs=plain', click: '#notifs' },
   { name: 'notifs-none', w: 1280, h: 330, q: '?mode=pill&notifs=none', click: '#notifs' },
   { name: 'notifs-off', w: 1280, h: 330, q: '?mode=pill&notifs=off', click: '#notifs' },
-  { name: 'notifs-edge', w: 1280, h: 540, q: '?notifs=some', click: '#notifs' }
+  { name: 'notifs-edge', w: 1280, h: 540, q: '?notifs=some', click: '#notifs' },
+  /* Quick settings one level down (ui/bar/qs-more.js, 2026-09-23): the Wi-Fi list, the password
+     field, the output picker and the mixer, in every state they have to get right. `steps` runs in
+     order: a string clicks that selector, {wait: ms} pauses, {fill, text} types into a field,
+     {scroll} scrolls that element to its bottom. The mock scans in 900 ms, hence the waits. */
+  { name: 'qsx-main', w: 1280, h: 400, q: '?mode=pill', click: '#network' },
+  { name: 'qsx-wifi', w: 1280, h: 560, q: '?mode=pill', steps: WIFI },
+  { name: 'qsx-wifi-more', w: 1280, h: 560, q: '?mode=pill', steps: WIFI.concat([{ scroll: '.qsx-view .qsx-scroll' }]) },
+  { name: 'qsx-wifi-connected', w: 1280, h: 560, q: '?mode=pill', steps: WIFI.concat([net('Maple-5G')]) },
+  { name: 'qsx-wifi-known', w: 1280, h: 560, q: '?mode=pill', steps: WIFI.concat([net('Maple-Guest')]) },
+  { name: 'qsx-wifi-open', w: 1280, h: 560, q: '?mode=pill', steps: WIFI.concat([net('CoffeeHouse Free WiFi')]) },
+  { name: 'qsx-wifi-enterprise', w: 1280, h: 560, q: '?mode=pill', steps: WIFI.concat([{ scroll: '.qsx-view .qsx-scroll' }, '.qsx-net[data-ssid^="Lakeview"] .qsx-nethead']) },
+  { name: 'qsx-wifi-password', w: 1280, h: 560, q: '?mode=pill', steps: PASSWORD },
+  { name: 'qsx-wifi-connecting', w: 1280, h: 560, q: '?mode=pill&wifi=connecting', steps: WIFI },
+  { name: 'qsx-wifi-failed', w: 1280, h: 560, q: '?mode=pill', steps: PASSWORD.concat(['.qsx-pw .qsx-btn.acc', { wait: 1800 }]) },
+  { name: 'qsx-wifi-lastfail', w: 1280, h: 560, q: '?mode=pill&wifi=failed', steps: WIFI },
+  { name: 'qsx-wifi-kbd', w: 1280, h: 560, q: '?mode=pill&kbd=refused', steps: WIFI.concat([net('Cafe WiFi'), '.qsx-net.open .qsx-btn.acc']) },
+  { name: 'qsx-wifi-scanning', w: 1280, h: 560, q: '?mode=pill&scan=hold', steps: ['#network', '.qsx-chev', { wait: 300 }] },
+  { name: 'qsx-wifi-off', w: 1280, h: 560, q: '?mode=pill&wifi=off', steps: WIFI },
+  { name: 'qsx-wifi-none', w: 1280, h: 560, q: '?mode=pill&wifi=none', steps: WIFI },
+  { name: 'qsx-wifi-empty', w: 1280, h: 560, q: '?mode=pill&wifi=empty', steps: WIFI },
+  { name: 'qsx-wifi-error', w: 1280, h: 560, q: '?mode=pill&wifi=error', steps: WIFI },
+  { name: 'qsx-sound-1', w: 1280, h: 560, q: '?mode=pill&audio=1', steps: SOUND },
+  { name: 'qsx-sound-4', w: 1280, h: 560, q: '?mode=pill&audio=4', steps: SOUND },
+  { name: 'qsx-mixer-0', w: 1280, h: 560, q: '?mode=pill&audio=1&mixer=0', steps: SOUND },
+  { name: 'qsx-mixer-8', w: 1280, h: 560, q: '?mode=pill&audio=1&mixer=8', steps: SOUND.concat([{ scroll: '.qsx-view .qsx-scroll' }]) },
+  { name: 'qsx-mixer-error', w: 1280, h: 560, q: '?mode=pill&mixer=error', steps: SOUND }
 ];
 const ONLY = process.argv.slice(2);
 const RUN = ONLY.length ? SHOTS.filter(s => ONLY.some(w => s.name.includes(w))) : SHOTS;
@@ -117,8 +150,17 @@ if (process.env.BAR_TRAY_JSON) {
       if (process.env.BAR_EXTRA_CSS) await page.addStyleTag({ content: process.env.BAR_EXTRA_CSS });
       await page.evaluate(() => document.fonts.ready);
       await page.waitForTimeout(350);           // the mock bridge answers at 30ms; this is slack, not a race
-      if (s.click) { await page.click(s.click); await page.waitForTimeout(400); }
+      for (const st of s.steps || (s.click ? [s.click] : [])) {
+        if (typeof st === 'string') { await page.click(st); await page.waitForTimeout(400); }
+        else if (st.wait) await page.waitForTimeout(st.wait);
+        else if (st.fill) await page.fill(st.fill, st.text);
+        else if (st.scroll) { await page.$eval(st.scroll, el => { el.scrollTop = el.scrollHeight; }); await page.waitForTimeout(100); }
+      }
       await page.mouse.move(0, 0);              // no hover state left on whatever was clicked
+      /* ...and let its fade finish: hovers fade out over 150 ms steps(2), so a shot taken at once
+         kept the full hover fill on whatever row the last click left the pointer over (seen on
+         qsx-wifi, 2026-09-23, where it read as a selected network). */
+      await page.waitForTimeout(200);
       const file = path.join(OUT, s.name + (process.env.BAR_SUFFIX || '') + '.png');
       await page.screenshot({ path: file });
       console.log(file);

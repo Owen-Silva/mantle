@@ -23,6 +23,8 @@
  *   ?apps=N       N pinned items instead of 12 (proves the centred row, the slide and the clip)
  *   ?qs=fail      Bluetooth and brightness come back ok:false, so the panel's muted-with-a-reason
  *                 path is on screen instead of having to be imagined
+ *   ?wifi= ?scan= ?kbd= ?audio= ?mixer=   the Wi-Fi list, output picker and mixer states
+ *                 (qs-more.js); listed at "quick settings, one level down" below
  *   ?state=down   sidecar reported down, so the amber status chip is on screen
  *   ?edge=top     pretend the bar is docked at the top (bar.js also honours this)
  *   ?media=X      now playing, in main's 'media' payload shape (main.js NOW PLAYING): playing,
@@ -181,10 +183,15 @@
   function qsSnapshot() {
     qsState.volume.level = volume.level;
     qsState.volume.muted = volume.muted;
+    /* qs.get reports levels 0-100 (the sidecar's own scale; bar.js divides by 100). The mock keeps
+       0-1 inside, and until 2026-09-23 sent that straight out, so the panel read "0%" and "1%". */
+    var pct = function (part) {
+      return typeof part.level === 'number' ? Object.assign({}, part, { level: Math.round(part.level * 100) }) : part;
+    };
     return {
       ok: true, reason: '',
-      volume: qsState.volume, wifi: qsState.wifi, bluetooth: qsState.bluetooth,
-      brightness: qsState.brightness, nightlight: qsState.nightlight, power: qsState.power
+      volume: pct(qsState.volume), wifi: qsState.wifi, bluetooth: qsState.bluetooth,
+      brightness: pct(qsState.brightness), nightlight: qsState.nightlight, power: qsState.power
     };
   }
 
@@ -200,6 +207,198 @@
     if (qsTimer) clearTimeout(qsTimer);
     if (!qsWatching) return;
     qsTimer = setTimeout(function () { qsPush(); qsLoop(); }, 2000);
+  }
+
+  /* ---- quick settings, one level down (ui/bar/qs-more.js) -------------------------------
+     Main's qs.wifi.* / qs.audio.* / qs.keyboard replies, in the sidecar's shapes (sidecar/Wlan.cs,
+     sidecar/AudioMixer.cs). The network names are made up: nobody's real neighbours in the repo.
+       ?wifi=list (default) | connecting | failed | off | none | empty | error
+       ?scan=hold     the scan never finishes, so "Scanning…" can be looked at
+       ?kbd=refused   qs.keyboard says no, as it does in a test instance
+       ?audio=1|4     playback devices (default 2)
+       ?mixer=0|3|8|error   apps with sound (default 3); 8 brings the long names
+     THE MOCK NEVER KEEPS A WI-FI PASSWORD: qs.wifi.connect checks the sidecar's rule (8-63
+     printable characters, or 64 hex digits), then drops it; the call log redacts it; and whether a
+     connect fails depends on the NETWORK ("Cafe WiFi" always does), never on what was typed. */
+  var WIFI = q.get('wifi') || 'list';
+  var SCAN_HOLD = q.get('scan') === 'hold';
+  var KBD_REFUSED = q.get('kbd') === 'refused';
+  var AUDIO_N = q.get('audio') === '1' ? 1 : q.get('audio') === '4' ? 4 : 2;
+  var MIXER = q.get('mixer') || '3';
+
+  function hexOf(s) {
+    var b = new TextEncoder().encode(s || ''), out = '';
+    for (var i = 0; i < b.length; i++) out += (b[i] < 16 ? '0' : '') + b[i].toString(16).toUpperCase();
+    return out;
+  }
+  var ENT_WHY = 'it uses enterprise (802.1X) sign-in - a user name and password or a certificate - which Windows\' own Wi-Fi list asks for';
+  var wifiNets = [
+    { ssid: 'Maple-5G', security: 'WPA3-Personal', kind: 'personal', signal: 82, known: true, connected: WIFI !== 'connecting' },
+    { ssid: 'Maple-Guest', security: 'WPA2-Personal', kind: 'personal', signal: 74, known: true },
+    { ssid: 'xfinitywifi', security: 'Open', kind: 'open', signal: 40, known: true },
+    { ssid: 'Cafe WiFi', security: 'WPA2-Personal', kind: 'personal', signal: 88 },
+    { ssid: 'NETGEAR-4F2A', security: 'WPA3-Personal', kind: 'personal', signal: 55 },
+    { ssid: 'CoffeeHouse Free WiFi', security: 'Open', kind: 'open', signal: 47 },
+    { ssid: 'Lakeview Plaza Staff Network (5 GHz) - Building B', security: 'WPA2-Enterprise', kind: 'settings', signal: 36 },
+    { ssid: 'DIRECT-bm-EPSON-ET-2800 Series', security: 'WPA2-Personal', kind: 'personal', signal: 18 },
+    { ssid: '', security: 'WPA2-Personal', kind: 'personal', signal: 30, hidden: true }
+  ];
+  var wifiConnecting = WIFI === 'connecting' ? 'Maple-5G' : null;   // Windows is mid-join on it
+  var wifiLast = WIFI === 'failed'
+    ? { op: 'connect', ok: false, ssid: 'Cafe WiFi', reason: 'PSK mismatch suspected (the profile Mantle had just saved for it was removed again)', at: Date.now() - 40000 }
+    : null;
+
+  function wifiRow(n) {
+    var action, why = null;
+    if (n.connected) action = 'disconnect';
+    else if (n.hidden) { action = 'settings'; why = 'it hides its name, and joining it means typing that name, which Windows\' own Wi-Fi list asks for'; }
+    else if (n.known) action = 'connect';
+    else if (n.kind === 'open') action = 'open';
+    else if (n.kind === 'personal') action = 'password';
+    else { action = 'settings'; why = ENT_WHY; }
+    return {
+      ssid: n.hidden ? null : n.ssid, hex: n.hidden ? '' : hexOf(n.ssid), hidden: !!n.hidden, signal: n.signal,
+      secure: n.kind !== 'open', security: n.security, known: !!n.known, connected: !!n.connected,
+      connecting: !n.connected && wifiConnecting === n.ssid, action: action, why: why
+    };
+  }
+
+  function wifiList() {
+    var base = { iface: null, networks: [], connecting: null, last: null, scannedAgoMs: null, readMs: 3 };
+    if (WIFI === 'none') return Object.assign(base, { ok: true, present: false, on: false, reason: 'this machine has no Wi-Fi adapter' });
+    if (WIFI === 'error') return Object.assign(base, { ok: false, present: true, on: false, reason: 'the Wi-Fi networks could not be read (WlanGetAvailableNetworkList: The group or resource is not in the correct state to perform the requested operation)' });
+    if (WIFI === 'off' || qsState.wifi.on === false) return Object.assign(base, { ok: true, present: true, on: false, reason: 'the Wi-Fi radio is switched off' });
+    var nets = WIFI === 'empty' ? [] : wifiNets.slice();
+    // the sidecar's order: connected, saved, the rest, hidden last; each by signal
+    function rank(n) { return n.connected ? 0 : n.hidden ? 3 : n.known ? 1 : 2; }
+    nets.sort(function (a, b) { return rank(a) - rank(b) || b.signal - a.signal; });
+    return Object.assign(base, {
+      ok: true, present: true, on: true, reason: null,
+      iface: { name: 'Intel(R) Wi-Fi 6E AX211 160MHz', state: wifiConnecting ? 'associating' : 'connected', count: 1 },
+      networks: nets.map(wifiRow),
+      connecting: wifiConnecting ? { ssid: wifiConnecting, ms: 1800 } : null,
+      last: wifiLast ? { op: wifiLast.op, ok: wifiLast.ok, ssid: wifiLast.ssid, reason: wifiLast.reason, agoMs: Date.now() - wifiLast.at } : null,
+      scannedAgoMs: 2500
+    });
+  }
+
+  function later(ms, value) { return new Promise(function (res) { setTimeout(function () { res(value); }, ms); }); }
+
+  /* the same rule as Wlan.CheckPassword: a mock that accepted what the sidecar refuses would hide
+     the refusal path. The value itself is looked at here and nowhere else, then dropped. */
+  function mockPasswordProblem(pw) {
+    if (pw.length === 64 && /^[0-9a-fA-F]{64}$/.test(pw)) return null;
+    if (pw.length < 8) return 'a Wi-Fi password is at least 8 characters';
+    if (pw.length > 63) return 'a Wi-Fi password is at most 63 characters (or exactly 64 hex digits)';
+    if (!/^[\x20-\x7e]+$/.test(pw)) return 'a Wi-Fi password may only use the printable ASCII characters (letters, digits, spaces and symbols)';
+    return null;
+  }
+
+  function wifiConnect(p) {
+    var hasPw = typeof p.password === 'string' && p.password.length > 0;
+    var pwBad = hasPw ? mockPasswordProblem(p.password) : null;
+    delete p.password;
+    var n = null;
+    wifiNets.forEach(function (x) { if (!x.hidden && (p.hex ? hexOf(x.ssid) === p.hex : x.ssid === p.ssid)) n = x; });
+    var label = 'Mantle could not connect to "' + (p.ssid || 'that network') + '"';
+    if (!n) return { ok: false, reason: label + ': "' + (p.ssid || p.hex) + '" is not in range any more (it is not in Windows\' list of networks); refresh and try again' };
+    if (pwBad) return { ok: false, reason: label + ': wlan connect: ' + pwBad };
+    var out = function (ok, reason, code) {
+      wifiLast = { op: 'connect', ok: ok, ssid: n.ssid, reason: reason, at: Date.now() };
+      return {
+        ok: ok, op: 'connect', ssid: n.ssid, connected: ok, code: code || 0, codeHex: '0x' + (code || 0).toString(16),
+        ms: 1400, wifi: { ok: true, present: true, on: true, connected: ok, ssid: ok ? n.ssid : 'Maple-5G' }, reason: reason
+      };
+    };
+    if (n.kind === 'settings') return later(300, out(false, ENT_WHY, 0));
+    if (n.kind === 'personal' && !n.known && !hasPw) return later(300, out(false, '"' + n.ssid + '" needs its password', 0));
+    if (n.kind === 'open' && hasPw) return later(300, out(false, '"' + n.ssid + '" is an open network: it takes no password', 0));
+    wifiConnecting = n.ssid;
+    return later(1400, null).then(function () {
+      wifiConnecting = null;
+      if (n.ssid === 'Cafe WiFi') return out(false, 'PSK mismatch suspected (the profile Mantle had just saved for it was removed again)', 0x48014);
+      wifiNets.forEach(function (x) { x.connected = x === n; });
+      n.known = true;
+      qsState.wifi.connected = true; qsState.wifi.ssid = n.ssid; qsState.wifi.signal = n.signal;
+      setTimeout(qsPush, 0);
+      return out(true, null, 0);
+    });
+  }
+
+  function wifiDisconnect() {
+    var was = null;
+    wifiNets.forEach(function (x) { if (x.connected) { was = x.ssid; x.connected = false; } });
+    qsState.wifi.connected = false; qsState.wifi.ssid = '';
+    setTimeout(qsPush, 0);
+    wifiLast = { op: 'disconnect', ok: true, ssid: was, reason: null, at: Date.now() };
+    return later(500, { ok: true, op: 'disconnect', ssid: was, connected: false, code: 0, codeHex: '0x0', ms: 480, wifi: { ok: true, present: true, on: true, connected: false }, reason: null });
+  }
+
+  var audioDevs = [
+    { id: '{0.0.0.00000000}.{mock-0001-speakers}', name: 'Speakers (Realtek(R) Audio)' },
+    { id: '{0.0.0.00000000}.{mock-0002-headset}', name: 'Headphones (WH-1000XM4 Stereo)' },
+    { id: '{0.0.0.00000000}.{mock-0003-monitor}', name: 'DELL S2721DGF (NVIDIA High Definition Audio)' },
+    { id: '{0.0.0.00000000}.{mock-0004-usb}', name: 'Speakers (USB Audio CODEC)' }
+  ].slice(0, AUDIO_N);
+  var audioDefault = audioDevs[0].id;
+  var audioCalls = AUDIO_N === 4 ? audioDevs[1].id : audioDevs[0].id;   // with 4, calls stay on the headset
+
+  function audioDevices() {
+    var list = audioDevs.map(function (d) {
+      return {
+        id: d.id, name: d.name, isDefault: d.id === audioDefault,
+        roles: { console: d.id === audioDefault, multimedia: d.id === audioDefault, communications: d.id === audioCalls }
+      };
+    });
+    list.sort(function (a, b) { return a.name.localeCompare(b.name); });
+    return { ok: true, devices: list, defaultId: audioDefault, readMs: 4, reason: null };
+  }
+
+  /* A real icon is a PNG data URL from the sidecar; two made-up ones here exercise the <img> path,
+     and the rest exercise the letter-with-a-reason path. */
+  function appIcon(color) {
+    return 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">' +
+      '<circle cx="8" cy="8" r="7" fill="' + color + '"/><path d="M4.5 6.2c2.4-.8 4.9-.6 7 .6M5 8.4c2-.6 4-.4 5.7.5M5.6 10.5c1.5-.4 3-.3 4.3.4" ' +
+      'fill="none" stroke="#fff" stroke-width="1.1" stroke-linecap="round"/></svg>');
+  }
+  var mixApps = [
+    { key: 'system', pid: 0, system: true, name: 'System Sounds', path: null, active: false, level: 100, muted: false, sessions: 1 },
+    { key: 'pid:4120', pid: 4120, name: 'Spotify', path: 'C:\\Users\\user\\AppData\\Roaming\\Spotify\\Spotify.exe', active: true, level: 64, muted: false, sessions: 1, icon: appIcon('#1db954') },
+    { key: 'pid:9876', pid: 9876, name: 'Microsoft Edge', path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', active: false, level: 100, muted: false, sessions: 3, icon: appIcon('#2f6fe0') },
+    { key: 'pid:5512', pid: 5512, name: 'LessonPlayer Learning Accelerator - Algebra II, Unit 4 Lesson 14 video player', path: 'C:\\Program Files\\LessonPlayer\\LessonPlayer.exe', active: true, level: 80, muted: false, sessions: 1, iconReason: 'no icon (LessonPlayer.exe: the mock bridge has no icons)' },
+    { key: 'pid:2231', pid: 2231, name: 'Discord', path: 'C:\\Users\\user\\AppData\\Local\\Discord\\app-1.0.9212\\Discord.exe', active: false, level: 45, muted: true, sessions: 2, iconReason: 'no icon (Discord.exe: the mock bridge has no icons)' },
+    { key: 'pid:7710', pid: 7710, name: 'Minecraft Launcher', path: 'C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe', active: false, level: 100, muted: false, sessions: 1, iconReason: 'no icon (Minecraft.exe: the mock bridge has no icons)' },
+    { key: 'sid:190233', pid: 0, name: 'Windows Audio Device Graph Isolation host process for a shared session', path: null, active: false, level: 100, muted: false, sessions: 1, iconReason: 'no icon: Windows gave no program path for this app' },
+    { key: 'pid:3302', pid: 3302, name: 'Zoom Workplace', path: 'C:\\Users\\user\\AppData\\Roaming\\Zoom\\bin\\Zoom.exe', active: true, level: 72, muted: false, sessions: 1, iconReason: 'no icon (Zoom.exe: the mock bridge has no icons)' }
+  ];
+  mixApps = MIXER === '0' ? [] : MIXER === '8' ? mixApps : mixApps.slice(0, 3);
+
+  function audioSessions() {
+    var dev = audioDevs.filter(function (d) { return d.id === audioDefault; })[0];
+    if (MIXER === 'error') {
+      return { ok: false, device: { id: dev.id, name: dev.name }, sessions: [], readMs: 3,
+        reason: 'the apps playing sound cannot be read: the output device refused the session manager (HRESULT 0x88890004)' };
+    }
+    return { ok: true, device: { id: dev.id, name: dev.name }, sessions: mixApps.map(function (a) { return Object.assign({}, a); }), readMs: 6, reason: null };
+  }
+
+  function audioSession(p) {
+    var a = mixApps.filter(function (x) { return x.key === (p && p.key); })[0];
+    if (!a) return { ok: false, key: p && p.key, session: null, ms: 5, reason: 'that app has no audio session on the current output any more (it may have stopped or closed)' };
+    if (typeof p.level === 'number') a.level = Math.max(0, Math.min(100, Math.round(p.level)));
+    if (typeof p.muted === 'boolean') a.muted = p.muted;
+    var row = Object.assign({}, a);
+    delete row.icon; delete row.iconReason;       // main decorates icons on sessions, not on a set's reply
+    return { ok: true, key: a.key, session: row, ms: 5, reason: null };
+  }
+
+  /* The bridge copies arguments when it sends them (structured clone), and the log must never
+     print a password: both done here, once, for every call. */
+  function redacted(payload) {
+    if (!payload || typeof payload !== 'object' || !('password' in payload)) return payload || '';
+    var copy = Object.assign({}, payload);
+    copy.password = '[redacted]';
+    return copy;
   }
   /* ---- now playing ----------------------------------------------------
      main's 'media' payload, built the way main.js builds it (NOW PLAYING): sessions, the one
@@ -457,6 +656,37 @@
         qsLoop();
         return { ok: true, reason: '' };
 
+      /* one level down (qs-more.js): the Wi-Fi list, the output picker, the mixer */
+      case 'qs.wifi.list': return wifiList();
+      case 'qs.wifi.scan': {
+        if (SCAN_HOLD) return new Promise(function () {});          // "Scanning…" held for a look
+        var scanned = wifiList();
+        scanned.scan = WIFI === 'off' || WIFI === 'none' || WIFI === 'error'
+          ? { ok: false, ms: 2, reason: scanned.reason }
+          : { ok: true, ms: 900, reason: null };
+        return later(900, scanned);
+      }
+      case 'qs.wifi.connect': return wifiConnect(payload || {});
+      case 'qs.wifi.disconnect': return wifiDisconnect();
+      case 'qs.keyboard':
+        if (payload && payload.on && KBD_REFUSED)
+          return { ok: false, focused: false, reason: 'a test instance never takes the keyboard from whoever is at the machine, so a password cannot be typed here' };
+        return { ok: true, focused: !!(payload && payload.on), note: null, restored: null, reason: null };
+      case 'qs.audio.devices': return audioDevices();
+      case 'qs.audio.default': {
+        var dev = audioDevs.filter(function (d) { return d.id === (payload && payload.device); })[0];
+        if (!dev) return { ok: false, reason: 'the output device could not be changed: audio default: no active playback device has that id (it may have been unplugged or disabled)' };
+        audioDefault = dev.id; audioCalls = dev.id;
+        setTimeout(qsPush, 0);
+        return later(120, Object.assign(audioDevices(), {
+          ok: true, id: dev.id, name: dev.name, noop: false,
+          roles: { console: true, multimedia: true, communications: true },
+          hr: { console: '0x00000000', multimedia: '0x00000000', communications: '0x00000000' }, ms: 41
+        }));
+      }
+      case 'qs.audio.sessions': return audioSessions();
+      case 'qs.audio.session': return audioSession(payload || {});
+
       /* Every set answers with the value that actually took, and a part the mock cannot switch
          answers ok:false WITH a reason — the panel must show that reason, not just fail to move. */
       case 'qs.set': {
@@ -570,7 +800,10 @@
     },
 
     call: function (channel, payload) {
-      console.log('[mock] call', channel, payload || '');
+      console.log('[mock] call', channel, redacted(payload));
+      /* A copy, taken now: the real bridge serialises the arguments the moment it is called, so a
+         caller that deletes a password right after calling must not change what the mock gets. */
+      payload = payload && typeof payload === 'object' ? structuredClone(payload) : payload;
       return new Promise(function (resolve, reject) {
         setTimeout(function () {
           try { resolve(reply(channel, payload)); }
@@ -587,6 +820,15 @@
     revealed = true;
     emit('bar.reveal', { why: 'mock: pointer at the bottom edge', mode: MODE, ms: DUR_IN });
   }, 300);
+
+  /* HARNESS HOOK (2026-09-23): ui/bar/check-reveal.js sends main's hide and reveal at exact
+     moments, because the bug it reproduces lives in the gap between the reveal event and the
+     pill's first frame, and a click-driven replay (the M button) is too loosely timed for that.
+     Mock only: inside Electron this file returned at the top and there is no such object. */
+  window.__mockMain = {
+    reveal: function (why) { revealed = true; emit('bar.reveal', { why: why || 'mock: harness reveal', mode: MODE, ms: DUR_IN }); },
+    hide: function (why) { revealed = false; emit('bar.hide', { why: why || 'mock: harness hide', ms: DUR_OUT }); }
+  };
 
   /* THE BACKDROP main would photograph. There is no screen behind a file:// page, so the mock
      paints one: a deliberately loud gradient with hard-edged blocks in it, at the size main would

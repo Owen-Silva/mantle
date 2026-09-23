@@ -1,0 +1,242 @@
+/* ui/bar/qs-more.css — the quick-settings panel, one level down (ui/bar/qs-more.js, 2026-09-23).
+
+   ONE THEME: only the glass-light --lg-* tokens, the same ones bar.css's .qs* rules use, so the
+   Wi-Fi list and the mixer are the same panel rather than a second design inside it. Motion uses
+   steps(), like the rest of the bar: a smooth per-frame animation in a transparent Electron window
+   costs a core (measured on the browser project, 2026-09). */
+
+/* ---------------------------------------------------------------- the two '>' buttons */
+
+/* Windows 11 splits the Wi-Fi tile: the tile toggles the radio, its '>' opens the list. The '>'
+   costs its column 23 px, and the grid's two columns are equal, so the panel may grow by twice
+   that: measured in the mock 2026-09-23, 304 px before the split; at .pop's 340 cap the Wi-Fi
+   tile cut "Maple-5G · 5 GHz" to "Maple-5G · 5 G…". This panel alone gets the room back. */
+.pop:has(> .qsgrid .qsx-split) { max-width: 360px; }
+.qsx-split { display: flex; min-width: 0; }
+.qsx-split > .qstile { flex: 1 1 auto; min-width: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.qsx-chev {
+  flex: 0 0 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--lg-edge-out);
+  border-radius: 0 var(--lg-r-ctl) var(--lg-r-ctl) 0;
+  background: var(--lg-tile);
+  color: var(--lg-ink);
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.qsx-chev:hover { background: var(--lg-hover); }
+.qsx-chev:active { background: var(--lg-press); }
+.qsx-chev:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+/* the chevron wears its tile's state: accent when on, sunk when the radio cannot be used */
+.qsx-split > .qstile.on + .qsx-chev {
+  background: var(--lg-acc);
+  color: var(--lg-acc-on);
+  border-left-color: color-mix(in srgb, var(--lg-acc-on) 30%, transparent);
+}
+.qsx-split > .qstile.on + .qsx-chev:hover { background: var(--lg-acc); color: var(--lg-acc-on); }
+.qsx-split > .qstile.dead + .qsx-chev { background: var(--lg-sunk); color: var(--lg-ink-3); }
+
+/* the volume row's '>' is a .qsmute square; it only needs to keep its glyph centred */
+.qsx-more svg { display: block; }
+
+/* ---------------------------------------------------------------- the sub-view */
+
+/* Inside a sub-view the main panel's own rows stay in the DOM (the watch keeps painting them)
+   but out of sight; the view replaces them in the same popover. */
+.pop.qsx-sub > :not(.qsx-view) { display: none !important; }
+/* line-height above 1 for everything in a view: body's 1 cuts descenders off wherever a long name
+   is clipped with overflow:hidden ("Speakers" read "Soeakers" in the first mock shot, 2026-09-23) */
+.qsx-view { display: flex; flex-direction: column; min-height: 0; line-height: 1.35; }
+
+.qsx-head { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; margin: -3px -4px 6px; }
+.qsx-title { flex: 1 1 auto; min-width: 0; font-size: 14px; font-weight: 600; color: var(--lg-ink); padding-left: 2px; }
+.qsx-status { flex: 0 0 auto; font-size: 12px; color: var(--lg-ink-3); white-space: nowrap; }
+.qsx-icon {
+  flex: 0 0 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-2);
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.qsx-icon:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.qsx-icon:active { background: var(--lg-press); }
+.qsx-icon:disabled { color: var(--lg-ink-3); background: transparent; }
+.qsx-icon svg { display: block; }
+.qsx-refresh.spin svg { animation: qsx-spin 960ms steps(8) infinite; }
+@keyframes qsx-spin { to { transform: rotate(360deg); } }
+
+/* The list scrolls; the header and footer never do (main caps a popover at 480 px). */
+.qsx-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; margin: 0 -6px; padding: 0 6px; }
+.qsx-scroll::-webkit-scrollbar { width: 6px; }
+.qsx-scroll::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 3px; }
+
+.qsx-notes { flex: 0 0 auto; }
+.qsx-notes[hidden] { display: none; }
+.qsx-notes .note { margin-top: 0; padding-top: 6px; border-top: 0; font-size: 12px; }
+.qsx-notes .note + .note { padding-top: 2px; }
+
+.qsx-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--lg-edge-out);
+}
+
+/* a whole-view state: what, why, what to do about it */
+.qsx-state { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; padding: 26px 12px 12px; }
+.qsx-stateico { color: var(--lg-ink-3); margin-bottom: 4px; }
+.qsx-stateico svg { display: block; }
+.qsx-statetitle { font-size: 13px; color: var(--lg-ink); }
+.qsx-statewhy { font-size: 12px; line-height: 1.45; color: var(--lg-ink-3); max-width: 250px; overflow-wrap: anywhere; }
+.qsx-statewhy.bad { color: var(--lg-warn); }
+.qsx-state .qsx-btns { justify-content: center; margin-top: 8px; }
+
+.qsx-btns { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+.qsx-btn {
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
+  color: var(--lg-ink);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 12px;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.qsx-btn:hover { background: var(--lg-hover); }
+.qsx-btn:active { background: var(--lg-press); }
+.qsx-btn.acc { background: var(--lg-acc); color: var(--lg-acc-on); }
+.qsx-btn:disabled { opacity: .55; }
+.qsx-btn.acc:disabled:hover { background: var(--lg-acc); }
+.qsx-btn:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: 1px; }
+
+.qsx-err { margin-bottom: 7px; font-size: 12px; line-height: 1.4; color: var(--lg-warn); overflow-wrap: anywhere; }
+.qsx-err[hidden] { display: none; }
+.qsx-errlead { color: var(--lg-warn); }
+.qsx-errwhy { color: var(--lg-ink-2); }
+.qsx-hint { margin-bottom: 7px; font-size: 12px; line-height: 1.4; color: var(--lg-ink-2); overflow-wrap: anywhere; }
+
+/* ---------------------------------------------------------------- Wi-Fi rows */
+
+.qsx-net { border-radius: var(--lg-r-ctl); }
+.qsx-net + .qsx-net { margin-top: 1px; }
+.qsx-net.open { background: var(--lg-tile); }
+.qsx-nethead {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  transition: background-color 150ms steps(2);
+}
+.qsx-nethead:hover { background: var(--lg-hover); }
+.qsx-nethead:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.qsx-netico { position: relative; flex: 0 0 18px; height: 18px; display: grid; place-items: center; }
+.qsx-netico svg { display: block; }
+.qsx-lock { position: absolute; right: -4px; bottom: -3px; line-height: 0; color: var(--lg-ink); }
+.qsx-nettext { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.qsx-netname, .qsx-netsub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qsx-netname { font-size: 12.5px; line-height: 1.3; }
+.qsx-netsub { font-size: 12px; line-height: 1.3; color: var(--lg-ink-3); }
+/* "Connected": the one accent word in the list, as in Windows */
+.qsx-net.on .qsx-netsub, .qsx-net.on .qsx-netico { color: var(--lg-acc); }
+.qsx-net.busy .qsx-netsub { color: var(--lg-ink-2); }
+.qsx-net.fail .qsx-netsub { color: var(--lg-warn); }
+.qsx-net.hid .qsx-netname { font-style: italic; color: var(--lg-ink-2); }
+.qsx-netbody { padding: 1px 8px 8px 36px; }
+
+.qsx-auto { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 12px; color: var(--lg-ink-2); }
+.qsx-auto input { margin: 0; accent-color: var(--lg-acc); }
+
+.qsx-pwlbl { display: block; font-size: 12px; color: var(--lg-ink-2); margin-bottom: 4px; }
+.qsx-pwin {
+  display: block;
+  width: 100%;
+  margin-bottom: 7px;
+  padding: 6px 8px;
+  border: 1px solid var(--lg-edge-out);
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
+  color: var(--lg-ink);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+.qsx-pwin:focus { border-color: var(--lg-acc); box-shadow: 0 0 0 2px var(--lg-acc-soft); }
+.qsx-pwin:disabled { opacity: .6; }
+
+/* ---------------------------------------------------------------- sound: devices */
+
+.qsx-section { margin: 10px 2px 4px; font-size: 12.5px; font-weight: 600; color: var(--lg-ink-3); letter-spacing: .04em; text-transform: uppercase; }
+.qsx-dev {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: default;
+  transition: background-color 150ms steps(2);
+}
+.qsx-dev + .qsx-dev { margin-top: 1px; }
+.qsx-dev:hover { background: var(--lg-hover); }
+.qsx-dev:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+/* the output: a soft accent row with the check, Windows' "selected" */
+.qsx-dev.on, .qsx-dev.on:hover { background: var(--lg-acc-soft); }
+.qsx-dev.busy { opacity: .6; }
+.qsx-check { flex: 0 0 16px; height: 16px; color: var(--lg-acc); }
+.qsx-check svg { display: block; }
+.qsx-devname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qsx-devsub { flex: 0 0 auto; font-size: 12px; color: var(--lg-ink-3); }
+.qsx-deverr { margin: 6px 8px 0; }
+
+/* ---------------------------------------------------------------- sound: the mixer */
+
+.qsx-app { padding: 5px 8px 4px; border-radius: var(--lg-r-ctl); }
+.qsx-app + .qsx-app { margin-top: 2px; }
+.qsx-apptop { display: flex; align-items: center; gap: 8px; margin-bottom: 1px; }
+.qsx-appico { flex: 0 0 18px; height: 18px; display: grid; place-items: center; color: var(--lg-ink-2); }
+.qsx-appico img { width: 18px; height: 18px; object-fit: contain; display: block; }
+.qsx-appico svg { display: block; }
+.qsx-letter {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--lg-tile);
+  color: var(--lg-ink);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.qsx-appname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--lg-ink); }
+.qsx-app.idle .qsx-appname { color: var(--lg-ink-2); }
+.qsx-appval { flex: 0 0 auto; font-size: 12px; color: var(--lg-ink-3); font-variant-numeric: tabular-nums; }
+.qsx-appline { padding-left: 26px; }
+.qsx-appline .qsmute { flex-basis: 26px; height: 26px; }
+.qsx-app.muted .qsx-appline input[type="range"] { opacity: .5; }
+.qsx-apperr { margin: 3px 0 0 26px; }

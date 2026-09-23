@@ -100,6 +100,7 @@ namespace Mantle {
       "glass", "corners", "place", "morph", "region",
       "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop",
       "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power",
+      "wlan", "audio",
       "tray", "trayClick", "media", "notifications", "search", "session", "sleep", "quit"
     };
 
@@ -930,13 +931,10 @@ namespace Mantle {
         }
 
         case "hotkey": {
-          if (Passive) return PassiveRefusal;
-          if (!Json.HasKey(req, "winTap")) return "hotkey needs winTap:true or winTap:false";
-          bool installed;
-          string herr = Hotkey.Install(Json.GetBool(req, "winTap", false), out installed);
-          if (herr != null) return herr;
-          result = Json.Obj("installed", installed);
-          return null;
+          // Every form lives in Hotkey.Command, next to the hook it drives:
+          // {winTap, altTab, winKeys} switch features (refused in passive), and
+          // the `op` forms serve the Alt+Tab switcher (AltTab.cs) and its tests.
+          return Hotkey.Command(req, Passive, PassiveRefusal, out result);
         }
 
         // ------------------------------------------- the quick settings panel
@@ -959,6 +957,18 @@ namespace Mantle {
             return null;
           }
           result = QuickSettings.Wifi();               // ui lane, from the cache
+          return null;
+        }
+
+        case "wlan": {
+          // The Wi-Fi LIST behind the tile's '>' (Wlan.cs): list, scan, connect,
+          // disconnect. Handed off like `search`: this lane only validates and
+          // queues, a pool thread replies, so a 4 s scan or a 25 s connect
+          // never holds a lane. connect/disconnect are refused in passive.
+          object wres;
+          string werr = Wlan.Run(req, req.ContainsKey("id") ? req["id"] : null, Passive, out wres);
+          if (werr != null) return werr;
+          result = wres;
           return null;
         }
 
@@ -1020,6 +1030,18 @@ namespace Mantle {
           int lvl; bool m;
           Volume.Apply(level, muted, out lvl, out m);
           result = Json.Obj("level", lvl, "muted", m);
+          return null;
+        }
+
+        case "audio": {
+          // The sound view behind the volume slider's '>' (AudioMixer.cs):
+          // playback devices, the default one, and each app's level and mute.
+          // Audio lane. In passive only a no-op default and the harness's own
+          // session may be written; the arguments are checked first.
+          object ares;
+          string aerr = AudioMixer.Run(req, Passive, out ares);
+          if (aerr != null) return aerr;
+          result = ares;
           return null;
         }
 

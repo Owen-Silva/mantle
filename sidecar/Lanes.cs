@@ -189,6 +189,12 @@ namespace Mantle {
       // may grow a UI Automation fallback: both are slow and thread-agnostic.
       { "tray", Slow }, { "trayClick", Slow },
       { "volume", Audio },
+      // AudioMixer.cs: playback devices, the default one, per-app levels. The
+      // same CoreAudio RPCs as volume (a session list measured in the qsx lane
+      // report, 2026-09-23). `wlan` is NOT listed, on purpose: like `search`
+      // its case only validates and hands off to its own pool threads, so it
+      // never waits behind an icon load for a 4 s scan to even start.
+      { "audio", Audio },
       // Media.cs: WinRT session manager and thumbnails, run on its own MTA
       // thread while the slow lane waits.
       { "media", Slow },
@@ -286,6 +292,16 @@ namespace Mantle {
         if (lv && !mu) return "volume.level";
         if (mu && !lv) return "volume.mute";
       }
+      // The sound view's reads, asked twice, are one answer; a dragged app
+      // slider only needs its newest level. Default changes never merge.
+      if (cmd == "audio") {
+        string aop = Json.GetString(req, "op");
+        if (string.IsNullOrEmpty(aop) || aop == "devices") return "audio.devices";
+        if (aop == "sessions") return "audio.sessions";
+        if (aop == "session" && Json.HasKey(req, "level") && !Json.HasKey(req, "muted"))
+          return "audio.session.level:" + Json.GetString(req, "key");
+        return null;
+      }
       return null;
     }
 
@@ -297,7 +313,10 @@ namespace Mantle {
         case "edgeclip": return Json.HasKey(req, "on") && !Json.GetBool(req, "on", true);
         case "taskbar": return Json.GetBool(req, "restore", false);
         case "appbar": return Json.GetBool(req, "remove", false);
-        case "hotkey": return Json.HasKey(req, "winTap") && !Json.GetBool(req, "winTap", true);
+        // Turning ANY of the hook's three features off is an undo (Hotkey.cs).
+        case "hotkey": return (Json.HasKey(req, "winTap") && !Json.GetBool(req, "winTap", true)) ||
+                              (Json.HasKey(req, "altTab") && !Json.GetBool(req, "altTab", true)) ||
+                              (Json.HasKey(req, "winKeys") && !Json.GetBool(req, "winKeys", true));
         case "desktop": return Json.GetBool(req, "detach", false);
         case "morph": return Json.GetBool(req, "cancel", false);
         case "workarea": return Json.GetBool(req, "reset", false);
