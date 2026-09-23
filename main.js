@@ -22,6 +22,8 @@ const thumbs = require('./lib/thumbs');
 // layer and its panes hid it). Required HERE, before app 'ready', because it registers the
 // mantle-wp:// scheme a web wallpaper is served on, which Electron only accepts before ready.
 const wallpaper = require('./lib/wallpaper');
+// Mantle's notification centre (2026-09-22): the bar's bell, over the sidecar's `notifications`.
+const notifications = require('./lib/notifications');
 
 /*
  * The pinned-taskbar reader (lane C's file). It is REQUIRED IN A TRY on purpose:
@@ -2926,6 +2928,7 @@ ipcMain.handle('mantle:replay', async (_e, name) => {
     case 'launcher:visible': return { has: true, payload: !!(launcherWin && !launcherWin.isDestroyed() && launcherWin.isVisible()) };
     case 'tray': return lastTray ? { has: true, payload: lastTray } : { has: false };
     case 'media': return lastMedia ? { has: true, payload: lastMedia } : { has: false };
+    case 'notifications': return notifications.replay(name);
     // The bar subscribes before it calls, and an empty first frame in a taskbar
     // looks exactly like a broken one. Build the list if nothing has yet.
     case 'bar.pinned': return { has: true, payload: lastPinned || await pinnedOnce() };
@@ -4649,6 +4652,8 @@ app.whenReady().then(() => {
   }
   // The wallpaper library, its pause rules and the Wallpapers window: all in lib/wallpaper.js.
   wallpaper.start({ root: ROOT, test: flags.test, state, sidecar, commands: COMMANDS, desktopWin });
+  // The notification centre's list, watch and commands (notifs.*): all in lib/notifications.js.
+  notifications.start({ test: flags.test, state, sidecar, commands: COMMANDS, broadcast });
 
   // Order matters: the shortcuts write their own state before the tray reads the
   // state to build its menu, and test mode's four "deliberately not done" reasons

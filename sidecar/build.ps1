@@ -64,7 +64,8 @@ $cscArgs = @(
   '/r:System.Management.dll',
   '/r:System.Windows.Forms.dll',
   '/r:System.Data.dll',            # Search.cs: OLE DB over the Windows Search index
-  '/r:System.ServiceProcess.dll'   # Search.cs: is the WSearch service running
+  '/r:System.ServiceProcess.dll',  # Search.cs: is the WSearch service running
+  '/r:System.Xml.dll'              # Notifications.cs: a toast's payload is XML
 )
 
 # WinRT, for `bluetooth` ONLY. There is no Win32 API that can switch a
@@ -125,7 +126,10 @@ $facade = Get-ChildItem 'C:\Windows\Microsoft.NET\assembly\GAC_MSIL\System.Runti
 # NEVER BOTH: the union and the split winmds define every type twice.
 $wm = Join-Path $env:SystemRoot 'System32\WinMetadata'
 $interop = Join-Path (Split-Path -Parent $csc) 'System.Runtime.InteropServices.WindowsRuntime.dll'
-$split = @('Windows.Foundation.winmd', 'Windows.Media.winmd', 'Windows.Storage.winmd', 'Windows.Devices.winmd') |
+# Windows.UI + Windows.ApplicationModel + Windows.System are for Notifications.cs
+# (UserNotificationListener, the AppInfo on each toast, Launcher.LaunchUriAsync).
+$split = @('Windows.Foundation.winmd', 'Windows.Media.winmd', 'Windows.Storage.winmd', 'Windows.Devices.winmd',
+           'Windows.UI.winmd', 'Windows.ApplicationModel.winmd', 'Windows.System.winmd') |
          ForEach-Object { Join-Path $wm $_ }
 $splitOk = $facade -and (Test-Path $interop) -and (@($split | Where-Object { -not (Test-Path $_) }).Count -eq 0)
 

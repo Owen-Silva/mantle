@@ -1152,6 +1152,44 @@ async function main() {
       JSON.stringify(r).slice(0, 200));
   } catch (e) { check('volume', false, e.message); }
 
+  // ---- notifications (READ ONLY: no toast of Owen's is ever touched) -----
+  // Only reads and refusals here. remove/open are exercised end to end on
+  // toasts posted under Notifications.TestAumid by the notif lane's scratch
+  // script, never in this suite, which must not write to the machine.
+  try {
+    const r = await s.send('notifications', { op: 'list' });
+    const n = r.ok ? r.result : null;
+    check('notifications list answers toasts[] or says why not',
+      n && ((n.ok === true && Array.isArray(n.toasts) && typeof n.access === 'string') ||
+            (n.ok === false && typeof n.reason === 'string' && n.reason.length > 0)),
+      JSON.stringify(r).slice(0, 200));
+    check('every listed toast has an id, an app and a way to open (or why not)',
+      n && Array.isArray(n.toasts) && n.toasts.every((t) => typeof t.id === 'number' && typeof t.app === 'string' &&
+        ['protocol', 'app', 'none'].includes(t.opens) && (t.opens !== 'none' || typeof t.opensWhy === 'string')),
+      n && Array.isArray(n.toasts) ? `${n.toasts.length} toasts` : 'no list');
+  } catch (e) { check('notifications list', false, e.message); }
+  try {
+    // An id no toast has: nothing is dismissed, and the reply says it was missing.
+    const r = await s.send('notifications', { op: 'remove', ids: [4000000001] });
+    check('notifications remove of an unknown id reports it missing',
+      r.ok && r.result && r.result.removed.length === 0 && r.result.missing.length === 1, JSON.stringify(r));
+  } catch (e) { check('notifications remove of an unknown id', false, e.message); }
+  try {
+    const r = await s.send('notifications', { op: 'open', toast: 4000000001 });
+    check('notifications open of an unknown toast says it is gone',
+      r.ok && r.result && r.result.ok === false && /gone/.test(r.result.reason), JSON.stringify(r));
+  } catch (e) { check('notifications open of an unknown toast', false, e.message); }
+  try {
+    const r = await s.send('notifications', { op: 'open' });
+    check('notifications open without `toast` errors on the argument',
+      r.ok === false && /needs toast/.test(r.error), JSON.stringify(r));
+  } catch (e) { check('notifications open without toast', false, e.message); }
+  try {
+    const r = await s.send('notifications', { op: 'clear' });
+    check('notifications clear of everything is refused in passive',
+      r.ok === false && typeof r.error === 'string' && r.error.startsWith('refused: sidecar is passive'), JSON.stringify(r));
+  } catch (e) { check('notifications clear refused in passive', false, e.message); }
+
   // ---- passive refusals -------------------------------------------------
   const refusals = [
     ['taskbar', { mode: 'autohide' }],

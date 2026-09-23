@@ -1380,7 +1380,7 @@
     if (!popKey) return;
     if (el.pop.contains(ev.target)) return;
     // the anchors toggle themselves, so a click on one must not also be an outside click
-    if (ev.target.closest && ev.target.closest('#volume, #network, #battery, #clock, #more, #media, .cell')) return;
+    if (ev.target.closest && ev.target.closest('#volume, #network, #battery, #clock, #notifs, #more, #media, .cell')) return;
     closePop();
   }, true);
   document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closePop(); });
@@ -1434,8 +1434,8 @@
 
   /* ================================================================= the Windows flyouts
 
-     Two surfaces Mantle cannot replicate — the full quick-settings flyout and the notification
-     centre — are still Windows', and the bar asks the shell to press the key for it. Every panel
+     Two surfaces Mantle does not fully replicate — the full quick-settings flyout and the notification
+     centre (Mantle's own panel covers the list; see notifications.js) — are still Windows', and the bar asks the shell to press the key for it. Every panel
      below keeps one of these as its escape hatch, because "Mantle does 90% of it" is only honest
      if the last 10% is one click away. A refused key press lands in the state strip. */
   function keys(combo, what) {
@@ -1834,9 +1834,9 @@
 
   /* ================================================================= the calendar
 
-     The clock opens a month, the way Windows' does. The notification centre is the one half of
-     that flyout Mantle cannot replicate, so it is a link at the bottom that says so rather than
-     something quietly missing. */
+     The clock opens a month, the way Windows' does. Windows puts the notification centre above
+     it; Mantle's is the bell's own panel (ui/bar/notifications.js, 2026-09-22), and the link at
+     the bottom goes there. */
   var calShown = null;          // the 1st of the month on screen; null = follow today
 
   function sameDay(a, b) {
@@ -1892,9 +1892,14 @@
     var foot = document.createElement('div'); foot.className = 'calfoot';
     var link = document.createElement('button');
     link.type = 'button'; link.className = 'qslink';
-    link.textContent = 'Windows notifications';
-    link.title = 'Open the notification centre (Win+N) — the one part of this flyout Mantle cannot draw yet';
-    link.addEventListener('click', function () { closePop(); keys('win+n', 'notifications'); });
+    /* Mantle draws the notification centre itself now (the bell, ui/bar/notifications.js); the
+       Windows one stays reachable from inside that panel. */
+    link.textContent = 'Notifications';
+    link.title = 'Open Mantle\'s notification centre (the bell beside the clock)';
+    link.addEventListener('click', function () {
+      if (window.MantleNotifs) MantleNotifs.open();
+      else { closePop(); keys('win+n', 'notifications'); }
+    });
     foot.appendChild(link);
     pop.appendChild(foot);
 
@@ -2393,6 +2398,7 @@
        the same open path a click takes, then closing it again. */
     if (p && p.what === 'close') { closePop(); return; }
     if (p && p.what === 'more') { if (popKey !== 'more') openPop('more', el.more, buildMorePop); return; }
+    if (p && p.what === 'notifs') { if (window.MantleNotifs) MantleNotifs.open(); return; }
     if (p && (p.what === 'media' || p.what === 'media-play')) {
       if (el.media.hidden) { fail('testclick', 'no media chip', 'the test hook was asked to open the media card, but nothing is playing so there is no chip', 'warn'); return; }
       if (popKey !== 'media') openMedia();
@@ -2452,6 +2458,21 @@
 
   volumeGlyph();      // draw the speaker immediately, in its "unknown" form, rather than an empty square
   tick();             // clock first: it is the one thing that must be right even if the bridge is dead
+
+  /* The notification centre (ui/bar/notifications.js) is handed the bar's own popover, bridge and
+     failure helpers, so its panel opens, sizes, closes and reports problems like every other one.
+     If that file did not load, the bell still works: it opens Windows' centre, and says why. */
+  if (window.MantleNotifs) {
+    MantleNotifs.init({
+      call: call, callR: callR, on: on, msg: msg, fail: fail, clearFail: clearFail, keys: keys,
+      openPop: openPop, closePop: closePop, popPlace: popPlace,
+      popKey: function () { return popKey; }
+    });
+  } else {
+    var bell = document.getElementById('notifs');
+    if (bell) bell.addEventListener('click', function () { closePop(); keys('win+n', 'notifications'); });
+    fail('notifs', 'notifications panel missing', 'ui/bar/notifications.js did not load, so the bell opens Windows\' notification centre instead', 'warn');
+  }
 
   if (!mantle) {
     fail('bridge', 'bridge missing', 'window.mantle is not present (preload did not run) — the bar cannot see Windows', 'warn');

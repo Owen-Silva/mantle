@@ -100,7 +100,7 @@ namespace Mantle {
       "glass", "corners", "place", "morph", "region",
       "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop",
       "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power",
-      "tray", "trayClick", "media", "search", "session", "sleep", "quit"
+      "tray", "trayClick", "media", "notifications", "search", "session", "sleep", "quit"
     };
 
     public static bool Passive;        // --passive: never touch the live shell
@@ -1078,6 +1078,13 @@ namespace Mantle {
           // Now-playing and transport controls (Media.cs, WinRT). Slow lane;
           // Media.cs does the WinRT work on its own MTA thread.
           return Media.Run(req, ref result);
+
+        case "notifications":
+          // Mantle's notification centre (Notifications.cs: the WinRT
+          // listener + Windows' notification database, read-only). Slow lane;
+          // the WinRT work runs on its own MTA thread. remove/clear/open are
+          // refused in --passive except on the test-only AUMID.
+          return Notifications.Run(req, ref result);
 
         case "trayClick": {
           // `icon`, NOT `id`: `id` is the PROTOCOL id. A caller that sent the

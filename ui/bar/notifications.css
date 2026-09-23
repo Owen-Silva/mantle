@@ -1,0 +1,110 @@
+/* ui/bar/notifications.css — the bell and its panel (ui/bar/notifications.js).
+   The island theme and nothing else: --lg-* tokens only (glass-light.css), light frost, dark ink,
+   plain hairlines. The accent marks exactly two things, as everywhere in the bar: the count on the
+   bell and the dot on a toast that arrived since the panel was last opened. */
+
+/* ---------------------------------------------------------------- the bell */
+.notifs.off { color: var(--lg-ink-3); }
+/* The count sits BESIDE the bell, not on it: a badge laid over a 16 px glyph hid half the bell in
+   the first mock shot (2026-09-22). The button widens only while there is something new. */
+.notifs.new { width: auto; padding: 0 8px 0 9px; gap: 5px; }
+.notifs .nbadge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--lg-r-pill);
+  background: var(--lg-acc);
+  color: var(--lg-acc-on);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.notifs .nbadge[hidden] { display: none; }
+
+/* ---------------------------------------------------------------- the panel */
+.pop.ntf { width: 340px; max-width: 340px; padding: 11px 10px 9px; }
+
+.ntf-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px 6px; }
+.ntf-head h3 { margin: 0; }
+.ntf-clear[hidden] { display: none; }
+.ntf-clear:disabled { color: var(--lg-ink-3); background: transparent; }
+
+/* The popover can never be taller than main's cap (POPOVER_MAX, 480 px) — the list scrolls instead. */
+.ntf-list { max-height: 300px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 8px; }
+.ntf-list::-webkit-scrollbar { width: 6px; }
+.ntf-list::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 3px; }
+
+.ntf-group { display: flex; flex-direction: column; gap: 3px; }
+.ntf-group.busy { opacity: .5; }
+.ntf-ghead { display: flex; align-items: center; gap: 7px; padding: 0 0 1px 4px; min-height: 26px; }
+.ntf-gicon { flex: 0 0 16px; width: 16px; height: 16px; object-fit: contain; }
+.ntf-letter {
+  display: inline-grid;
+  place-items: center;
+  border-radius: 4px;
+  background: var(--lg-tile);
+  color: var(--lg-ink-2);
+  font-size: 10px;
+  font-weight: 600;
+}
+.ntf-gname { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--lg-ink-2); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ntf-gcount { flex: 0 0 auto; font-size: 11px; color: var(--lg-ink-3); font-variant-numeric: tabular-nums; }
+.ntf-ghead .ntf-x { flex-basis: 22px; height: 22px; }
+
+.ntf-card {
+  position: relative;
+  padding: 8px 4px 8px 9px;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
+  cursor: default;
+  transition: background-color 120ms steps(2);
+}
+.ntf-card:hover { background: var(--lg-hover); }
+.ntf-card:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.ntf-card.dead:hover { background: var(--lg-sunk); }
+.ntf-card.busy { opacity: .5; pointer-events: none; }
+
+/* Arrived since the panel was last opened: one accent dot at the card's left edge. */
+.ntf-card.unread::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 14px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--lg-acc);
+}
+
+.ntf-row { display: flex; align-items: flex-start; gap: 9px; }
+.ntf-logo { flex: 0 0 32px; width: 32px; height: 32px; object-fit: cover; border-radius: var(--lg-r-ctl); margin-top: 1px; }
+.ntf-logo.circle { border-radius: 50%; }
+.ntf-text { flex: 1 1 auto; min-width: 0; }
+.ntf-title { color: var(--lg-ink); font-size: 12.5px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.ntf-body {
+  color: var(--lg-ink-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+  margin-top: 1px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ntf-meta { color: var(--lg-ink-3); font-size: 11px; margin-top: 3px; }
+.ntf-row .ntf-x { flex: 0 0 22px; height: 22px; margin-top: -2px; }
+.ntf-hero { display: block; width: 100%; max-height: 132px; object-fit: cover; border-radius: var(--lg-r-ctl); margin-top: 7px; }
+
+.ntf-empty { padding: 18px 8px 16px; text-align: center; }
+.ntf-empty .big { font-size: 13.5px; }
+.ntf-bad .big { color: var(--lg-warn); }
+
+.pop.ntf .note[hidden], .ntf-detail[hidden] { display: none; }
+.ntf-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--lg-edge-out); }
+.ntf-detail { flex: 1 0 100%; min-width: 0; padding: 0 2px; color: var(--lg-ink-3); font-size: 11px; line-height: 1.35; }
+.ntf-foot .qslink { flex: 0 0 auto; margin-left: auto; }

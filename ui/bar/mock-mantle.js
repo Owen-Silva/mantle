@@ -343,6 +343,42 @@
     ];
   }
 
+  /* ?notifs=X — the notification centre (ui/bar/notifications.js), in main's 'notifications'
+     payload shape (lib/notifications.js): some (three apps, pictures, two unread), many (enough to
+     scroll), plain (no database: text only, and the reason at the bottom), off (the list cannot be
+     read: muted bell, chip, reason), none (default: the empty state). Dismiss, clear and open
+     play along on this list, so every button can be pressed in a browser. */
+  var NOTIFS = q.get('notifs') || 'none';
+  var ntfList = (function () {
+    var now = Date.now(), m = 60000;
+    var chat = tile(32, ['#2f6fe0', '#6d8ff0'], 'D'), mail = tile(32, ['#1f8f4e', '#6cc39a'], 'S'), sec = tile(32, ['#3a4250', '#6b7688'], 'W');
+    var base = [
+      { id: 104, aumid: 'com.squirrel.Discord.Discord', app: 'Discord', icon: chat, timeMs: now - 2 * m, title: 'Alex', body: 'are you still coming to dinner tonight? we moved it to 7', attribution: '#general', logo: tile(64, ['#b23fd0', '#e0a059'], 'M'), logoCircle: true, opens: 'app', unread: true },
+      { id: 103, aumid: 'com.squirrel.Discord.Discord', app: 'Discord', icon: chat, timeMs: now - 26 * m, title: 'Jordan', body: 'sent a picture', attribution: '#clips', hero: tile(180, ['#2f6fe0', '#1f8f4e']), opens: 'app', unread: true },
+      { id: 101, aumid: 'com.readdle.SparkDesktop', app: 'Spark', icon: mail, timeMs: now - 3 * 60 * m, title: 'Calendar update', body: 'Your Saturday meeting has moved to 8:15 AM.\nReply to confirm.', opens: 'app', unread: false },
+      { id: 37517, aumid: 'Windows.Defender.SecurityCenter', app: 'Windows Security', icon: sec, timeMs: now - 2 * 24 * 60 * m, title: 'Virus & threat protection', body: 'Windows Security scanned your device. No action needed.', opens: 'protocol', unread: false },
+      { id: 90, aumid: 'NotifyIconGeneratedAumid_2221369545442751248', app: 'A notification-area icon', icon: null, timeMs: now - 5 * 60 * m, title: 'Sync paused', body: 'Resume from the tray icon.', opens: 'none', opensWhy: 'it came from a notification-area icon, and Windows gives other apps no way to click one', unread: false },
+    ];
+    if (NOTIFS === 'many') for (var i = 0; i < 8; i++) base.push({ id: 200 + i, aumid: 'com.readdle.SparkDesktop', app: 'Spark', icon: mail, timeMs: now - (4 + i) * 60 * m, title: 'Newsletter ' + (i + 1), body: 'Something long enough to wrap onto a second line of the card, as mail previews do.', opens: 'app', unread: i < 2 });
+    if (NOTIFS === 'plain') base.forEach(function (t) { t.logo = null; t.hero = null; t.attribution = null; });
+    return (NOTIFS === 'none' || NOTIFS === 'off') ? [] : base;
+  })();
+  function ntfPayload() {
+    if (NOTIFS === 'off') return { ok: false, available: false, reason: 'Windows is not letting apps read your notifications (Settings > Privacy & security > Notifications > Let apps access your notifications is off)', toasts: [], unread: 0, count: 0 };
+    return {
+      ok: true, available: true, reason: null, access: 'Allowed', via: NOTIFS === 'plain' ? 'listener' : 'listener+database', rev: 1,
+      count: ntfList.length, unread: ntfList.filter(function (t) { return t.unread; }).length, toasts: ntfList,
+      detail: NOTIFS === 'plain' ? "text only, and new notifications show within 5 s rather than at once: Windows' notification database is not laid out the way Mantle knows (a Windows update may have changed it)" : null,
+      seenNote: null,
+    };
+  }
+  function ntfDrop(ids) {
+    var removed = [];
+    ntfList = ntfList.filter(function (t) { if (ids.indexOf(t.id) >= 0) { removed.push(t.id); return false; } return true; });
+    setTimeout(function () { emit('notifications', ntfPayload()); }, 60);
+    return { ok: true, reason: null, removed: removed, missing: [], failed: [] };
+  }
+
   var revealed = false;
   var listeners = Object.create(null);
 
@@ -473,6 +509,21 @@
         return { ok: true, reason: '', mock: true };
 
       case 'media.get': return mediaPayload();
+      case 'notifs.get': return ntfPayload();
+      case 'notifs.seen':
+        ntfList.forEach(function (t) { if (((payload && payload.ids) || []).indexOf(t.id) >= 0) t.unread = false; });
+        setTimeout(function () { emit('notifications', ntfPayload()); }, 60);
+        return { ok: true, reason: null };
+      case 'notifs.remove': return ntfDrop((payload && payload.ids) || []);
+      case 'notifs.clear':
+        return ntfDrop(ntfList.filter(function (t) { return !payload || !payload.aumid || t.aumid === payload.aumid; }).map(function (t) { return t.id; }));
+      case 'notifs.open': {
+        var t = ntfList.filter(function (x) { return x.id === (payload && payload.id); })[0];
+        if (!t) return { ok: false, reason: 'that notification is not in the list Mantle is showing (it may have just gone)' };
+        if (t.opens === 'none') return { ok: false, reason: t.opensWhy };
+        ntfDrop([t.id]);
+        return { ok: true, via: t.opens, dismissed: true, note: t.opens === 'app' ? 'Windows would also have told ' + t.app + ' which notification was clicked; Mantle cannot pass that on yet' : null, reason: null };
+      }
       case 'media.select':
         mediaPick = (payload && payload.aumid) || null;
         return mediaPayload();
@@ -510,6 +561,7 @@
         else if (channel === 'bar.pinned') cb({ ok: true, reason: '', items: items });
         else if (channel === 'tray') cb(TRAY || []);  // [] = tray unavailable on this build
         else if (channel === 'media') { if (MEDIA) cb(mediaPayload()); }   // main replays only once it has read
+        else if (channel === 'notifications') cb(ntfPayload());
         else if (channel === 'state') cb(state());
       }, 30);
       return function off() {

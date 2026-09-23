@@ -192,6 +192,9 @@ namespace Mantle {
       // Media.cs: WinRT session manager and thumbnails, run on its own MTA
       // thread while the slow lane waits.
       { "media", Slow },
+      // Notifications.cs: the listener read (up to ~0.8 s under load) runs on
+      // its own MTA thread while the slow lane waits; icons are shell calls.
+      { "notifications", Slow },
     };
 
     // Commands whose READ is served from a cache (QuickSettings.cs), so it is
@@ -269,6 +272,12 @@ namespace Mantle {
         if (string.IsNullOrEmpty(mop) || mop == "get")
           return "media.get:" + Json.GetBool(req, "art", true) + ":" + Json.GetInt(req, "artSize", 96) + ":" +
                  Json.GetString(req, "aumid");
+        return null;
+      }
+      // A notification list asked twice is one answer; remove/clear/open never merge.
+      if (cmd == "notifications") {
+        string nop = Json.GetString(req, "op");
+        if (string.IsNullOrEmpty(nop) || nop == "list") return "notifications.list:" + Json.GetBool(req, "fresh", false);
         return null;
       }
       if (cmd == "volume") {

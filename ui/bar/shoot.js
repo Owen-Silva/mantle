@@ -73,7 +73,15 @@ const SHOTS = [
   { name: 'media-off', w: 1280, h: 330, q: '?mode=pill&media=off', click: '#more' },   // the chip's reason, in words
   /* the tray: the white-icon plate on the strip, and the hidden icons in the overflow */
   { name: 'tray', w: 1280, h: 60, q: '?mode=pill&tray=1&media=playing' },
-  { name: 'tray-more', w: 1280, h: 330, q: '?mode=pill&tray=1', click: '#more' }
+  { name: 'tray-more', w: 1280, h: 330, q: '?mode=pill&tray=1', click: '#more' },
+  /* The notification centre (ui/bar/notifications.js): the bell's count, then the panel */
+  { name: 'notifs-bell', w: 1280, h: 60, q: '?mode=pill&notifs=some' },
+  { name: 'notifs-panel', w: 1280, h: 540, q: '?mode=pill&notifs=some', click: '#notifs' },
+  { name: 'notifs-many', w: 1280, h: 540, q: '?mode=pill&notifs=many', click: '#notifs' },
+  { name: 'notifs-plain', w: 1280, h: 540, q: '?mode=pill&notifs=plain', click: '#notifs' },
+  { name: 'notifs-none', w: 1280, h: 330, q: '?mode=pill&notifs=none', click: '#notifs' },
+  { name: 'notifs-off', w: 1280, h: 330, q: '?mode=pill&notifs=off', click: '#notifs' },
+  { name: 'notifs-edge', w: 1280, h: 540, q: '?notifs=some', click: '#notifs' }
 ];
 const ONLY = process.argv.slice(2);
 const RUN = ONLY.length ? SHOTS.filter(s => ONLY.some(w => s.name.includes(w))) : SHOTS;
