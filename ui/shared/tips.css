@@ -1,0 +1,57 @@
+/* ui/shared/tips.css - Mantle's own tooltips (ui/shared/tips.js), 2026-09-24.
+ *
+ * Owen: "can you make these popout things the same theme as the rest of it and make sure they dont
+ * go behind the taskbar please". The popout things were Chromium's native `title` tooltips: dark,
+ * Windows-styled, and a separate OS window that the always-on-top bar drew over. This is the same
+ * text drawn INSIDE the page, in the one theme (glass-light.css --lg-* only): the popover's light
+ * frost, dark ink, a plain hairline, the small radius. Needs glass-light.css loaded first.
+ *
+ * The frost is --lg-fill-strong, not the bar's thinner glass: a tip sits over whatever window is
+ * behind the bar (the transparent Electron window cannot blur it), exactly like a popover, and the
+ * popover's rule applies -- text over anything gets a real surface. The hairline is --lg-edge-out
+ * (dark 10 %) so a tip over an open popover's own white still has an edge.
+ */
+.mtip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 2147483000;           /* over the pill and over any popover: never behind anything in the page */
+  box-sizing: border-box;
+  max-width: 320px;              /* tips.js lowers it to fit a narrow window */
+  padding: 6px 9px 7px;
+  background-color: var(--lg-fill-strong);
+  border: 1px solid var(--lg-edge-out);
+  border-radius: var(--lg-r);
+  box-shadow: inset 0 1px 0 var(--lg-edge-in), var(--lg-shadow);
+  color: var(--lg-ink);
+  font-family: inherit;          /* the page's face: Segoe UI Variable on the bar */
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.35;
+  letter-spacing: normal;
+  text-align: left;
+  white-space: pre-line;         /* a title's "\n" stays a line break, as the native tooltip kept it */
+  overflow-wrap: anywhere;
+  pointer-events: none;          /* never takes a click, a hover or the focus */
+  user-select: none;
+  opacity: 0;
+  visibility: hidden;
+  /* steps(2), like the bar's own hover fades: two frames, not a 60 fps ramp (Electron animation
+     CPU, 2026-09). visibility waits for the fade so the fade-out is seen. */
+  transition: opacity 100ms steps(2), visibility 0s linear 100ms;
+}
+.mtip.on {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 100ms steps(2), visibility 0s;
+}
+/* A hand-off from one icon to the next while a tip is up: it moves and changes, no second fade. */
+.mtip.now { transition: none; }
+
+/* NO SILENT FAILURES: when the room above the bar could not be opened, the tip says so itself. */
+.mtip .mtip-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--lg-warn);
+  font-size: 11.5px;
+}

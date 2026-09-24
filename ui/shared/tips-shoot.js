@@ -1,0 +1,286 @@
+/* tips-shoot.js - headless shots AND behaviour checks of the Mantle tooltips (ui/shared/tips.js)
+ * on the bar page with the mock bridge. No Electron.
+ *
+ * LINE 1 below is not optional (same rule as ui/bar/shoot.js): lowcpu.js pins this process and
+ * its browser to a few cores at below-normal priority and allows one headless browser at a time.
+ *
+ *   node ui/shared/tips-shoot.js      shots into TIPS_SHOTS (default: the lane scratchpad), then
+ *                                     one line per check and "TIPS HEADLESS: N passed, M failed"
+ *
+ * The viewport is the live pill window's width and taller than the pill, so there is room above it
+ * the way the live window (480 DIP taller, barTall) has. window.mantle.call is wrapped to log every
+ * bar.popover call, who made it (from the stack: tips.js or the bar's own scripts) and to keep
+ * main's ONE-owner rule (the latest open wins, any close shuts it), so the checks can prove the
+ * tip never closes a popover's room.
+ */
+require('C:/Users/user/dev-tools/tools/lowcpu.js');
+
+const fs = require('fs');
+const path = require('path');
+
+const PW_CANDIDATES = [
+  'C:/Users/user/other-app/node_modules/playwright-core',
+  'C:/Users/user/Downloads/other-app/node_modules/playwright-core',
+  'playwright-core'
+];
+let chromium = null;
+for (const c of PW_CANDIDATES) { try { chromium = require(c).chromium; break; } catch (e) { /* next */ } }
+if (!chromium) { console.error('FAILED: playwright-core not found. Tried:\n  ' + PW_CANDIDATES.join('\n  ')); process.exit(1); }
+function findChrome() {
+  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  for (const d of fs.readdirSync(base).filter(n => n.startsWith('chromium-')).sort().reverse())
+    for (const sub of ['chrome-win/chrome.exe', 'chrome-win64/chrome.exe']) {
+      const p = path.join(base, d, sub);
+      if (fs.existsSync(p)) return p;
+    }
+  return null;
+}
+
+const OUT = process.env.TIPS_SHOTS ||
+  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/tips-shots';
+const PAGE = 'file:///C:/Users/user/mantle/ui/bar/index.html';
+const WALL = {
+  dark: 'html{background:#141619 !important;}',
+  light: 'html{background:linear-gradient(160deg,#eef2f7 0%,#d9e2ee 55%,#c9d6e6 100%) !important;}'
+};
+
+let passed = 0, failed = 0;
+const lines = [];
+function ok(cond, what) { if (cond) passed++; else failed++; lines.push((cond ? 'ok   ' : 'FAIL ') + what); }
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function open(ctx, q, wall, h) {
+  const page = await ctx.newPage();
+  await page.setViewportSize({ width: 1120, height: h || 300 });
+  const problems = [];
+  page.on('pageerror', e => problems.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') problems.push('console: ' + m.text()); });
+  await page.goto(PAGE + q, { waitUntil: 'load' });
+  await page.addStyleTag({ content: WALL[wall] });
+  await page.evaluate(() => document.fonts.ready);
+  await page.evaluate(() => {
+    window.__roomLog = [];
+    window.__owner = null;
+    const m = window.mantle;
+    const orig = m.call;
+    m.call = function (ch, p) {
+      if (ch === 'bar.popover') {
+        const st = String(new Error().stack || '');
+        const who = /shared\/tips\.js/.test(st) ? 'tips' : 'page';
+        window.__roomLog.push({ who, open: !!(p && p.open), key: (p && p.key) || null, h: (p && p.height) || 0 });
+        window.__owner = p && p.open ? { key: p.key || 'unnamed', h: p.height } : null;
+      }
+      return orig.apply(this, arguments);
+    };
+  });
+  await page.waitForTimeout(900);          // the pill's entrance
+  page.problems = problems;
+  return page;
+}
+const st = (page) => page.evaluate(() => window.MantleTips.state());
+const log = (page) => page.evaluate(() => ({ log: window.__roomLog.slice(), owner: window.__owner }));
+async function center(page, sel) {
+  const b = await page.$eval(sel, el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  return b;
+}
+async function hover(page, sel) { const c = await center(page, sel); await page.mouse.move(c.x, c.y, { steps: 3 }); }
+async function away(page) { await page.mouse.move(560, 20, { steps: 2 }); }
+async function shot(page, name) {
+  const file = path.join(OUT, name + '.png');
+  await page.screenshot({ path: file });
+  shots.push(file);
+}
+const shots = [];
+
+(async () => {
+  fs.mkdirSync(OUT, { recursive: true });
+  const exe = findChrome();
+  if (!exe) { console.error('FAILED: no ms-playwright chromium'); process.exit(1); }
+  const browser = await chromium.launch({ headless: true, executablePath: exe });
+  const ctx = await browser.newContext({ deviceScaleFactor: 1.25, viewport: { width: 1120, height: 300 } });
+  const problems = [];
+  try {
+    /* ---------------- shots: each tip over the pill, light and dark ---------------- */
+    for (const wall of ['dark', 'light']) {
+      let page = await open(ctx, '?mode=pill&tray=1&battery=battery', wall);
+      for (const [name, sel] of [['speaker', '#volume'], ['wifi', '#network'], ['battery', '#battery'], ['clock', '#clock'], ['tray', '.ti']]) {
+        await away(page); await page.waitForTimeout(700);   // past the hand-off window: each shot is a first tip
+        await hover(page, sel);
+        await page.waitForTimeout(700);
+        await shot(page, `tip-${name}-${wall}`);
+      }
+      problems.push(...page.problems.map(p => wall + ' pill: ' + p));
+      await page.close();
+
+      // inside the open quick-settings panel: the Bluetooth tile's '>' and the settings gear
+      page = await open(ctx, '?mode=pill', wall, 560);
+      await page.click('#network');
+      await page.waitForTimeout(700);
+      await hover(page, '#pop .qsx-chev');
+      await page.waitForTimeout(700);
+      await shot(page, `tip-qs-chevron-${wall}`);
+      const gear = await page.evaluate(() => {
+        const g = Array.from(document.querySelectorAll('#pop [title],#pop [data-mtip]')).find(e => /Windows Settings/.test(e.getAttribute('title') || e.getAttribute('data-mtip') || ''));
+        if (!g) return null; g.setAttribute('data-shoot', 'gear'); return true;
+      });
+      if (gear) { await away(page); await page.waitForTimeout(700); await hover(page, '[data-shoot="gear"]'); await page.waitForTimeout(700); await shot(page, `tip-qs-gear-${wall}`); }
+      problems.push(...page.problems.map(p => wall + ' qs: ' + p));
+      await page.close();
+    }
+    // a top bar: the tip goes below the pill
+    {
+      const page = await open(ctx, '?mode=pill&edge=top', 'dark');
+      await hover(page, '#clock');
+      await page.waitForTimeout(700);
+      await shot(page, 'tip-clock-top-dark');
+      const s = await st(page);
+      const pill = await page.$eval('#bar', el => el.getBoundingClientRect().toJSON());
+      ok(s.shown && s.box && s.box.y >= pill.bottom + 5.9, `top bar: the tip is below the pill (tip y ${s.box && s.box.y}, pill bottom ${pill.bottom})`);
+      problems.push(...page.problems.map(p => 'top: ' + p));
+      await page.close();
+    }
+
+    /* ---------------- behaviour ---------------- */
+    const page = await open(ctx, '?mode=pill&tray=1&battery=battery', 'dark', 560);
+    const pill = await page.$eval('#bar', el => el.getBoundingClientRect().toJSON());
+    const volTitle0 = await page.$eval('#volume', el => el.getAttribute('title'));
+    ok(!!volTitle0, `before any hover #volume still has its title attribute ("${(volTitle0 || '').split('\n')[0]}")`);
+
+    await hover(page, '#volume');
+    await page.waitForTimeout(250);
+    let s = await st(page);
+    ok(!s.shown, 'no tip at 250 ms (the first delay is 450)');
+    const a11y = await page.$eval('#volume', el => ({ attr: el.getAttribute('title'), data: el.getAttribute('data-mtip'), prop: el.title, al: el.getAttribute('aria-label') }));
+    ok(a11y.attr === null && a11y.data === volTitle0 && a11y.prop === volTitle0, 'hovered: the title moved to data-mtip (no native tooltip) and el.title still reads it');
+    ok(a11y.al === volTitle0, 'the icon-only speaker keeps its accessible name as an aria-label');
+    await page.waitForTimeout(450);
+    s = await st(page);
+    ok(s.shown && s.anchor === '#volume' && /^Volume/.test(s.text), `tip up by 700 ms over the speaker ("${s.text.split('\n')[0]}")`);
+    const desc = await page.$eval('#volume', el => el.getAttribute('aria-describedby'));
+    ok(/mantle-tip/.test(desc || ''), 'aria-describedby points at the tip while it is up');
+    let L = await log(page);
+    const lastTip = L.log.filter(e => e.who === 'tips').pop();
+    ok(lastTip && lastTip.open && lastTip.key === 'tip' && lastTip.h === s.box.need, `asked bar.popover for its room (${lastTip && lastTip.h} = need ${s.box.need})`);
+    ok(s.box.y >= pill.top - s.box.need - 1 && s.box.y + s.box.h <= pill.top - 5.9, `the tip is inside the room it asked for and clear of the pill (y ${s.box.y}..${s.box.y + s.box.h}, pill top ${pill.top}, room ${s.box.need})`);
+    const multi = await page.evaluate(() => { const t = document.getElementById('mantle-tip'); return { lines: Math.round(t.getBoundingClientRect().height / 16), txt: t.textContent }; });
+    ok(multi.txt.includes('\n') && multi.lines >= 2, 'the multi-line title keeps its line break');
+    const look = await page.evaluate(() => { const c = getComputedStyle(document.getElementById('mantle-tip')); return { pe: c.pointerEvents, ws: c.whiteSpace, bg: c.backgroundColor, fam: c.fontFamily }; });
+    ok(look.pe === 'none' && look.ws === 'pre-line', 'pointer-events none, pre-line');
+    ok(/255, 255, 255, 0\.72/.test(look.bg) && /Segoe UI/.test(look.fam), `the popover frost and the bar's face (${look.bg}; ${look.fam.split(',')[0]})`);
+
+    // live update in place: the volume keys while the tip is up
+    await page.evaluate(() => window.__mockMain.volume(73));
+    await page.waitForTimeout(120);
+    s = await st(page);
+    ok(s.shown && /Volume 73%/.test(s.text), `the level changed under the tip: updated in place ("${s.text.split('\n')[0]}")`);
+    await shot(page, 'tip-speaker-live-73-dark');
+
+    // hand-off: straight onto the Wi-Fi glyph
+    await hover(page, '#network');
+    await page.waitForTimeout(60);
+    s = await st(page);
+    ok(s.shown && s.anchor === '#network', `hand-off: the next icon's tip at once (${s.anchor} at 60 ms)`);
+
+    // leave: hidden, and the room given back after the fade
+    await away(page);
+    await page.waitForTimeout(500);
+    s = await st(page);
+    L = await log(page);
+    ok(!s.shown && s.held === 0, 'left the bar: hidden and no room held');
+    ok(L.owner === null && L.log[L.log.length - 1].who === 'tips' && !L.log[L.log.length - 1].open, 'the tip gave its room back (main\'s one owner is none)');
+
+    // the race: a tip holding room, then a click that opens quick settings
+    await page.waitForTimeout(600);
+    await hover(page, '#volume');
+    await page.waitForTimeout(700);
+    s = await st(page);
+    ok(s.shown && s.held > 0, 'tip up again, holding room');
+    const nBefore = (await log(page)).log.length;
+    await page.mouse.down(); await page.mouse.up();
+    await page.waitForTimeout(800);
+    L = await log(page);
+    const after = L.log.slice(nBefore);
+    const popOpen = await page.$eval('#pop', el => !el.hidden);
+    ok(popOpen && L.owner && L.owner.key !== 'tip', `clicked: the panel owns the room (${JSON.stringify(L.owner)}; calls since: ${after.map(e => e.who + (e.open ? ':open:' + e.key : ':close')).join(', ')})`);
+    const pageOpenAt = after.findIndex(e => e.who === 'page' && e.open);
+    ok(pageOpenAt >= 0 && !after.slice(pageOpenAt).some(e => e.who === 'tips'), 'the tip never called bar.popover after the panel opened');
+    s = await st(page);
+    ok(!s.shown, 'no tip over the speaker after the click (until the pointer leaves it)');
+
+    // inside the panel: a tip that fits in the panel's own room, and asks for none
+    const nIn = (await log(page)).log.filter(e => e.who === 'tips').length;
+    await hover(page, '#pop .qsx-chev');
+    await page.waitForTimeout(700);
+    s = await st(page);
+    const popR = await page.$eval('#pop', el => el.getBoundingClientRect().toJSON());
+    L = await log(page);
+    ok(s.shown && s.box.need === 0 && L.log.filter(e => e.who === 'tips').length === nIn, `inside the panel: tip up (${s.text.split('\n')[0]}), no room asked`);
+    ok(s.box.y >= popR.top - 0.5, `inside the panel: within what the panel's room shows (tip y ${s.box.y}, panel top ${popR.top})`);
+    // Esc: the panel's keyboard handling may close it; the tip goes regardless
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(150);
+    s = await st(page);
+    ok(!s.shown, 'Esc hides the tip');
+    // close the panel with a click on the Wi-Fi glyph (bar.js's toggle), then check the owner
+    if (await page.$eval('#pop', el => !el.hidden)) { await page.click('#network'); await page.waitForTimeout(400); }
+    L = await log(page);
+    ok(L.owner === null, `panel closed: nothing holds room (${JSON.stringify(L.owner)})`);
+
+    // keyboard focus shows it too
+    await away(page); await page.waitForTimeout(700);
+    await page.focus('#clock');
+    await page.keyboard.press('Shift+Tab'); await page.keyboard.press('Tab');
+    await page.waitForTimeout(700);
+    s = await st(page);
+    ok(s.shown && s.mode === 'focus', `keyboard focus: tip up (${s.anchor}, ${s.mode})`);
+    await page.keyboard.press('Shift');
+    await page.waitForTimeout(250);
+    s = await st(page);
+    ok(!s.shown, 'a key press hides it');
+
+    // mousedown and wheel hide it
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await hover(page, '#clock'); await page.waitForTimeout(700);
+    await page.mouse.wheel(0, 40); await page.waitForTimeout(150);
+    s = await st(page);
+    ok(!s.shown, 'the wheel hides it');
+
+    // the flyout: a running app's own hover popover replaces any tip
+    await away(page); await page.waitForTimeout(700);
+    const running = await page.evaluate(() => { const c = Array.from(document.querySelectorAll('.cell')).find(x => x.classList.contains('run')); if (!c) return false; c.setAttribute('data-shoot', 'run'); return true; });
+    if (running) {
+      await hover(page, '[data-shoot="run"]');
+      await page.waitForTimeout(1000);
+      s = await st(page);
+      const flyOpen = await page.$eval('#pop', el => !el.hidden && el.classList.contains('fly'));
+      L = await log(page);
+      ok(!flyOpen || (!s.shown && L.owner && L.owner.key !== 'tip'), `a running app's flyout: no tip over it, the flyout owns the room (fly ${flyOpen}, tip ${s.shown}, owner ${JSON.stringify(L.owner)})`);
+      await away(page); await page.waitForTimeout(900);
+    } else {
+      lines.push('skip no running app cell in the mock to check the flyout against');
+    }
+
+    // uninstall puts every title back
+    await hover(page, '#battery'); await page.waitForTimeout(700);
+    const un = await page.evaluate(() => {
+      window.MantleTips.uninstall();
+      const v = document.getElementById('volume');
+      return {
+        title: v.getAttribute('title'), data: v.getAttribute('data-mtip'), own: Object.prototype.hasOwnProperty.call(v, 'title'),
+        al: v.getAttribute('aria-label'), tip: !!document.getElementById('mantle-tip'), left: document.querySelectorAll('[data-mtip]').length
+      };
+    });
+    L = await log(page);
+    ok(un.title && /Volume/.test(un.title) && un.data === null && !un.own && un.al === null && !un.tip && un.left === 0, `uninstall: titles back as attributes, our aria-label gone, no tip element (${JSON.stringify(un)})`);
+    ok(L.owner === null, 'uninstall: no room left held');
+    problems.push(...page.problems.map(p => 'behaviour: ' + p));
+    await page.close();
+  } finally {
+    await browser.close();
+  }
+  for (const f of shots) console.log(f);
+  for (const l of lines) console.log(l);
+  console.log(problems.length ? 'PAGE PROBLEMS:\n  ' + problems.join('\n  ') : 'no page errors, no console errors');
+  console.log(`TIPS HEADLESS: ${passed} passed, ${failed} failed`);
+  process.exit(failed || problems.length ? 1 : 0);
+})().catch(e => { console.error('FAILED', e && e.stack || e); process.exit(1); });
