@@ -885,6 +885,13 @@ body.pill .chips { display: none; }
    display:none, so scrollWidth still measures the title for the way back. */
 .media.compact .mchip { gap: 0; }
 .media.compact .mtxt { max-width: 0; }
+/* PICTURE ONLY (Owen, 2026-09-24: "only be allowed to show the songs image ... not the whole song
+   name and artist too"). The title and the play/pause button give way for good; the song is in the
+   chip's tooltip, and a click still opens the now-playing card with its controls. max-width, not
+   display:none, for the same reason as compact above. */
+.media .mchip { gap: 0; padding: 0 5px; }
+.media .mtxt { max-width: 0; }
+.media .mtog { display: none; }
 .mtog { width: 26px; height: 26px; padding: 0; justify-content: center; margin-left: -3px; }
 .mtog[hidden] { display: none; }                      /* .btn's display:flex would beat [hidden] */
 .mtog.off { color: var(--lg-ink-3); }
