@@ -240,7 +240,10 @@ const REVEAL_BY = flags.osMorph ? 'morph' : 'page';
  *     there is NO chip at all when an LessonPlayer lesson is the only session (Owen, same day).
  * Add this flag to the logon task's arguments to lift all three.
  */
-flags.lessonplayerMediaControls = ARGV.some((a) => a === '--lessonplayer-media-controls');
+// 2026-09-24: THE DEFAULT FLIPPED. Owen, looking at the card's "controls off" note: "i want to be
+// able to pause it". LessonPlayer now gets play/pause like any player; --lessonplayer-guard puts the rule
+// above back on for a recording session (--lessonplayer-media-controls is still accepted, and wins).
+flags.lessonplayerMediaControls = ARGV.includes('--lessonplayer-media-controls') || !ARGV.includes('--lessonplayer-guard');
 
 // A test instance gets its own userData directory, which is ALSO what keys
 // Electron's single-instance lock -- that is the whole reason the profile name
@@ -2708,7 +2711,7 @@ const MEDIA_POLL_MS = 10000;          // only when the sidecar could not hook th
 const MEDIA_ACTIONS = new Set(['play', 'pause', 'toggle', 'next', 'previous', 'seek']);
 const LESSONPLAYER_RE = /lessonplayer/i;
 const LESSONPLAYER_GUARD_REASON = "LessonPlayer lesson · controls off so a stray click can't pause it";
-const LESSONPLAYER_GUARD_HOW = 'Mantle leaves LessonPlayer alone while you record lessons; start Mantle with --lessonplayer-media-controls to allow them';
+const LESSONPLAYER_GUARD_HOW = 'Mantle was started with --lessonplayer-guard for a recording session; start it without that flag to allow them';
 let lastMedia = null;       // the last payload pushed to the bar, for replay and the guard
 let mediaPick = null;       // the AUMID Owen picked in the card's switcher, or null for automatic
 let mediaReading = null;    // the in-flight read, so a burst of triggers makes one read
@@ -2731,7 +2734,7 @@ function mediaGuardOn() { return !flags.lessonplayerMediaControls; }
 async function mediaRead() {
   const guard = mediaGuardOn()
     ? { on: true, reason: LESSONPLAYER_GUARD_REASON, how: LESSONPLAYER_GUARD_HOW }
-    : { on: false, reason: 'LessonPlayer media controls are allowed (--lessonplayer-media-controls)', how: null };
+    : { on: false, reason: 'LessonPlayer media controls are on (start Mantle with --lessonplayer-guard to turn them off while recording)', how: null };
   // `retry`: whether reading again can help (mediaPollArm). An old exe will never grow the command.
   const failed = (reason, retry) => ({ ok: false, present: false, reason, retry: retry !== false, rev: null, guard, sessions: [], shown: null, pick: null, events: false, eventsReason: null });
   const ask = async (extra) => {
