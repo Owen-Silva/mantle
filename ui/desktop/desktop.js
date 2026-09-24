@@ -260,6 +260,10 @@
     // ok means the panes are on the thicker fallback tint, and this row is the
     // only place that says why.
     ['backdrop.desktop', 'Pane backdrop', (p) => p.ok === true],
+    // Alt+Tab or Win+N / Win+A switched ON in the tray and still Windows' own --
+    // the same rule as problems(). lib/switcher.js stateWords decides `broken`,
+    // which is also the reason; a test run never hooks, so it says nothing there.
+    ['switcher', 'Alt+Tab', (p, s) => s.mode === 'test' || !p.broken],
   ];
 
   function row(title, reason) {
@@ -311,7 +315,7 @@
       if (key === 'wallpaper' && piece.rulesOk === false) rows.push(row('Wallpaper pause rules', piece.rulesReason || 'not being checked, and no reason given'));
       if (ok(piece, s)) continue;
       if (key === 'backdrop.desktop') saidBackdrop = true;
-      rows.push(row(label, piece.reason || 'no reason given, which is itself a bug'));
+      rows.push(row(label, (key === 'switcher' ? piece.broken : piece.reason) || 'no reason given, which is itself a bug'));
     }
     // ...and the failure this page had with a picture that DID arrive, which no
     // state piece can know about. Only when main is not already saying it, so

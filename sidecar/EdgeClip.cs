@@ -64,6 +64,9 @@ namespace Mantle {
     public const string MultiMonitorReason = "multi-monitor edge clip not supported yet";
 
     static bool _on;
+    // Whether THIS process ever turned the clip on. Only such a process may release a clip on its
+    // way out (below, ReleaseForExit).
+    static bool _everOn;
     static int _inset = 2;
     static bool _applied;
     static string _reason = "";
@@ -124,6 +127,7 @@ namespace Mantle {
       Compute(new Win32.RECT(), inset, out used);
       _inset = used;
       _on = true;
+      _everOn = true;
 
       if (_hook == IntPtr.Zero) {
         _proc = OnForeground;
@@ -166,10 +170,16 @@ namespace Mantle {
     /// written, like every other restore step - a cursor the user cannot move
     /// to the bottom of their screen is precisely the "Windows looks broken"
     /// class of failure this sidecar exists to avoid.
+    ///
+    /// ONLY A PROCESS THAT TURNED THE CLIP ON RELEASES IT HERE (2026-09-23). Recognising the clip by
+    /// its shape alone meant EVERY sidecar that exited released the LIVE Mantle's clip: each passive
+    /// test run (test-sidecar.js, a launcher test) freed Owen's cursor until the live sidecar's 1 s
+    /// backstop put it back (measured: the live clip is 0,0,1920,1078, Mantle-shaped). A stale clip
+    /// from a Mantle that died is ClearStaleAtStartup's job, not this one's.
     public static bool ReleaseForExit() {
       _on = false;
       StopWatchers();
-      bool released = ReleaseOwnClip();
+      bool released = _everOn && ReleaseOwnClip();
       _applied = false;
       return released;
     }
@@ -212,11 +222,25 @@ namespace Mantle {
       Win32.RECT cur;
       if (!Win32.GetClipCursor(out cur)) return null;
       if (!IsMantleShaped(cur, mon)) return null;
+      // Not stale while another Mantle sidecar is alive: that one may be keeping it (a second
+      // sidecar started beside the live one, as a measurement run does, used to free the live
+      // cursor here).
+      if (OtherSidecarRunning()) return null;
       string where = cur.left + "," + cur.top + "," + cur.right + "," + cur.bottom;
       bool ok;
       try { ok = Win32.ClipCursorRelease(IntPtr.Zero); } catch (Exception) { ok = false; }
       return (ok ? "released a stale cursor clip (" : "FAILED to release a stale cursor clip (") + where +
              ") left behind by an earlier Mantle that did not run its safety path";
+    }
+
+    static bool OtherSidecarRunning() {
+      try {
+        int me = System.Diagnostics.Process.GetCurrentProcess().Id;
+        foreach (var p in System.Diagnostics.Process.GetProcessesByName("Mantle.Sidecar")) {
+          using (p) { if (p.Id != me) return true; }
+        }
+      } catch (Exception) { }
+      return false;
     }
 
     // ------------------------------------------------------------ the keeping

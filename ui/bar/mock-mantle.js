@@ -25,6 +25,10 @@
  *                 path is on screen instead of having to be imagined
  *   ?wifi= ?scan= ?kbd= ?audio= ?mixer= ?bt= ?btwatch=   the Wi-Fi list, output picker, mixer and
  *                 Bluetooth device states (qs-more.js); listed at "quick settings, one level down" below
+ *   ?net=X        the network readout: connected (default), no-internet, wifi-off, disconnected,
+ *                 ethernet, error; __mockMain.net(X) pushes a change
+ *   ?qsdelay=MS   qs.set answers that late, so the optimistic tile and its pending state show
+ *   ?qsset=refuse every switch comes back refused with its part unchanged (the spring-back + note)
  *   ?state=down   sidecar reported down, so the amber status chip is on screen
  *   ?edge=top     pretend the bar is docked at the top (bar.js also honours this)
  *   ?media=X      now playing, in main's 'media' payload shape (main.js NOW PLAYING): playing,
@@ -160,6 +164,10 @@
   }
 
   var volume = { level: 0.42, muted: false };
+  /* The speaker as main sends it (volume.get, and the 'volume' push since 2026-09-23): whole
+     percentages 0-100, the sidecar's scale. The mock kept 0-1 inside and sent that out, so its
+     first frame read "Volume 0%". */
+  function volumeReading() { return { ok: true, level: Math.round(volume.level * 100), muted: volume.muted, reason: null }; }
 
   /* ---- the battery (2026-09-23) -----------------------------------------
      Readings in exactly the sidecar's shape (sidecar/Battery.cs), so the words and the glyph are
@@ -194,11 +202,48 @@
   }
   var batteryNow = batteryReading(q.get('battery') || 'battery');
 
+  /* ---- the network readout (2026-09-23) ----------------------------------
+     Readings in exactly the sidecar's shape (sidecar/NetState.cs), so the words and the glyph are
+     drawn by the real ui/bar/net.js. ?net=<name> picks one; __mockMain.net(name) pushes another,
+     the way main does when the route or the internet changes. The default is the laptop on Wi-Fi
+     with internet - what the fixed drawing always showed - so the older shots do not move. */
+  var NET = {
+    connected:     { state: 'connected', kind: 'wifi', internet: true },
+    'no-internet': { state: 'no-internet', kind: 'wifi', internet: false, local: true, connectivity: 0x22 },
+    'wifi-off':    { state: 'wifi-off', kind: 'none', internet: false, wifiOn: false },
+    disconnected:  { state: 'disconnected', kind: 'none', internet: false, wifiOn: true },
+    ethernet:      { state: 'connected', kind: 'ethernet', internet: true, adapter: 'Ethernet' },
+    error:         { ok: false, reason: 'the network is not being read: the sidecar exited (code 1)' }
+  };
+  function netReading(name) {
+    var n = NET[name] || NET.connected;
+    if (n.ok === false) return { ok: false, state: 'unknown', kind: 'none', internet: null, reason: n.reason, via: 'mock' };
+    var up = n.kind === 'wifi';
+    var wifi = n.kind === 'ethernet'
+      ? { present: null, on: null, connected: false, ssid: null, signal: 0, band: null, reason: 'not read: the internet goes through Ethernet' }
+      : { present: true, on: n.wifiOn !== false, connected: up, ssid: up ? 'Maple-5G' : null,
+          signal: up ? 82 : 0, band: up ? '5 GHz' : null, reason: null };
+    return {
+      ok: true, state: n.state, kind: n.kind, internet: n.internet, local: !!n.local,
+      connectivity: typeof n.connectivity === 'number' ? n.connectivity : (n.internet ? 0x440 : 0),
+      adapter: n.kind === 'none' ? null : (n.adapter || 'Wi-Fi'), adapterType: n.kind === 'none' ? null : n.kind,
+      wifi: wifi, reason: null, via: 'mock', ms: 0
+    };
+  }
+  var netNow = netReading(q.get('net') || 'connected');
+  function netPush(name) { netNow = netReading(name); emit('net', netNow); return netNow; }
+
   /* ---- quick settings -------------------------------------------------
      Plausible values for a laptop on Wi-Fi. ?qs=fail breaks TWO parts (Bluetooth and brightness)
      with real-sounding reasons, because the panel's whole contract is that a part it cannot read
      renders muted WITH its reason rather than blank — and that path has to be eyeballable. */
   var QS_FAIL = q.get('qs') === 'fail';
+  /* ?qsdelay=<ms>: qs.set answers that late (a radio under load took 260-510 ms, measured
+     2026-09-23), so the optimistic tile and its pending state can be seen and timed.
+     ?qsset=refuse: every switch is turned down with its part read back unchanged, the way the
+     sidecar reports a switch Windows would not make, so the spring-back and its note show. */
+  var QS_DELAY = Math.max(0, Number(q.get('qsdelay')) || 0);
+  var QS_REFUSE = q.get('qsset') === 'refuse';
   var qsState = {
     volume:     { level: volume.level, muted: volume.muted, ok: true, reason: '' },
     wifi:       { present: true, on: true, connected: true, ssid: 'Maple-5G', signal: 82, band: '5 GHz', ok: true, reason: '' },
@@ -211,6 +256,7 @@
     nightlight: { present: true, on: false, ok: true, reason: '' },
     power:      batteryNow                  // the sidecar's `power` is the battery reading (Battery.cs)
   };
+  if (netNow.ok && netNow.wifi.on === false) { qsState.wifi.on = false; qsState.wifi.connected = false; qsState.wifi.ssid = ''; }
   var qsWatching = false, qsTimer = 0;
 
   function qsSnapshot() {
@@ -233,13 +279,15 @@
     emit('qs', qsSnapshot());
   }
 
-  /* The real main pushes every 2s while the watch is on. The mock does the same, and stops dead
-     when it is turned off — a mock that kept pushing would hide exactly the leak the watch is
-     there to prevent. */
+  /* The real watch (2026-09-23; it was a 2 s re-read) pushes every part once when it starts, then
+     only what changes. The mock does the same - one push when the watch goes on, one per change
+     after - and stops dead when it is turned off: a mock that kept pushing would hide exactly the
+     leak the watch is there to prevent. */
   function qsLoop() {
     if (qsTimer) clearTimeout(qsTimer);
+    qsTimer = 0;
     if (!qsWatching) return;
-    qsTimer = setTimeout(function () { qsPush(); qsLoop(); }, 2000);
+    qsTimer = setTimeout(function () { qsTimer = 0; qsPush(); }, 60);
   }
 
   /* ---- quick settings, one level down (ui/bar/qs-more.js) -------------------------------
@@ -732,13 +780,14 @@
   function reply(channel, payload) {
     switch (channel) {
       case 'state.get':   return state();
-      case 'sys.stats':   return { battery: { percent: 72, charging: false }, volume: { level: volume.level, muted: volume.muted } };
+      case 'sys.stats':   return { battery: { percent: 72, charging: false }, volume: volumeReading() };
       case 'battery.get': return batteryNow;
-      case 'volume.get':  return { level: volume.level, muted: volume.muted };
-      case 'volume.set':
-        if (payload && typeof payload.level === 'number') volume.level = Math.max(0, Math.min(1, payload.level));
+      case 'volume.get':  return volumeReading();
+      case 'volume.set':                           // 0-100, as main passes it to the sidecar
+        if (payload && typeof payload.level === 'number') volume.level = Math.max(0, Math.min(100, payload.level)) / 100;
         if (payload && typeof payload.muted === 'boolean') volume.muted = payload.muted;
-        return { ok: true, reason: '', level: volume.level, muted: volume.muted };
+        setTimeout(function () { emit('volume', volumeReading()); }, 0);
+        return volumeReading();
 
       case 'bar.pinned':  return { ok: true, reason: '', items: items };
       case 'bar.hover':
@@ -776,11 +825,12 @@
         return { ok: true, reason: '' };
       }
       case 'qs.get': return qsSnapshot();
+      case 'net.get': return netNow;
 
       case 'qs.watch':
         qsWatching = !!(payload && payload.on);
         qsLoop();
-        return { ok: true, reason: '' };
+        return { ok: true, watching: qsWatching, via: 'mock', leaseMs: 60000, reason: '' };
 
       /* one level down (qs-more.js): the Wi-Fi list, the output picker, the mixer */
       case 'qs.wifi.list': return wifiList();
@@ -834,10 +884,13 @@
         var part = payload && payload.part, val = payload && payload.value;
         var st = {
           volume: qsState.volume, mute: qsState.volume, wifi: qsState.wifi,
-          bluetooth: qsState.bluetooth, brightness: qsState.brightness
+          bluetooth: qsState.bluetooth, brightness: qsState.brightness, nightlight: qsState.nightlight
         }[part];
         if (!st) return { ok: false, part: part, value: null, state: null, reason: 'this shell does not know how to set "' + part + '"' };
         if (st.ok === false) return { ok: false, part: part, value: null, state: null, reason: st.reason };
+        if (QS_REFUSE && (part === 'wifi' || part === 'bluetooth' || part === 'nightlight'))
+          return { ok: false, part: part, value: null, state: qsSnapshot()[part],
+            reason: 'Windows did not make the switch (mock ?qsset=refuse: the radio answered AccessDenied)' };
         if ((part === 'volume' || part === 'brightness') &&
             !(Number.isInteger(Number(val)) && Number(val) >= 0 && Number(val) <= 100))
           return { ok: false, part: part, value: null, state: null, reason: part + ' must be a whole number from 0 to 100' };
@@ -850,6 +903,9 @@
           else if (part === 'wifi') { st.connected = true; st.ssid = 'Maple-5G'; }
         }
         setTimeout(qsPush, 0);                       // main pushes after every set, so the mock does too
+        if (part === 'volume' || part === 'mute') setTimeout(function () { emit('volume', volumeReading()); }, 0);
+        // the readout follows the radio a moment later, as the sidecar's route watch sees it
+        if (part === 'wifi') setTimeout(function () { netPush(st.on ? 'connected' : 'wifi-off'); }, 250);
         var back = qsSnapshot()[part === 'mute' ? 'volume' : part];
         return { ok: true, part: part, value: val, state: back, reason: null };
       }
@@ -938,6 +994,9 @@
         else if (channel === 'media') { if (MEDIA) cb(mediaPayload()); }   // main replays only once it has read
         else if (channel === 'notifications') cb(ntfPayload());
         else if (channel === 'battery') cb(batteryNow);
+        else if (channel === 'volume') cb(volumeReading());
+        else if (channel === 'net') cb(netNow);
+        else if (channel === 'qs') cb(qsSnapshot());     // main replays its last whole picture
         else if (channel === 'state') cb(state());
       }, 30);
       return function off() {
@@ -954,7 +1013,7 @@
         setTimeout(function () {
           try { resolve(reply(channel, payload)); }
           catch (e) { console.warn('[mock] call rejected', channel, e.message); reject(e); }
-        }, 30);
+        }, channel === 'qs.set' && QS_DELAY ? QS_DELAY : 30);
       });
     }
   };
@@ -982,6 +1041,39 @@
       emit('battery', batteryNow);
       qsPush();
       return batteryNow;
+    },
+    /* The route or the internet changed (a cable, the radio, the router): main pushes 'net'. The
+       Wi-Fi tile follows, as the qs watch would push it. */
+    net: function (name) {
+      var r = netPush(name);
+      if (r.ok && r.wifi && typeof r.wifi.on === 'boolean') {
+        qsState.wifi.on = r.wifi.on; qsState.wifi.connected = !!r.wifi.connected; qsState.wifi.ssid = r.wifi.ssid || '';
+        qsPush();
+      }
+      return r;
+    },
+    /* The volume keys, Windows' flyout, another app: main pushes 'volume' whether or not the
+       panel is open. level is 0-100. */
+    volume: function (level, muted) {
+      if (typeof level === 'number') volume.level = Math.max(0, Math.min(100, level)) / 100;
+      if (typeof muted === 'boolean') volume.muted = muted;
+      emit('volume', volumeReading());
+      qsPush();
+      return volumeReading();
+    },
+    /* A part changed elsewhere (the brightness keys, Windows' own flyout) and the watch pushed it.
+       Levels are 0-100, as main sends them. Pushed whether or not the watch is on: the harness
+       says when. */
+    qsPushNow: function (over) {
+      Object.keys(over || {}).forEach(function (k) {
+        var p = Object.assign({}, over[k]);
+        if ((k === 'volume' || k === 'brightness') && typeof p.level === 'number') p.level = p.level / 100;
+        qsState[k] = Object.assign({}, qsState[k] || {}, p);
+        if (k === 'volume') { volume.level = qsState.volume.level; volume.muted = !!qsState.volume.muted; }
+      });
+      var snap = qsSnapshot();
+      emit('qs', snap);
+      return snap;
     },
     /* The sidecar's watch pushing a changed list (a device connected, the radio switched). */
     bt: function (name) {

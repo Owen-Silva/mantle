@@ -1515,6 +1515,41 @@
      shows a pending state and is re-rendered from the reply, so a switch that did not take cannot
      stay lit. */
   var qs = null, qsBusy = Object.create(null), qsPaint = null;
+  /* A set that did not take, said IN the panel until that part is set again or the panel is
+     rebuilt: part -> sentence. The state strip's chip is 56 px in pill mode; nobody reads it. */
+  var qsNote = Object.create(null);
+  /* part -> function saying whether the panel is holding that part: a set in flight, or a slider
+     under the pointer. A push from main never moves a held part (the reply has the last word). */
+  var qsHold = Object.create(null);
+
+  function qsHeld(key) {
+    if (key === 'volume' && (qsBusy.volume || qsBusy.mute)) return true;
+    if (qsBusy[key]) return true;
+    return !!(qsHold[key] && qsHold[key]());
+  }
+
+  /* The speaker glyph reads the same volume as the panel (0-100 there, 0-1 on vol). */
+  function qsTakeVolume(v) {
+    if (!v || v.ok === false || typeof v.level !== 'number') return;
+    vol.level = v.level / 100; vol.muted = !!v.muted; vol.reason = '';
+    volumeGlyph();
+  }
+
+  /* A whole picture from main (qs.get, or a push): every part not held takes it. */
+  function qsTake(d) {
+    if (!d || typeof d !== 'object') return;
+    var next = Object.assign({}, d);
+    if (qs) Object.keys(next).forEach(function (key) {
+      if (qs[key] && typeof qs[key] === 'object' && qsHeld(key)) next[key] = qs[key];
+    });
+    qs = next;
+    if (!qsHeld('volume')) qsTakeVolume(qs.volume);
+  }
+
+  function qsLabel(part) {
+    return { wifi: 'Wi-Fi', bluetooth: 'Bluetooth', nightlight: 'Night light', brightness: 'Brightness',
+      volume: 'Volume', mute: 'Mute' }[part] || part;
+  }
 
   function qsPart(name) { return (qs && qs[name]) || null; }
   function partOk(p) { return !!(p && p.ok !== false); }
@@ -1524,10 +1559,7 @@
 
   function qsSnapshot() {
     return callR('qs.get').then(function (d) {
-      qs = d; clearFail('qs');
-      if (d && d.volume && typeof d.volume.level === 'number') {
-        vol.level = typeof d.volume.level === 'number' ? d.volume.level / 100 : null; vol.muted = !!d.volume.muted; vol.reason = ''; volumeGlyph();
-      }
+      qsTake(d); clearFail('qs');
       return d;
     }, function (e) {
       fail('qs', 'quick settings off', 'qs.get was refused, so the panel cannot read the system: ' + msg(e), 'warn');
@@ -1535,8 +1567,8 @@
     });
   }
 
-  /* The watch is on ONLY while the panel is open: a 2s push into a closed popover is pure cost on
-     a bar that is meant to be free at rest. */
+  /* The watch is on ONLY while the panel is open: main then holds a lease on the sidecar's own
+     watch, which pushes each part the moment it changes (2026-09-23; it was a 2 s re-read). */
   function qsWatch(on) {
     callR('qs.watch', { on: !!on }).then(function () { clearFail('qswatch'); }, function (e) {
       if (on) fail('qswatch', 'qs stale', 'qs.watch was refused, so the panel shows a snapshot and will not update itself: ' + msg(e));
@@ -1552,44 +1584,64 @@
     if (!r || !r.part || !qs) return;
     var key = r.part === 'mute' ? 'volume' : r.part;
     if (!qs[key]) return;
-    if (r.state && typeof r.state === 'object') qs[key] = r.state;
+    if (r.state && typeof r.state === 'object') qs[key] = Object.assign({}, r.state);
     else {
       var v = r.value;
       if ((r.part === 'volume' || r.part === 'brightness') && typeof v === 'number') qs[key].level = v;
       else if (r.part === 'mute') qs.volume.muted = !!v;
       else if (r.part === 'wifi' || r.part === 'bluetooth') qs[key].on = !!v;
     }
-    if (key === 'volume' && typeof qs.volume.level === 'number') {   // the readout's glyph too
-      vol.level = qs.volume.level / 100; vol.muted = !!qs.volume.muted; vol.reason = ''; volumeGlyph();
-    }
+    if (key === 'volume') qsTakeVolume(qs.volume);       // the readout's glyph too
   }
 
-  function qsSet(part, value) {
-    qsBusy[part] = true;
+  /* A SET, OPTIMISTICALLY (2026-09-23). Owen: "be way more responsive". A tile waited for the
+     reply before it changed at all: 260-510 ms for a Wi-Fi or Bluetooth radio under load
+     (measured), long enough to click again. Now `guess` changes the part on screen in the same
+     frame and the tile shows pending; the reply - the part READ BACK from Windows - has the last
+     word. A switch Windows refused springs back AND its reason is written in the panel. */
+  function qsSet(part, value, guess) {
+    var key = part === 'mute' ? 'volume' : part;
+    if (guess && qs && qs[key]) {
+      qs[key] = Object.assign({}, qs[key]);
+      guess(qs[key]);
+      if (key === 'volume') qsTakeVolume(qs.volume);
+    }
+    qsBusy[part] = (qsBusy[part] || 0) + 1;
+    delete qsNote[key];
     if (qsPaint) qsPaint();
-    return callR('qs.set', { part: part, value: value }).then(function (r) {
-      qsBusy[part] = false;
-      qsApplyReply(r);                      // the reply is authoritative, not the click
-      if (qsPaint) qsPaint();
-      clearFail('qsset');
+    function settle() {
+      qsBusy[part] = Math.max(0, (qsBusy[part] || 0) - 1);
+      if (!qsBusy[part]) delete qsBusy[part];
+    }
+    return call('qs.set', { part: part, value: value }).then(function (r) {
+      settle();
+      if (!r || typeof r !== 'object') r = { ok: false, part: part, reason: 'qs.set answered with nothing' };
+      if (r.state) qsApplyReply(r);           // the read-back, not the click
+      if (r.ok === false) {
+        qsNote[key] = qsWhy(part, r.reason);
+        fail('qsset', part + ' failed', 'qs.set ' + part + ' was refused: ' + (r.reason || 'no reason given'), 'warn');
+        // no read-back came with it (an unknown part, a bad value): what the system says, again
+        if (!r.state) qsSnapshot().then(qsRepaint, qsRepaint);
+      } else clearFail('qsset');
+      qsRepaint();
       return r;
     }, function (e) {
-      qsBusy[part] = false;
-      if (qsPaint) qsPaint();               // straight back to what the system actually says
+      settle();
+      qsNote[key] = qsWhy(part, msg(e));
       fail('qsset', part + ' failed', 'qs.set ' + part + ' was refused: ' + msg(e), 'warn');
+      qsSnapshot().then(qsRepaint, qsRepaint); // the guess is undone by what the system says
+      qsRepaint();
+      return { ok: false, part: part, reason: msg(e) };
     });
   }
 
-  /* 10 sets a second while a slider is dragged, and the last value always lands (the trailing
-     call), because the one the user stops on is the one that matters. */
-  function throttled(fn, ms) {
-    var last = 0, t = 0, pending = null;
-    return function (v) {
-      pending = v;
-      var now = Date.now(), wait = ms - (now - last);
-      if (wait <= 0) { last = now; fn(pending); }
-      else if (!t) t = setTimeout(function () { t = 0; last = Date.now(); fn(pending); }, wait);
-    };
+  function qsRepaint() { if (popKey === 'qs' && qsPaint) qsPaint(); }
+
+  /* "<Part> did not change: <why>" - unless the reason already names the part, as main's own
+     refusals do ("Night light could not be changed: ..."), which read doubled in a --test run. */
+  function qsWhy(part, reason) {
+    var label = qsLabel(part), why = reason || 'no reason was given';
+    return why.toLowerCase().indexOf(label.toLowerCase()) === 0 ? why : label + ' did not change: ' + why;
   }
 
   function svg(body, size) {
@@ -1614,8 +1666,9 @@
     pop.classList.add('qs');
     var tiles = {}, notes = document.createElement('div'), sliders = {};
 
+    qsNote = Object.create(null);             // a new panel starts with nothing to apologise for
     var grid = document.createElement('div'); grid.className = 'qsgrid';
-    [['wifi', 'Wi-Fi'], ['bluetooth', 'Bluetooth'], ['nightlight', 'Night light'], ['saver', 'Battery saver']]
+    [['wifi', 'Wi-Fi'], ['bluetooth', 'Bluetooth'], ['nightlight', 'Night light'], ['saver', 'Energy saver']]
       .forEach(function (t) {
         var b = document.createElement('button');
         b.type = 'button'; b.className = 'qstile';
@@ -1628,17 +1681,37 @@
       });
     pop.appendChild(grid);
 
-    tiles.wifi.b.addEventListener('click', function () {
-      var p = qsPart('wifi');
-      if (!partOk(p) || !p.present || qsBusy.wifi) return;
-      qsSet('wifi', !p.on);
+    /* A click on a switch ALWAYS does something visible: it switches (at once, pending until
+       Windows answers), or - when the part cannot be switched - it says why in the panel. It used
+       to return silently when the panel had no reading yet. A dead part's reason is already a
+       note line and its tooltip; a click on it adds nothing, and does not pretend to try. */
+    function toggle(key) {
+      return function () {
+        var p = qsPart(key);
+        if (!p) {
+          qsNote[key] = qsLabel(key) + ' is still being read, so it cannot be switched yet';
+          paint();
+          qsSnapshot().then(qsRepaint, qsRepaint);
+          return;
+        }
+        if (!partOk(p) || p.present === false || qsBusy[key]) return;
+        var want = !p.on;
+        qsSet(key, want, function (part) {
+          part.on = want;
+          if (key === 'wifi' && !want) { part.connected = false; }
+        });
+      };
+    }
+    tiles.wifi.b.addEventListener('click', toggle('wifi'));
+    tiles.bluetooth.b.addEventListener('click', toggle('bluetooth'));
+    tiles.nightlight.b.addEventListener('click', toggle('nightlight'));
+    /* ENERGY SAVER has no switch another app may use (powrprof.dll exports only the power-mode
+       overlay; checked 2026-09-23), so the tile shows the state and opens Windows' own page. It
+       used to be a dead tile that did nothing at all when clicked. */
+    tiles.saver.b.addEventListener('click', function () {
+      closePop();
+      act('open', { target: 'ms-settings:batterysaver' }, 'energy saver settings');
     });
-    tiles.bluetooth.b.addEventListener('click', function () {
-      var p = qsPart('bluetooth');
-      if (!partOk(p) || !p.present || qsBusy.bluetooth) return;
-      qsSet('bluetooth', !p.on);
-    });
-    // night light and battery saver are read-only for now, and say so in their tooltips
 
     function slider(key, label, part, setPart) {
       var wrap = document.createElement('div'); wrap.className = 'qsrow';
@@ -1653,16 +1726,31 @@
       wrap.appendChild(head); wrap.appendChild(line);
       pop.appendChild(wrap);
       /* Whole percentages, 0-100: the scale qs.set and the sidecar take. These divided by 100
-         until 2026-09-23, the sidecar rounded 0.42 to 0, and a drag set Windows to 0-1 %. */
-      var send = throttled(function (v) { qsSet(setPart, v); }, 100);
+         until 2026-09-23, the sidecar rounded 0.42 to 0, and a drag set Windows to 0-1 %.
+         THE SENDER (qs-send.js): one set in flight, only the newest value waiting, the last one
+         always sent - so the system follows the pointer as fast as it can answer and never
+         replays a stale level after the pointer stops. While the slider is held (dragged, or a
+         set in flight), nothing but the pointer moves it or its number. */
+      var sl = { wrap: wrap, range: range, val: val, line: line, part: part, dragging: false };
+      sl.send = window.MantleQsSend
+        ? MantleQsSend.sender(function (v) {
+            return qsSet(setPart, v, function (p) { p.level = v; });
+          }, { minGapMs: 16, onIdle: function () { qsRepaint(); } })
+        : { push: function (v) { qsSet(setPart, v, function (p) { p.level = v; }); }, busy: function () { return false; } };
+      qsHold[part] = function () { return sl.dragging || sl.send.busy(); };
+      range.addEventListener('pointerdown', function () { sl.dragging = true; });
+      var letGo = function () { if (sl.dragging) { sl.dragging = false; qsRepaint(); } };
+      window.addEventListener('pointerup', letGo);
+      window.addEventListener('pointercancel', letGo);
       range.addEventListener('input', function () {
-        val.textContent = range.value + '%';
-        if (setPart === 'volume') { vol.level = Number(range.value) / 100; volumeGlyph(); }
-        send(Number(range.value));
+        var v = Number(range.value);
+        val.textContent = v + '%';
+        if (setPart === 'volume') { vol.level = v / 100; volumeGlyph(); }
+        sl.send.push(v);
       });
-      range.addEventListener('change', function () { qsSet(setPart, Number(range.value)); });
-      sliders[key] = { wrap: wrap, range: range, val: val, line: line, part: part };
-      return sliders[key];
+      range.addEventListener('change', function () { sl.send.push(Number(range.value)); });
+      sliders[key] = sl;
+      return sl;
     }
 
     slider('brightness', 'Brightness', 'brightness', 'brightness');
@@ -1672,7 +1760,8 @@
     mute.addEventListener('click', function () {
       var p = qsPart('volume');
       if (qsBusy.mute) return;
-      qsSet('mute', !(p && p.muted));
+      var want = !(p && p.muted);
+      qsSet('mute', want, function (part) { part.muted = want; });
     });
     v.line.appendChild(mute);
     v.mute = mute;
@@ -1742,30 +1831,35 @@
         BT_GLYPH, false);
       if (!partOk(b)) problems.push('Bluetooth: ' + partWhy(b, 'Bluetooth'));
 
-      // ---- Night light (state only)
+      // ---- Night light (a switch since 2026-09-23: Display.SetNightLight)
       paintTile('nightlight', n && n.on, !n || n.present !== false, partOk(n),
         !n ? 'Unknown' : !partOk(n) ? 'Unavailable' : n.present === false ? 'Not set up' : (n.on ? 'On' : 'Off'),
         !partOk(n) ? 'Night light — ' + partWhy(n, 'night light')
-          : 'Mantle cannot switch this yet — it reads the state only',
-        MOON_GLYPH, true);
+          : n && n.present === false ? 'Night light — ' + partWhy(n, 'night light')
+          : 'Turn night light ' + (n && n.on ? 'off' : 'on'),
+        MOON_GLYPH, false);
       if (!partOk(n)) problems.push('Night light: ' + partWhy(n, 'night light'));
 
-      // ---- Battery saver (state only)
+      // ---- Energy saver: its state, and a click opens Windows' own switch for it
       paintTile('saver', p && p.saver, !!p, partOk(p),
-        !p ? 'Unknown' : !partOk(p) ? 'Unavailable' : (p.saver ? 'On' : 'Off'),
-        !partOk(p) ? 'Battery saver — ' + partWhy(p, 'battery saver')
-          : 'Mantle cannot switch this yet — it reads the state only',
-        SAVER_GLYPH, true);
+        !p ? 'Unknown' : !partOk(p) ? 'Unavailable' : (p.saver ? 'On' : 'Off') + ' \u00b7 Settings',
+        !partOk(p) ? 'Energy saver — ' + partWhy(p, 'energy saver')
+          : 'Energy saver is ' + (p && p.saver ? 'on' : 'off') + '.\nWindows lets only its own Settings switch it: click to open that page',
+        SAVER_GLYPH, false);
       if (!partOk(p)) problems.push('Power: ' + partWhy(p, 'power'));
 
       // ---- sliders
+      /* A HELD slider (under the pointer, or a set in flight) keeps the pointer's value and its
+         number: a reading that crosses the drag is older than the pointer. It used to test
+         document.activeElement, which a focusable:false bar window never reliably sets, and
+         rewrote the number on every push regardless. */
       function paintSlider(s, part, pct, ok, present, why) {
         var live = ok && present;
+        var held = qsHeld(part);
         s.range.disabled = !live;
         s.wrap.classList.toggle('dead', !live);
-        if (document.activeElement !== s.range && typeof pct === 'number')
-          s.range.value = String(Math.round(pct));
-        s.val.textContent = live ? (typeof pct === 'number' ? Math.round(pct) + '%' : '—') : 'unavailable';
+        if (!held && typeof pct === 'number') s.range.value = String(Math.round(pct));
+        if (!held || !live) s.val.textContent = live ? (typeof pct === 'number' ? Math.round(pct) + '%' : '—') : 'unavailable';
         s.wrap.title = live ? '' : why;
       }
       paintSlider(sliders.brightness, 'brightness',
@@ -1794,6 +1888,9 @@
       power.title = bd ? bd.tip.replace(/\nClick: quick settings$/, '') : '';
       if (bd && (bd.state === 'error' || bd.state === 'unknown') && partOk(p)) problems.push('Battery: ' + bd.reason);
 
+      // ---- a set that did not take, until that part is set again
+      Object.keys(qsNote).forEach(function (k) { problems.push(qsNote[k]); });
+
       // ---- the notes: one line per part that is not ok, never a blank tile with no explanation
       notes.textContent = '';
       problems.forEach(function (text) {
@@ -1819,6 +1916,24 @@
   el.volume.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openQs(el.volume); });
   el.network.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openQs(el.network); });
   el.battery.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openQs(el.battery); });
+
+  /* ================================================================= network
+
+     THE READOUT BESIDE THE SPEAKER (2026-09-23) was a fixed Wi-Fi drawing in index.html: full
+     bars with the radio off, on Ethernet, with no internet, with no network at all. Owen: "make
+     the Internet thing ... actually work". main pushes the sidecar's reading ('net', replayed on
+     subscribe) and net.js words and draws it; a reading that fails is a dimmed globe with the
+     reason in the tooltip. */
+  function renderNet(r) {
+    var d = window.MantleNet ? MantleNet.describe(r || null)
+      : { state: 'error', tip: 'Network state unknown\nnet.js did not load, so the network cannot be shown', label: 'Network state unknown' };
+    el.network.innerHTML = window.MantleNet ? MantleNet.svg(d) : '';
+    el.network.title = d.tip + '\nClick: quick settings';
+    el.network.setAttribute('aria-label', d.label);
+    el.network.setAttribute('data-state', d.state);
+    el.network.classList.toggle('dead', d.state === 'error' || d.state === 'unknown');
+  }
+  renderNet(null);                    // the first frame says "not read yet", never a made-up signal
 
   /* ================================================================= battery */
 
@@ -2486,6 +2601,20 @@
     if (p && p.what === 'close') { closePop(); return; }
     if (p && p.what === 'more') { if (popKey !== 'more') openPop('more', el.more, buildMorePop); return; }
     if (p && p.what === 'notifs') { if (window.MantleNotifs) MantleNotifs.open(); return; }
+    // 'qs': the quick-settings panel, fed by the real (passive) sidecar's watch (2026-09-23)
+    if (p && p.what === 'qs') { if (popKey !== 'qs') openQs(); return; }
+    /* 'qs-nightlight': ...and click its Night light tile, so a --test run photographs a set going
+       through main to the PASSIVE sidecar and coming back refused, with the note in the panel. */
+    if (p && p.what === 'qs-nightlight') {
+      if (popKey !== 'qs') openQs();
+      var nl = Array.prototype.filter.call(el.pop.querySelectorAll('.qstile'), function (t) {
+        var l = t.querySelector('.qslbl');
+        return l && l.textContent === 'Night light';
+      })[0];
+      if (nl) setTimeout(function () { nl.click(); }, 600);   // after the panel's first picture
+      else fail('testclick', 'no night light tile', 'the test hook opened quick settings and found no Night light tile', 'warn');
+      return;
+    }
     if (p && (p.what === 'media' || p.what === 'media-play')) {
       if (el.media.hidden) { fail('testclick', 'no media chip', 'the test hook was asked to open the media card, but nothing is playing so there is no chip', 'warn'); return; }
       if (popKey !== 'media') openMedia();
@@ -2555,7 +2684,7 @@
   if (window.MantleQsMore) {
     MantleQsMore.init({
       call: call, callR: callR, on: on, msg: msg, fail: fail, closePop: closePop,
-      svg: svg, wifiGlyph: wifiGlyph, volumeSvg: volumeSvg, throttled: throttled
+      svg: svg, wifiGlyph: wifiGlyph, volumeSvg: volumeSvg
     });
   } else {
     fail('qsmore', 'Wi-Fi list missing', 'ui/bar/qs-more.js did not load, so quick settings has no Wi-Fi list, Bluetooth devices, output picker or mixer', 'warn');
@@ -2595,14 +2724,33 @@
     on('bar.hide', function (p) { lastEventAt = Date.now(); slide(false, p && p.why, null, p && p.ms); });
     on('bar.pinned', renderDock);
     on('bar.backdrop', setBackdrop);
-    /* Pushed every 2s ONLY while the quick-settings panel is open (and after every set), so this
-       repaints the panel in place and keeps the bar's own speaker honest for free. */
+    /* Pushed the moment a part changes while the panel is open (the sidecar's watch), and
+       replayed on subscribe, so the panel opens on a whole picture. Levels are 0-100: this
+       wrote them straight into the 0-1 glyph until 2026-09-23 ("Volume 3700%"). A part the
+       panel is holding (a set in flight, a slider under the pointer) keeps what is on screen. */
     on('qs', function (d) {
-      qs = d;
-      if (d && d.volume && typeof d.volume.level === 'number') {
-        vol.level = d.volume.level; vol.muted = !!d.volume.muted; volumeGlyph();
+      qsTake(d);
+      qsRepaint();
+    });
+    /* The speaker, pushed on every change from anywhere (the volume keys, Windows' flyout,
+       another app) whether or not the panel is open; it was read once at start. */
+    on('volume', function (v) {
+      if (!v || typeof v !== 'object') return;
+      if (v.ok !== false && typeof v.level === 'number') {
+        if (qsHeld('volume')) return;                  // the pointer is the truth mid-drag
+        if (qs) qs.volume = { ok: true, level: v.level, muted: !!v.muted, reason: null };
+        qsTakeVolume(v);
+      } else {
+        vol.level = null; vol.reason = v.reason || 'the volume could not be read, and no reason was given';
+        volumeGlyph();
       }
-      if (popKey === 'qs' && qsPaint) qsPaint();
+      qsRepaint();
+    });
+    /* The network readout: pushed on every change (net.js words and draws it). */
+    var netPushed = false;
+    on('net', function (r) { netPushed = true; renderNet(r); });
+    call('net.get').then(function (r) { if (!netPushed) renderNet(r); }, function (e) {
+      if (!netPushed) renderNet({ ok: false, state: 'unknown', reason: 'net.get was refused: ' + msg(e) });
     });
     on('windows', renderWindows);
     /* Now playing: pushed by main on every media change (and replayed on subscribe), so the chip

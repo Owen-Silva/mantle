@@ -63,16 +63,9 @@
     <div class="sep" aria-hidden="true"></div>
 
     <button id="volume" class="btn glyph" type="button" title="Volume"></button>
-    <button id="network" class="btn glyph" type="button" title="Network, sound and battery — Windows quick settings">
-      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
-        <g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
-          <path d="M1.6 5.6a9.5 9.5 0 0 1 12.8 0"/>
-          <path d="M4 8.2a6 6 0 0 1 8 0"/>
-          <path d="M6.3 10.8a2.6 2.6 0 0 1 3.4 0"/>
-        </g>
-        <circle cx="8" cy="13.2" r="1" fill="currentColor"/>
-      </svg>
-    </button>
+    <!-- drawn by bar.js from the sidecar's network reading (net.js); it was a fixed Wi-Fi drawing
+         here until 2026-09-23, full bars whatever the network did -->
+    <button id="network" class="btn glyph" type="button" title="Network"></button>
     <button id="battery" class="btn glyph battery" type="button" title="Battery" hidden></button>
 
     <!-- time over date, like the Windows 11 clock; clicking it opens the notification centre -->
@@ -114,6 +107,10 @@
 <script src="battery.js"></script>
 <!-- the Bluetooth device list's words and glyphs (window.MantleBt); ui/bar/bt.test.js loads the same file in node -->
 <script src="bt.js"></script>
+<!-- the network readout's words and glyph (window.MantleNet); ui/bar/net.test.js loads the same file in node -->
+<script src="net.js"></script>
+<!-- a dragged slider's sets, one in flight (window.MantleQsSend); ui/bar/qs-send.test.js loads it in node -->
+<script src="qs-send.js"></script>
 <script src="bar.js"></script>
 </body>
 </html>

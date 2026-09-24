@@ -100,7 +100,7 @@ namespace Mantle {
       "glass", "corners", "place", "morph", "region",
       "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop",
       "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power", "battery",
-      "wlan", "audio", "btdevices",
+      "wlan", "audio", "btdevices", "volwatch", "net", "qswatch",
       "tray", "trayClick", "media", "notifications", "search", "session", "sleep", "quit"
     };
 
@@ -572,6 +572,7 @@ namespace Mantle {
           // nothing" comes back.
           ping["load"] = Lanes.Snapshot();
           ping["caches"] = QuickSettings.Snapshot();
+          ping["watches"] = Json.Obj("volume", VolumeWatch.Snapshot(), "net", NetState.Snapshot());
           result = ping;
           return null;
         }
@@ -953,7 +954,7 @@ namespace Mantle {
             string aerr = StrictBool(req, "on", out want);
             if (aerr != null) return aerr;
             if (Passive) return PassiveRefusal + ": wifi would switch the live radio";
-            result = QuickSettings.SetWifi(want);      // slow lane
+            result = QuickSettings.SetWifi(want);      // qs lane
             return null;
           }
           result = QuickSettings.Wifi();               // ui lane, from the cache
@@ -996,7 +997,7 @@ namespace Mantle {
             string aerr = StrictBool(req, "on", out want);
             if (aerr != null) return aerr;
             if (Passive) return PassiveRefusal + ": bluetooth would switch the live radio";
-            result = QuickSettings.SetBluetooth(want); // slow lane
+            result = QuickSettings.SetBluetooth(want); // qs lane
             return null;
           }
           result = QuickSettings.Bluetooth();          // ui lane, from the cache
@@ -1011,7 +1012,7 @@ namespace Mantle {
             int want = (int)Math.Round((double)lv);
             if (want < 0 || want > 100) return "brightness: level must be a number from 0 to 100";
             if (Passive) return PassiveRefusal + ": brightness would dim the live display";
-            result = QuickSettings.SetBrightness(want); // slow lane, coalesced
+            result = QuickSettings.SetBrightness(want); // qs lane, coalesced
             return null;
           }
           result = QuickSettings.Brightness();          // ui lane, from the cache
@@ -1019,12 +1020,16 @@ namespace Mantle {
         }
 
         case "nightlight": {
-          // Read-only on purpose - see Display.cs: the state is an undocumented
-          // CloudStore blob, and writing it wrongly leaves the display stuck.
+          // A SWITCH since 2026-09-23 (it was read-only, and the tile did nothing):
+          // Display.SetNightLight writes the undocumented CloudStore blob only when
+          // it has exactly the layout measured on this machine, else refuses with
+          // the reason. qs lane (Lanes.cs _switchArg); the read stays on ui.
           if (Json.HasKey(req, "on")) {
-            result = Json.Obj("ok", false, "present", true, "on", false,
-                              "reason", "not available yet: Mantle can read night light but cannot switch it, " +
-                                        "because Windows has no API for it and its state is an undocumented blob");
+            bool want;
+            string aerr = StrictBool(req, "on", out want);
+            if (aerr != null) return aerr;
+            if (Passive) return PassiveRefusal + ": nightlight would tint the live display";
+            result = QuickSettings.SetNightLight(want);
             return null;
           }
           result = Display.NightLight();
@@ -1033,8 +1038,10 @@ namespace Mantle {
 
         case "power": {
           if (Json.HasKey(req, "saver")) {
+            // Windows has no public switch: powrprof.dll exports only the power-mode
+            // overlay calls (checked 2026-09-23), so the panel opens Settings instead.
             result = Json.Obj("ok", false, "reason",
-                              "not available yet: Mantle can report battery saver but cannot switch it");
+                              "Windows has no public switch for energy saver; its page in Settings has the switch");
             return null;
           }
           result = Power.Read();
@@ -1054,6 +1061,51 @@ namespace Mantle {
             return null;
           }
           result = Battery.Read();
+          return null;
+        }
+
+        case "volwatch": {
+          // VolumeWatch.cs: {ev:"volume"} pushed by CoreAudio itself on every change
+          // of the level, the mute or the default device. Listening changes nothing,
+          // so it runs in passive. Unlisted in Lanes: it only starts or stops a thread.
+          bool von;
+          string verr = StrictBool(req, "on", out von);
+          if (verr != null) return verr;
+          result = VolumeWatch.Set(von);
+          return null;
+        }
+
+        case "net": {
+          // NetState.cs: what the bar's network readout shows. get replies from a
+          // pool thread; watch pushes {ev:"net"}. Both only read, so both run in
+          // passive. The arguments are checked here, strictly, like every switch.
+          bool nb;
+          if (Json.HasKey(req, "on")) { string e1 = StrictBool(req, "on", out nb); if (e1 != null) return e1; }
+          if (Json.HasKey(req, "fast")) { string e2 = StrictBool(req, "fast", out nb); if (e2 != null) return e2; }
+          object nres;
+          string nerr = NetState.Run(req, req.ContainsKey("id") ? req["id"] : null, Passive, out nres);
+          if (nerr != null) return nerr;
+          result = nres;
+          return null;
+        }
+
+        case "qswatch": {
+          // QuickSettings.cs, the watch: while main holds the lease (the panel is
+          // open) every part is pushed as {ev:"qs", part, state} the moment it
+          // changes (volume too, as the backstop to volwatch's CoreAudio callback).
+          // Reads only, so it runs in passive.
+          bool qon;
+          string qerr = StrictBool(req, "on", out qon);
+          if (qerr != null) return qerr;
+          int lease = 60000;
+          if (Json.HasKey(req, "leaseMs")) {
+            object lv;
+            Json.TryGet(req, "leaseMs", out lv);
+            if (!(lv is double) || (double)lv < 1000 || (double)lv > 120000)
+              return "qswatch: leaseMs must be a number from 1000 to 120000";
+            lease = (int)(double)lv;
+          }
+          result = QuickSettings.Watch(qon, lease);
           return null;
         }
 

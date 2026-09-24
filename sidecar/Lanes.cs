@@ -164,7 +164,7 @@ namespace Mantle {
   }
 
   static class Lanes {
-    public const string Ui = "ui", Capture = "capture", Slow = "slow", Audio = "audio";
+    public const string Ui = "ui", Capture = "capture", Slow = "slow", Audio = "audio", Qs = "qs";
 
     // ============================================================ THE REGISTRY
     //
@@ -177,8 +177,13 @@ namespace Mantle {
     // because every button press waits behind it.
     //
     //   capture  screen grabs only
-    //   slow     icons, shortcuts, app ids, pins, launch, the tray, the Quick
-    //            Settings switches - "may take seconds, nobody is dragging it"
+    //   slow     icons, shortcuts, app ids, pins, launch, the tray, media,
+    //            notifications - "may take seconds, nobody is dragging it"
+    //   qs       the Quick Settings SWITCHES (_switchArg below): Wi-Fi and
+    //            Bluetooth radios, brightness, night light. Their own lane
+    //            since 2026-09-23: on slow, a dragged brightness slider queued
+    //            behind icon loads, tray reads and notification lists, which is
+    //            part of why Owen found the panel "doesn't work well at all".
     //   audio    volume, read and set: a CoreAudio RPC is ~5 ms but spikes to
     //            200+ under load (measured 2026-09-22), too slow for ui, and a
     //            dragged slider must not queue behind an icon load
@@ -204,11 +209,12 @@ namespace Mantle {
       { "notifications", Slow },
     };
 
-    // Commands whose READ is served from a cache (QuickSettings.cs), so it is
-    // instant and stays on ui, but whose SWITCH blocks on the hardware and goes
-    // to slow. The value is the argument whose presence makes it a switch.
+    // Commands whose READ is served from a cache (QuickSettings.cs) or is one
+    // registry value, so it is instant and stays on ui, but whose SWITCH blocks
+    // on the hardware and goes to qs. The value is the argument whose presence
+    // makes it a switch.
     static readonly Dictionary<string, string> _switchArg = new Dictionary<string, string>(StringComparer.Ordinal) {
-      { "wifi", "on" }, { "bluetooth", "on" }, { "brightness", "level" },
+      { "wifi", "on" }, { "bluetooth", "on" }, { "brightness", "level" }, { "nightlight", "on" },
     };
 
     /// For a command added at run time rather than in the table above.
@@ -230,6 +236,10 @@ namespace Mantle {
       _workers[Capture] = new Lane(Capture, exec, ApartmentState.STA, ThreadPriority.AboveNormal);
       _workers[Slow] = new Lane(Slow, exec, ApartmentState.STA, ThreadPriority.Normal);
       _workers[Audio] = new Lane(Audio, exec, ApartmentState.MTA, ThreadPriority.AboveNormal);
+      // STA like slow, where these switches ran until 2026-09-23 (the WinRT radio
+      // and WMI calls were proven there); AboveNormal like audio, because a slider
+      // is being dragged.
+      _workers[Qs] = new Lane(Qs, exec, ApartmentState.STA, ThreadPriority.AboveNormal);
     }
 
     /// The worker for a lane name, or null for ui (the message loop).
@@ -248,10 +258,10 @@ namespace Mantle {
         // Test-only (passive only, see Program): lets the harness park a
         // chosen lane and prove the others still answer.
         string l = Json.GetString(req, "lane");
-        return l == Ui || l == Capture || l == Audio ? l : Slow;
+        return l == Ui || l == Capture || l == Audio || l == Qs ? l : Slow;
       }
       string arg;
-      if (_switchArg.TryGetValue(cmd, out arg)) return Json.HasKey(req, arg) ? Slow : Ui;
+      if (_switchArg.TryGetValue(cmd, out arg)) return Json.HasKey(req, arg) ? Qs : Ui;
       string lane;
       lock (_laneOf) { if (_laneOf.TryGetValue(cmd, out lane)) return lane; }
       return Ui;
@@ -330,7 +340,7 @@ namespace Mantle {
       var lanes = new List<object>();
       lanes.Add(Json.Obj("name", Ui, "queued", Thread.VolatileRead(ref UiQueued), "busy", busy,
                          "busyMs", busy == null ? (object)null : (object)MsSince(UiBusySinceTs)));
-      foreach (string name in new string[] { Capture, Slow, Audio }) {
+      foreach (string name in new string[] { Capture, Slow, Audio, Qs }) {
         Lane w = Worker(name);
         if (w != null) lanes.Add(w.Snapshot());
       }
@@ -425,6 +435,34 @@ namespace Mantle {
         _gen++;
         _value = v;
         _atTs = Stopwatch.GetTimestamp();
+      }
+    }
+
+    /// For a reader that is not this cache's refresh thread (QuickSettings' watch):
+    /// take Gen() before the read and Offer() the result after. Like a refresh, it
+    /// is dropped if a switch Put() a newer read-back while it was in flight, and
+    /// Offer() says so, so the watch never pushes a state older than the cache's.
+    public int Gen() {
+      lock (_lock) return _gen;
+    }
+
+    public bool Offer(int gen, IDictionary v) {
+      if (v == null) return false;
+      lock (_lock) {
+        if (gen != _gen) return false;
+        _value = v;
+        _atTs = Stopwatch.GetTimestamp();
+        return true;
+      }
+    }
+
+    /// A copy of the value if it is at most maxAgeMs old, else null. Never kicks a refresh.
+    public IDictionary PeekFresh(int maxAgeMs) {
+      lock (_lock) {
+        if (_value == null || Lanes.MsSince(_atTs) > maxAgeMs) return null;
+        var copy = Json.Obj();
+        foreach (DictionaryEntry e in _value) copy[e.Key] = e.Value;
+        return copy;
       }
     }
 

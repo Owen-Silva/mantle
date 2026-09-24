@@ -13,6 +13,7 @@ const { stats } = require('./lib/sys-stats');
 const { trayImage } = require('./lib/tray-icon');
 const { openTarget } = require('./lib/open-target');
 const { probe } = require('./lib/net-probe');
+const { createCallLog, createSetLog } = require('./lib/call-log');
 const { placeholderUrl } = require('./lib/placeholder');
 const { createBar, createLauncher, createDesktop, hwndOf, BAR_H } = require('./lib/windows');
 // The hover flyout's live window previews (DWM thumbnails through koffi). Requiring it is free:
@@ -2085,13 +2086,17 @@ const QS_PARTS = [
  * (QuickSettings.Pending: ok:false, pending:true, placeholder values and a reason) was drawn as a
  * real reading -- Wi-Fi "Off" in the seconds after a start -- and its reason never reached the
  * panel. A bare answer with no ok (volume's {level, muted}) is a reading, so it is ok. */
+function qsNormalize(r, label) {
+  if (!r || typeof r !== 'object') return { ok: false, reason: `${label} cannot be read: the sidecar answered with nothing` };
+  const part = Object.assign({ ok: true, reason: null }, r);
+  delete part.read;
+  if (part.ok === false && !part.reason) part.reason = `${label} cannot be read, and the sidecar gave no reason`;
+  return part;
+}
+
 async function qsPart(cmd, label, args) {
   try {
-    const r = await sidecar.call(cmd, args || {}, 4000);
-    if (!r || typeof r !== 'object') return { ok: false, reason: `${label} cannot be read: the sidecar answered with nothing` };
-    const part = Object.assign({ ok: true, reason: null }, r);
-    if (part.ok === false && !part.reason) part.reason = `${label} cannot be read, and the sidecar gave no reason`;
-    return part;
+    return qsNormalize(await sidecar.call(cmd, args || {}, 4000), label);
   } catch (err) {
     return {
       ok: false,
@@ -2102,25 +2107,90 @@ async function qsPart(cmd, label, args) {
   }
 }
 
-async function qsRead() {
-  const results = await Promise.allSettled(QS_PARTS.map(([, cmd, label]) => qsPart(cmd, label)));
+/** The whole panel from its parts. The panel is worth opening if the two things it is mostly
+ * for answered; anything else missing is a control that draws itself disabled with a reason. */
+function qsCompose(parts) {
   const out = { ok: false, reason: null };
   const dead = [];
+  for (const [key, , label] of QS_PARTS) {
+    out[key] = (parts && parts[key]) || { ok: false, pending: true, reason: `${label} has not been read yet` };
+    if (!out[key].ok) dead.push(out[key].reason);
+  }
+  out.ok = !!(out.volume.ok && out.power.ok);
+  out.reason = dead.length ? dead.join('; ') : null;
+  return out;
+}
+
+async function qsRead() {
+  const startedAt = Date.now();
+  const results = await Promise.allSettled(QS_PARTS.map(([, cmd, label]) => qsPart(cmd, label)));
   results.forEach((res, i) => {
     const key = QS_PARTS[i][0];
     const label = QS_PARTS[i][2];
     // allSettled cannot reject here (qsPart swallows), but a thrown TypeError
     // inside it would still land as `rejected` rather than as a missing key.
-    out[key] = res.status === 'fulfilled'
+    const part = res.status === 'fulfilled'
       ? res.value
       : { ok: false, reason: `${label} cannot be read: ${(res.reason && res.reason.message) || res.reason}` };
-    if (!out[key].ok) dead.push(out[key].reason);
+    if (key === 'volume') volumeStore(part, 'a full quick-settings read', startedAt);
+    else qsStore(key, part, startedAt);
   });
-  // The panel is worth opening if the two things it is mostly for answered.
-  // Anything else missing is a control that draws itself disabled with a reason.
-  out.ok = !!(out.volume.ok && out.power.ok);
-  out.reason = dead.length ? dead.join('; ') : null;
-  return out;
+  return qsCompose(qsLatest);
+}
+
+/*
+ * WHAT MAIN KNOWS, PUSHED (qsx lane, 2026-09-23). Owen, live on 1c6afe3: "you need to make the
+ * Internet thing and volume and brightness and all that stuff over there actually work and be
+ * way more responsive". main used to learn about the panel by re-reading all six parts every 2 s
+ * while it was open - 2 to 5 s behind a brightness key, and blind while it was closed. Now:
+ *   volume     the sidecar's CoreAudio listener pushes {ev:'volume'} on every change, always
+ *   network    {ev:'net'} for the readout, always (event-first; re-checked every 5 s, 1 s while
+ *              the panel is open)
+ *   the rest   {ev:'qs', part, state} from the sidecar's own watch while the panel is open (a
+ *              lease main renews), so a change made anywhere shows within about a second
+ * qs.get answers from qsLatest at once, so the panel opens on its last picture and the watch
+ * fills it in (all six parts within 0.1-0.7 s of opening, measured). A qs.set's reply IS its
+ * read-back. The old 2 s full re-read remains only for a sidecar too old to watch.
+ */
+let qsLatest = null;                    // part -> its state as qs.get shows it
+const qsPartAt = Object.create(null);   // part -> when the answer held was asked for
+let qsBroadcastTimer = null;
+
+/** Keep a part's newest state. `at` is when it was ASKED FOR: a full read that started before a
+ * push arrived is older than the push, however late it lands, and does not overwrite it. */
+function qsStore(key, state, at) {
+  if (!state || typeof state !== 'object') return false;
+  if (qsPartAt[key] && at < qsPartAt[key]) return false;
+  qsPartAt[key] = at;
+  qsLatest = Object.assign({}, qsLatest || {}, { [key]: state });
+  // The open panel hears it in the same frame; a closed one gets the whole picture from qs.get.
+  if (qsWatching && !qsBroadcastTimer) {
+    qsBroadcastTimer = setTimeout(() => { qsBroadcastTimer = null; broadcast('qs', qsCompose(qsLatest)); }, 8);
+  }
+  return true;
+}
+
+/* The speaker glyph's reading ('volume', replayed on subscribe) and the panel's volume part are
+ * one value: every source of it - the CoreAudio push, the panel's watch, a set's read-back, a
+ * full read - lands here. */
+let lastVolume = null;
+
+function volumeStore(part, why, at) {
+  if (!part || typeof part !== 'object') return;
+  const v = {
+    ok: part.ok !== false && typeof part.level === 'number',
+    level: typeof part.level === 'number' ? part.level : null,
+    muted: !!part.muted,
+    reason: null,
+  };
+  if (!v.ok) v.reason = part.reason || 'the volume reading came back without a level, and no reason';
+  if (!qsStore('volume', Object.assign({}, v), at || Date.now())) return;
+  const changed = !lastVolume || lastVolume.ok !== v.ok || lastVolume.level !== v.level ||
+    lastVolume.muted !== v.muted || lastVolume.reason !== v.reason;
+  lastVolume = v;
+  if (!changed) return;
+  if (!v.ok) process.stdout.write(`mantle: volume: ${v.reason} (${why})\n`);
+  broadcast('volume', v);
 }
 
 /** part -> how to validate it, what to send, and which value of the read-back part it set.
@@ -2134,6 +2204,7 @@ const QS_LEVEL = (what) => (v) => (Number.isInteger(Number(v)) && Number(v) >= 0
   : `${what} must be a whole number from 0 to 100` + (Number(v) > 0 && Number(v) < 1 ? ` (${v} looks like a 0-1 fraction)` : ''));
 const QS_WRITE = {
   volume: {
+    key: 'volume',
     cmd: 'volume',
     label: 'the volume',
     args: (v) => ({ level: Number(v) }),
@@ -2141,6 +2212,7 @@ const QS_WRITE = {
     read: (p) => p.level,
   },
   mute: {
+    key: 'volume',
     cmd: 'volume',
     label: 'mute',
     args: (v) => ({ muted: !!v }),
@@ -2148,6 +2220,7 @@ const QS_WRITE = {
     read: (p) => !!p.muted,
   },
   wifi: {
+    key: 'wifi',
     cmd: 'wifi',
     label: 'Wi-Fi',
     args: (v) => ({ on: !!v }),
@@ -2155,6 +2228,7 @@ const QS_WRITE = {
     read: (p) => !!p.on,
   },
   bluetooth: {
+    key: 'bluetooth',
     cmd: 'bluetooth',
     label: 'Bluetooth',
     args: (v) => ({ on: !!v }),
@@ -2162,23 +2236,41 @@ const QS_WRITE = {
     read: (p) => !!p.on,
   },
   brightness: {
+    key: 'brightness',
     cmd: 'brightness',
     label: 'the screen brightness',
     args: (v) => ({ level: Number(v) }),
     check: QS_LEVEL('brightness'),
     read: (p) => p.level,
   },
+  // A switch since 2026-09-23 (Display.SetNightLight); the tile did nothing before.
+  nightlight: {
+    key: 'nightlight',
+    cmd: 'nightlight',
+    label: 'Night light',
+    args: (v) => ({ on: !!v }),
+    check: (v) => (typeof v === 'boolean' ? null : 'nightlight must be true or false'),
+    read: (p) => !!p.on,
+  },
 };
 
-// The watcher: one, ever. Two would double every sidecar call for a panel that
-// can only be open once.
-let qsTimer = null;
+// The watch: one, ever, while the panel is open. The sidecar's own (qswatch) pushes each part
+// as it changes; main holds a lease on it, renewed every QS_RENEW_MS, so a main that dies or
+// forgets costs the sidecar at most QS_LEASE_MS of reads. Only a sidecar that cannot watch
+// gets the old full re-read every QS_WATCH_MS instead.
+let qsTimer = null;                // the fallback poll's timer
 let qsWatching = false;
+let qsPolling = false;
+let qsLeaseTimer = null;
+let qsWatchVia = null;             // 'push' | 'poll' | null, for qs.watch's reply and the log
 const QS_WATCH_MS = 2000;
+const QS_LEASE_MS = 60000;
+const QS_RENEW_MS = 20000;
 
+/** A full re-read, broadcast to an open panel. */
 function qsPush(why) {
   return qsRead().then((snap) => {
-    broadcast('qs', snap);
+    if (!qsWatching) broadcast('qs', snap);      // an open panel already had it from qsStore
     return snap;
   }).catch((err) => {
     process.stderr.write(`mantle: the quick-settings push (${why}) threw: ${err.message}\n`);
@@ -2186,34 +2278,178 @@ function qsPush(why) {
   });
 }
 
-function qsWatchStart() {
-  // The guard is `qsWatching`, NOT `qsTimer`: the timer is null for as long as a
-  // push is in flight, so a second qs.watch arriving in that window used to start
-  // a SECOND chain -- two pushes per tick, two sets of sidecar calls, and a stop
-  // that only cancelled one of them. Caught by the harness, 2026-09-21.
-  if (qsWatching) return false;      // already watching: not an error, just nothing to do
+/** The fallback: the full re-read every QS_WATCH_MS. The guard is `qsPolling`, NOT `qsTimer`:
+ * the timer is null for as long as a push is in flight, so a second start in that window used to
+ * begin a SECOND chain (caught by the harness, 2026-09-21). */
+function qsPollStart() {
+  if (qsPolling) return;
   const tick = () => {
     qsTimer = null;
     qsPush('the quick-settings panel is open').then(() => {
-      if (!shuttingDown && qsWatching) {
+      if (!shuttingDown && qsWatching && qsPolling) {
         qsTimer = setTimeout(tick, QS_WATCH_MS);
         if (qsTimer.unref) qsTimer.unref();
       }
     });
   };
-  qsWatching = true;
+  qsPolling = true;
   tick();
+}
+
+function qsPollStop() {
+  qsPolling = false;
+  if (qsTimer) clearTimeout(qsTimer);
+  qsTimer = null;
+}
+
+/** Start or renew the sidecar's watch (and the network readout's 1 s re-check). */
+function qsLease(why) {
+  if (!qsWatching || shuttingDown) return;
+  if (qsLeaseTimer) clearTimeout(qsLeaseTimer);
+  qsLeaseTimer = setTimeout(() => { qsLeaseTimer = null; qsLease('the lease is renewed'); }, QS_RENEW_MS);
+  if (qsLeaseTimer.unref) qsLeaseTimer.unref();
+  sidecar.call('qswatch', { on: true, leaseMs: QS_LEASE_MS }, 4000).then((r) => {
+    if (!qsWatching) return;
+    if (qsWatchVia !== 'push') process.stdout.write(`mantle: quick settings: the sidecar pushes each change (${why})\n`);
+    qsWatchVia = 'push';
+    qsPollStop();
+  }, (err) => {
+    if (!qsWatching) return;
+    const reason = Sidecar.isOldExeError(err)
+      ? 'the sidecar exe has no quick-settings watch yet (run npm run build:sidecar)'
+      : `the sidecar's quick-settings watch did not start: ${err.message}`;
+    if (qsWatchVia !== 'poll') process.stdout.write(`mantle: quick settings: ${reason}, so the panel re-reads every ${QS_WATCH_MS / 1000} s instead\n`);
+    qsWatchVia = 'poll';
+    qsPollStart();
+  });
+  sidecar.call('net', { op: 'watch', on: true, fast: true }, 4000).catch(() => { /* the readout says so itself */ });
+}
+
+function qsWatchStart() {
+  if (qsWatching) return false;      // already watching: not an error, just nothing to do
+  qsWatching = true;
+  qsLease('the panel opened');
   return true;
 }
 
 function qsWatchStop(why) {
   if (!qsWatching && !qsTimer) return false;
   qsWatching = false;
-  if (qsTimer) clearTimeout(qsTimer);
-  qsTimer = null;
+  qsPollStop();
+  if (qsLeaseTimer) clearTimeout(qsLeaseTimer);
+  qsLeaseTimer = null;
+  qsWatchVia = null;
+  sidecar.call('qswatch', { on: false }, 4000).catch(() => { /* the lease runs out by itself */ });
+  sidecar.call('net', { op: 'watch', on: true, fast: false }, 4000).catch(() => { /* the readout says so itself */ });
   process.stdout.write(`mantle: quick-settings watch off: ${why}\n`);
   return true;
 }
+
+sidecar.on('qs', (ev) => {
+  if (!ev) return;
+  if (!ev.part) {
+    // The sidecar's watch died (it says why). NO SILENT FAILURES: the log says so, and an open
+    // panel keeps updating through the old re-read.
+    process.stdout.write(`mantle: quick settings: ${ev.reason || 'the sidecar\'s watch stopped without a reason'}; the panel re-reads every ${QS_WATCH_MS / 1000} s instead\n`);
+    qsWatchVia = 'poll';
+    if (qsWatching) qsPollStart();
+    return;
+  }
+  const spec = QS_PARTS.find(([key]) => key === ev.part);
+  if (!spec) return;
+  const state = qsNormalize(ev.state, spec[2]);
+  if (ev.part === 'volume') volumeStore(state, 'the panel\'s watch');
+  else qsStore(ev.part, state, Date.now());
+});
+
+// The speaker glyph, live whether or not the panel is open (VolumeWatch.cs).
+sidecar.on('volume', (ev) => {
+  if (!ev) return;
+  if (ev.ok === false) {
+    // The listener failed, not the volume: say so, and read it the ordinary way.
+    process.stdout.write(`mantle: volume watch: ${ev.reason || 'failed without a reason'}; the glyph updates when the panel opens\n`);
+    qsPart('volume', 'the volume').then((p) => volumeStore(p, 'a read after the volume watch failed'));
+    return;
+  }
+  volumeStore(ev, `the volume changed (${ev.via || 'no reason given'})`);
+});
+
+/*
+ * THE NETWORK READOUT (qsx lane, 2026-09-23): the glyph beside the volume was a fixed Wi-Fi
+ * drawing in index.html, full bars with the radio off, on Ethernet, or with no internet. The
+ * sidecar's watch (NetState.cs) pushes {ev:'net'} whenever what the readout shows changes; pages
+ * get 'net' (replayed on subscribe) and net.get answers the latest.
+ */
+let lastNet = null;
+
+function netShown(r) {
+  if (!r) return 'none';
+  const w = r.wifi || {};
+  const bars = typeof w.signal === 'number' && w.signal > 0 ? Math.min(4, Math.ceil(w.signal / 25)) : 0;
+  return [r.ok, r.state, r.kind, r.internet, r.adapter, w.on, w.connected, w.ssid, bars, r.reason].join('|');
+}
+
+function netPush(r, why) {
+  if (!r || typeof r !== 'object') return;
+  const next = Object.assign({}, r);
+  delete next.ev;
+  delete next.id;
+  const changed = netShown(next) !== netShown(lastNet);
+  lastNet = next;
+  if (!changed) return;
+  if (next.ok === false) process.stdout.write(`mantle: network readout: ${next.reason || 'the reading failed without a reason'} (${why})\n`);
+  broadcast('net', next);
+}
+
+function netFailure(err, what) {
+  return {
+    ok: false,
+    state: 'unknown',
+    reason: Sidecar.isOldExeError(err)
+      ? 'the network state cannot be read: the sidecar exe has no "net" command yet, so run npm run build:sidecar'
+      : `${what}: ${err.message}`,
+  };
+}
+
+sidecar.on('net', (ev) => netPush(ev, `the network changed (${(ev && ev.via) || 'no reason given'})`));
+
+/* The next push of a sidecar event, or null after ms. For a readout asked for before the sidecar
+   is up: the bar's first volume.get and net.get land 2-8 s before the ready line on a loaded
+   machine (measured 2026-09-23), and failing them put "cannot run volume/net: waiting for its
+   ready line" on the readouts and two failure lines in the log on EVERY start - while the watches
+   armed on 'ready' push the real readings 60-400 ms later anyway. Registered after main's own
+   handlers, so the stores (lastVolume, lastNet) are already updated when this resolves. */
+function sidecarNext(event, ms) {
+  return new Promise((resolve) => {
+    const onEv = () => { clearTimeout(timer); sidecar.removeListener(event, onEv); resolve(true); };
+    const timer = setTimeout(() => { sidecar.removeListener(event, onEv); resolve(false); }, ms);
+    if (timer.unref) timer.unref();
+    sidecar.on(event, onEv);
+  });
+}
+
+// Armed on EVERY sidecar start: a restarted sidecar has forgotten its watches.
+sidecar.on('ready', () => {
+  sidecar.call('volwatch', { on: true }, 4000).then((r) => {
+    if (r && r.ok === false) process.stdout.write(`mantle: volume watch: ${r.reason || 'refused without a reason'}\n`);
+  }, (err) => {
+    process.stdout.write(`mantle: volume watch not armed (${Sidecar.isOldExeError(err) ? 'the sidecar exe has no volwatch yet, run npm run build:sidecar' : err.message}); the glyph updates when the panel opens\n`);
+  });
+  sidecar.call('net', { op: 'watch', on: true, fast: qsWatching }, 4000).then(null, (err) => {
+    netPush(netFailure(err, 'the network readout is not being watched'), 'the watch could not be armed');
+  });
+  if (qsWatching) qsLease('the sidecar restarted while the panel was open');
+  // The first open of the panel should find a whole picture: the sidecar's own start-up read
+  // (QuickSettings.WarmUp) lands at +1.5 s.
+  const prime = setTimeout(() => { if (!shuttingDown) qsRead().catch(() => { /* each part says why */ }); }, 2500);
+  if (prime.unref) prime.unref();
+});
+
+// A sidecar that is down reads nothing: the readout must not keep saying "connected".
+sidecar.on('status', ({ status, reason }) => {
+  if (status !== 'down' || shuttingDown || !lastNet || lastNet.ok === false) return;   // a quit is not news
+  netPush({ ok: false, state: 'unknown', reason: `the network is not being read: ${reason}` }, 'the sidecar is down');
+});
 
 /*
  * QUICK SETTINGS, ONE LEVEL DOWN (qsx lane, 2026-09-23): the Wi-Fi network list,
@@ -2976,7 +3212,10 @@ const COMMANDS = {
     return res;
   },
 
-  'volume.get': async () => sidecar.call('volume'),
+  'volume.get': async () => {
+    if (sidecar.status === 'starting' && await sidecarNext('volume', 15000) && lastVolume && lastVolume.ok) return lastVolume;
+    return sidecar.call('volume');
+  },
   'volume.set': async (a) => {
     const args = {};
     if (a && a.level !== undefined) args.level = a.level;
@@ -2986,21 +3225,44 @@ const COMMANDS = {
   },
 
   // ---- Quick Settings: the bar's own panel, not a trip to the Settings app ----
-  'qs.get': async () => qsRead(),
+  // The last whole picture at once when there is one (the panel opens on it, and the watch that
+  // qs.watch starts fills in anything that moved); a full read only before the first.
+  'qs.get': async () => {
+    if (qsLatest && QS_PARTS.every(([key]) => qsLatest[key])) return Object.assign(qsCompose(qsLatest), { cached: true });
+    return qsRead();
+  },
 
+  'net.get': async () => {
+    if (lastNet) return lastNet;
+    if (sidecar.status === 'starting' && await sidecarNext('net', 15000) && lastNet) return lastNet;
+    let r;
+    try { r = await sidecar.call('net', { op: 'get' }, 4000); } catch (err) { r = netFailure(err, 'the network state cannot be read'); }
+    netPush(r, 'the first read');
+    return r;
+  },
+
+  // EVERY CALL IS LOGGED with its result and latency (qsSetLog, lib/call-log.js): until
+  // 2026-09-23 a set was never logged, so a switch that did nothing left no trace at all.
   'qs.set': async (a) => {
+    const t0 = Date.now();
     const part = String((a && a.part) || '');
+    const value = a ? a.value : undefined;
+    const done = (reply) => {
+      reply.ms = Date.now() - t0;
+      qsSetLog.record(part, value, reply, reply.ms);
+      return reply;
+    };
     const spec = QS_WRITE[part];
     if (!spec) {
-      return { ok: false, part, value: null, state: null, reason: `qs.set does not know the part "${part}" (it does ${Object.keys(QS_WRITE).join(', ')})` };
+      return done({ ok: false, part, value: null, state: null, reason: `qs.set does not know the part "${part}" (it does ${Object.keys(QS_WRITE).join(', ')})` });
     }
-    const bad = spec.check(a && a.value);
-    if (bad) return { ok: false, part, value: null, state: null, reason: bad };
+    const bad = spec.check(value);
+    if (bad) return done({ ok: false, part, value: null, state: null, reason: bad });
     let set;
     try {
-      set = await sidecar.call(spec.cmd, spec.args(a.value), 4000);
+      set = await sidecar.call(spec.cmd, spec.args(value), 4000);
     } catch (err) {
-      return {
+      return done({
         ok: false,
         part,
         value: null,
@@ -3008,38 +3270,43 @@ const COMMANDS = {
         reason: Sidecar.isOldExeError(err)
           ? `${spec.label} could not be changed: the sidecar exe has no "${spec.cmd}" command yet, so run npm run build:sidecar`
           : `${spec.label} could not be changed: ${err.message}`,
-      };
+      });
     }
-    // READ IT BACK rather than echoing what was asked for: a slider that springs
-    // back is the truth about a control that refused, and a slider that lies
-    // about where it is is the silent failure this rule exists to stop.
-    const now = await qsPart(spec.cmd, spec.label);
-    if (qsWatching) qsPush(`${part} was changed`);
     // A switch Windows refused comes back from the sidecar as a RESULT, ok:false with its reason
-    // (Network.Set: "Windows refused to switch the Wi-Fi radio (error 5 ...)"), not as an error.
-    // That answer was dropped here, so the tile just did not move and nothing said why. It wins.
+    // (Network.Set: "Windows refused to switch the Wi-Fi radio (error 5 ...)"), not as an error,
+    // and it wins: the tile did not move, and this says why.
     const refused = !!(set && typeof set === 'object' && set.ok === false);
+    // THE REPLY IS THE READ-BACK (2026-09-23): every switch reads the hardware back itself
+    // (QuickSettings.Settle, Display, Volume.Apply), so a slider that springs back is the truth
+    // about a control that refused. A refused switch carries its plain read as `read`; only an
+    // older sidecar without it costs a second read. This used to be a second read of every
+    // part plus a full six-part push after EVERY set, a dragged slider's included.
+    let now;
+    if (!refused) now = qsNormalize(set, spec.label);
+    else if (set.read && typeof set.read === 'object') now = qsNormalize(set.read, spec.label);
+    else now = await qsPart(spec.cmd, spec.label);
+    if (spec.key === 'volume') volumeStore(now, `qs.set ${part}`);
+    else qsStore(spec.key, now, Date.now());
     // `value` is the one number or switch the part reads now, in the units it was set in; `state`
-    // is the whole part as qs.get shows it. `value` used to BE the whole part, and the panel wrote
-    // that object into the slider's level: its number read '—' until the next push (2026-09-23).
-    return {
+    // is the whole part as qs.get shows it.
+    return done({
       ok: !refused && !!now.ok,
       part,
       value: now.ok ? spec.read(now) : null,
       state: now,
       reason: refused ? (set.reason || `${spec.label} was not changed, and the sidecar gave no reason`)
         : now.ok ? null : now.reason,
-    };
+    });
   },
 
   'qs.watch': async (a) => {
     const on = !!(a && a.on);
     if (on) {
       const started = qsWatchStart();
-      return { ok: true, watching: true, everyMs: QS_WATCH_MS, reason: started ? null : 'the quick-settings watch was already running, so nothing was started twice' };
+      return { ok: true, watching: true, via: qsWatchVia || 'starting', leaseMs: QS_LEASE_MS, reason: started ? null : 'the quick-settings watch was already running, so nothing was started twice' };
     }
     qsWatchStop('the panel asked');
-    return { ok: true, watching: false, everyMs: QS_WATCH_MS, reason: null };
+    return { ok: true, watching: false, via: null, reason: null };
   },
 
   // ---- Quick Settings, one level down: Wi-Fi networks, output device, mixer ----
@@ -3262,20 +3529,27 @@ const COMMANDS = {
   'net.probe': async (a) => probe((a && a.url) || ''),
 };
 
+// A command that answers ok:false is a failure the page will show as a chip -- a 56 px pip in
+// pill mode, which nobody reads. It goes to the log too, so "I clicked and nothing happened" can
+// be answered from the log (2026-09-21) -- ONCE per command and arguments until the reason
+// changes or it recovers (lib/call-log.js; a 30 s probe of a service that is not running wrote
+// 436 identical lines in a morning). state./sys. answers are shown by their own pages, and
+// qs.set writes a line of its own for every attempt.
+const callLog = createCallLog({
+  write: (line) => process.stdout.write(line + '\n'),
+  skip: (name) => /^(state|sys)\./.test(name) || name === 'qs.set',
+});
+const qsSetLog = createSetLog({ write: (line) => process.stdout.write(line + '\n') });
+
 ipcMain.handle('mantle:call', async (_e, name, args) => {
   const fn = COMMANDS[name];
   if (!fn) return { ok: false, error: `Mantle has no command called "${name}"` };
   try {
     const result = await fn(args || {});
-    // A command that answers ok:false is a failure the page will show as a chip --
-    // a 56 px pip in pill mode, which nobody reads. It goes to the log too, so
-    // "I clicked and nothing happened" can be answered from the log (2026-09-21).
-    if (result && typeof result === 'object' && result.ok === false && !/^(state|sys)\./.test(name)) {
-      process.stdout.write(`mantle: ${name} ${args ? JSON.stringify(args).slice(0, 120) : ''} -> ${result.reason || 'ok:false, no reason'}\n`);
-    }
+    callLog.result(name, args, result);
     return { ok: true, result };
   } catch (err) {
-    process.stdout.write(`mantle: ${name} threw: ${err && err.message ? err.message : String(err)}\n`);
+    callLog.threw(name, args, err);
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }
 });
@@ -3290,6 +3564,10 @@ ipcMain.handle('mantle:replay', async (_e, name) => {
     case 'tray': return lastTray ? { has: true, payload: lastTray } : { has: false };
     case 'media': return lastMedia ? { has: true, payload: lastMedia } : { has: false };
     case 'battery': return lastBattery ? { has: true, payload: lastBattery } : { has: false };
+    case 'volume': return lastVolume ? { has: true, payload: lastVolume } : { has: false };
+    case 'net': return lastNet ? { has: true, payload: lastNet } : { has: false };
+    // The panel opens on this at once (bar.js keeps it); the watch fills in what moved.
+    case 'qs': return qsLatest ? { has: true, payload: qsCompose(qsLatest) } : { has: false };
     case 'notifications': return notifications.replay(name);
     // The bar subscribes before it calls, and an empty first frame in a taskbar
     // looks exactly like a broken one. Build the list if nothing has yet.
@@ -4481,6 +4759,7 @@ function shutdown(why) {
   if (shuttingDown) return;
   shuttingDown = true;
   process.stdout.write(`mantle: shutting down (${why})\n`);
+  qsSetLog.flushAll();          // a slider dragged just before quitting still gets its summary line
   stopTrayPoll();
   // The cursor poll stops DEAD here, before anything else: it is the only thing
   // in Mantle that runs many times a second, and a poll still ticking through a
@@ -4776,6 +5055,20 @@ async function runScreenshots(dir) {
     if (!barWin || barWin.isDestroyed()) break;
     broadcast('bar.test.click', { what });
     await new Promise((r) => setTimeout(r, 1800));   // the popover's room, its first read, a paint
+    if (what === 'qs' || what === 'qs-nightlight') {
+      /* The panel in words, as the real sidecar's watch filled it (2026-09-23): each tile, the two
+         levels, the notes, and the network and speaker readouts, so a run is read, not squinted at. */
+      try {
+        const seen = await barWin.webContents.executeJavaScript(
+          "(function(){var q=function(s){return Array.prototype.slice.call(document.querySelectorAll(s));};return JSON.stringify({" +
+          "tiles:q('.qstile').map(function(t){return (t.querySelector('.qslbl')||{}).textContent+'='+(t.classList.contains('on')?'on':'off')+(t.classList.contains('dead')?',dead':'')+(t.classList.contains('pending')?',pending':'')+' ('+(t.querySelector('.qssub')||{}).textContent+')';})," +
+          "levels:q('.qsrow .qsval').map(function(v){return v.textContent;}),notes:q('.qsnotes .note').map(function(n){return n.textContent;})," +
+          "network:(document.getElementById('network')||{dataset:{}}).dataset.state,speaker:((document.getElementById('volume')||{}).title||'').split(String.fromCharCode(10))[0]});})()");
+        process.stdout.write(`mantle: --test-pops qs: page says ${seen}\n`);
+      } catch (err) {
+        process.stdout.write(`mantle: --test-pops qs: could not read the panel: ${err.message}\n`);
+      }
+    }
     const out = path.join(dir, `bar-${what}.png`);
     try {
       const img = await barWin.webContents.capturePage();

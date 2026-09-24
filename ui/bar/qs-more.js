@@ -1228,17 +1228,25 @@
     row.el.appendChild(line);
     row.el.appendChild(row.errEl);
 
-    var send = B.throttled(function (v) { setApp(row, { level: v }); }, 100);
+    /* The panel's own sliders' sender (qs-send.js, 2026-09-23): one set in flight, only the newest
+       level waiting, the level the pointer stops on always sent. It was a 100 ms throttle plus a
+       set on `change`, whether or not the last had answered. While a set is in flight, a read-back
+       of an older level does not move the slider; the last one is painted when all have answered. */
+    var born = gen;                        // this row's view; a later view has rows of its own
+    var send = row.send = window.MantleQsSend
+      ? MantleQsSend.sender(function (v) { return setApp(row, { level: v }); },
+          { minGapMs: 16, onIdle: function () { if (alive(born)) paintApp(row, row.s); } })
+      : { push: function (v) { setApp(row, { level: v }); }, busy: function () { return false; } };
     range.addEventListener('pointerdown', function () { row.drag = true; });
     range.addEventListener('input', function () {
       row.dragUntil = Date.now() + 700;
       row.val.textContent = range.value + '%';
-      send(Number(range.value));
+      send.push(Number(range.value));
     });
     range.addEventListener('change', function () {
       row.drag = false;
       row.dragUntil = Date.now() + 700;
-      setApp(row, { level: Number(range.value) });
+      send.push(Number(range.value));
     });
     range.addEventListener('pointerup', function () { row.drag = false; });
     row.mute.addEventListener('click', function () { setApp(row, { muted: !row.s.muted }); });
@@ -1254,7 +1262,7 @@
       (s.path ? '\n' + s.path : '') +
       (s.sessions > 1 ? '\n' + s.sessions + ' audio sessions, one slider' : '') +
       (s.active ? '' : '\nNot playing right now');
-    var dragging = row.drag || Date.now() < row.dragUntil;
+    var dragging = row.drag || Date.now() < row.dragUntil || !!(row.send && row.send.busy());
     if (!dragging && typeof s.level === 'number') {
       row.range.value = String(s.level);
       row.val.textContent = s.level + '%';
@@ -1273,8 +1281,9 @@
     if (change.level !== undefined) args.level = change.level;
     if (change.muted !== undefined) args.muted = change.muted;
     if (change.muted !== undefined) row.mute.classList.add('pending');
-    B.call('qs.audio.session', args).then(function (r) { done(r || { ok: false, reason: 'qs.audio.session gave no answer' }); },
-      function (e) { done({ ok: false, reason: 'the change could not be asked for: ' + B.msg(e) }); });
+    // the answer goes back to the sender too (qs-send.js), so it knows when a set did not take
+    return B.call('qs.audio.session', args).then(function (r) { r = r || { ok: false, reason: 'qs.audio.session gave no answer' }; done(r); return r; },
+      function (e) { var r = { ok: false, reason: 'the change could not be asked for: ' + B.msg(e) }; done(r); return r; });
     function done(r) {
       if (!alive(g) || !S.a) return;
       row.mute.classList.remove('pending');

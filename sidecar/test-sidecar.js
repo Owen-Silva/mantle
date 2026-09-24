@@ -746,6 +746,183 @@ async function qsxChecks(s) {
     } catch (e) { check('btdevices ' + op + ' is refused in passive', false, e.message); }
   }
 
+  // ---- the panel's live picture: volwatch, net, qswatch (qsx round 2, 2026-09-23) ---------------
+  // Pushes, not polls (Owen, 2026-09-23: "be way more responsive"). READ ONLY: listening changes
+  // nothing, and every switch below goes to this PASSIVE sidecar, which refuses it. The budgets are
+  // generous multiples of what Owen's laptop measured under load the same day: first volume event
+  // 410 ms, qs first pushes 605-958 ms, net get 1007 ms cold / 58-172 ms warm.
+  try {
+    const r = await s.send('ping');
+    const cmds = r.ok && r.result ? r.result.commands : null;
+    check('ping lists volwatch, net and qswatch',
+      Array.isArray(cmds) && ['volwatch', 'net', 'qswatch'].every((c) => cmds.indexOf(c) >= 0), JSON.stringify(cmds));
+    const w = r.result && r.result.watches;
+    check('ping reports the volume and net watches',
+      !!(w && w.volume && w.net && typeof w.volume.watching === 'boolean' && typeof w.net.watching === 'boolean'), JSON.stringify(w));
+  } catch (e) { check('ping lists volwatch, net and qswatch', false, e.message); }
+
+  try {
+    const i = s.events.length;
+    const t0 = Date.now();
+    const on = await s.send('volwatch', { on: true });
+    const ev = await eventAfter(i, (e) => e.ev === 'volume', 3000);
+    const ms = Date.now() - t0;
+    check('volwatch starts and pushes the current volume (ev volume, ' + ms + ' ms, budget 3000)',
+      on.ok === true && on.result && on.result.ok === true && on.result.watching === true && !!ev && ev.ok === true &&
+      typeof ev.level === 'number' && ev.level >= 0 && ev.level <= 100 && typeof ev.muted === 'boolean',
+      JSON.stringify({ on, ev }).slice(0, 260));
+    if (ev) notes.push('volwatch: first event ' + ms + ' ms (' + ev.via + ')');
+    const p = await s.send('ping');
+    check('ping shows the volume watch running',
+      !!(p.result && p.result.watches && p.result.watches.volume.watching === true), JSON.stringify(p.result && p.result.watches));
+    const again = await s.send('volwatch', { on: true });
+    const off = await s.send('volwatch', { on: false });
+    const off2 = await s.send('volwatch', { on: false });
+    check('volwatch: on twice does not start a second listener; off stops it; off twice is harmless',
+      again.ok === true && again.result.started === false && off.ok === true && off.result.watching === false &&
+      off2.ok === true && off2.result.watching === false, JSON.stringify({ again, off, off2 }).slice(0, 260));
+    const bad = await s.send('volwatch', { on: 'yes' });
+    check("volwatch {on:'yes'} is refused as a bad argument",
+      bad.ok === false && typeof bad.error === 'string' && !bad.error.includes('passive'), JSON.stringify(bad));
+  } catch (e) { check('volwatch', false, e.message); }
+
+  const NET_STATES = ['connected', 'no-internet', 'disconnected', 'wifi-off', 'unknown'];
+  const NET_KINDS = ['wifi', 'ethernet', 'other', 'none'];
+  try {
+    const t0 = Date.now();
+    const r = await s.send('net', { op: 'get' }, 8000);
+    const coldMs = Date.now() - t0;
+    const n = (r.ok && r.result) || {};
+    check('net get answers with the readout\'s shape (' + coldMs + ' ms cold, budget 3000)',
+      n.ok === true && NET_STATES.indexOf(n.state) >= 0 && NET_KINDS.indexOf(n.kind) >= 0 &&
+      (n.internet === true || n.internet === false || n.internet === null) && !!n.wifi && typeof n.wifi === 'object' &&
+      coldMs < 3000, JSON.stringify(r).slice(0, 300));
+    check('net get agrees with itself: connected has internet (or it is unknown), a Wi-Fi route is a connected Wi-Fi, off is off',
+      (n.state !== 'connected' || n.internet !== false) && (n.kind !== 'wifi' || n.wifi.connected === true) &&
+      (n.state !== 'wifi-off' || n.wifi.on === false) && (n.state !== 'no-internet' || n.internet === false),
+      JSON.stringify(n).slice(0, 300));
+    const warm = [];
+    for (let k = 0; k < 3; k++) { const t = Date.now(); await s.send('net', { op: 'get' }, 8000); warm.push(Date.now() - t); }
+    check('net get answers warm within 1000 ms (' + warm.join('/') + ' ms)', Math.max(...warm) < 1000, warm.join(','));
+    // no network name in the notes: they are printed
+    notes.push('net: ' + n.state + ' through ' + n.kind + ', internet ' + n.internet + ', cold ' + coldMs + ' ms, warm ' +
+      warm.join('/') + ' ms, parts ' + JSON.stringify(n.partsMs));
+  } catch (e) { check('net get', false, e.message); }
+
+  try {
+    const i = s.events.length;
+    const t0 = Date.now();
+    const on = await s.send('net', { op: 'watch', on: true, fast: true });
+    const ev = await eventAfter(i, (e) => e.ev === 'net', 3000);
+    const ms = Date.now() - t0;
+    check('net watch starts and pushes the reading (ev net, ' + ms + ' ms, budget 3000)',
+      on.ok === true && on.result.watching === true && !!ev && ev.ok === true && NET_STATES.indexOf(ev.state) >= 0,
+      JSON.stringify({ on, ev }).slice(0, 260));
+    const p = await s.send('ping');
+    const nw = p.result && p.result.watches && p.result.watches.net;
+    check('ping shows the net watch running fast, and whether Windows\' connectivity events are heard',
+      !!nw && nw.watching === true && nw.fast === true && nw.connectivityEvents !== undefined, JSON.stringify(nw));
+    if (nw) notes.push('net watch: first event ' + ms + ' ms, connectivity events ' + JSON.stringify(nw.connectivityEvents));
+    const slow = await s.send('net', { op: 'watch', on: true, fast: false });
+    check('net watch drops to its slow tick without restarting',
+      slow.ok === true && slow.result.started === false && slow.result.fast === false, JSON.stringify(slow).slice(0, 200));
+    const off = await s.send('net', { op: 'watch', on: false });
+    check('net watch stops', off.ok === true && off.result.watching === false, JSON.stringify(off).slice(0, 200));
+  } catch (e) { check('net watch', false, e.message); }
+  for (const [extra, what] of [
+    [{ op: 'watch' }, 'net watch without on'],
+    [{ op: 'watch', on: 'yes' }, "net {on:'yes'}"],
+    [{ op: 'watch', on: true, fast: 1 }, 'net {fast:1}'],
+    [{ op: 'bogus' }, "net {op:'bogus'}"]
+  ]) {
+    try {
+      const r = await s.send('net', extra);
+      check(what + ' is refused as a bad argument',
+        r.ok === false && typeof r.error === 'string' && !r.error.includes('passive'), JSON.stringify(r));
+    } catch (e) { check(what + ' is refused as a bad argument', false, e.message); }
+  }
+
+  const QS_PARTS = ['nightlight', 'power', 'volume', 'brightness', 'bluetooth', 'wifi'];
+  try {
+    const i = s.events.length;
+    const t0 = Date.now();
+    const on = await s.send('qswatch', { on: true, leaseMs: 5000 });
+    const seen = {};
+    while (Date.now() - t0 < 4000 && QS_PARTS.some((p) => seen[p] === undefined)) {
+      for (const e of s.events.slice(i)) if (e.ev === 'qs' && e.part && seen[e.part] === undefined) seen[e.part] = Date.now() - t0;
+      await sleep(25);
+    }
+    const missing = QS_PARTS.filter((p) => seen[p] === undefined);
+    check('qswatch starts and pushes every part once (budget 4000 ms)',
+      on.ok === true && on.result.ok === true && on.result.started === true && on.result.watching === true && !missing.length,
+      'missing: ' + missing.join(',') + '; ' + JSON.stringify(on).slice(0, 200));
+    const pushes = s.events.slice(i).filter((e) => e.ev === 'qs');
+    check('each qs push carries its part\'s whole state, and none is an error',
+      pushes.length > 0 && pushes.every((e) => e.part && e.state && typeof e.state === 'object' && e.ok !== false),
+      JSON.stringify(pushes.filter((e) => !e.part || !e.state || e.ok === false)).slice(0, 240));
+    notes.push('qswatch: first pushes ' + QS_PARTS.map((p) => p + ' ' + seen[p]).join(', ') + ' ms');
+    const again = await s.send('qswatch', { on: true, leaseMs: 5000 });
+    check('renewing the lease does not restart the watch',
+      again.ok === true && again.result.started === false && again.result.watching === true, JSON.stringify(again).slice(0, 200));
+    const off = await s.send('qswatch', { on: false });
+    check('qswatch off ends the lease at once', off.ok === true && off.result.leaseMs === 0 && off.result.watching === false,
+      JSON.stringify(off).slice(0, 200));
+    // A lease nobody renews ends the watch by itself (a dead panel cannot leave it running), and
+    // the next on pushes every part again, so main's picture is whole after any gap.
+    await s.send('qswatch', { on: true, leaseMs: 1000 });
+    await sleep(2500);
+    const p = await s.send('ping');
+    const w = p.result && p.result.caches && p.result.caches.watch;
+    const j = s.events.length;
+    const back = await s.send('qswatch', { on: true, leaseMs: 5000 });
+    const re = await eventAfter(j, (e) => e.ev === 'qs' && e.part === 'nightlight', 3000);
+    check('a lapsed lease ends the watch by itself, and the next on pushes every part again',
+      !!w && w.watching === false && back.ok === true && back.result.watching === true && !!re,
+      JSON.stringify({ w, back, re }).slice(0, 260));
+    await s.send('qswatch', { on: false });
+  } catch (e) { check('qswatch', false, e.message); }
+  for (const [extra, what] of [
+    [{ on: 'yes' }, "qswatch {on:'yes'}"],
+    [{ on: true, leaseMs: 10 }, 'qswatch {leaseMs:10}'],
+    [{ on: true, leaseMs: 'long' }, "qswatch {leaseMs:'long'}"]
+  ]) {
+    try {
+      const r = await s.send('qswatch', extra);
+      check(what + ' is refused as a bad argument',
+        r.ok === false && typeof r.error === 'string' && !r.error.includes('passive'), JSON.stringify(r));
+    } catch (e) { check(what + ' is refused as a bad argument', false, e.message); }
+  }
+
+  // Switches run on their own lane (qs) since 2026-09-23: brightness sets used to queue on the
+  // slow lane behind WMI and PowerShell reads.
+  try {
+    const parked = s.send('sleep', { lane: 'slow', ms: 2000 }, 8000);
+    await sleep(50);
+    const t = Date.now();
+    const nl = await s.send('nightlight', { on: true }, 4000);
+    const br = await s.send('brightness', { level: 50 }, 4000);
+    const ms = Date.now() - t;
+    check('night light and brightness switches answer while the slow lane is busy (' + ms + ' ms, budget 600)',
+      nl.ok === false && /passive/.test(nl.error || '') && br.ok === false && /passive/.test(br.error || '') && ms < 600,
+      JSON.stringify({ nl, br, ms }).slice(0, 260));
+    await parked;
+  } catch (e) { check('switches answer while the slow lane is busy', false, e.message); }
+  try {
+    const parked = s.send('sleep', { lane: 'qs', ms: 800 }, 8000);
+    await sleep(50);
+    const tS = Date.now();
+    const sw = s.send('brightness', { level: 50 }, 4000).then((r) => ({ r, ms: Date.now() - tS }));
+    const tR = Date.now();
+    const rd = await s.send('brightness', {}, 4000);
+    const rdMs = Date.now() - tR;
+    const swr = await sw;
+    check('with the qs lane parked, a brightness switch waits for it (' + swr.ms + ' ms) and a brightness read does not (' + rdMs + ' ms)',
+      swr.r.ok === false && /passive/.test(swr.r.error || '') && swr.ms >= 450 && rd.ok === true && rdMs < 400,
+      JSON.stringify({ sw: swr, rdMs }).slice(0, 260));
+    const pr = await parked;
+    check('the parked qs lane itself finished', pr.ok === true && pr.result && pr.result.lane === 'qs', JSON.stringify(pr));
+  } catch (e) { check('the qs lane', false, e.message); }
+
   // ---- nothing secret in anything the sidecar printed -------------------------
   const printed = JSON.stringify(s.events) + s.stderr;
   check('no Wi-Fi key from these tests appears in the sidecar\'s logs or events',
@@ -1462,7 +1639,8 @@ async function main() {
     ['wifi', { on: true }],
     ['wifi', { on: false }],
     ['bluetooth', { on: true }],
-    ['brightness', { level: 50 }]
+    ['brightness', { level: 50 }],
+    ['nightlight', { on: true }]
   ]) {
     try {
       const r = await s.send(cmd, extra);
@@ -1477,7 +1655,8 @@ async function main() {
     ['wifi', { on: 'maybe' }, "wifi {on:'maybe'}"],
     ['bluetooth', { on: 1 }, 'bluetooth {on:1}'],
     ['brightness', { level: 'bright' }, "brightness {level:'bright'}"],
-    ['brightness', { level: 500 }, 'brightness {level:500}']
+    ['brightness', { level: 500 }, 'brightness {level:500}'],
+    ['nightlight', { on: 'yes' }, "nightlight {on:'yes'}"]
   ]) {
     try {
       const r = await s.send(cmd, extra);
@@ -1486,16 +1665,16 @@ async function main() {
     } catch (e) { check(`${what} is refused as a bad argument`, false, e.message); }
   }
 
-  // The two things Mantle is honest about not being able to do yet.
-  for (const [cmd, extra] of [['nightlight', { on: true }], ['power', { saver: true }]]) {
-    try {
-      const r = await s.send(cmd, extra);
-      check(`${cmd} says plainly that the switch is not available yet`,
-        r.ok === true && r.result && r.result.ok === false &&
-        typeof r.result.reason === 'string' && r.result.reason.includes('not available yet'),
-        JSON.stringify(r));
-    } catch (e) { check(`${cmd} says the switch is not available yet`, false, e.message); }
-  }
+  // Energy saver: Windows has no public switch (powrprof.dll exports only the power-mode overlay,
+  // checked 2026-09-23), so the sidecar says so and the panel opens its Settings page. Night light
+  // became a real switch the same day (refused above, as every switch is in passive).
+  try {
+    const r = await s.send('power', { saver: true });
+    check('power {saver} says plainly that Windows has no public switch for it',
+      r.ok === true && r.result && r.result.ok === false &&
+      typeof r.result.reason === 'string' && r.result.reason.includes('no public switch'),
+      JSON.stringify(r));
+  } catch (e) { check('power {saver} says Windows has no public switch', false, e.message); }
 
   // ---- backdrop ---------------------------------------------------------
   // Read-only, so it runs in passive: a 64x16 grab of the very top-left corner
