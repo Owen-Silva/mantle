@@ -1,0 +1,43 @@
+/* card-mock.js - main, played for the card page in a plain browser (ui/screenshot/shoot.js). Defines
+ * window.mantle ONLY when it is absent; under Electron the real preload wins.
+ *
+ *   ?state=ok | nosave | nocopy | neither     what happened to the capture
+ *   ?life=0                                   never time out (for a still screenshot)
+ */
+(function () {
+  'use strict';
+  if (window.mantle) return;
+  var q = new URLSearchParams(location.search);
+  var listeners = {};
+  var mock = window.__mock = { calls: [] };
+  window.mantle = {
+    call: function (name, args) { mock.calls.push({ name: name, args: args }); return Promise.resolve({ ok: true }); },
+    on: function (name, cb) { (listeners[name] = listeners[name] || []).push(cb); return function () {}; },
+    pathForFile: function () { return ''; },
+  };
+  function thumb() {
+    var c = document.createElement('canvas');
+    c.width = 480; c.height = 300;
+    var g = c.getContext('2d');
+    var bg = g.createLinearGradient(0, 0, 480, 300);
+    bg.addColorStop(0, '#9CC3E6'); bg.addColorStop(1, '#F1D6C4');
+    g.fillStyle = bg; g.fillRect(0, 0, 480, 300);
+    g.fillStyle = '#fff'; g.fillRect(60, 40, 300, 200);
+    g.fillStyle = '#ECEEF3'; g.fillRect(60, 40, 300, 26);
+    g.fillStyle = 'rgba(51,58,78,.28)';
+    for (var y = 84; y < 230; y += 16) g.fillRect(76, y, 120 + (y * 7) % 140, 6);
+    return c.toDataURL('image/png');
+  }
+  window.addEventListener('load', function () {
+    var st = q.get('state') || 'ok';
+    var info = {
+      seq: 3, name: 'Screenshot 2026-09-24 143005.png', w: 1280, h: 720,
+      path: 'C:\\Users\\user\\Pictures\\Screenshots\\Screenshot 2026-09-24 143005.png',
+      url: thumb(), copied: st === 'ok' || st === 'nosave', lifeMs: q.get('life') === '0' ? 1e9 : 5000,
+      saveError: st === 'nosave' || st === 'neither' ? 'the Screenshots folder is read-only (Access to the path is denied)' : null,
+      copyError: st === 'nocopy' || st === 'neither' ? 'another app was holding the clipboard' : null,
+    };
+    if (info.saveError) info.path = null;
+    (listeners['screenshot.card'] || []).forEach(function (cb) { cb(info); });
+  });
+}());

@@ -78,6 +78,19 @@
   var hideTimer = null;
   var indexError = '';    // why apps.index itself failed, if it did
   var backdropNote = '';  // "no blur: …" — why there is nothing blurred under the tint
+  /* WIN+S (2026-09-24). The rows are laid out in labelled groups by groups.js (Calculator, Apps,
+     Commands, Settings, Power, Files, then "Search the web" last); rows is still the ONE flat list
+     the arrow keys walk, in on-screen order. calc.js answers arithmetic on every keystroke with no
+     round trip. Both are plain scripts loaded before this one; a page without them says so. */
+  var Calc = window.MantleCalc;
+  var Groups = window.MantleGroups;
+  var view = { groups: [], flat: [] };
+  var mode = 'apps';          // 'search' when Win+S opened the launcher (placeholder, empty state)
+  var pendingOpen = null;     // a launcher.open {mode, query} waiting for the window to be shown
+  var PLACEHOLDER = {
+    apps: 'Apps, files, settings, commands, or a URL',
+    search: 'Search apps, files, settings and the web',
+  };
 
   /* ---- shown / hidden, and the one animation ----------------------------
      Electron fires visibilitychange on window show and hide, which is the only signal this page
@@ -186,6 +199,11 @@
     signout: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" ' +
       'stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 2.5H4a1.5 1.5 0 0 0-1.5 1.5v8A1.5 1.5 0 0 0 4 13.5h2.5"/>' +
       '<path d="M10 5l3 3-3 3"/><path d="M13 8H6.5"/></svg>',
+    calc: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" ' +
+      'stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.8" width="10" height="12.4" rx="1.6"/>' +
+      '<path d="M5.5 4.8h5"/><path d="M5.6 8.2h.01M8 8.2h.01M10.4 8.2h.01M5.6 11h.01M8 11h.01M10.4 11h.01"/></svg>',
+    web: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" ' +
+      'stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4.6"/><path d="M10.4 10.4L14 14"/></svg>',
     file: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" ' +
       'stroke-linecap="round" stroke-linejoin="round"><path d="M9 1.8H4.5A1.5 1.5 0 0 0 3 3.3v9.4a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5V5.8z"/>' +
       '<path d="M9 1.8v4h4"/></svg>',
@@ -229,21 +247,51 @@
       var blank = document.createElement('div');
       blank.className = 'empty';
       var typed = els.q.value.trim();
-      blank.textContent = !typed ? 'Nothing to show yet.'
+      blank.textContent = !typed ? (mode === 'search' ? 'Type to search apps, files, settings and the web.' : 'Nothing to show yet.')
         : filePending ? 'Nothing matches ‘' + typed + '’ yet. Searching your files…'
         : 'Nothing matches ‘' + typed + '’';
       els.results.appendChild(blank);
       return;
     }
 
-    for (var i = 0; i < rows.length; i++) {
-      var item = rows[i];
+    var at = 0;
+    for (var g = 0; g < view.groups.length; g++) {
+      var grp = view.groups[g];
+      var head = document.createElement('div');
+      head.className = 'grp';
+      head.setAttribute('role', 'presentation');
+      head.textContent = grp.label;
+      els.results.appendChild(head);
+      for (var r = 0; r < grp.rows.length; r++, at++) els.results.appendChild(rowEl(grp.rows[r], at));
+      if (grp.status) {
+        // what the Files group is doing, or why it has nothing: never a selectable row
+        var st = document.createElement('div');
+        st.className = 'grp-status is-' + grp.status.kind;
+        st.setAttribute('role', 'status');
+        st.textContent = grp.status.text;
+        els.results.appendChild(st);
+      }
+    }
+
+    var selEl = els.results.querySelector('.row.is-sel');
+    if (selEl && selEl.scrollIntoView) {
+      // the first row of a group brings its header into view with it
+      var prev = selEl.previousElementSibling;
+      if (prev && prev.classList.contains('grp') && prev.scrollIntoView) prev.scrollIntoView({ block: 'nearest' });
+      selEl.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function rowEl(item, i) {
+    {
       var isArmed = !!(armed && armed.id === item.id);
       var row = document.createElement('div');
-      row.className = 'row' + (i === sel ? ' is-sel' : '') + (isArmed ? ' is-armed' : '');
+      row.className = 'row' + (i === sel ? ' is-sel' : '') + (isArmed ? ' is-armed' : '') +
+        (item.kind === 'calc' ? ' is-calc' : '') + (item.bad ? ' is-bad' : '');
       row.setAttribute('role', 'option');
       row.setAttribute('aria-selected', i === sel ? 'true' : 'false');
       row.dataset.i = String(i);
+      row.dataset.kind = item.kind || '';      // for the --test self-check (lib/features/_search-selftest.js)
       // a file row's subtitle is its folder, cut short; the whole path is one hover away
       if (item.kind === 'file') row.title = item.path || '';
 
@@ -281,11 +329,8 @@
         why.textContent = note.text;
         row.appendChild(why);
       }
-      els.results.appendChild(row);
+      return row;
     }
-
-    var selEl = els.results.children[sel];
-    if (selEl && selEl.scrollIntoView) selEl.scrollIntoView({ block: 'nearest' });
   }
 
   /* One place builds this strip, because three things write to it: the per-source reasons, the
@@ -305,8 +350,8 @@
        per query: how many rows and how long the index took, or why there are none. */
     if (fileState.status === 'ok') parts.push('files ' + fileState.n + ' in ' + fileState.ms + ' ms');
     else if (fileState.status === 'error') parts.push('files unavailable');
-    if (fileState.status === 'error') lines.push({ text: 'files: ' + fileState.reason, bad: true });
-    else if (fileState.reason) lines.push({ text: 'files: ' + fileState.reason, bad: false });
+    // (the index's reason itself - stopped service, unindexed profile - is the Files group's own
+    // status line since Win+S, right where the missing rows would be; not repeated down here)
 
     els.counts.textContent = indexError ? 'index unavailable'
       : (parts.length ? parts.join(' · ') : 'nothing indexed');
@@ -327,9 +372,15 @@
   function renderHint() {
     if (!els.hint) return;
     var item = rows[sel];
-    var text = 'Enter opens · Esc closes';
+    /* One line in a 680px footer beside the counts: with more than one group, "Tab next group"
+       takes the place of "Esc closes" (Esc is the one key everybody already tries). */
+    var tab = view.groups.length > 1;
+    var tail = tab ? ' · Tab next group' : ' · Esc closes';
+    var text = 'Enter opens' + tail;
     if (armed && item && armed.id === item.id) text = 'Enter again to confirm · Esc cancels';
-    else if (item && item.kind === 'file') text = 'Enter opens · Ctrl+Enter shows it in its folder';
+    else if (item && item.kind === 'file') text = 'Enter opens · Ctrl+Enter shows in folder' + (tab ? ' · Tab next group' : '');
+    else if (item && item.kind === 'calc') text = (item.bad ? 'No answer to copy' : 'Enter copies the answer') + tail;
+    else if (item && item.kind === 'web') text = 'Enter searches the web' + tail;
     if (els.hint.textContent !== text) els.hint.textContent = text;
   }
 
@@ -391,10 +442,12 @@
 
   var searchTimer = null;
   function queueSearch() {
-    // 40ms: long enough that a fast typist does not fire a call per keystroke,
-    // short enough that the list feels attached to the keyboard
+    // 12ms (was 40): Win+S asked for apps/settings/calc on screen in ~50 ms, and MEASURED in a
+    // --test Mantle on 2026-09-24 the 40ms debounce put input -> row at 48-77 ms, while the
+    // search itself is ~0.3 ms (lib/launcher-search.test.js) plus one IPC hop. 12ms still folds
+    // a burst of keys (auto-repeat, a paste) into one call.
     if (searchTimer) clearTimeout(searchTimer);
-    searchTimer = setTimeout(runSearch, 40);
+    searchTimer = setTimeout(runSearch, 12);
   }
 
   function runSearch() {
@@ -414,9 +467,18 @@
 
   /* ---- file rows ----------------------------------------------------------- */
 
+  /* A file query only for something that could be a file name: two letters or more, and NOT
+     arithmetic - "2*(3+4)" wants its answer, and a "No files match" under it is noise (and a
+     query with % in it is the one LIKE cannot run, see sidecar/SearchIndex.cs). */
+  function wantsFiles(q) {
+    if (q.length < FILE_MIN) return false;
+    try { if (Calc && Calc.evaluate(q)) return false; } catch (e) { /* the calc row reports its own failure */ }
+    return true;
+  }
+
   function queueFiles() {
     if (fileTimer) clearTimeout(fileTimer);
-    filePending = els.q.value.trim().length >= FILE_MIN;
+    filePending = wantsFiles(els.q.value.trim());
     fileTimer = setTimeout(runFiles, FILE_DEBOUNCE_MS);
   }
 
@@ -424,7 +486,7 @@
     fileTimer = null;
     var q = els.q.value.trim();
     var mine = ++fileSeq;
-    if (q.length < FILE_MIN) {
+    if (!wantsFiles(q)) {
       filePending = false;
       fileRows = []; fileQ = '';
       fileState = { status: 'idle', reason: '', ms: 0, n: 0 };
@@ -434,7 +496,7 @@
     }
     // fileState keeps the LAST answer's line in the footer until this one lands: a count that
     // blinks out on every keystroke would be noise, not news
-    mantle.call('launcher.files', { q: q }).then(function (res) {
+    callPreferring('search.files', 'launcher.files', { q: q }).then(function (res) {
       if (mine !== fileSeq) return;                // a newer query is on its way
       filePending = false;
       if (res && res.superseded) { mergeRows(); return; }   // nothing newer is coming from us: no rows
@@ -470,28 +532,40 @@
     return terms.every(function (t) { return words.some(function (w) { return w.indexOf(t) === 0; }); });
   }
 
-  /* appRows + fileRows -> rows, highest score first. Array.prototype.sort is stable, and the app
-     rows go in first, so a tie keeps the app on top. The selection follows its ROW when the
-     person has moved it by hand; otherwise it stays on the first row. */
+  /* appRows + fileRows + the calculator -> view (groups.js) -> rows, the flat on-screen order.
+     A file row from the last answer stays while its name still matches what is typed (typing
+     "repo" after "rep" narrows the list instead of blanking it). The selection follows its ROW
+     when the person has moved it by hand; otherwise it stays on the first row. */
   function mergeRows() {
-    var q = els.q.value.trim().toLowerCase();
+    var typed = els.q.value;
+    var q = typed.trim().toLowerCase();
     var keepId = userMoved && rows[sel] ? rows[sel].id : null;
     var files = q.length >= FILE_MIN
       ? fileRows.filter(function (f) { return fileQ === q || stillMatches(f.name, q); })
       : [];
-    var merged = appRows.concat(files);
-    if (files.length) {
-      merged.sort(function (a, b) {
-        return (typeof b.score === 'number' ? b.score : 0) - (typeof a.score === 'number' ? a.score : 0);
-      });
+    var calc = null;
+    try { calc = Calc ? Calc.evaluate(typed) : null; } catch (e) { calc = { ok: false, expr: typed.trim(), reason: 'the calculator failed: ' + reasonOf(e) }; }
+    if (!Groups) {
+      showProblem('ui/launcher/groups.js did not load, so the results cannot be laid out (check index.html loads it before launcher.js).');
+      return;
     }
-    rows = merged;
+    view = Groups.build({ q: typed, appRows: appRows, fileRows: files, fileState: fileState, filePending: filePending, calc: calc });
+    rows = view.flat;
     sel = 0;
     if (keepId) {
       for (var i = 0; i < rows.length; i++) if (rows[i].id === keepId) { sel = i; break; }
     }
     if (armed && !rows.some(function (r) { return r.id === armed.id; })) disarm();
     render();
+  }
+
+  /* A Win+S feature command when this Mantle has it (lib/features/search.js), otherwise main's
+     original one. ONLY "there is no such command" falls back: any other failure is the answer. */
+  function callPreferring(name, fallback, args) {
+    return mantle.call(name, args).then(null, function (err) {
+      if (/no command called|no "/.test(reasonOf(err))) return mantle.call(fallback, args);
+      throw err;
+    });
   }
 
   /* ---- ask first ------------------------------------------------------------ */
@@ -551,15 +625,58 @@
   /* File rows: Enter opens it with its default app, Ctrl+Enter (or Ctrl+click) shows it selected
      in its folder. */
   function activateFile(item, reveal) {
-    mantle.call('launcher.openFile', { path: item.path, reveal: !!reveal }).then(function (res) {
+    callPreferring('search.openFile', 'launcher.openFile', { path: item.path, reveal: !!reveal }).then(function (res) {
       if (res && res.ok) {
-        if (res.dryRun) { note = { id: item.id, text: res.reason, ok: true }; render(); }
-        return;                                   // main hid the launcher
+        if (res.dryRun) { note = { id: item.id, text: res.reason, ok: true }; render(); return; }
+        // launcher.openFile hides the window itself; search.openFile (a feature) cannot, so ask.
+        // A second hide of a hidden launcher is a no-op in main.
+        mantle.call('launcher.hide');
+        return;
       }
       note = { id: item.id, text: (res && res.reason) || 'it did not open, and no reason came back', ok: false };
       render();
     }, function (err) {
       note = { id: item.id, text: 'the open request failed: ' + reasonOf(err), ok: false };
+      render();
+    });
+  }
+
+  /* The calculator row: Enter copies the answer. Main works it out again from the expression and
+     copies only that number (lib/launcher-index.js copyCalc); a --test Mantle only says what it
+     would copy. A row with no answer says so and copies nothing. */
+  function activateCalc(item) {
+    if (item.bad) { note = { id: item.id, text: 'there is no answer to copy: ' + item.name, ok: false }; render(); return; }
+    mantle.call('search.copy', { expr: item.expr }).then(function (res) {
+      if (res && res.ok) {
+        note = { id: item.id, text: res.dryRun ? res.reason : 'Copied ' + (res.copied || item.copy), ok: true };
+        render();
+        if (!res.dryRun) hideTimer = setTimeout(function () { mantle.call('launcher.hide'); }, 700);
+        return;
+      }
+      note = { id: item.id, text: (res && res.reason) || 'nothing was copied, and no reason came back', ok: false };
+      render();
+    }, function (err) {
+      note = { id: item.id, text: 'the copy request failed: ' + reasonOf(err), ok: false };
+      render();
+    });
+  }
+
+  /* "Search the web for …": main builds the URL from the text and opens it the way a typed URL
+     opens (lib/launcher-index.js openWeb). A dry run stays open and says what it would have done. */
+  function activateWeb(item) {
+    // what is typed NOW, not the row's copy of it: the row is rebuilt only when apps.search answers,
+    // so an End+Enter inside that gap would search the previous text (caught by the selftest)
+    var typed = els.q.value.trim() || item.path;
+    mantle.call('search.web', { q: typed }).then(function (res) {
+      if (res && res.ok) {
+        if (res.dryRun || res.reason) { note = { id: item.id, text: res.reason, ok: true }; render(); }
+        if (!res.dryRun) hideTimer = setTimeout(function () { mantle.call('launcher.hide'); }, res.reason ? 1400 : 0);
+        return;
+      }
+      note = { id: item.id, text: (res && res.reason) || 'the search did not open, and no reason came back', ok: false };
+      render();
+    }, function (err) {
+      note = { id: item.id, text: 'the web search request failed: ' + reasonOf(err), ok: false };
       render();
     });
   }
@@ -570,6 +687,8 @@
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
     if (item.kind === 'power') { activatePower(item); return; }
     if (item.kind === 'file') { activateFile(item, alt); return; }
+    if (item.kind === 'calc') { activateCalc(item); return; }
+    if (item.kind === 'web') { activateWeb(item); return; }
 
     mantle.call('apps.launch', { id: item.id }).then(function (res) {
       if (res && res.ok) {
@@ -620,6 +739,11 @@
       activate(e.ctrlKey);
       return;
     }
+    if (e.key === 'Tab' && rows.length && Groups) {
+      e.preventDefault();
+      select(Groups.jumpGroup(view.groups, sel, e.shiftKey ? -1 : 1));
+      return;
+    }
     if (e.key === 'Home' && rows.length) { e.preventDefault(); select(0); return; }
     if (e.key === 'End' && rows.length) { e.preventDefault(); select(rows.length - 1); return; }
     // any other key belongs to the input, wherever focus drifted to
@@ -651,6 +775,11 @@
       // shown: a clean slate every time, so the Win tap always behaves the same
       if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
       els.q.value = '';
+      if (pendingOpen && Date.now() - pendingOpen.at > 2000) pendingOpen = null;
+      applyMode(pendingOpen ? pendingOpen.mode : 'apps');
+      if (pendingOpen && pendingOpen.query) els.q.value = pendingOpen.query;
+      pendingOpen = null;
+      if (els.q.value.trim().length >= FILE_MIN) queueFiles();
       note = null;
       disarm();
       if (fileTimer) { clearTimeout(fileTimer); fileTimer = null; }
@@ -667,6 +796,14 @@
          a panel that boots at opacity 0 may not depend on a single signal to become visible. */
       panelUp();
     });
+    /* Win+S: main sends 'launcher.open' {mode, query} just BEFORE showLauncher(), and showLauncher
+       ALWAYS broadcasts launcher:visible true - even when the window is already up (main.js,
+       showLauncher) - and that handler resets the launcher. So the mode only waits here, and the
+       reset above applies it. A stale one (the show never came) is dropped after 2 s so it cannot
+       leak into the next plain Win tap. */
+    mantle.on('launcher.open', function (p) {
+      pendingOpen = { mode: (p && p.mode) || 'apps', query: (p && p.query) || '', at: Date.now() };
+    });
     mantle.on('state', applyState);
     /* the picture behind this window: ~4 a second while it is up, one frame just before it is
        shown. setBackdrop swaps the <img> src and nothing else. */
@@ -676,6 +813,12 @@
     els.notice.hidden = false;
     els.notice.textContent = 'live updates unavailable: this build of the bridge has no mantle.on(), ' +
       'so the launcher cannot tell when it is shown or when the sidecar changes.';
+  }
+
+  function applyMode(m) {
+    mode = m === 'search' ? 'search' : 'apps';
+    document.body.dataset.mode = mode;
+    els.q.placeholder = PLACEHOLDER[mode];
   }
 
   /* ---- boot ---------------------------------------------------------------- */

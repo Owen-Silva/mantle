@@ -192,6 +192,32 @@ const SAMPLE = {
   });
   await shoot('14-files-down', PAGE + '?bg=1&files=down', typeQ('rep'));
 
+  /* Win+S (2026-09-24): grouped results, the calculator, the web row, the search mode */
+  const wait = (ms) => async page => { await page.waitForTimeout(ms); };
+  await shoot('15-search-mode', PAGE + '?bg=1&mode=search', wait(300));
+  await shoot('16-calc', PAGE + '?bg=1', typeQ('2*(3+4)^2'));
+  await shoot('17-calc-copy-dry', PAGE + '?bg=1', async page => {
+    await typeQ('6*7')(page);
+    await page.keyboard.press('Enter');                      // the mock's copy is a dry run
+    await page.waitForTimeout(150);
+  });
+  await shoot('18-calc-no-answer', PAGE + '?bg=1', typeQ('1/0'));
+  await shoot('19-groups-b', PAGE + '?bg=1', typeQ('b'));
+  await shoot('20-settings-night', PAGE + '?bg=1', typeQ('night'));
+  await shoot('21-files-pending', PAGE + '?bg=1&files=slow', typeQ('rep'));
+  await shoot('22-tab-to-files', PAGE + '?bg=1', async page => {
+    await typeQ('rep')(page);
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(150);
+  });
+  await shoot('23-web-enter-dry', PAGE + '?bg=1', async page => {
+    await typeQ('weather boston')(page);
+    await page.keyboard.press('End');                        // the last row: Search the web
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(150);
+  });
+  await shoot('24-search-mode-query', PAGE + '?bg=1&mode=search&q=blue', wait(400));
+
   await browser.close();
 
   for (const s of shots) {

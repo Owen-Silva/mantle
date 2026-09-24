@@ -1,0 +1,264 @@
+require('C:/Users/user/dev-tools/tools/lowcpu.js');
+/* shoot.js - headless screenshots of the screenshot overlay and card, plus the checks that matter.
+ *
+ * Line 1 is the machine-wide CPU cap and browser lock. Required, not optional.
+ *
+ * PRIVACY: nothing here ever shows Owen's screen. The overlay's "frozen frame" is mock-mantle.js's
+ * fake desktop, and the one real sidecar frame decoded below is a SYNTHETIC grab (a generated
+ * pattern, Screenshot.cs FillSynthetic), deleted at the end.
+ *
+ * WHAT IS CHECKED, not just photographed:
+ *   1. DPI. At device scale 1, 1.25, 1.5 and 2 (and on a monitor whose origin is -1920), a scripted
+ *      drag must commit EXACTLY geometry.cssToPhys of the points the page saw, and the drawn hole
+ *      must be that rect back in CSS px (what you see is what you get), within half a device px.
+ *   2. MODES. Window mode highlights the fake window under the pointer and a click commits its
+ *      physical rect; Full screen commits the whole monitor; the keyboard alone (W, arrows, Enter;
+ *      R, Enter, arrows, Enter) commits; Esc cancels; a click without a drag commits nothing.
+ *   3. THE FRAME FORMAT. The sidecar's 32-bit BI_BITFIELDS BMP, with junk in every fourth byte,
+ *      must decode in Chromium fully OPAQUE and pixel-exact (else a layered window's alpha would
+ *      punch holes in the frozen frame), and how long that decode takes is printed.
+ *
+ *   node ui/screenshot/shoot.js     (MANTLE_SIDECAR_EXE=<exe> for check 3; MANTLE_SHOOT_OUT=<dir>)
+ */
+'use strict';
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { execFileSync, spawn } = require('child_process');
+const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+const G = require('./geometry.js');
+
+const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+const PAGE = 'file:///C:/Users/user/mantle/ui/screenshot/index.html';
+const CARD = 'file:///C:/Users/user/mantle/ui/screenshot/card.html';
+const OUT = process.env.MANTLE_SHOOT_OUT ||
+  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/screenshot/shots';
+const EXE = process.env.MANTLE_SIDECAR_EXE || '';
+
+let passed = 0;
+const failures = [];
+function check(name, ok, detail) {
+  if (ok) { passed++; return; }
+  failures.push(name);
+  console.log('  FAIL ' + name + (detail ? ' - ' + detail : ''));
+}
+
+function gamesRunning() {
+  const out = execFileSync('powershell', ['-NoProfile', '-Command',
+    '@(Get-Process javaw,Minecraft*,RobloxPlayerBeta,*Riot*,VALORANT* -ErrorAction SilentlyContinue).Count'], { encoding: 'utf8' });
+  return Number(out.trim()) || 0;
+}
+
+async function open(browser, url, w, h, dsf) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: dsf });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.goto(url);
+  await page.waitForFunction(() => window.__mock && (window.__mock.ready || window.__mock.calls.some((c) => c.name === 'screenshot.cardShown')), null, { timeout: 8000 });
+  return { ctx, page, errors };
+}
+
+const lastCall = (page, name) => page.evaluate((n) => { const c = window.__mock.calls.filter((x) => x.name === n); return c.length ? c[c.length - 1].args : null; }, name);
+const holeRect = (page) => page.evaluate(() => { const h = document.getElementById('hole'); if (h.hidden) return null; const r = h.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+
+/* 1. DPI: a drag at every scale, and on a monitor left of the primary. */
+async function dpiCase(browser, dsf, monx, shoot) {
+  const tag = `dpi ${dsf}${monx ? ' monx ' + monx : ''}`;
+  const { ctx, page, errors } = await open(browser, `${PAGE}?mode=rect&monx=${monx}&cursor=300,200`, 1280, 720, dsf);
+  const mon = await page.evaluate(() => window.__shot.mon);
+  check(`${tag}: monitor is viewport x scale`, mon.w === Math.round(1280 * dsf) && mon.h === Math.round(720 * dsf), JSON.stringify(mon));
+  const a = { x: 100.4, y: 80.6 }, b = { x: 740.3, y: 420.9 };
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2);
+  await page.mouse.move(b.x, b.y);
+  const seen = await page.evaluate(() => ({ anchor: window.__shot.anchor, ptr: window.__shot.ptr }));
+  const want = G.cssToPhys(G.normRect(seen.anchor.x, seen.anchor.y, seen.ptr.x, seen.ptr.y), mon, { w: 1280, h: 720 });
+  const hole = await holeRect(page);
+  const back = G.physToCss(want, mon, { w: 1280, h: 720 });
+  const half = 0.5 / dsf + 1e-6;
+  check(`${tag}: the drawn hole is the physical rect back in CSS px`, hole && Math.abs(hole.x - back.x) <= half && Math.abs(hole.y - back.y) <= half &&
+    Math.abs(hole.w - back.w) <= half && Math.abs(hole.h - back.h) <= half, JSON.stringify({ hole, back }));
+  const label = await page.evaluate(() => document.getElementById('size').textContent);
+  check(`${tag}: the size readout is the PHYSICAL size`, label === G.sizeText(want.w, want.h), `${label} vs ${want.w}x${want.h}`);
+  if (shoot) await page.screenshot({ path: path.join(OUT, `overlay-rect-dragging-${dsf}x${monx ? '-monx' : ''}.png`) });
+  await page.mouse.up();
+  const c = await lastCall(page, 'screenshot.commit');
+  check(`${tag}: mouse-up commits exactly cssToPhys of the points the page saw`, c && c.rect.x === want.x && c.rect.y === want.y &&
+    c.rect.w === want.w && c.rect.h === want.h && c.grab === 7 && c.mode === 'rect', JSON.stringify({ got: c && c.rect, want }));
+  check(`${tag}: the rect is inside the monitor`, c && c.rect.x >= mon.x && c.rect.x + c.rect.w <= mon.x + mon.w, JSON.stringify(c && c.rect));
+  if (monx < 0) check(`${tag}: a monitor left of the primary commits negative x`, c && c.rect.x < 0);
+  check(`${tag}: no page errors`, errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+async function modes(browser) {
+  // Window mode: hover the fake "Browser" (second window, partly under "Notes"), click.
+  let { ctx, page, errors } = await open(browser, `${PAGE}?mode=window`, 1280, 720, 1.25);
+  const f = await page.evaluate(() => window.__mock.frame);
+  const browserWin = f.windows[1];
+  const p = G.physToCss({ x: browserWin.x + 40, y: browserWin.y + 60, w: 0, h: 0 }, f.monitor, { w: 1280, h: 720 });
+  await page.mouse.move(p.x, p.y);
+  const hole = await holeRect(page);
+  const want = G.physToCss(browserWin, f.monitor, { w: 1280, h: 720 });
+  check('window mode: the hovered window is the hole', hole && Math.abs(hole.x - want.x) < 0.5 && Math.abs(hole.w - want.w) < 0.5, JSON.stringify({ hole, want }));
+  await page.screenshot({ path: path.join(OUT, 'overlay-window-hover-1.25x.png') });
+  await page.mouse.down(); await page.mouse.up();
+  let c = await lastCall(page, 'screenshot.commit');
+  check('window mode: a click commits the window\'s physical rect', c && c.rect.x === browserWin.x && c.rect.w === browserWin.w && c.rect.h === browserWin.h && c.kind === 'window', JSON.stringify(c));
+  check('window mode: no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+
+  // Window mode over the empty desktop answers the whole monitor.
+  ({ ctx, page } = await open(browser, `${PAGE}?mode=window`, 1280, 720, 1));
+  await page.mouse.move(1270, 700); await page.mouse.down(); await page.mouse.up();
+  c = await lastCall(page, 'screenshot.commit');
+  check('window mode over the desktop commits the whole monitor', c && c.rect.w === 1280 && c.rect.h === 720 && c.kind === 'desktop', JSON.stringify(c));
+  await ctx.close();
+
+  // Full screen.
+  ({ ctx, page } = await open(browser, `${PAGE}?mode=full&monx=-1920`, 1280, 720, 1.5));
+  await page.mouse.move(640, 360);
+  await page.screenshot({ path: path.join(OUT, 'overlay-full-1.5x.png') });
+  await page.mouse.down(); await page.mouse.up();
+  c = await lastCall(page, 'screenshot.commit');
+  check('full screen: a click commits the whole monitor', c && c.rect.x === -1920 && c.rect.w === 1920 && c.rect.h === 1080 && c.kind === 'monitor', JSON.stringify(c));
+  await ctx.close();
+
+  // A click without a drag commits nothing and the overlay stays.
+  ({ ctx, page } = await open(browser, `${PAGE}?mode=rect&cursor=500,300`, 1280, 720, 1));
+  await page.screenshot({ path: path.join(OUT, 'overlay-rect-idle-1x.png') });
+  await page.mouse.move(500, 300); await page.mouse.down(); await page.mouse.up();
+  c = await lastCall(page, 'screenshot.commit');
+  check('a click without a drag commits nothing', c === null);
+  // Keyboard only: R, Enter (anchor), 25 x Shift+Right, 12 x Shift+Down, Enter.
+  await page.keyboard.press('r');
+  await page.keyboard.press('Enter');
+  for (let i = 0; i < 25; i++) await page.keyboard.press('Shift+ArrowRight');
+  for (let i = 0; i < 12; i++) await page.keyboard.press('Shift+ArrowDown');
+  await page.screenshot({ path: path.join(OUT, 'overlay-rect-keyboard-1x.png') });
+  await page.keyboard.press('Enter');
+  c = await lastCall(page, 'screenshot.commit');
+  check('keyboard: Enter, Shift+arrows, Enter commits a 250 x 120 rect', c && c.rect.w === 250 && c.rect.h === 120 && c.via === 'keyboard', JSON.stringify(c));
+  await ctx.close();
+
+  // Keyboard mode switch + Esc; the mode bar tells main.
+  ({ ctx, page } = await open(browser, `${PAGE}?mode=rect`, 1280, 720, 1));
+  await page.keyboard.press('w');
+  const m = await lastCall(page, 'screenshot.mode');
+  check('W switches to Window mode and tells main (the other monitors follow)', m && m.mode === 'window');
+  await page.click('button[data-mode="full"]');
+  const m2 = await lastCall(page, 'screenshot.mode');
+  check('the mode bar button switches to Full screen', m2 && m2.mode === 'full' &&
+    await page.evaluate(() => document.querySelector('button[data-mode="full"]').getAttribute('aria-pressed')) === 'true');
+  await page.keyboard.press('Escape');
+  const x = await lastCall(page, 'screenshot.cancel');
+  check('Esc cancels', x && x.why === 'Esc');
+  await ctx.close();
+
+  // The problem panel (NO SILENT FAILURES) and a dark desktop.
+  ({ ctx, page } = await open(browser, `${PAGE}?problem=1`, 1280, 720, 1));
+  const shown = await page.evaluate(() => !document.getElementById('problem').hidden && document.getElementById('problem-text').textContent);
+  check('a frame problem is shown in plain words', /BitBlt failed/.test(shown || ''), shown);
+  await page.screenshot({ path: path.join(OUT, 'overlay-problem.png') });
+  await ctx.close();
+  ({ ctx, page } = await open(browser, `${PAGE}?mode=window&dark=1&cursor=400,300`, 1920, 1080, 1));
+  await page.screenshot({ path: path.join(OUT, 'overlay-window-dark-1920.png') });
+  await ctx.close();
+}
+
+async function cards(browser) {
+  for (const st of ['ok', 'nosave', 'nocopy', 'neither']) {
+    const { ctx, page, errors } = await open(browser, `${CARD}?state=${st}&life=0`, 420, 190, 1.25);
+    await page.waitForTimeout(700);
+    await page.screenshot({ path: path.join(OUT, `card-${st}.png`) });
+    const t = await page.evaluate(() => ({ title: document.getElementById('title').textContent, warn: document.getElementById('warn').hidden ? '' : document.getElementById('warn').textContent, folder: document.getElementById('folder').disabled }));
+    if (st === 'ok') check('card ok: saved and copied', /^Screenshot saved$/.test(t.title) && !t.warn && !t.folder, JSON.stringify(t));
+    if (st === 'nosave') check('card nosave: says copied, not saved, and why; folder disabled', /copied/.test(t.title) && /Not saved: .*read-only/.test(t.warn) && t.folder, JSON.stringify(t));
+    if (st === 'nocopy') check('card nocopy: says saved, not copied, and why', /saved/.test(t.title) && /Not copied:/.test(t.warn), JSON.stringify(t));
+    if (st === 'neither') check('card neither: says not saved, both reasons', /not saved/.test(t.title) && /Not saved/.test(t.warn) && /Not copied/.test(t.warn), JSON.stringify(t));
+    check(`card ${st}: no page errors`, errors.length === 0, errors.join(' | '));
+    await ctx.close();
+  }
+  // The timer: a 5 s card dismisses itself; Esc dismisses at once; Copy path asks main.
+  const { ctx, page } = await open(browser, `${CARD}?state=ok`, 420, 190, 1);
+  await page.click('#copy-path');
+  const cp = await lastCall(page, 'screenshot.cardCopyPath');
+  check('card: Copy path asks main', !!cp);
+  await page.mouse.move(5, 5);         // off the card, so the timer runs
+  await page.waitForFunction(() => window.__mock.calls.some((c) => c.name === 'screenshot.cardDismiss'), null, { timeout: 9000 }).catch(() => {});
+  const d = await lastCall(page, 'screenshot.cardDismiss');
+  check('card: it dismisses itself after its time', d && d.why === 'timeout', JSON.stringify(d));
+  await ctx.close();
+}
+
+/* 3. The sidecar's frame format, decoded by Chromium (synthetic pixels only). */
+async function frameFormat(browser) {
+  if (!EXE || !fs.existsSync(EXE)) { console.log('  frame-format check SKIPPED: no MANTLE_SIDECAR_EXE'); return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mantle-shot-shoot-'));
+  const p = spawn(EXE, ['--passive'], { stdio: ['pipe', 'pipe', 'ignore'] });
+  const reply = await new Promise((resolve) => {
+    let buf = '';
+    p.stdout.on('data', (c) => { buf += c; let i; while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); try { const m = JSON.parse(l); if (m.id === 1) resolve(m); } catch (_) { /* skip */ } } });
+    p.stdin.write(JSON.stringify({ id: 1, cmd: 'shot.grab', dir, synthetic: true, ttl: 15000 }) + '\n');
+  });
+  try {
+    check('synthetic grab for the decode check', reply.ok, reply.error);
+    if (!reply.ok) return;
+    const m = reply.result.monitors[0];
+    const ctx = await browser.newContext({ viewport: { width: 400, height: 300 } });
+    const page = await ctx.newPage();
+    await page.goto('file:///C:/Users/user/mantle/ui/screenshot/card.html?life=0');
+    const r = await page.evaluate(async (src) => {
+      const img = new Image();
+      const t0 = performance.now();
+      img.src = src;
+      await img.decode();
+      const ms = performance.now() - t0;
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const g = c.getContext('2d');
+      g.drawImage(img, 0, 0);
+      const pts = [[0, 0], [c.width - 1, 0], [0, c.height - 1], [c.width - 1, c.height - 1], [301, 177], [1023, 511]];
+      const px = pts.filter(([x, y]) => x < c.width && y < c.height).map(([x, y]) => [x, y, ...g.getImageData(x, y, 1, 1).data]);
+      const all = g.getImageData(0, 0, c.width, c.height).data;
+      let transparent = 0;
+      for (let i = 3; i < all.length; i += 4) if (all[i] !== 255) transparent++;
+      return { w: img.naturalWidth, h: img.naturalHeight, ms, px, transparent };
+    }, 'file:///' + m.file.replace(/\\/g, '/'));
+    check('Chromium decodes the frame BMP at the monitor size', r.w === m.frame.w && r.h === m.frame.h, JSON.stringify({ w: r.w, h: r.h }));
+    check('the decoded frame is fully opaque (the junk fourth byte is ignored)', r.transparent === 0, `${r.transparent} pixels not opaque`);
+    const exp = (vx, vy) => [((((vx >> 8) & 15) << 4) | ((vy >> 8) & 15)) & 255, vy & 255, vx & 255];
+    const bad = r.px.filter(([x, y, R, Gr, B]) => { const e = exp(m.frame.x + x, m.frame.y + y); return e[0] !== R || e[1] !== Gr || e[2] !== B; });
+    check('the decoded frame is pixel-exact', bad.length === 0, JSON.stringify(bad));
+    console.log(`  frame decode in Chromium: ${r.w}x${r.h} BMP (${Math.round(m.bytes / 1048576 * 10) / 10} MB) in ${r.ms.toFixed(1)} ms`);
+    await ctx.close();
+  } finally {
+    p.stdin.write(JSON.stringify({ id: 2, cmd: 'shot.release' }) + '\n');
+    await new Promise((res) => setTimeout(res, 300));
+    try { p.kill(); } catch (_) { /* gone */ }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+(async () => {
+  const games = gamesRunning();
+  if (games) { console.log(`NOT RUN: ${games} game process(es) are running; screenshots wait.`); process.exit(2); }
+  fs.mkdirSync(OUT, { recursive: true });
+  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--allow-file-access-from-files'] });
+  try {
+    await dpiCase(browser, 1, 0, true);
+    await dpiCase(browser, 1.25, 0, true);
+    await dpiCase(browser, 1.5, -1920, true);
+    await dpiCase(browser, 2, 0, false);
+    await modes(browser);
+    await cards(browser);
+    await frameFormat(browser);
+  } finally {
+    await browser.close();
+  }
+  console.log(`screenshot shots: ${passed} passed, ${failures.length} failed (PNGs in ${OUT})`);
+  process.exit(failures.length ? 1 : 0);
+})().catch((e) => { console.log('screenshot shots: crashed: ' + e.stack); process.exit(1); });

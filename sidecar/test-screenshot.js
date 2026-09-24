@@ -1,0 +1,279 @@
+// test-screenshot.js - the `shot.*` sidecar commands (Screenshot.cs), end to end. Plain node.
+//
+//   MANTLE_SIDECAR_EXE=<exe> node sidecar/test-screenshot.js
+//
+// Runs the sidecar in --passive, like test-sidecar.js. PRIVACY, the lane's hard rule: every pixel
+// this test LOOKS AT comes from `synthetic:true` grabs (a generated pattern, never the screen).
+// The one real grab is there to measure the timings on this machine: it prints dimensions and
+// milliseconds only, and its frames and its PNG are deleted before the test ends. Everything is
+// written under a fresh %TEMP% folder that is removed at the end; nothing touches the clipboard
+// or the Pictures folder (the passive refusal of a non-temp save is itself asserted).
+'use strict';
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const zlib = require('zlib');
+
+const EXE = process.env.MANTLE_SIDECAR_EXE || path.join(__dirname, 'bin', 'Mantle.Sidecar.exe');
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'mantle-shot-test-'));
+const FRAMES = path.join(TMP, 'frames');
+const OUT = path.join(TMP, 'out');
+let passed = 0;
+const failures = [];
+function check(name, ok, detail) {
+  if (ok) { passed++; return true; }
+  failures.push(detail ? `${name} (${detail})` : name);
+  console.log('  FAIL ' + name + (detail ? ' - ' + detail : ''));
+  return false;
+}
+
+function start() {
+  const proc = spawn(EXE, ['--passive', '--parent-pid=' + process.pid, '--state-file=' + path.join(TMP, 'state.json')],
+    { stdio: ['pipe', 'pipe', 'pipe'] });
+  const pending = new Map();
+  let buf = '';
+  let id = 1;
+  proc.stdout.on('data', (c) => {
+    buf += c.toString('utf8');
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line) continue;
+      let m;
+      try { m = JSON.parse(line); } catch (_) { continue; }
+      if (m.ev === undefined && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+    }
+  });
+  proc.stderr.on('data', () => {});
+  function send(cmd, args, timeoutMs) {
+    const n = id++;
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => { pending.delete(n); reject(new Error(`no reply to ${cmd}`)); }, timeoutMs || 15000);
+      pending.set(n, (m) => { clearTimeout(t); resolve(m); });
+      proc.stdin.write(JSON.stringify(Object.assign({ id: n, cmd, ttl: timeoutMs || 15000 }, args || {})) + '\n');
+    });
+  }
+  return { proc, send };
+}
+
+/** The synthetic pattern (Screenshot.cs FillSynthetic), at a VIRTUAL-screen position: [r,g,b]. */
+function expected(vx, vy) {
+  return [((((vx >> 8) & 15) << 4) | ((vy >> 8) & 15)) & 255, vy & 255, vx & 255];
+}
+
+/** Reads a BMP the sidecar wrote: header facts plus a pixel getter (b,g,r in the file). */
+function readBmp(file) {
+  const b = fs.readFileSync(file);
+  const off = b.readUInt32LE(10);
+  const w = b.readInt32LE(18);
+  const h = b.readInt32LE(22);
+  return {
+    magic: b.toString('latin1', 0, 2), size: b.readUInt32LE(2), off, hdr: b.readUInt32LE(14), w, h,
+    bpp: b.readUInt16LE(28), compression: b.readUInt32LE(30),
+    masks: [b.readUInt32LE(54), b.readUInt32LE(58), b.readUInt32LE(62)], length: b.length,
+    px(x, y) { const o = off + (y * w + x) * 4; return [b[o + 2], b[o + 1], b[o]]; },
+  };
+}
+
+/** A minimal PNG decoder (8-bit RGB / RGBA, non-interlaced): enough to check the saved file. */
+function readPng(file) {
+  const b = fs.readFileSync(file);
+  if (b.readUInt32BE(0) !== 0x89504e47) throw new Error('not a PNG');
+  let p = 8;
+  let w = 0, h = 0, depth = 0, ctype = 0, interlace = 0;
+  const idat = [];
+  while (p < b.length) {
+    const len = b.readUInt32BE(p);
+    const type = b.toString('latin1', p + 4, p + 8);
+    const data = b.subarray(p + 8, p + 8 + len);
+    if (type === 'IHDR') { w = data.readUInt32BE(0); h = data.readUInt32BE(4); depth = data[8]; ctype = data[9]; interlace = data[12]; }
+    if (type === 'IDAT') idat.push(data);
+    p += 12 + len;
+  }
+  const bpp = ctype === 6 ? 4 : ctype === 2 ? 3 : 0;
+  if (depth !== 8 || !bpp || interlace) return { w, h, depth, ctype, interlace, px: null };
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const stride = w * bpp;
+  const img = Buffer.alloc(stride * h);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)];
+    const src = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? img[y * stride + x - bpp] : 0;
+      const up = y > 0 ? img[(y - 1) * stride + x] : 0;
+      const c = x >= bpp && y > 0 ? img[(y - 1) * stride + x - bpp] : 0;
+      let v = src[x];
+      if (f === 1) v += a;
+      else if (f === 2) v += up;
+      else if (f === 3) v += (a + up) >> 1;
+      else if (f === 4) { const pp = a + up - c; const pa = Math.abs(pp - a), pb = Math.abs(pp - up), pc = Math.abs(pp - c); v += pa <= pb && pa <= pc ? a : pb <= pc ? up : c; }
+      img[y * stride + x] = v & 255;
+    }
+  }
+  return { w, h, depth, ctype, px(x, y) { const o = y * stride + x * bpp; return [img[o], img[o + 1], img[o + 2], bpp === 4 ? img[o + 3] : 255]; } };
+}
+
+const same = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+
+async function main() {
+  if (!fs.existsSync(EXE)) { console.log('no sidecar exe at ' + EXE); process.exit(2); }
+  const s = start();
+  try {
+    // --- the command table -------------------------------------------------------------------
+    const ping = await s.send('ping');
+    const cmds = (ping.result && ping.result.features && ping.result.features.commands) || [];
+    const probs = (ping.result && ping.result.features && ping.result.features.problems) || [];
+    check('ping lists the four shot.* commands', ['shot.grab', 'shot.save', 'shot.release', 'shot.folder'].every((c) => cmds.includes(c)),
+      JSON.stringify(cmds).slice(0, 200));
+    check('no feature registration problem names Screenshot', !probs.some((p) => /Screenshot/.test(p)), JSON.stringify(probs));
+
+    // --- refusals ------------------------------------------------------------------------------
+    const noDir = await s.send('shot.grab', {});
+    check('grab without a dir is refused with the reason', noDir.ok === false && /dir/.test(noDir.error), noDir.error);
+    const notTemp = await s.send('shot.grab', { dir: 'C:\\Users\\Public\\mantle-shot-nope' });
+    check('grab refuses a frame folder outside %TEMP%', notTemp.ok === false && /may only go under/.test(notTemp.error), notTemp.error);
+    check('...and did not create it', !fs.existsSync('C:\\Users\\Public\\mantle-shot-nope'));
+    const gone = await s.send('shot.save', { grab: 999, x: 0, y: 0, w: 10, h: 10, dir: OUT, name: 'x' });
+    check('save of an unknown capture says it is gone', gone.ok === false && /is gone/.test(gone.error), gone.error);
+
+    // --- a synthetic grab: the layout and the frame files ---------------------------------------
+    fs.mkdirSync(FRAMES, { recursive: true });
+    fs.writeFileSync(path.join(FRAMES, 'mantle-shot-77-0.bmp'), 'stale');       // a crash's leftover
+    fs.writeFileSync(path.join(FRAMES, 'keep-me.txt'), 'not ours');
+    const g = await s.send('shot.grab', { dir: FRAMES, synthetic: true });
+    check('synthetic grab answers ok', g.ok === true, g.error);
+    const r = g.result || {};
+    check('grab deleted the stale frame and nothing else', r.staleDeleted === 1 && !fs.existsSync(path.join(FRAMES, 'mantle-shot-77-0.bmp')) &&
+      fs.existsSync(path.join(FRAMES, 'keep-me.txt')), String(r.staleDeleted));
+    check('grab reports the virtual screen', r.virt && r.virt.w > 0 && r.virt.h > 0, JSON.stringify(r.virt));
+    check('grab reports at least one monitor, exactly one primary', Array.isArray(r.monitors) && r.monitors.length >= 1 &&
+      r.monitors.filter((m) => m.primary).length === 1, String(r.monitors && r.monitors.length));
+    const mons = r.monitors || [];
+    for (const m of mons) {
+      check(`monitor ${m.index}: dpi and scale agree`, m.dpi >= 96 && Math.abs(m.scale - m.dpi / 96) < 1e-3, `${m.dpi} ${m.scale}`);
+      check(`monitor ${m.index}: dpi read from Windows (${m.dpiSource})`, m.dpiSource === 'GetDpiForMonitor');
+      check(`monitor ${m.index}: work area inside the monitor`, m.work.x >= m.x && m.work.y >= m.y &&
+        m.work.x + m.work.w <= m.x + m.w && m.work.y + m.work.h <= m.y + m.h);
+      check(`monitor ${m.index}: a frame file under the temp dir`, m.file && m.file.startsWith(FRAMES) && fs.existsSync(m.file), m.file);
+      if (!m.file || !fs.existsSync(m.file)) continue;
+      const bmp = readBmp(m.file);
+      check(`monitor ${m.index}: BMP header is 32-bit BI_BITFIELDS top-down at the monitor size`,
+        bmp.magic === 'BM' && bmp.hdr === 40 && bmp.bpp === 32 && bmp.compression === 3 && bmp.w === m.frame.w && bmp.h === -m.frame.h &&
+        bmp.off === 66 && bmp.size === bmp.length && bmp.length === m.bytes, JSON.stringify({ w: bmp.w, h: bmp.h, c: bmp.compression, off: bmp.off }));
+      check(`monitor ${m.index}: RGB masks, and no alpha mask`, bmp.masks[0] === 0xff0000 && bmp.masks[1] === 0xff00 && bmp.masks[2] === 0xff);
+      const H = -bmp.h;
+      const pts = [[0, 0], [bmp.w - 1, 0], [0, H - 1], [bmp.w - 1, H - 1], [Math.floor(bmp.w / 2), Math.floor(H / 3)], [257, 511]];
+      let bad = 0;
+      for (const [x, y] of pts) if (x < bmp.w && y < H && !same(bmp.px(x, y), expected(m.frame.x + x, m.frame.y + y))) bad++;
+      check(`monitor ${m.index}: frame pixels are the pattern at their virtual positions`, bad === 0, `${bad} of ${pts.length} wrong`);
+    }
+    check('windows is a list of physical rects', Array.isArray(r.windows) && r.windows.every((w) => typeof w.hwnd === 'string' && w.w > 0 && w.h > 0),
+      String(r.windows && r.windows.length));
+    check('the desktop (Progman/WorkerW) is marked as kind desktop', r.windows.some((w) => w.kind === 'desktop'));
+    // exclude: pass the first listed window's hwnd back and it must disappear
+    if (r.windows.length) {
+      const first = r.windows[0].hwnd;
+      const g2 = await s.send('shot.grab', { dir: FRAMES, synthetic: true, exclude: [first] });
+      check('exclude drops that hwnd from the list', g2.ok && !g2.result.windows.some((w) => w.hwnd === first));
+      check('a new grab replaces the old one: its frames are deleted', mons.every((m) => !fs.existsSync(m.file)));
+      Object.assign(r, g2.result);
+    }
+    const monsNow = r.monitors;
+
+    // --- save: crop, encode, name ----------------------------------------------------------------
+    const m0 = monsNow.find((m) => m.primary) || monsNow[0];
+    const crop = { x: m0.x + 13, y: m0.y + 250, w: 301, h: 17 };
+    const sv = await s.send('shot.save', Object.assign({ grab: r.grab, dir: OUT, name: 'Screenshot 2026-09-24 101500' }, crop));
+    check('save answers ok', sv.ok === true, sv.error);
+    const sr = sv.result || {};
+    check('save wrote "<name>.png" in the asked folder', sr.name === 'Screenshot 2026-09-24 101500.png' && sr.path === path.join(OUT, sr.name) && fs.existsSync(sr.path), sr.name);
+    check('save reports the crop size', sr.w === crop.w && sr.h === crop.h && sr.bytes === fs.statSync(sr.path).size);
+    const png = readPng(sr.path);
+    check('the PNG is 8-bit RGB (opaque), at the crop size', png.w === crop.w && png.h === crop.h && png.depth === 8 && (png.ctype === 2 || png.ctype === 6),
+      JSON.stringify({ w: png.w, h: png.h, depth: png.depth, ctype: png.ctype }));
+    if (png.px) {
+      let bad = 0, alpha = 0, n = 0;
+      for (let y = 0; y < png.h; y += 4) for (let x = 0; x < png.w; x += 7) {
+        n++;
+        const p = png.px(x, y);
+        if (!same(p, expected(crop.x + x, crop.y + y))) bad++;
+        if (p[3] !== 255) alpha++;
+      }
+      check(`every sampled PNG pixel is the pattern at its virtual position (${n} sampled)`, bad === 0, `${bad} wrong`);
+      check('no PNG pixel is transparent (the junk fourth byte was ignored)', alpha === 0, `${alpha} not opaque`);
+    }
+    const sv2 = await s.send('shot.save', Object.assign({ grab: r.grab, dir: OUT, name: 'Screenshot 2026-09-24 101500' }, crop));
+    const sv3 = await s.send('shot.save', Object.assign({ grab: r.grab, dir: OUT, name: 'Screenshot 2026-09-24 101500' }, crop));
+    check('the same name again becomes " (2)" then " (3)", never an overwrite',
+      sv2.ok && sv2.result.name === 'Screenshot 2026-09-24 101500 (2).png' && sv3.ok && sv3.result.name === 'Screenshot 2026-09-24 101500 (3).png',
+      JSON.stringify([sv2.result && sv2.result.name, sv3.result && sv3.result.name]));
+    const clipped = await s.send('shot.save', { grab: r.grab, dir: OUT, name: 'clipped', x: r.virt.x - 50, y: r.virt.y - 50, w: 100, h: 80 });
+    check('a rect hanging off the screen is clipped to it', clipped.ok && clipped.result.w === 50 && clipped.result.h === 30 &&
+      clipped.result.x === r.virt.x && clipped.result.y === r.virt.y, JSON.stringify(clipped.result || clipped.error));
+    const outside = await s.send('shot.save', { grab: r.grab, dir: OUT, name: 'no', x: r.virt.x - 500, y: r.virt.y, w: 100, h: 100 });
+    check('a rect entirely off the screen is refused with the reason', outside.ok === false && /outside the capture/.test(outside.error), outside.error);
+    const badName = await s.send('shot.save', { grab: r.grab, dir: OUT, name: '..\\escape', x: m0.x, y: m0.y, w: 10, h: 10 });
+    check('a name with a folder in it is refused', badName.ok === false && /plain file name/.test(badName.error), badName.error);
+    const pics = path.join(os.homedir(), 'Pictures', 'Screenshots');
+    const refused = await s.send('shot.save', { grab: r.grab, dir: pics, name: 'mantle-test-must-not-exist', x: m0.x, y: m0.y, w: 10, h: 10 });
+    check('PASSIVE: a save outside %TEMP% (the real Pictures folder) is refused', refused.ok === false && /passive/.test(refused.error), refused.error);
+    check('...and wrote nothing there', !fs.existsSync(path.join(pics, 'mantle-test-must-not-exist.png')));
+
+    // --- release ------------------------------------------------------------------------------------
+    const rel = await s.send('shot.release', { grab: r.grab + 1000 });
+    check('release of a stale id keeps the current capture', rel.ok && rel.result.released === false && monsNow.every((m) => fs.existsSync(m.file)));
+    const rel2 = await s.send('shot.release', { grab: r.grab });
+    check('release frees the capture and deletes its frames', rel2.ok && rel2.result.released === true &&
+      rel2.result.filesDeleted === monsNow.length && monsNow.every((m) => !fs.existsSync(m.file)), JSON.stringify(rel2.result));
+    const after = await s.send('shot.save', Object.assign({ grab: r.grab, dir: OUT, name: 'late' }, crop));
+    check('save after release says the capture is gone', after.ok === false && /is gone/.test(after.error), after.error);
+
+    // --- folder -------------------------------------------------------------------------------------
+    const fo = await s.send('shot.folder', {});
+    check('shot.folder names a Screenshots folder', fo.ok && /Screenshots$/i.test(fo.result.path), fo.error || fo.result.source);
+    console.log(`  screenshots folder source: ${fo.result && fo.result.source}`);
+
+    // --- the REAL grab: timings and dimensions only; frames deleted at once --------------------------
+    const times = [];
+    let real = null;
+    for (let i = 0; i < 5; i++) {
+      const t0 = process.hrtime.bigint();
+      const gr = await s.send('shot.grab', { dir: FRAMES });
+      const rt = Number(process.hrtime.bigint() - t0) / 1e6;
+      if (!gr.ok) { check('real grab ok', false, gr.error); break; }
+      real = gr.result;
+      times.push({ rt, ...gr.result.ms });
+    }
+    if (real) {
+      const pm = real.monitors.find((m) => m.primary) || real.monitors[0];
+      const t0 = process.hrtime.bigint();
+      const full = await s.send('shot.save', { grab: real.grab, dir: OUT, name: 'real-full', x: pm.x, y: pm.y, w: pm.w, h: pm.h });
+      const saveRt = Number(process.hrtime.bigint() - t0) / 1e6;
+      check('a real full-monitor save works (then deleted)', full.ok === true, full.error);
+      if (full.ok) fs.unlinkSync(full.result.path);
+      await s.send('shot.release', {});
+      check('the real frames are deleted', real.monitors.every((m) => !m.file || !fs.existsSync(m.file)));
+      const med = (k) => { const v = times.map((t) => t[k]).sort((a, b) => a - b); return v[Math.floor(v.length / 2)].toFixed(1); };
+      console.log(`  real grab (${real.monitors.length} monitor${real.monitors.length > 1 ? 's' : ''}, virtual ${real.virt.w}x${real.virt.h}, ` +
+        `scales ${real.monitors.map((m) => m.scale).join('/')}; ${real.windows.length} windows), median of ${times.length}: ` +
+        `BitBlt ${med('blt')} ms, BMP write ${med('write')} ms, window list ${med('windows')} ms, sidecar total ${med('total')} ms, round trip ${med('rt')} ms`);
+      if (full.ok) console.log(`  real full-monitor save ${full.result.w}x${full.result.h}: crop ${full.result.ms.crop} ms, PNG encode ${full.result.ms.encode} ms, write ${full.result.ms.write} ms, round trip ${saveRt.toFixed(1)} ms, ${Math.round(full.result.bytes / 1024)} KB`);
+    }
+  } finally {
+    try { s.proc.stdin.write(JSON.stringify({ id: 0, cmd: 'quit' }) + '\n'); } catch (_) { /* gone */ }
+    setTimeout(() => { try { s.proc.kill(); } catch (_) { /* gone */ } }, 1500).unref();
+  }
+  await new Promise((res) => setTimeout(res, 300));
+  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+  check('the test temp folder is gone', !fs.existsSync(TMP));
+  console.log(`screenshot sidecar: ${passed} passed, ${failures.length} failed`);
+  process.exit(failures.length ? 1 : 0);
+}
+
+main().catch((e) => {
+  console.log('screenshot sidecar: crashed: ' + e.message);
+  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (_) { /* best effort: frames and captures must not outlive a crash */ }
+  process.exit(1);
+});

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle Screenshot saved</title>
+<!-- The ~5 s card after a capture, bottom right above the bar: what was saved and copied (or, in
+     plain words, what was not and why), a click opens the file, Copy path / Open folder. -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="card.css">
+</head>
+<body>
+<div id="card" hidden>
+  <button type="button" id="open" class="thumb" title="Open the screenshot">
+    <img id="thumb" alt="">
+  </button>
+  <div class="text">
+    <button type="button" id="title" class="title" title="Open the screenshot"></button>
+    <div id="name" class="name"></div>
+    <div id="status" class="status"></div>
+    <div id="warn" class="warn" hidden></div>
+    <div class="actions">
+      <button type="button" id="copy-path" class="act">Copy path</button>
+      <button type="button" id="folder" class="act">Open folder</button>
+    </div>
+  </div>
+  <button type="button" id="dismiss" class="x" title="Close (Esc)" aria-label="Close">
+    <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+  </button>
+  <div id="timer" class="timer"></div>
+</div>
+<script src="card-mock.js"></script>
+<script src="geometry.js"></script>
+<script src="card.js"></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- light frosted glass, so the UA's own bits are drawn for a light surface -->
+<meta name="color-scheme" content="light">
+<!-- the launcher's policy: file:// is an opaque origin, so scheme sources; data: for icon bitmaps -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle snap</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="snap.css">
+</head>
+<!-- ONE window, three faces (body.mode-*): the Win+Z layout picker, Snap Assist filling the space a
+     snap left empty, and the notice that says why a window could not be snapped. Main sizes and
+     places the window for each; the page fills it. -->
+<body class="mode-none">
+  <div id="stage">
+    <main class="panel" id="panel">
+      <!-- Win+Z: pick a zone of a layout. Every zone is a button; arrows, Enter and Esc work. -->
+      <section class="face picker" id="picker" aria-label="Snap layouts">
+        <header class="head">
+          <span class="h-t">Snap layouts</span>
+          <span class="h-app" id="pickApp"></span>
+        </header>
+        <div class="layouts" id="layouts" role="listbox" aria-label="Layouts"></div>
+        <footer class="foot" id="pickFoot">Arrows choose a zone &middot; Enter snaps &middot; Esc closes</footer>
+      </section>
+
+      <!-- Snap Assist: the other windows as live pictures (DWM draws them into each .pv box, which
+           main registers at the boxes this page measures). Whole rows only: a DWM picture cannot
+           be clipped by CSS, so rows scroll as units. -->
+      <section class="face assist" id="assist" aria-label="Snap Assist">
+        <header class="head">
+          <span class="h-t" id="assistTitle">Snap Assist</span>
+          <span class="h-app" id="assistZone"></span>
+        </header>
+        <div class="tiles" id="tiles" role="listbox" aria-label="Windows to snap here"></div>
+        <div class="empty" id="assistEmpty">No other windows to put here</div>
+        <footer class="foot" id="assistFoot">Arrows choose a window &middot; Enter puts it here &middot; Esc closes</footer>
+      </section>
+
+      <!-- "Could not snap ...": the reason, in words, for a few seconds. -->
+      <section class="face notice" id="notice" role="alert">
+        <div class="n-t" id="noticeTitle"></div>
+        <div class="n-x" id="noticeText"></div>
+      </section>
+    </main>
+  </div>
+<script src="mock-mantle.js"></script>
+<script src="layouts.js"></script>
+<script src="snap.js"></script>
+</body>
+</html>

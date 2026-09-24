@@ -321,6 +321,45 @@ body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
 @keyframes arm-run { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 @media (prefers-reduced-motion: reduce) { .arm-bar { animation: none; } }
 
+/* ---- groups (Win+S, 2026-09-24) ------------------------------------------
+   A header per kind of result, so "blue" reads as an app, a Settings page and some files rather
+   than one undifferentiated list. Quiet on purpose: small caps-ish label in --lg-ink-3, no rule,
+   no fill - the rows carry the weight, the header only says what they are. */
+.grp {
+  padding: 10px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--lg-ink-3);
+  user-select: none;
+}
+.grp:first-child { padding-top: 4px; }
+.row + .grp, .grp-status + .grp { margin-top: 2px; }
+/* the Files group's own line: searching, the index's reason, or "no files match" */
+.grp-status {
+  padding: 6px 12px 8px 52px;          /* under the name column, past the icon cell */
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--lg-ink-3);
+  user-select: none;
+}
+.grp-status.is-error { color: var(--lg-warn); }
+.grp-status.is-pending::after {
+  /* three dots that step, not a spinner: the index answers in 10-300 ms, this is only for the
+     slow ones, and a stepped animation costs nothing between steps */
+  content: "";
+  display: inline-block;
+  width: 1.2em;
+  text-align: left;
+  animation: grp-dots 900ms steps(4, end) infinite;
+}
+@keyframes grp-dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+@media (prefers-reduced-motion: reduce) { .grp-status.is-pending::after { animation: none; } }
+/* the calculator's answer is the point of its row: the readout ink, tabular digits */
+.row.is-calc .name { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--lg-ink); }
+.row.is-bad .name { color: var(--lg-warn); font-weight: 500; }
+
 .empty {
   padding: 16px 12px;
   font-size: 13px;

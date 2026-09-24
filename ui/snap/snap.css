@@ -1,0 +1,178 @@
+/* snap.css - the Win+Z picker, Snap Assist and the snap notice, in the taskbar island's glass.
+ *
+ * EVERY colour is a --lg-* token from ../shared/glass-light.css: light frost, dark ink, plain
+ * hairlines, one accent (the selection and keyboard focus). No backdrop-filter (in a transparent
+ * Electron window it would blur this page and nothing else), no text-shadow, no glow.
+ *
+ * The panels carry text and small targets over whatever desktop is behind, so they use the
+ * popovers' real surface (--lg-fill-strong), not the thin bar tint.
+ *
+ * NO ENTRANCE MOTION: main puts the window on screen already drawn, and DWM puts the window
+ * pictures up at full opacity in that same frame. A CSS fade would only fade the glass under
+ * pictures that are already there.
+ */
+:root {
+  --m: 16px;          /* the transparent margin round the panel, for its drop shadow */
+  --panel-r: 20px;    /* the launcher's and switcher's radius: one family of floating panes */
+  --pad: 14px;
+  --gap: 8px;
+  --zone-gap: 3px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: transparent;   /* the window is transparent: paint only the pane */
+  overflow: hidden;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px;
+  -webkit-font-smoothing: antialiased;
+  color: var(--lg-ink-2);
+  user-select: none;
+  cursor: default;
+}
+
+#stage { position: fixed; inset: 0; }
+
+.panel {
+  position: absolute;
+  inset: var(--m);
+  border-radius: var(--panel-r);
+  background: var(--lg-fill-strong);
+  border: 1px solid var(--lg-edge-out);
+  box-shadow: var(--lg-lip-up), var(--lg-shadow);
+  overflow: hidden;
+  display: none;
+}
+body.mode-picker .panel, body.mode-assist .panel, body.mode-notice .panel { display: block; }
+/* Snap Assist fills a whole zone: a smaller margin, so the pane reads as "this space". */
+body.mode-assist { --m: 10px; }
+
+.face { display: none; position: absolute; inset: 0; padding: var(--pad); flex-direction: column; }
+body.mode-picker .picker, body.mode-assist .assist, body.mode-notice .notice { display: flex; }
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  height: 22px;
+  flex: none;
+  margin: 0 2px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.h-t { color: var(--lg-ink); font-weight: 600; font-size: 13px; }
+.h-app { color: var(--lg-ink-3); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+.foot {
+  flex: none;
+  margin: 10px 2px 0;
+  color: var(--lg-ink-3);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.foot.warn { color: var(--lg-warn); }
+
+/* ---- Win+Z: the layouts ---------------------------------------------------------------------- */
+
+.layouts {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 1fr;
+  gap: var(--gap);
+}
+
+.layout {
+  /* the layout's own grid (snap.js sets its columns and rows): the zones ARE its cells */
+  display: grid;
+  gap: var(--zone-gap);
+  border-radius: 10px;
+  background: var(--lg-sunk);
+  border: 1px solid var(--lg-edge-out);
+  padding: 5px;
+  min-height: 0;
+}
+
+.zone {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  border-radius: 5px;
+  background: var(--lg-fill-fb);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+  cursor: pointer;
+  outline: none;
+}
+.zone:hover { background: var(--lg-acc-soft); box-shadow: inset 0 0 0 1px var(--lg-acc); }
+.zone.sel { background: var(--lg-acc); box-shadow: none; }
+.zone:active { background: var(--lg-acc); }
+
+/* ---- Snap Assist ----------------------------------------------------------------------------- */
+
+.tiles { position: relative; flex: 1; min-height: 0; }
+
+.tile {
+  position: absolute;          /* snap.js lays the grid out in px: DWM needs exact boxes */
+  border-radius: 12px;
+  padding: 6px;
+  cursor: pointer;
+}
+.tile:hover { background: var(--lg-hover); }
+.tile.sel { background: var(--lg-acc-soft); box-shadow: inset 0 0 0 2px var(--lg-acc); }
+
+/* The preview box. DWM draws the window over it; what is in here is only seen when there is
+   no picture, and then it is the icon and the reason. */
+.pv {
+  position: relative;
+  border-radius: 6px;
+  background: var(--lg-sunk);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.pv img { width: 32px; height: 32px; opacity: .9; }
+.pv-why { color: var(--lg-ink-3); font-size: 11px; text-align: center; padding: 0 8px; line-height: 1.3; }
+
+.cap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  margin-top: 6px;
+  padding: 0 2px;
+  color: var(--lg-ink);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cap img { width: 16px; height: 16px; flex: none; }
+.cap .t { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tile.sel .cap { color: var(--lg-ink); }
+.cap .min { color: var(--lg-ink-3); flex: none; }
+
+.letter {
+  width: 16px; height: 16px; flex: none; border-radius: 4px;
+  background: var(--lg-tile); color: var(--lg-ink-2);
+  font-size: 10px; font-weight: 600; display: grid; place-items: center;
+}
+.pv .letter { width: 32px; height: 32px; font-size: 15px; border-radius: 8px; }
+
+.empty { display: none; flex: 1; align-items: center; justify-content: center; color: var(--lg-ink-2); font-size: 13px; }
+body.is-empty .empty { display: flex; }
+body.is-empty .tiles { display: none; }
+
+.more { position: absolute; right: 2px; bottom: -2px; color: var(--lg-ink-3); font-size: 11px; }
+
+/* ---- the notice ------------------------------------------------------------------------------ */
+
+.notice { justify-content: center; gap: 4px; padding: 12px 18px; }
+.n-t { color: var(--lg-ink); font-weight: 600; font-size: 13px; }
+.n-x { color: var(--lg-ink-2); line-height: 1.4; }

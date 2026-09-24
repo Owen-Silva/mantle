@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- light frosted glass, so the UA's own bits are drawn for a light surface -->
+<meta name="color-scheme" content="light">
+<!-- the switcher's policy: file:// is an opaque origin, so scheme sources; data: is for the icon
+     bitmaps main sends. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle task view</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette (one theme for
+     every Mantle surface, Owen 2026-09-21). -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="taskview.css">
+</head>
+<!-- no-glass until main says the blur-behind took: the thicker fallback fill carries the page alone -->
+<body class="no-glass is-idle">
+  <!-- The desktops, across the top. Each card: its name, how many windows are on it, the current
+       one ringed; click to switch, double-click the name (or F2) to rename, x to remove, + to add,
+       and drop a dragged window on one to move it there. -->
+  <header class="strip" id="strip">
+    <div class="desks" id="desks" role="listbox" aria-label="Desktops" aria-orientation="horizontal"></div>
+    <!-- why the strip is read-only or empty, in words (build not pinned, explorer not answering) -->
+    <div class="strip-why" id="stripWhy" role="status"></div>
+  </header>
+
+  <!-- Type to filter: there is no input to click, typing anywhere lands here. -->
+  <div class="search" id="search" aria-live="polite">
+    <div class="pill" id="pill">
+      <svg class="glass-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.6"/><path d="M10.4 10.4 14 14"/></svg>
+      <span class="q" id="q"></span>
+      <span class="q-hint" id="qHint">Type to filter windows</span>
+      <span class="q-count" id="qCount"></span>
+    </div>
+  </div>
+
+  <!-- The windows on this desktop. Each tile's .pv is a box DWM draws the live window into (main
+       registers the thumbnails at the boxes this page measures). Nothing may overlap a .pv: DWM
+       draws over the page there, so the close button lives in the caption row. -->
+  <main class="grid" id="grid" role="listbox" aria-label="Windows on this desktop"></main>
+
+  <div class="empty" id="empty"></div>
+
+  <!-- what is degraded in THIS Task View (no blur, no previews), in words -->
+  <footer class="foot" id="foot"></footer>
+
+  <!-- an action that failed ("could not move ..."), on screen for a few seconds -->
+  <div class="toast" id="toast" role="alert"></div>
+
+  <!-- the window being dragged towards a desktop -->
+  <div class="chip-drag" id="dragChip" aria-hidden="true"></div>
+<script src="mock-mantle.js"></script>
+<script src="layout.js"></script>
+<script src="taskview.js"></script>
+</body>
+</html>

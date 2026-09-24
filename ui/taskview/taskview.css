@@ -1,0 +1,199 @@
+/* taskview.css - Mantle's Task View (Win+Tab). One theme: glass-light.css --lg-* tokens only.
+ *
+ * GEOMETRY IS SHARED WITH layout.js: .strip is L.stripH tall, .search L.searchH, a tile's padding
+ * is L.inset and its caption L.capH. The page positions tiles with layout.js numbers and measures
+ * each .pv for main, so a CSS change here that moves a .pv moves the live picture with it.
+ */
+:root {
+  --strip-h: 148px;
+  --search-h: 48px;
+  --inset: 8px;
+  --cap-h: 36px;
+  --tile-r: 12px;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px;
+  color: var(--lg-ink);
+  -webkit-font-smoothing: antialiased;
+}
+/* The window is transparent with the sidecar's blur-behind; this light fill is the frost over it.
+   Without the blur (no-glass) a much thicker fill carries the page on its own, honestly. */
+body { background: var(--lg-fill); }
+body.no-glass { background: var(--lg-fill-strong); }
+body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale on the next open */
+
+/* ---------------------------------------------------------------- the desktop strip */
+.strip {
+  position: absolute; left: 0; right: 0; top: 0;
+  height: var(--strip-h);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px;
+  box-shadow: inset 0 -1px 0 var(--lg-edge-out);
+  background: var(--lg-sunk);
+}
+.desks { display: flex; gap: 12px; align-items: stretch; max-width: calc(100% - 96px); overflow: hidden; padding: 4px; }
+.desk {
+  position: relative;
+  width: 168px; height: 84px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: var(--tile-r);
+  background: var(--lg-fill-strong);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-lip-up);
+  display: flex; flex-direction: column; justify-content: space-between;
+  transition: background-color 90ms steps(2);
+}
+.desk:hover { background: var(--lg-fill-strong); box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-lip-up), inset 0 0 0 100px var(--lg-hover); }
+.desk.is-cur { box-shadow: inset 0 0 0 2px var(--lg-acc), var(--lg-lip-up); }
+.desk.is-focus { outline: 2px solid var(--lg-ink-2); outline-offset: 2px; }
+.desk.is-drop { background: var(--lg-acc-soft); box-shadow: inset 0 0 0 2px var(--lg-acc); }
+.desk.is-ro { opacity: .92; }
+/* the miniature: one bar per window on that desktop (up to 8), a glance at how busy it is */
+.mini { display: flex; gap: 3px; flex-wrap: wrap; height: 30px; align-content: flex-start; overflow: hidden; }
+.mini i { display: block; width: 22px; height: 13px; border-radius: 3px; background: var(--lg-tile); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+.desk.is-cur .mini i { background: var(--lg-acc-soft); }
+.desk-name { font-size: 12.5px; font-weight: 600; color: var(--lg-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-meta { font-size: 11px; color: var(--lg-ink-3); white-space: nowrap; }
+.desk-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.desk-name-in {
+  font: inherit; font-size: 12.5px; font-weight: 600; color: var(--lg-ink);
+  width: 100%; box-sizing: border-box; padding: 2px 6px; margin: -3px -7px;
+  border: 1px solid var(--lg-acc); border-radius: var(--lg-r-ctl); background: var(--lg-fill-strong); outline: none;
+}
+.desk-x, .x {
+  position: absolute;
+  width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: 50%;
+  background: transparent; color: var(--lg-ink-2);
+  display: grid; place-items: center;
+  opacity: 0; transition: opacity 90ms steps(2);
+}
+.desk-x { top: 5px; right: 5px; }
+.desk:hover .desk-x, .desk.is-focus .desk-x { opacity: 1; }
+.desk-x:hover, .x:hover { background: var(--lg-press); color: var(--lg-ink); }
+.desk-x svg, .x svg { width: 10px; height: 10px; stroke: currentColor; stroke-width: 1.6; fill: none; stroke-linecap: round; }
+.desk-add {
+  width: 56px; height: 84px; box-sizing: border-box;
+  border: 0; border-radius: var(--tile-r);
+  background: transparent; color: var(--lg-ink-2);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+  display: grid; place-items: center;
+}
+.desk-add:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.desk-add.is-focus { outline: 2px solid var(--lg-ink-2); outline-offset: 2px; }
+.desk-add.is-drop { background: var(--lg-acc-soft); box-shadow: inset 0 0 0 2px var(--lg-acc); }
+.desk-add svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.6; fill: none; stroke-linecap: round; }
+.strip-why { font-size: 11.5px; color: var(--lg-warn); max-width: 900px; text-align: center; padding: 0 24px; }
+.strip-why:empty { display: none; }
+
+/* ---------------------------------------------------------------- type to filter */
+.search {
+  position: absolute; left: 0; right: 0; top: var(--strip-h);
+  height: var(--search-h);
+  display: flex; align-items: center; justify-content: center;
+}
+.pill {
+  display: flex; align-items: center; gap: 8px;
+  min-width: 280px; max-width: 560px; height: 32px; box-sizing: border-box;
+  padding: 0 14px;
+  border-radius: var(--lg-r-pill);
+  background: var(--lg-fill-strong);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-lip-up);
+}
+.glass-ico { width: 14px; height: 14px; flex: none; stroke: var(--lg-ink-3); stroke-width: 1.5; fill: none; stroke-linecap: round; }
+.q { color: var(--lg-ink); font-size: 13px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.q:empty { display: none; }
+.q:not(:empty)::after { content: ''; display: inline-block; width: 1px; height: 14px; margin-left: 1px; vertical-align: -2px; background: var(--lg-ink); animation: caret 1s steps(1) infinite; }
+@keyframes caret { 50% { opacity: 0; } }
+.q-hint { color: var(--lg-ink-3); font-size: 13px; }
+.q:not(:empty) ~ .q-hint { display: none; }
+.q-count { margin-left: auto; padding-left: 12px; color: var(--lg-ink-3); font-size: 11.5px; white-space: nowrap; }
+
+/* ---------------------------------------------------------------- the windows */
+.grid { position: absolute; inset: 0; pointer-events: none; }
+.tile {
+  position: absolute;
+  box-sizing: border-box;
+  padding: var(--inset) var(--inset) 0;
+  border-radius: var(--tile-r);
+  background: var(--lg-fill);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-lip-up);
+  pointer-events: auto;
+  transition: background-color 90ms steps(2);
+}
+.tile:hover { background: var(--lg-fill-strong); }
+/* the selection ring is an INSET shadow, not a border: a border would move the .pv by 2px */
+.tile.is-sel { background: var(--lg-fill-strong); box-shadow: inset 0 0 0 2px var(--lg-acc), var(--lg-lip-up); }
+.tile.is-dragging { opacity: .55; }
+.pv {
+  position: relative;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+  overflow: hidden;
+  display: grid; place-items: center;
+}
+/* Under the live picture: the app's icon, big and quiet. It is what shows before DWM's picture
+   arrives (the grid fills in progressively) and for a minimised window, which DWM cannot draw. */
+.pv .big { width: 48px; height: 48px; opacity: .5; }
+.pv .big.letter { display: grid; place-items: center; border-radius: 12px; background: var(--lg-tile); color: var(--lg-ink-2); font-size: 22px; font-weight: 600; opacity: .7; }
+.pv-why {
+  position: absolute; left: 8px; right: 8px; bottom: 8px;
+  font-size: 11.5px; color: var(--lg-ink-2); text-align: center;
+  padding: 4px 8px; border-radius: var(--lg-r-ctl);
+}
+.pv-why:not(:empty) { background: var(--lg-fill-strong); }
+.cap {
+  height: var(--cap-h);
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 32px 0 2px;
+  position: relative;
+}
+.ico { width: 18px; height: 18px; flex: none; object-fit: contain; }
+.ico.letter { display: grid; place-items: center; border-radius: 4px; background: var(--lg-tile); color: var(--lg-ink-2); font-size: 10.5px; font-weight: 600; }
+.ttl { flex: 1; min-width: 0; color: var(--lg-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile.is-sel .ttl, .tile:hover .ttl { color: var(--lg-ink); }
+.tile.is-sel .ttl { font-weight: 600; }
+.chip {
+  flex: none; font-size: 10.5px; padding: 1px 6px; border-radius: var(--lg-r-pill);
+  background: var(--lg-tile); color: var(--lg-ink-2);
+}
+.chip.warn { background: var(--lg-warn); color: var(--lg-acc-on); }
+.x { right: 4px; top: 6px; }
+.tile:hover .x, .tile.is-sel .x { opacity: 1; }
+
+/* ---------------------------------------------------------------- states, notes */
+.empty {
+  position: absolute; left: 0; right: 0; top: calc(var(--strip-h) + var(--search-h) + 80px);
+  text-align: center; color: var(--lg-ink-2); font-size: 14px;
+}
+.empty:empty { display: none; }
+.foot {
+  position: absolute; left: 0; right: 0; bottom: 10px;
+  text-align: center; font-size: 11.5px; color: var(--lg-ink-3);
+}
+.foot:empty { display: none; }
+.toast {
+  position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%);
+  max-width: 720px; padding: 10px 16px; border-radius: var(--lg-r);
+  background: var(--lg-fill-strong); color: var(--lg-ink);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  font-size: 12.5px; display: none;
+}
+.toast.on { display: block; }
+.toast b { color: var(--lg-warn); font-weight: 600; }
+.chip-drag {
+  position: fixed; left: 0; top: 0; display: none; align-items: center; gap: 8px;
+  max-width: 280px; padding: 6px 12px 6px 8px; border-radius: var(--lg-r-pill);
+  background: var(--lg-fill-strong); color: var(--lg-ink);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chip-drag.on { display: flex; }

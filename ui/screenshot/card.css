@@ -1,0 +1,59 @@
+/* card.css - the "Screenshot saved" card. The taskbar island's popover glass (--lg-fill-strong: a
+ * card carries text, so it gets a real surface), plain hairlines, accent only for focus. */
+html, body {
+  margin: 0; height: 100%; overflow: hidden; background: transparent;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px; color: var(--lg-ink); user-select: none; -webkit-user-select: none; cursor: default;
+}
+/* The window is the card plus room for its shadow; the card sits at its bottom-right. */
+#card {
+  position: absolute; right: 12px; bottom: 12px; width: 372px; box-sizing: border-box;
+  display: flex; gap: 12px; padding: 12px 12px 14px; border-radius: var(--lg-r-pop);
+  background: var(--lg-fill-strong);
+  box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  overflow: hidden;
+  transform: translateY(8px); opacity: 0;
+  transition: transform var(--lg-dur) var(--lg-ease), opacity 180ms linear;
+}
+#card.in { transform: none; opacity: 1; }
+#card[hidden] { display: none; }
+
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: default; outline: none; }
+button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
+
+.thumb {
+  flex: none; width: 104px; height: 66px; border-radius: var(--lg-r-ctl); overflow: hidden;
+  background: var(--lg-sunk); box-shadow: 0 0 0 1px var(--lg-edge-out);
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb img:not([src]) { visibility: hidden; }
+
+.text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding-right: 22px; }
+.title { text-align: left; font-size: 14px; font-weight: 600; color: var(--lg-ink); border-radius: 4px; }
+.name, .status, .warn { font-size: 12px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.name { color: var(--lg-ink-2); }
+.status { color: var(--lg-ink-3); font-variant-numeric: tabular-nums; }
+.warn { color: var(--lg-warn); white-space: normal; }
+
+.actions { display: flex; gap: 6px; margin-top: 6px; }
+.act {
+  height: 26px; padding: 0 10px; border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk); color: var(--lg-ink); font-size: 12px;
+}
+.act:hover { background: var(--lg-hover); }
+.act:active { background: var(--lg-press); }
+.act[disabled] { color: var(--lg-ink-3); background: transparent; }
+.act.done { color: var(--lg-acc); }
+
+.x {
+  position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border-radius: var(--lg-r-ctl);
+  display: grid; place-items: center; color: var(--lg-ink-3);
+}
+.x svg { width: 14px; height: 14px; }
+.x:hover { background: var(--lg-hover); color: var(--lg-ink); }
+
+/* How long the card has left: a hairline that shrinks, paused while the pointer or focus is on it. */
+.timer {
+  position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--lg-acc); opacity: .35;
+  transform-origin: left center;
+}

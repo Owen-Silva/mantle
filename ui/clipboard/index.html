@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- light frosted glass, so the UA's own bits (the caret, the scrollbar) are drawn for a light surface -->
+<meta name="color-scheme" content="light">
+<!-- file:// is an opaque origin, so scheme sources; data: is for the picture thumbnails the
+     sidecar makes (small JPEGs), and nothing here ever loads from the network. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle clipboard</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette (one theme for
+     every Mantle surface, Owen 2026-09-21). -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="clipboard.css">
+</head>
+<body>
+  <!-- The window. Main sizes it to the panel plus its shadow margin and parks it off screen
+       between uses; the mock harness moves #stage around a fake screen instead. -->
+  <div id="stage">
+    <main class="panel" id="panel" role="dialog" aria-label="Clipboard history">
+      <header class="head">
+        <div class="title">Clipboard</div>
+        <div class="count" id="count"></div>
+        <button class="chip" id="clearAll" type="button" title="Remove every item that is not pinned">Clear all</button>
+      </header>
+
+      <!-- The filter keeps the keyboard focus the whole time the panel is open: typing filters,
+           and the list keys (arrows, Enter, Del, P, Esc) are read before the box sees them. -->
+      <label class="filter" id="filterBox">
+        <svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4 14 14"/></svg>
+        <input id="q" type="text" placeholder="Type to filter" spellcheck="false" autocomplete="off"
+               role="combobox" aria-controls="list" aria-expanded="true" aria-label="Filter the clipboard history">
+      </label>
+
+      <!-- a standing problem or caveat, in words: not recording and why, pins not saved, an
+           administrator window that Mantle cannot type into -->
+      <div class="banner" id="banner" role="status"></div>
+
+      <div class="list" id="list" role="listbox" aria-label="Clipboard items"></div>
+
+      <div class="empty" id="empty">
+        <div class="empty-t" id="emptyTitle"></div>
+        <div class="empty-x" id="emptyText"></div>
+      </div>
+
+      <!-- "Copied, not pasted": why a paste did not land, on screen for a few seconds -->
+      <div class="note" id="note" role="alert">
+        <div class="note-t" id="noteTitle"></div>
+        <div class="note-x" id="noteText"></div>
+      </div>
+
+      <footer class="foot" id="foot"></footer>
+    </main>
+  </div>
+<script src="mock-mantle.js"></script>
+<script src="model.js"></script>
+<script src="clipboard.js"></script>
+</body>
+</html>

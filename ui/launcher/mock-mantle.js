@@ -17,7 +17,12 @@
  *                which is the fallback pane (--lg-fill-fb) plus the "no blur: …"
  *                line in the footer — the failure must be visible, not silent
  *   ?files=down  launcher.files answers the way it does when the WSearch service is
- *                stopped, so the reason line in the footer can be looked at
+ *                stopped, so the reason line in the Files group can be looked at
+ *   ?files=slow  the index takes 6 s: the Files group's pending line
+ *   ?mode=search&q=…  opened the way Win+S opens it (launcher.open), with that query typed
+ *
+ * The Win+S commands (search.files / search.openFile / search.copy / search.web) are here too,
+ * and like power they are ALWAYS dry runs: nothing is opened, nothing touches a clipboard.
  *
  * Power rows (Lock, Sleep, Hibernate, Restart, Shut down, Sign out) are in the fake
  * index, and launcher.power here is ALWAYS a dry run: it answers the command the real
@@ -32,6 +37,11 @@
   var ALWAYS_FAIL = flags.get('fail') === '1';
   var NO_BLUR = flags.get('blur') === '0';
   var FILES_DOWN = flags.get('files') === 'down';
+  // ?files=slow  the index takes 6 s, so the Files group's "Searching your files" line can be seen
+  var FILES_SLOW = flags.get('files') === 'slow';
+  // ?mode=search opens as Win+S does (launcher.open {mode:'search'}), ?q=... types it
+  var OPEN_MODE = flags.get('mode');
+  var OPEN_Q = flags.get('q');
 
   /* The page itself paints nothing outside the panel — html and body stay
      transparent so DWM's blur-behind is what you see. In MOCK MODE ONLY there
@@ -100,6 +110,10 @@
     mk('setting', 'Default apps', 'Settings', null, 'ms-settings:defaultapps'),
     mk('setting', 'Startup apps', 'Settings', null, 'ms-settings:startupapps'),
     mk('setting', 'Windows Security', 'Settings', null, 'ms-settings:windowsdefender'),
+    mk('setting', 'Night light', 'Settings', null, 'ms-settings:nightlight'),
+    mk('setting', 'Colors', 'Settings', null, 'ms-settings:colors'),
+    mk('setting', 'Background', 'Settings', null, 'ms-settings:personalization-background'),
+    mk('setting', 'Screen and sleep', 'Settings', null, 'ms-settings:powersleep'),
   ];
 
   /* the power rows, shaped like lib/launcher-index.js source 4 builds them */
@@ -309,6 +323,7 @@
           }
           return Promise.resolve({ ok: true, dryRun: true, reason: 'dry run: would run ' + POWER_RUN[args.action] });
         }
+        case 'search.files':
         case 'launcher.files':
           // a real index answers in 50-300 ms on Owen's machine; 90 keeps the merge visible
           return new Promise(function (resolve) {
@@ -320,8 +335,20 @@
               }
               var hits = fileSearch(args.q);
               resolve({ ok: true, q: args.q, items: hits, ms: 84, reason: '' });
-            }, 90);
+            }, FILES_SLOW ? 6000 : 90);
           });
+        case 'search.copy': {
+          var C = window.MantleCalc;
+          var r = C ? C.evaluate(args.expr) : null;
+          if (!r) return Promise.resolve({ ok: false, reason: '"' + args.expr + '" is not a calculation, so there is no answer to copy' });
+          if (!r.ok) return Promise.resolve({ ok: false, reason: r.reason });
+          return Promise.resolve({ ok: true, dryRun: true, copied: r.copy, reason: 'dry run: would copy ' + r.copy });
+        }
+        case 'search.web':
+          return Promise.resolve({ ok: true, dryRun: true,
+            url: 'https://www.google.com/search?q=' + encodeURIComponent(args.q).replace(/%20/g, '+'),
+            reason: 'dry run: would open https://www.google.com/search?q=' + encodeURIComponent(args.q).replace(/%20/g, '+') + ' in your browser' });
+        case 'search.openFile':
         case 'launcher.openFile':
           return Promise.resolve({ ok: true, dryRun: true,
             reason: 'dry run: would ' + (args.reveal ? 'show ' + args.path + ' in its folder' : 'open ' + args.path) });
@@ -351,4 +378,10 @@
 
   // a test can drive the visible event by hand
   window.__mockShow = function () { emit('launcher:visible', true); };
+  // Win+S's path: main sends launcher.open {mode, query} and then shows the window
+  window.__mockOpen = function (mode, query) {
+    emit('launcher.open', { mode: mode || 'search', query: query || '', from: 'mock' });
+    emit('launcher:visible', true);
+  };
+  if (OPEN_MODE || OPEN_Q) setTimeout(function () { window.__mockOpen(OPEN_MODE || 'search', OPEN_Q || ''); }, 50);
 })();

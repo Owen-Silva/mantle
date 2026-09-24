@@ -1,0 +1,251 @@
+/* clipboard.css — Mantle's Win+V clipboard history panel, in the taskbar island's glass.
+ *
+ * EVERY colour is a --lg-* token from ../shared/glass-light.css: light frost, dark ink, plain
+ * hairlines, one accent. No backdrop-filter (in a transparent Electron window it blurs this page
+ * and nothing else), no text-shadow, no glow.
+ *
+ * THE SURFACE: this panel carries a LIST of Owen's text over whatever window he was typing in,
+ * with no screen capture behind it (a picture of the screen under a clipboard panel is exactly
+ * the kind of pixels the privacy rule keeps out). The switcher measured the glass tint alone at
+ * 3.1:1 over a dark screen (2026-09-23), so the pane is the popovers' --lg-fill-strong laid over
+ * the fallback tint --lg-fill-fb: ~89% white. Even so --lg-ink-3 measured 4.1:1 on a row over a
+ * dark desktop (shoot.js, 2026-09-24), so every line of TEXT is --lg-ink-2 or darker; ink-3 is
+ * left to the placeholder and the glyphs. shoot.js checks 4.5:1 off the screenshots every run.
+ */
+:root {
+  --panel-r: 20px;      /* the launcher's and the switcher's panel radius: one family of panes */
+  --m: 18px;            /* the transparent margin round the panel, for its drop shadow */
+  --pw: 360px;
+  --ph: 460px;
+  --row-r: 10px;
+}
+* { box-sizing: border-box; }
+html, body {
+  height: 100%;
+  margin: 0;
+  background: transparent;   /* the window is transparent: paint only the pane */
+  overflow: hidden;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px;
+  -webkit-font-smoothing: antialiased;
+  color: var(--lg-ink-2);
+  user-select: none;
+  cursor: default;
+}
+#stage { position: fixed; inset: 0; }
+
+/* ---- the pane ------------------------------------------------------------------------------ */
+.panel {
+  position: absolute;
+  left: var(--m);
+  top: var(--m);
+  width: var(--pw);
+  height: var(--ph);
+  border-radius: var(--panel-r);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)),
+    var(--lg-fill-fb);
+  /* the two hairlines: the white lip inside the top edge, the ink line round the pane */
+  box-shadow: inset 0 1px 0 var(--lg-edge-in), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+}
+
+/* ---- header -------------------------------------------------------------------------------- */
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 8px 16px;
+  flex: none;
+}
+.title { color: var(--lg-ink); font-size: 13.5px; font-weight: 600; }
+.count { color: var(--lg-ink-2); font-size: 12px; flex: 1; font-variant-numeric: tabular-nums; }
+.chip {
+  font: inherit;
+  font-size: 12px;
+  color: var(--lg-ink-2);
+  background: var(--lg-sunk);
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.chip:hover { background: var(--lg-hover); }
+.chip:active { background: var(--lg-press); }
+.chip:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
+.chip[disabled] { display: none; }   /* nothing to clear: no button, rather than a greyed one */
+
+/* ---- filter -------------------------------------------------------------------------------- */
+.filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 0 10px;
+  height: 32px;
+  flex: none;
+  border-radius: var(--lg-r-ctl);
+  background: linear-gradient(var(--lg-sunk), var(--lg-sunk)), var(--lg-fill-strong);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+  cursor: text;
+}
+.filter.armed, .filter.typing { box-shadow: inset 0 0 0 1.5px var(--lg-acc); }
+.filter input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--lg-ink);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  caret-color: var(--lg-acc);
+}
+.filter input::placeholder { color: var(--lg-ink-3); }
+.glyph { width: 14px; height: 14px; flex: none; fill: none; stroke: var(--lg-ink-3); stroke-width: 1.6; stroke-linecap: round; }
+
+/* ---- banner (a standing caveat) ------------------------------------------------------------- */
+.banner {
+  display: none;
+  margin: 0 12px 8px;
+  padding: 7px 10px;
+  border-radius: var(--lg-r-ctl);
+  background: linear-gradient(var(--lg-warn-soft), var(--lg-warn-soft)), var(--lg-fill-strong);
+  /* ink on the warn tint, the warn colour as a bar: warn-coloured text on its own tint measured
+     4.1:1 over a dark desktop (shoot.js, 2026-09-24) */
+  box-shadow: inset 3px 0 0 var(--lg-warn);
+  color: var(--lg-ink);
+  font-size: 12px;
+  line-height: 1.4;
+  flex: none;
+}
+.banner.on { display: block; }
+.banner.info { background: linear-gradient(var(--lg-sunk), var(--lg-sunk)), var(--lg-fill-strong); box-shadow: none; color: var(--lg-ink-2); }
+
+/* ---- the list ------------------------------------------------------------------------------ */
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 8px 8px;
+}
+/* ::-webkit-scrollbar ONLY: in this Chromium a standard scrollbar-width/-color on the element
+   switches these off and brings back the native bar with its arrows (seen in the --test shot) */
+.list::-webkit-scrollbar { width: 8px; }
+.list::-webkit-scrollbar-button { display: none; height: 0; }
+.list::-webkit-scrollbar-thumb { background: var(--lg-press); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box; }
+.row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 9px 8px 8px 10px;
+  margin-bottom: 4px;
+  border-radius: var(--row-r);
+  /* each row sits on its own --lg-fill-strong: with no blurred picture of the screen behind this
+     pane, the text of the window underneath ghosted through the 89% pane in the dark mock shot */
+  background: linear-gradient(var(--lg-sunk), var(--lg-sunk)), var(--lg-fill-strong);
+  cursor: pointer;
+}
+.row:hover { background: linear-gradient(var(--lg-hover), var(--lg-hover)), var(--lg-fill-strong); }
+.row.sel { background: linear-gradient(var(--lg-acc-soft), var(--lg-acc-soft)), var(--lg-fill-strong); box-shadow: inset 0 0 0 1.5px var(--lg-acc); }
+.body { flex: 1; min-width: 0; }
+.txt {
+  color: var(--lg-ink);
+  font-size: 12.5px;
+  line-height: 1.42;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.txt.blank { color: var(--lg-ink-2); font-style: italic; }
+.img {
+  display: inline-flex;
+  max-width: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--lg-edge-out);
+  background: var(--lg-fill-strong);
+}
+.img img { display: block; max-width: 100%; max-height: 90px; object-fit: contain; }
+.files { display: flex; flex-direction: column; gap: 2px; }
+.file { display: flex; align-items: center; gap: 6px; color: var(--lg-ink); min-width: 0; }
+.file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file svg { width: 14px; height: 14px; flex: none; fill: none; stroke: var(--lg-ink-2); stroke-width: 1.4; stroke-linejoin: round; }
+.more { color: var(--lg-ink-2); font-size: 12px; margin-left: 20px; align-self: flex-start; }
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  color: var(--lg-ink-2);
+  font-size: 11.5px;
+}
+.meta .pinmark { width: 11px; height: 11px; fill: var(--lg-acc); }
+.row.sel .meta { color: var(--lg-ink-2); }
+
+/* the row's two actions: quiet until the row is hovered or selected (keyboard users get P and Del) */
+.acts { display: flex; gap: 2px; flex: none; opacity: 0; }
+.row:hover .acts, .row.sel .acts, .row.pinned .acts { opacity: 1; }
+.row.pinned:not(:hover):not(.sel) .act.del { visibility: hidden; }
+.act {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.act:hover { background: var(--lg-hover); }
+.act:active { background: var(--lg-press); }
+.act svg { width: 14px; height: 14px; fill: none; stroke: var(--lg-ink-2); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.act.pin[aria-pressed="true"] svg { fill: var(--lg-acc); stroke: var(--lg-acc); }
+
+/* ---- empty and notice ---------------------------------------------------------------------- */
+.empty { display: none; padding: 40px 28px; text-align: center; flex: 1; }
+body.is-empty .empty { display: block; }
+body.is-empty .list { display: none; }
+.empty-t { color: var(--lg-ink); font-size: 13.5px; font-weight: 600; margin-bottom: 6px; }
+.empty-x { color: var(--lg-ink-2); font-size: 12.5px; line-height: 1.5; }
+
+.note {
+  display: none;
+  position: absolute;
+  left: 12px; right: 12px; bottom: 44px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--lg-fill-strong);
+  box-shadow: 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+}
+body.noting .note { display: block; }
+.note-t { color: var(--lg-warn); font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+.note-x { color: var(--lg-ink); font-size: 12.5px; line-height: 1.45; }
+
+/* ---- footer: the keys, always on screen ---------------------------------------------------- */
+.foot {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 8px 14px 11px;
+  border-top: 1px solid var(--lg-edge-out);
+  color: var(--lg-ink-2);
+  font-size: 11.5px;
+}
+.foot b {
+  font-weight: 600;
+  color: var(--lg-ink-2);
+  background: var(--lg-sunk);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-right: 3px;
+}
