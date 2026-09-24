@@ -48,11 +48,14 @@
     S.seq = info.seq; S.info = info; S.left = info.lifeMs || LIFE_MS; S.runningSince = performance.now();
     S.gone = false; S.hover = false; S.focus = false;
     var saved = !info.saveError && !!info.path, copied = !!info.copied;
-    $('title').textContent = saved ? 'Screenshot saved' : copied ? 'Screenshot copied' : 'Screenshot not saved';
+    // info.title / info.note: a card that is not about a capture (Mantle's overlay could not come
+    // forward and Windows' Snipping Tool was opened instead) says so in its own words.
+    $('title').textContent = info.title || (saved ? 'Screenshot saved' : copied ? 'Screenshot copied' : 'Screenshot not saved');
     $('name').textContent = saved ? info.name : (copied ? 'Copied to the clipboard only' : '');
     $('status').textContent = (saved && copied ? 'Copied to clipboard · ' : '') +
       (info.w && info.h ? G.sizeText(info.w, info.h) : '');
     var warn = [];
+    if (info.note) warn.push(info.note);
     if (info.saveError) warn.push('Not saved: ' + info.saveError);
     if (info.copyError) warn.push('Not copied: ' + info.copyError);
     $('warn').textContent = warn.join(' · ');

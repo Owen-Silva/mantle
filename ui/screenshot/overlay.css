@@ -85,3 +85,8 @@ body.failed { cursor: default; }
 body.failed #bar, body.failed #hint { display: none; }
 
 body.mode-window, body.mode-full { cursor: default; }
+
+/* The canary (overlay.js canary()): a few device pixels of pure magenta, for one screen-pixel check
+   right after the overlay moves on screen. Not a theme colour on purpose: it must be a colour the
+   frozen frame under it is very unlikely to have, and it is gone within ~50 ms. */
+#canary { position: fixed; z-index: 2147483647; background: #FF00FF; pointer-events: none; }

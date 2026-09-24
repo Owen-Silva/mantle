@@ -276,6 +276,26 @@
   if (!bridge) { fail('this page was opened without Mantle (no window.mantle bridge)'); return; }
   bridge.on('screenshot.frame', onFrame);
   bridge.on('screenshot.mode', function (m) { if (m && m.mode && m.mode !== S.mode && !S.done) setMode(m.mode, false); });
-  bridge.on('screenshot.clear', clear);
+  bridge.on('screenshot.clear', function (c) { canary({ on: false }); clear(c); });
+
+  // THE CANARY (lib/features/screenshot.js canary()): a magenta dot a few device pixels wide, on
+  // top of everything on this page for one check, so main can read the SCREEN's pixel there and
+  // know the overlay is really what Owen sees (2026-09-24: a capture that every window flag called
+  // "on screen" was invisible). Painted, then two frames, then main is told; main turns it off.
+  var dot = null;
+  function canary(c) {
+    if (!c || !c.on) { if (dot) { dot.remove(); dot = null; } return; }
+    if (!dot) { dot = document.createElement('div'); dot.id = 'canary'; document.body.appendChild(dot); }
+    var sz = Math.max(c.size || 3, 1);
+    dot.style.width = dot.style.height = sz + 'px';
+    dot.style.left = (c.x - sz / 2) + 'px';
+    dot.style.top = (c.y - sz / 2) + 'px';
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        send('canary', { seq: c.seq, focus: document.hasFocus(), visibility: document.visibilityState });
+      });
+    });
+  }
+  bridge.on('screenshot.canary', canary);
   send('loaded', { at: Math.round(performance.now()) });
 }());
