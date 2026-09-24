@@ -1161,13 +1161,43 @@
     act('bar.open', { id: b.dataset.id, fresh: true }, 'open');
   });
 
-  /* RIGHT CLICK = the window flyout, always, whatever main would have done with a left click. If
-     the hover already opened it, the right-click keeps it open instead of toggling it shut. */
+  /* RIGHT CLICK = Windows 11's taskbar menu (lane jumplist, 2026-09-24; Owen: "right click the apps
+     on the taskbar and have the same options regular windows shows"): the app's jump list, the app
+     itself, Pin/Unpin, Close (ui/bar/jumplist.js). Hover keeps the window previews. Without that
+     module it is the window flyout as before; switched off in the tray, the menu keeps its own
+     rows and says the list is off. */
+  var JL = window.MantleJumpList || null;
+  function jlKey(b) { return 'jl:' + b.dataset.key; }
+  function openJump(b) {
+    var it = b._item;
+    openPop(jlKey(b), b, function (pop) {
+      JL.open(pop, it, {
+        call: call, callR: callR, msg: msg,
+        resize: function () {
+          if (popKey !== jlKey(b)) return;
+          callR('bar.popover', { open: true, height: el.pop.offsetHeight + 16, key: popKey }).catch(function () {});
+          popPlace(b);
+        },
+        close: closePop,
+        refreshPinned: refreshPinned,
+        // pinned: the pin's own shortcut, like a middle-click; running only: the shortcut Windows would use
+        openFresh: function (item, app) {
+          return item.kind === 'pinned' ? callR('bar.open', { id: item.id, fresh: true })
+            : callR('jumplist.open', { app: app, item: 'app' });
+        },
+      });
+    });
+  }
   el.dock.addEventListener('contextmenu', function (ev) {
     var b = cellOf(ev);
     if (!b) return;
     ev.preventDefault();
     if (flyDwell) { clearTimeout(flyDwell); flyDwell = 0; }
+    if (JL && b._item) {
+      if (popKey === jlKey(b)) { closePop(); return; }   // a second right-click closes it
+      openJump(b);
+      return;
+    }
     if (fly && popKey === popKeyOf(b)) { fly.by = 'click'; return; }
     openAppPop(b, b._item);
   });
@@ -1377,6 +1407,7 @@
       if (window.MantlePowerMode) MantlePowerMode.closed(); // its 3 s re-read and its push stop
     }
     if (popKey === 'media') { mediaPaint = null; mediaNote = ''; mediaRoom = 0; }
+    if (popKey.indexOf('jl:') === 0 && window.MantleJumpList) MantleJumpList.closed();   // gives the keyboard back
     if (isFlyKey(popKey)) flyTeardown();
     popKey = null;
     el.pop.hidden = true;
@@ -1442,7 +1473,11 @@
     if (ev.target.closest && ev.target.closest('#volume, #network, #battery, #clock, #notifs, #more, #media, .cell')) return;
     closePop();
   }, true);
-  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closePop(); });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') { closePop(); return; }
+    // the right-click menu's arrows / Enter / Right / Left (ui/bar/jumplist.js)
+    if (popKey && popKey.indexOf('jl:') === 0 && window.MantleJumpList && MantleJumpList.key(ev)) ev.preventDefault();
+  });
 
   /* ================================================================= volume */
 
@@ -2636,6 +2671,21 @@
     /* 'media' / 'more' / 'close': main's --test-pops screenshot run opening a popover through
        the same open path a click takes, then closing it again. */
     if (p && p.what === 'close') { closePop(); return; }
+    /* 'jumplist' / 'jumplist-<match>': the right-click menu of the first app (or the first whose
+       name/exe contains <match>) through the same openJump a right-click takes; 'jumplist-sub-...'
+       also opens its first item's own actions. Every action in it is a dry run in --test. */
+    if (p && typeof p.what === 'string' && p.what.indexOf('jumplist') === 0 && JL) {
+      var jm = p.what.replace(/^jumplist(-sub)?-?/, '').toLowerCase(), sub = p.what.indexOf('jumplist-sub') === 0;
+      var jk = Object.keys(cells), jhit = null;
+      for (var ji = 0; ji < jk.length && !jhit; ji++) {
+        var jit = cells[jk[ji]]._item;
+        if (jit && (!jm || (String(jit.name || '') + ' ' + String(jit.exe || '')).toLowerCase().indexOf(jm) !== -1)) jhit = cells[jk[ji]];
+      }
+      if (!jhit) { fail('testclick', 'no app', 'the test hook found no bar app matching "' + jm + '"', 'warn'); return; }
+      if (popKey !== jlKey(jhit)) openJump(jhit);
+      if (sub) setTimeout(function () { var f = el.pop.querySelector('.jl-list .jl-i'); if (f) f.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); }, 900);
+      return;
+    }
     if (p && p.what === 'more') { if (popKey !== 'more') openPop('more', el.more, buildMorePop); return; }
     if (p && p.what === 'notifs') { if (window.MantleNotifs) MantleNotifs.open(); return; }
     // 'qs': the quick-settings panel, fed by the real (passive) sidecar's watch (2026-09-23)

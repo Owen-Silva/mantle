@@ -140,6 +140,37 @@
     return out;
   }
 
+  /* ?jl=<scenario> - lib/features/jumplist.js replies, in the sidecar's shape (sidecar/JumpList.cs):
+       (default)  Pinned 2, Recent 6, Tasks 3        long   Pinned 5, Recent 12, a named list 8, Tasks 4 (scrolls)
+       none       an app that publishes no jump list  error  the read failed        off   switched off in the tray
+       part       Tasks read, the recent items failed ms=N  answer after N ms (default 40) */
+  var JL = q.get('jl') || '';
+  var JL_MS = parseInt(q.get('jlms'), 10) || 40;
+  function jlItems(n, prefix, kind, icon, names) {
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var t = names && names[i % names.length] ? names[i % names.length] + (i >= names.length ? ' (' + (i + 1) + ')' : '') : prefix + ' ' + (i + 1);
+      out.push({ title: t, tip: 'C:\\Users\\owen\\Documents\\' + t, icon: i % 3 === 2 ? null : icon, item: (kind === 'task' ? 'c:1:' : 'a:') + (i + 1), kind: kind, pinned: prefix === 'pinned', canRemove: kind === 'item' && prefix !== 'pinned' });
+    }
+    return out;
+  }
+  function jumpList() {
+    var DOCS = ['Q3 project plan.xlsx', 'Meeting notes v2.docx', 'Mantle design.md', 'Lease agreement.pdf', 'Screenshot 2026-09-24.png', 'Contacts list.csv', 'Budget.xlsx', 'Proposal draft - final.docx'];
+    var TASKS = [{ title: 'New window' }, { title: 'New InPrivate window' }, { title: 'Open a new tab in a very long named profile that has to be cut short' }];
+    var tasks = TASKS.map(function (t, i) { return { title: t.title, tip: 'msedge.exe --new-window', icon: ICON_A, item: 'c:1:' + i, kind: 'task', pinned: false, canRemove: false }; });
+    var r = { ok: true, appid: 'MSEdge', hash: 'ccba5a5986c77e43', how: 'window', cached: false, ms: { total: 12 }, none: null, error: null, note: null, sections: [] };
+    if (JL === 'off') return { ok: false, off: true, reason: 'jump lists are switched off in the tray' };
+    if (JL === 'error') return { ok: false, reason: 'its recent items could not be read (the file is busy: The process cannot access the file because it is being used by another process.)' };
+    if (JL === 'none') { r.none = "this app doesn't publish one"; return r; }
+    if (JL === 'part') { r.sections = [{ name: 'Tasks', kind: 'tasks', items: tasks }]; r.error = 'its recent items could not be read (not a compound file (0x80030050))'; return r; }
+    var long = JL === 'long';
+    r.sections.push({ name: 'Pinned', kind: 'pinned', items: jlItems(long ? 5 : 2, 'pinned', 'item', ICON_B, DOCS.slice(3)) });
+    r.sections.push({ name: 'Recent', kind: 'recent', items: jlItems(long ? 12 : 6, 'recent', 'item', ICON_B, DOCS) });
+    if (long) r.sections.push({ name: 'Most visited', kind: 'custom', items: jlItems(8, 'Site', 'link', ICON_A, ['GitHub', 'Northwind dashboard', 'LessonPlayer', 'YouTube', 'Sports scores', 'Gmail', 'Robinhood', 'Claude']) });
+    r.sections.push({ name: 'Tasks', kind: 'tasks', items: long ? tasks.concat([{ sep: true }, { title: 'Settings', tip: 'msedge.exe edge://settings', icon: ICON_A, item: 'c:1:9', kind: 'task' }]) : tasks });
+    return r;
+  }
+
   function state() {
     return {
       mode: 'test',
@@ -911,6 +942,10 @@
       }
       case 'qs.wifi.connect': return wifiConnect(payload || {});
       case 'qs.wifi.disconnect': return wifiDisconnect();
+      case 'jumplist.get': return new Promise(function (res) { setTimeout(function () { res(jumpList()); }, JL_MS); });
+      case 'jumplist.open': case 'jumplist.remove': case 'jumplist.close': case 'jumplist.pin':
+        console.log('[mock] ' + channel + ' ' + JSON.stringify(payload).slice(0, 160));
+        return { ok: true, dryRun: true, reason: 'mock: nothing was run' };
       case 'qs.keyboard':
         if (payload && payload.on && KBD_REFUSED)
           return { ok: false, focused: false, reason: 'a test instance never takes the keyboard from whoever is at the machine, so a password cannot be typed here' };

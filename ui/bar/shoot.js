@@ -167,7 +167,24 @@ const SHOTS = [
   { name: 'pm-plans-hone', w: 1280, h: 520, q: '?mode=pill&pm=hone', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'pm-plans-chose-balanced', w: 1280, h: 520, q: '?mode=pill&pm=hone', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmplan[data-plan="381b4222-f694-41f0-9685-ff5bb260df2e"]', { wait: 300 }] },
   { name: 'pm-plans-open', w: 1280, h: 520, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmplantoggle', { wait: 200 }] },
-  { name: 'pm-plans-refused', w: 1280, h: 520, q: '?mode=pill&pm=refuse', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmplantoggle', { wait: 150 }, '.pmplan[data-plan="44444444-4444-4444-4444-444444444452"]', { wait: 300 }] }
+  { name: 'pm-plans-refused', w: 1280, h: 520, q: '?mode=pill&pm=refuse', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmplantoggle', { wait: 150 }, '.pmplan[data-plan="44444444-4444-4444-4444-444444444452"]', { wait: 300 }] },
+  // The right-click menu (lane jumplist, 2026-09-24): Windows 11's jump list + app, pin, close. rclick = a
+  // right-click; dsf = the device scale (1 or 1.25); desk = the desktop behind the transparent page.
+  { name: 'jl-edge', w: 1280, h: 600, q: '?mode=pill', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },
+  { name: 'jl-edge-1x', w: 1280, h: 600, q: '?mode=pill', dsf: 1, steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },
+  { name: 'jl-edge-light', w: 1280, h: 600, q: '?mode=pill', desk: 'light', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },
+  { name: 'jl-edge-light-1x', w: 1280, h: 600, q: '?mode=pill', desk: 'light', dsf: 1, steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },
+  { name: 'jl-long', w: 1280, h: 600, q: '?mode=pill&jl=long', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },
+  { name: 'jl-long-scrolled', w: 1280, h: 600, q: '?mode=pill&jl=long', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }, { scroll: '.pop.jl .jl-list' }] },
+  { name: 'jl-none', w: 1280, h: 320, q: '?mode=pill&jl=none', steps: [{ rclick: '.cell[data-id="code"]' }, { wait: 300 }] },
+  { name: 'jl-error', w: 1280, h: 320, q: '?mode=pill&jl=error', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },
+  { name: 'jl-part', w: 1280, h: 400, q: '?mode=pill&jl=part', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },
+  { name: 'jl-off', w: 1280, h: 320, q: '?mode=pill&jl=off', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },
+  { name: 'jl-loading', w: 1280, h: 320, q: '?mode=pill&jlms=60000', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 200 }] },
+  { name: 'jl-notrunning', w: 1280, h: 480, q: '?mode=pill', steps: [{ rclick: '.cell[data-id="spotify"]' }, { wait: 300 }] },
+  { name: 'jl-item-actions', w: 1280, h: 600, q: '?mode=pill', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }, { rclick: '.pop.jl .jl-list .jl-i:nth-of-type(4)' }, { wait: 200 }] },
+  { name: 'jl-task-actions', w: 1280, h: 600, q: '?mode=pill', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }, { rclick: '.pop.jl .jl-list .jl-i:last-of-type' }, { wait: 200 }] },
+  { name: 'jl-edge-top', w: 1280, h: 600, q: '?mode=pill&edge=top', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },
 ];
 const ONLY = process.argv.slice(2);
 const RUN = ONLY.length ? SHOTS.filter(s => ONLY.some(w => s.name.includes(w))) : SHOTS;
@@ -186,9 +203,12 @@ if (process.env.BAR_TRAY_JSON) {
   const browser = await chromium.launch({ headless: true, executablePath: exe });
   const ctx = await browser.newContext({ colorScheme: 'dark', deviceScaleFactor: 1.25, viewport: { width: 1920, height: 44 } });
   const problems = [];
+  const ctxs = {};
+  const ctxAt = async (dsf) => ctxs[dsf] || (ctxs[dsf] = await browser.newContext({ colorScheme: 'dark', deviceScaleFactor: dsf, viewport: { width: 1920, height: 44 } }));
   try {
     for (const s of RUN) {
-      const page = await ctx.newPage();
+      // per-shot device scale (the jump list shots take 1x and 1.25x); one context per scale
+      const page = await (s.dsf && s.dsf !== 1.25 ? ctxAt(s.dsf) : Promise.resolve(ctx)).then((c) => c.newPage());
       if (REAL_TRAY && /tray/.test(s.q)) await page.addInitScript((t) => { window.__MOCK_TRAY__ = t; }, REAL_TRAY);
       await page.setViewportSize({ width: s.w, height: s.h });
       page.on('pageerror', e => problems.push(s.name + ' pageerror: ' + e.message));
@@ -199,13 +219,14 @@ if (process.env.BAR_TRAY_JSON) {
          plausible dark desktop behind it — on <html>, never on the bar. The ?bg=1 shot brings
          its own (much louder) wallpaper from the mock, so leave that one alone. */
       if (!s.q.includes('bg=1'))
-        await page.addStyleTag({ content: 'html{background:#141619 !important;}' });
+        await page.addStyleTag({ content: 'html{background:' + (s.desk === 'light' ? '#dfe4ec' : '#141619') + ' !important;}' });
       if (process.env.BAR_EXTRA_CSS) await page.addStyleTag({ content: process.env.BAR_EXTRA_CSS });
       await page.evaluate(() => document.fonts.ready);
       await page.waitForTimeout(350);           // the mock bridge answers at 30ms; this is slack, not a race
       for (const st of s.steps || (s.click ? [s.click] : [])) {
         if (typeof st === 'string') { await page.click(st); await page.waitForTimeout(400); }
         else if (st.wait) await page.waitForTimeout(st.wait);
+        else if (st.rclick) { await page.click(st.rclick, { button: 'right' }); await page.waitForTimeout(150); }
         else if (st.fill) await page.fill(st.fill, st.text);
         else if (st.scroll) { await page.$eval(st.scroll, el => { el.scrollTop = el.scrollHeight; }); await page.waitForTimeout(100); }
         else if (st.js) await page.evaluate(st.js);   // a mock-main push (window.__mockMain), mid-shot

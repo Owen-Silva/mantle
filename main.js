@@ -2035,6 +2035,15 @@ async function buildPinned() {
     }
   }
   pins = pins.slice().sort((a, b) => (Number(a && a.order) || 0) - (Number(b && b.order) || 0));
+  /* Mantle's OWN "Pin to taskbar" / "Unpin from taskbar" (the right-click menu, lane jumplist,
+     2026-09-24): an overlay kept by lib/features/jumplist.js, applied here, so Windows' own pins
+     are never written. Unreadable = Windows' pins as they are, and the reason is said. */
+  try {
+    const own = require('./lib/features/_jumplist-pins');
+    pins = own.apply(pins, own.read(app.getPath('userData')));
+  } catch (err) {
+    problems.push(err.message);
+  }
 
   const items = [];
   const claimed = new Set();

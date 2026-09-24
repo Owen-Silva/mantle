@@ -1,0 +1,110 @@
+/* jumplist.css - the right-click menu of an app on the bar (ui/bar/jumplist.js, 2026-09-24).
+   One Theme: the bar's own popover glass (.pop in bar.css) with glass-light.css --lg-* tokens only;
+   rows are the popover's .item language (hover = --lg-hover, radius --lg-r-ctl), headings are its h3. */
+
+.pop.jl {
+  width: 284px;
+  max-width: calc(100vw - 16px);
+  /* The bar window is POPOVER_MAX (480 DIP) taller than the bar and main is asked for this height
+     + 16, so the menu stops at 456 and the LIST scrolls inside it: never cut off by the window,
+     never behind the taskbar. */
+  max-height: 456px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.pop.jl .jl-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--lg-tile) transparent;
+  padding-bottom: 4px;
+}
+.pop.jl .jl-list[hidden] { display: none; }
+
+.pop.jl .jl-h {
+  margin: 6px 8px 3px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--lg-ink-3);
+}
+.pop.jl .jl-h:first-child { margin-top: 2px; }
+
+.pop.jl .jl-i {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  transition: background-color 120ms steps(2), color 120ms steps(2);
+}
+.pop.jl .jl-i:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.pop.jl .jl-i:active { background: var(--lg-press); }
+.pop.jl .jl-i:focus { outline: none; }
+.pop.jl .jl-i:focus-visible { background: var(--lg-hover); color: var(--lg-ink); box-shadow: inset 0 0 0 1.5px var(--lg-acc); }
+.pop.jl .jl-i.close:hover { color: var(--lg-warn); }
+
+.pop.jl .jl-t {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pop.jl .jl-ico {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--lg-ink-3);
+}
+.pop.jl .jl-ico img { width: 16px; height: 16px; display: block; }
+.pop.jl .jl-ico.letter {
+  border-radius: 4px;
+  background: var(--lg-tile);
+  color: var(--lg-ink);
+  font-size: 10px;
+  font-weight: 600;
+}
+.pop.jl .jl-sep { height: 1px; margin: 4px 8px; background: var(--lg-edge-out); }
+
+/* an item's own actions, opened by right-click / Right arrow, inset under it */
+.pop.jl .jl-sub {
+  margin: 1px 0 4px 25px;
+  padding: 2px 0 2px 6px;
+  border-left: 1px solid var(--lg-edge-out);
+}
+.pop.jl .jl-sub .jl-i { min-height: 26px; }
+.pop.jl .jl-why { padding: 3px 8px 4px; color: var(--lg-ink-3); font-size: 11.5px; line-height: 1.4; }
+
+.pop.jl .jl-quiet { padding: 6px 8px; color: var(--lg-ink-3); line-height: 1.45; }
+.pop.jl .jl-quiet.warn { color: var(--lg-warn); }
+
+.pop.jl .jl-note { padding: 6px 8px; line-height: 1.45; color: var(--lg-warn); border-top: 1px solid var(--lg-edge-out); }
+.pop.jl .jl-note.quiet { color: var(--lg-ink-3); }
+.pop.jl .jl-note[hidden] { display: none; }
+
+.pop.jl .jl-foot {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--lg-edge-out);
+}
+.pop.jl .jl-foot .jl-i.app { color: var(--lg-ink); font-weight: 600; }
