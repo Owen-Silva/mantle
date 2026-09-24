@@ -1216,6 +1216,105 @@ async function main() {
       (d.reason ? ' reason=' + JSON.stringify(d.reason) : ''));
   } catch (e) { check('power reads with the full shape', false, e.message); }
 
+  // ---- battery (Battery.cs, 2026-09-23) ---------------------------------
+  // READ ONLY: GetSystemPowerStatus and CallNtPowerInformation, and a watch that only listens.
+  // The readout used Win32_Battery, which said 71 where Windows said 72 and "charging" for any
+  // laptop on AC; these rows hold the sidecar to what Windows itself reports.
+  try {
+    const times = [];
+    let r = null;
+    for (let k = 0; k < 9; k++) {
+      const t = Date.now();
+      r = await s.send('battery');
+      times.push(Date.now() - t);
+    }
+    times.sort((a, b) => a - b);
+    const d = r.ok ? r.result : null;
+    check('battery reads with the full shape',
+      r.ok === true && d && d.ok === true && (d.present === null || typeof d.present === 'boolean') &&
+      (d.percent === null || (Number.isInteger(d.percent) && d.percent >= 0 && d.percent <= 100)) &&
+      (d.ac === null || typeof d.ac === 'boolean') && typeof d.charging === 'boolean' && typeof d.saver === 'boolean' &&
+      (d.secondsLeft === null || (Number.isInteger(d.secondsLeft) && d.secondsLeft > 0)) &&
+      (d.reason === null || typeof d.reason === 'string') && !!d.raw && typeof d.raw === 'object',
+      JSON.stringify(r).slice(0, 320));
+    if (d && d.raw) {
+      check('battery never passes an "unknown" on as a value (255 %, a -1 / 0xFFFFFFFF lifetime)',
+        d.percent !== 255 && d.secondsLeft !== -1 && d.secondsLeft !== 4294967295 &&
+        (d.raw.lifePercent !== 255 || d.percent === null) && (d.raw.lifeTime !== 4294967295 || d.secondsLeft === null),
+        JSON.stringify({ percent: d.percent, secondsLeft: d.secondsLeft, raw: d.raw }));
+      check('battery gives a time left only on battery', d.ac !== true || d.secondsLeft === null, JSON.stringify(d).slice(0, 200));
+      if (d.raw.ntCharging !== null) {
+        check('battery: charging agrees with the kernel\'s own SYSTEM_BATTERY_STATE.Charging',
+          d.charging === d.raw.ntCharging, JSON.stringify(d.raw));
+      }
+      quickNotes.push('battery: present=' + d.present + ' percent=' + d.percent + ' ac=' + d.ac + ' charging=' + d.charging +
+        ' secondsLeft=' + d.secondsLeft + ' saver=' + d.saver + ' flag=' + d.raw.flag +
+        (d.capacity ? ' mWh=' + d.capacity.remaining + '/' + d.capacity.full + ' rate=' + d.capacity.rate + 'mW' : '') +
+        ' read median ' + times[4] + ' ms' + (d.reason ? ' reason=' + JSON.stringify(d.reason) : ''));
+    }
+  } catch (e) { check('battery reads with the full shape', false, e.message); }
+
+  // The same Windows call, read independently (.NET's PowerStatus in PowerShell), then the sidecar
+  // straight after: the two must agree. Once more if the percentage moved in between.
+  try {
+    let agree = false, detail = '';
+    for (let attempt = 0; attempt < 2 && !agree; attempt++) {
+      const ps = spawnSync('powershell', ['-NoProfile', '-Command',
+        'Add-Type -AssemblyName System.Windows.Forms; $p = [System.Windows.Forms.SystemInformation]::PowerStatus; ' +
+        '"{0} {1} {2}" -f [int][Math]::Round($p.BatteryLifePercent * 100), $p.PowerLineStatus, [int]$p.BatteryChargeStatus'],
+        { encoding: 'utf8', timeout: 20000 });
+      const r = await s.send('battery');
+      const m = /(\d+) (\w+) (\d+)/.exec(ps.stdout || '');
+      if (!m || !r.ok) { detail = 'powershell: ' + JSON.stringify((ps.stdout || ps.stderr || '').trim()) + ' sidecar: ' + JSON.stringify(r).slice(0, 160); continue; }
+      const d = r.result, pct = Number(m[1]), flags = Number(m[3]);
+      const want = {
+        percent: pct > 100 ? null : pct,
+        ac: m[2] === 'Online' ? true : m[2] === 'Offline' ? false : null,
+        charging: flags !== 255 && (flags & 8) !== 0
+      };
+      agree = d.percent === want.percent && d.ac === want.ac && d.charging === want.charging;
+      detail = 'Windows ' + JSON.stringify(want) + ' sidecar ' + JSON.stringify({ percent: d.percent, ac: d.ac, charging: d.charging });
+    }
+    check('battery agrees with Windows\' own PowerStatus, read independently', agree, detail);
+  } catch (e) { check('battery agrees with Windows\' own PowerStatus', false, e.message); }
+
+  try {
+    const r = await s.send('power');
+    const d = r.ok ? r.result : null;
+    check('power carries the battery reading too (one reading for the panel and the readout)',
+      !!d && typeof d.charging === 'boolean' && 'ac' in d && 'secondsLeft' in d && typeof d.onBattery === 'boolean',
+      JSON.stringify(r).slice(0, 220));
+  } catch (e) { check('power carries the battery reading too', false, e.message); }
+
+  // The watch: armed with all three notifications, and the path proven end to end by the push
+  // Windows sends at registration (measured 6 ms after arming, 2026-09-23). Passive is fine: it
+  // listens and changes nothing.
+  try {
+    const r = await s.send('battery', { watch: true });
+    const d = r.ok ? r.result : null;
+    check('battery {watch:true} arms, with ac, percent and saver all registered',
+      !!d && d.watching === true && Array.isArray(d.registered) &&
+      ['ac', 'percent', 'saver'].every((n) => d.registered.indexOf(n) >= 0) && d.watchReason === null,
+      JSON.stringify(r).slice(0, 320));
+    let ev = null, evErr = '';
+    try { ev = await s.waitEvent('battery', 3000); } catch (e) { evErr = e.message; }
+    check('the watch delivers a push through its window (Windows notifies at registration)',
+      !!ev && typeof ev.via === 'string' && ev.ok === true && typeof ev.charging === 'boolean' && 'percent' in ev,
+      ev ? JSON.stringify(ev).slice(0, 200) : evErr);
+    const again = await s.send('battery', { watch: true });
+    check('arming the watch twice is harmless (the same three registrations)',
+      again.ok === true && again.result.watching === true && again.result.registered.length === 3, JSON.stringify(again).slice(0, 200));
+    const off = await s.send('battery', { watch: false });
+    check('battery {watch:false} stops the watch',
+      off.ok === true && off.result.watching === false && off.result.registered.length === 0, JSON.stringify(off).slice(0, 200));
+  } catch (e) { check('battery watch', false, e.message); }
+
+  try {
+    const r = await s.send('battery', { watch: 'yes' });
+    check("battery {watch:'yes'} is refused as a bad argument",
+      r.ok === false && typeof r.error === 'string' && r.error.includes('watch') && !r.error.includes('passive'), JSON.stringify(r));
+  } catch (e) { check("battery {watch:'yes'} is refused", false, e.message); }
+
   // Every switch, refused - and the refusal must SAY it is passive.
   for (const [cmd, extra] of [
     ['wifi', { on: true }],
@@ -1512,7 +1611,7 @@ async function main() {
     check('ping lists the commands it serves',
       Array.isArray(cmds) && ['lnk', 'keys', 'foreground', 'traywatch', 'corners', 'morph', 'region',
                               'edgeclip', 'backdrop', 'app', 'pins', 'launch', 'wifi', 'bluetooth', 'brightness',
-                              'nightlight', 'power', 'hittest', 'raise', 'windows', 'glass', 'place']
+                              'nightlight', 'power', 'battery', 'hittest', 'raise', 'windows', 'glass', 'place']
         .every((c) => cmds.indexOf(c) >= 0),
       JSON.stringify(cmds));
   } catch (e) { check('ping lists the commands it serves', false, e.message); }

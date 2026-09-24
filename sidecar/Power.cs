@@ -14,33 +14,19 @@
 // nothing stable enough to hold a switch, so `power {saver:...}` answers
 // "not available yet" instead of pretending. An honest refusal beats a toggle
 // that silently does nothing.
+//
+// ONE READING FOR BOTH (2026-09-23). The panel's footer read this while the
+// bar's own readout read Win32_Battery, and the two could disagree on screen
+// at the same moment (71 % beside 72 %; "Plugged in" beside a bolt). This is
+// now Battery.Read(): the same call, the same fields, plus `power`'s older
+// names (onBattery, minutesLeft, hasBattery), which it still carries.
 using System;
 using System.Collections;
 
 namespace Mantle {
   static class Power {
     public static IDictionary Read() {
-      Win32.SYSTEM_POWER_STATUS s;
-      if (!Win32.GetSystemPowerStatus(out s))
-        return Json.Obj("ok", false, "onBattery", false, "percent", null, "minutesLeft", null,
-                        "saver", false,
-                        "reason", "Windows would not report the power status (Win32 error " +
-                                  System.Runtime.InteropServices.Marshal.GetLastWin32Error() + ")");
-
-      // BatteryFlag bit 7 (128) means "no system battery" - a desktop.
-      bool hasBattery = (s.BatteryFlag & 128) == 0;
-      bool onBattery = s.ACLineStatus == 0;
-      object percent = s.BatteryLifePercent <= 100 ? (object)(int)s.BatteryLifePercent : null;
-      object minutes = s.BatteryLifeTime != 0xFFFFFFFF ? (object)(int)(s.BatteryLifeTime / 60) : null;
-      bool saver = s.SystemStatusFlag == 1;
-
-      string reason = null;
-      if (!hasBattery) reason = "this machine has no battery, so it is always on mains power";
-      else if (percent == null) reason = "Windows does not know the battery percentage yet";
-      else if (onBattery && minutes == null) reason = "Windows has not estimated the remaining time yet";
-
-      return Json.Obj("ok", true, "onBattery", onBattery, "percent", percent, "minutesLeft", minutes,
-                      "saver", saver, "hasBattery", hasBattery, "reason", reason);
+      return Battery.Read();
     }
   }
 }

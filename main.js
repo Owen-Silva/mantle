@@ -2536,6 +2536,97 @@ sidecar.on('media', (ev) => {
   mediaPush(`media changed (${reasons.join(', ') || 'no reason given'})`);
 });
 
+// ---------------------------------------------------------------------------
+// The battery (2026-09-23).
+//
+// Owen: "there are problems with it showing how charged my computer is". The
+// readout was lib/sys-stats.js's PowerShell + Win32_Battery, asked on the bar's
+// clock tick through a 60 s cache: 71 % where Windows said 72, a bolt for any
+// laptop on AC, up to a minute behind a plug or unplug, and gone for the whole
+// session after one slow PowerShell start. Now it is the sidecar's reading
+// (sidecar/Battery.cs: GetSystemPowerStatus, the number Windows shows), and it
+// is PUSHED: the watch is armed on every sidecar start, and the sidecar sends
+// {ev:'battery'} whenever something shown changes. Pages get 'battery'
+// (replayed on subscribe); sys.stats reads the same reading.
+// ---------------------------------------------------------------------------
+let lastBattery = null;        // the last reading pushed, for replay, sys.stats and the dedupe
+
+/** The fields a page shows, as one string: a reading that changes none of them is not re-sent. */
+function batteryShown(r) {
+  if (!r) return 'none';
+  return [r.ok, r.present, r.percent, r.ac, r.charging, r.saver, r.minutesLeft, r.reason].join('|');
+}
+
+function batteryPush(r, why) {
+  if (!r || typeof r !== 'object') return;
+  const next = Object.assign({}, r);
+  delete next.ev;
+  delete next.id;
+  const changed = batteryShown(next) !== batteryShown(lastBattery);
+  lastBattery = next;
+  if (!changed) return;
+  if (next.ok === false) process.stdout.write(`mantle: battery: ${next.reason || 'the reading failed without a reason'} (${why})\n`);
+  broadcast('battery', next);
+}
+
+/** A fresh reading that never throws: a failure comes back as {ok:false, reason}. */
+async function batteryRead() {
+  try {
+    return await sidecar.call('battery', {}, 3000);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: Sidecar.isOldExeError(err)
+        ? 'the battery cannot be read: the sidecar exe has no "battery" command yet, so run npm run build:sidecar'
+        : `the battery cannot be read: ${err.message}`,
+    };
+  }
+}
+
+/** What battery.get and sys.stats answer: the pushed reading, or a fresh one before the first push. */
+async function batteryLatest() {
+  if (lastBattery) return lastBattery;
+  const r = await batteryRead();
+  batteryPush(r, 'the first read');
+  return r;
+}
+
+// Armed on EVERY sidecar start: a restarted sidecar has forgotten the watch.
+sidecar.on('ready', () => {
+  sidecar.call('battery', { watch: true }, 4000).then((r) => {
+    if (r && r.watchReason) process.stdout.write(`mantle: battery watch: ${r.watchReason}\n`);
+    batteryPush(r, 'the sidecar is ready');
+  }, (err) => {
+    batteryPush({
+      ok: false,
+      reason: Sidecar.isOldExeError(err)
+        ? 'the battery cannot be read: the sidecar exe has no "battery" command yet, so run npm run build:sidecar'
+        : `the battery watch could not start: ${err.message}`,
+    }, 'the watch could not be armed');
+  });
+});
+
+sidecar.on('battery', (ev) => {
+  // via:'recheck' is the sidecar's 30 s backstop finding a change. Windows' first time-left
+  // estimate after an unplug has no notification of its own, so that one only ever arrives this
+  // way (measured on a real unplug 2026-09-23: the unplug came via 'status' in the same second,
+  // the estimate 32 s later via 'recheck'). Anything ELSE it catches is a change Windows did not
+  // announce, and that line is the measurement of whether the backstop is needed for more.
+  if (ev && ev.via === 'recheck' && lastBattery) {
+    const bare = (r) => batteryShown(Object.assign({}, r, { minutesLeft: null, reason: null }));
+    if (bare(ev) !== bare(lastBattery)) {
+      process.stdout.write(`mantle: battery: the 30 s re-check caught a change no notification announced (was ${batteryShown(lastBattery)}, now ${batteryShown(ev)})\n`);
+    }
+  }
+  batteryPush(ev, `the battery changed (${(ev && ev.via) || 'no reason given'})`);
+});
+
+// A sidecar that is down reads nothing: the readout must not keep a number nobody is vouching for.
+sidecar.on('status', ({ status, reason }) => {
+  if (status !== 'down' || !lastBattery || lastBattery.ok === false || lastBattery.present === false) return;
+  batteryPush({ ok: false, present: lastBattery.present, reason: `the battery is not being read: ${reason}` }, 'the sidecar is down');
+});
+
 
 // ---------------------------------------------------------------------------
 // The command table behind mantle.call(). Every one of these either resolves
@@ -3049,7 +3140,10 @@ const COMMANDS = {
     return { ok: true, reason: null, via: plan.via };
   },
 
-  'sys.stats': async () => stats(),
+  'sys.stats': async () => stats(batteryLatest),
+
+  // The battery readout's first draw; after that it is pushed as 'battery'.
+  'battery.get': async () => batteryLatest(),
 
   'tray.list': async () => {
     const list = await sidecar.call('tray');
@@ -3149,6 +3243,7 @@ ipcMain.handle('mantle:replay', async (_e, name) => {
     case 'launcher:visible': return { has: true, payload: !!(launcherWin && !launcherWin.isDestroyed() && launcherWin.isVisible()) };
     case 'tray': return lastTray ? { has: true, payload: lastTray } : { has: false };
     case 'media': return lastMedia ? { has: true, payload: lastMedia } : { has: false };
+    case 'battery': return lastBattery ? { has: true, payload: lastBattery } : { has: false };
     case 'notifications': return notifications.replay(name);
     // The bar subscribes before it calls, and an empty first frame in a taskbar
     // looks exactly like a broken one. Build the list if nothing has yet.

@@ -99,7 +99,7 @@ namespace Mantle {
       "taskbar", "appbar", "traywatch", "edgeclip", "hittest", "raise",
       "glass", "corners", "place", "morph", "region",
       "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop",
-      "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power",
+      "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power", "battery",
       "wlan", "audio",
       "tray", "trayClick", "media", "notifications", "search", "session", "sleep", "quit"
     };
@@ -1020,6 +1020,22 @@ namespace Mantle {
             return null;
           }
           result = Power.Read();
+          return null;
+        }
+
+        case "battery": {
+          // Battery.cs: the bar's readout, read where Windows' own icon reads it,
+          // and {watch:true} pushes {ev:"battery"} on change. Reading and
+          // listening change nothing, so both run in passive. Unlisted in
+          // Lanes, so ui: the watch's window must live on this loop thread.
+          if (Json.HasKey(req, "watch")) {
+            bool watch;
+            string berr = StrictBool(req, "watch", out watch);
+            if (berr != null) return berr;
+            result = Battery.Watch(watch);
+            return null;
+          }
+          result = Battery.Read();
           return null;
         }
 

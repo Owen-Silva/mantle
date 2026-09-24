@@ -1785,12 +1785,14 @@
       sliders.volume.mute.title = muted ? 'Unmute' : 'Mute';
       sliders.volume.mute.setAttribute('aria-pressed', String(muted));
 
-      // ---- footer power line
-      power.textContent = !p ? 'Power state unknown'
-        : !partOk(p) ? 'Power: ' + partWhy(p, 'power')
-        : !p.onBattery ? 'Plugged in' + (typeof p.percent === 'number' ? ' · ' + Math.round(p.percent) + '%' : '')
-        : (typeof p.percent === 'number' ? Math.round(p.percent) + '%' : 'On battery') +
-          (p.minutesLeft ? ' · ' + Math.floor(p.minutesLeft / 60) + 'h ' + (p.minutesLeft % 60) + 'm left' : '');
+      // ---- footer power line: the readout's own reading and words (battery.js), so the two can
+      // never disagree on screen. It used to word the `power` part for itself, and said "Plugged
+      // in · 72%" beside a readout drawing a bolt from a different, older number (2026-09-23).
+      // The whole sentence is its tooltip: the line is one row and ellipsizes.
+      var bd = battNow ? battDescribe(battNow) : p ? battDescribe(partOk(p) ? p : { ok: false, reason: partWhy(p, 'power') }) : null;
+      power.textContent = bd ? bd.footer : 'Battery state unknown';
+      power.title = bd ? bd.tip.replace(/\nClick: quick settings$/, '') : '';
+      if (bd && (bd.state === 'error' || bd.state === 'unknown') && partOk(p)) problems.push('Battery: ' + bd.reason);
 
       // ---- the notes: one line per part that is not ok, never a blank tile with no explanation
       notes.textContent = '';
@@ -1820,36 +1822,47 @@
 
   /* ================================================================= battery */
 
-  function renderBattery(b) {
-    if (!b || typeof b.percent !== 'number') { el.battery.hidden = true; return; }   // a desktop: no battery, nothing to say
-    var p = Math.max(0, Math.min(100, Math.round(b.percent)));
-    var fillW = (8.4 * p / 100).toFixed(2);
-    var s = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">';
-    s += '<rect x="1.2" y="4.7" width="11.6" height="6.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>';
-    s += '<rect x="13.5" y="6.7" width="1.5" height="2.6" rx=".7" fill="currentColor"/>';
-    if (p > 0) s += '<rect x="2.8" y="6.3" width="' + fillW + '" height="3.4" rx="1" fill="currentColor"/>';
-    // No var() inside SVG presentation attributes: they are not custom-property aware.
-    if (b.charging) s += '<path d="M8.6 5.4L6.2 8.6h1.9l-.5 2.2 2.4-3H8.2z" fill="currentColor" opacity=".95"/>';
-    s += '</svg><span class="pct">' + p + '%</span>';
-    el.battery.innerHTML = s;
-    el.battery.title = 'Battery ' + p + '%' + (b.charging ? ', charging' : '') + ' — open battery settings';
-    el.battery.hidden = false;
+  /* ONE READING, PUSHED (2026-09-23). Owen: "there are problems with it showing how charged my
+     computer is". This drew sys.stats' Win32_Battery answer, re-asked every fifth clock tick
+     through main's 60 s cache: 71 % where Windows said 72, a bolt whenever the charger was in
+     (even held at a charge limit, not charging) and all but invisible on the fill, up to a minute
+     behind a plug or unplug, hidden for good after one slow PowerShell start, and a tooltip
+     offering "battery settings" for a click that opens quick settings. Now main pushes the
+     sidecar's reading on every change ('battery', replayed on subscribe) and battery.js words and
+     draws it. A reading that fails stays on screen as a dash with its reason in the tooltip. */
+  var battNow = null;                  // the reading on screen; the panel's footer words this same one
+
+  function battDescribe(r) {
+    if (window.MantleBattery) return MantleBattery.describe(r);
+    var why = 'battery.js did not load, so the battery cannot be worded';
+    return { show: true, state: 'error', short: '—', footer: 'Battery: ' + why, tip: 'Battery status: unknown\n' + why,
+      level: null, bolt: false, plug: false, reason: why };
   }
 
-  function readStats() {
-    return call('sys.stats').then(function (s) {
-      clearFail('stats');
-      renderBattery(s && s.battery);
-      if (s && s.volume && vol.level === null && typeof s.volume.level === 'number') { vol.level = s.volume.level / 100; vol.muted = !!s.volume.muted; volumeGlyph(); }
-    }, function (e) {
-      el.battery.hidden = true;
-      fail('stats', 'stats off', 'sys.stats failed, so battery and volume readings are stale: ' + msg(e));
+  function renderBattery(r) {
+    battNow = r || null;
+    var d = battDescribe(battNow);
+    if (!d.show) el.battery.hidden = true;                  // no battery (a desktop): nothing to draw
+    else {
+      el.battery.innerHTML = (window.MantleBattery ? MantleBattery.svg(d) : '') + '<span class="pct">' + d.short + '</span>';
+      el.battery.title = d.tip;
+      el.battery.setAttribute('aria-label', d.tip.split('\n')[0]);
+      el.battery.classList.toggle('dead', d.state === 'error' || d.state === 'unknown');
+      el.battery.setAttribute('data-state', d.state);
+      el.battery.hidden = false;
+    }
+    if (popKey === 'qs' && qsPaint) qsPaint();              // the footer words the same reading
+  }
+
+  function readBattery() {
+    return call('battery.get').then(renderBattery, function (e) {
+      renderBattery({ ok: false, reason: 'battery.get was refused: ' + msg(e) });
     });
   }
 
   /* ================================================================= clock */
 
-  var tickN = 0, tickTimer = 0;
+  var tickTimer = 0;
   function pad(n) { return n < 10 ? '0' + n : String(n); }
 
   /* 12-hour with seconds, Windows' own shape: "4:15:32 PM" — no leading zero on the hour, two
@@ -1880,9 +1893,7 @@
       '\nClick: the calendar';
     if (el.clock.title !== tip) el.clock.title = tip;
 
-    // Battery drifts slowly: refreshing it on every fifth minute tick avoids a second timer.
-    if (tickN % 5 === 0) readStats();
-    tickN++;
+    // No battery read here any more (2026-09-23): main pushes it on every change.
     schedule();
   }
 
@@ -2619,7 +2630,10 @@
     });
 
     refreshPinned();    // draw the icons now, so the first reveal slides up a bar that is already right
-    readStats();
+    /* The battery: pushed by main on every change, and replayed on subscribe. battery.get draws
+       the first frame anyway, and says why if it cannot. */
+    on('battery', renderBattery);
+    readBattery();
     readVolume().catch(function () { /* already reported on the glyph tooltip and the chip */ });
   }
 

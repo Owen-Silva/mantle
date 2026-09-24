@@ -58,6 +58,11 @@ const WIFI = ['#network', '.qsx-chev', { wait: 1300 }];
 const net = (ssid) => '.qsx-net[data-ssid="' + ssid + '"] .qsx-nethead';
 const PASSWORD = WIFI.concat([net('Cafe WiFi'), '.qsx-net.open .qsx-btn.acc', { fill: '#qsxpw', text: 'not-a-real-key' }]);
 const SOUND = ['#volume', '.qsx-more', { wait: 600 }];
+/* The battery (2026-09-23): every state the readout and the panel's footer can be in, from the
+   readings the sidecar sends (?battery=<name>, mock-mantle.js). `plugged` is on AC and NOT
+   charging (a charge limit): a plug, never a bolt. `none` has no readout, so its panel is opened
+   from the Wi-Fi glyph. The 900 ms lets the pill's entrance finish before anything is clicked. */
+const BATT = ['charging', 'plugged', 'full', 'battery', 'unplugged', 'saver', 'unknown', 'error', 'none'];
 
 /* Each shot is one state worth looking at, not one size for its own sake. */
 const SHOTS = [
@@ -114,7 +119,13 @@ const SHOTS = [
   { name: 'qsx-sound-4', w: 1280, h: 560, q: '?mode=pill&audio=4', steps: SOUND },
   { name: 'qsx-mixer-0', w: 1280, h: 560, q: '?mode=pill&audio=1&mixer=0', steps: SOUND },
   { name: 'qsx-mixer-8', w: 1280, h: 560, q: '?mode=pill&audio=1&mixer=8', steps: SOUND.concat([{ scroll: '.qsx-view .qsx-scroll' }]) },
-  { name: 'qsx-mixer-error', w: 1280, h: 560, q: '?mode=pill&mixer=error', steps: SOUND }
+  { name: 'qsx-mixer-error', w: 1280, h: 560, q: '?mode=pill&mixer=error', steps: SOUND },
+  ...BATT.map((b) => ({ name: 'battery-' + b, w: 1280, h: 60, q: '?mode=pill&battery=' + b, steps: [{ wait: 900 }] })),
+  ...BATT.map((b) => ({ name: 'battery-' + b + '-qs', w: 1280, h: 400, q: '?mode=pill&battery=' + b,
+    steps: [{ wait: 900 }, b === 'none' ? '#network' : '#battery'] })),
+  // Plugged in while the panel is open: main's push must redraw the readout AND the footer.
+  { name: 'battery-push-qs', w: 1280, h: 400, q: '?mode=pill&battery=battery',
+    steps: [{ wait: 900 }, '#battery', { js: "__mockMain.battery('charging')" }, { wait: 300 }] }
 ];
 const ONLY = process.argv.slice(2);
 const RUN = ONLY.length ? SHOTS.filter(s => ONLY.some(w => s.name.includes(w))) : SHOTS;
@@ -155,6 +166,7 @@ if (process.env.BAR_TRAY_JSON) {
         else if (st.wait) await page.waitForTimeout(st.wait);
         else if (st.fill) await page.fill(st.fill, st.text);
         else if (st.scroll) { await page.$eval(st.scroll, el => { el.scrollTop = el.scrollHeight; }); await page.waitForTimeout(100); }
+        else if (st.js) await page.evaluate(st.js);   // a mock-main push (window.__mockMain), mid-shot
       }
       await page.mouse.move(0, 0);              // no hover state left on whatever was clicked
       /* ...and let its fade finish: hovers fade out over 150 ms steps(2), so a shot taken at once

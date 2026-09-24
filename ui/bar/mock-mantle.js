@@ -161,6 +161,39 @@
 
   var volume = { level: 0.42, muted: false };
 
+  /* ---- the battery (2026-09-23) -----------------------------------------
+     Readings in exactly the sidecar's shape (sidecar/Battery.cs), so the words and the glyph are
+     drawn by the real ui/bar/battery.js. ?battery=<name> picks one; __mockMain.battery(name)
+     pushes another, the way main does on a plug or an unplug. The default is the look the mock
+     always had (72 %, on battery, 3 hr 4 min left), so the older shots do not move. `plugged` is
+     the case the old readout got wrong: on AC, held at a charge limit, NOT charging. */
+  var BATTERY = {
+    battery:   { percent: 72, ac: false, secondsLeft: 184 * 60 },
+    charging:  { percent: 72, ac: true, charging: true },
+    plugged:   { percent: 60, ac: true },
+    full:      { percent: 100, ac: true },
+    unplugged: { percent: 72, ac: false, reason: 'Windows has not estimated the time left yet' },
+    saver:     { percent: 18, ac: false, secondsLeft: 47 * 60, saver: true, low: true },
+    unknown:   { percent: null, ac: true, reason: 'Windows does not know the battery percentage yet' },
+    none:      { percent: null, ac: true, present: false, reason: 'this machine has no battery, so it always runs on mains power' },
+    error:     { ok: false, reason: 'Windows would not report the power status (GetSystemPowerStatus failed, Win32 error 5)' }
+  };
+  function batteryReading(name) {
+    var b = BATTERY[name] || BATTERY.battery;
+    if (b.ok === false) {
+      return { ok: false, present: null, percent: null, ac: null, charging: false, secondsLeft: null, saver: false,
+        onBattery: false, minutesLeft: null, hasBattery: null, reason: b.reason };
+    }
+    var secs = typeof b.secondsLeft === 'number' ? b.secondsLeft : null;
+    return {
+      ok: true, present: b.present !== false, percent: b.percent, ac: b.ac, charging: !!b.charging,
+      secondsLeft: secs, saver: !!b.saver, low: !!b.low, critical: false,
+      onBattery: b.ac === false, minutesLeft: secs === null ? null : Math.floor(secs / 60), hasBattery: b.present !== false,
+      reason: b.reason || null
+    };
+  }
+  var batteryNow = batteryReading(q.get('battery') || 'battery');
+
   /* ---- quick settings -------------------------------------------------
      Plausible values for a laptop on Wi-Fi. ?qs=fail breaks TWO parts (Bluetooth and brightness)
      with real-sounding reasons, because the panel's whole contract is that a part it cannot read
@@ -176,7 +209,7 @@
       ? { present: false, level: null, ok: false, reason: 'this display exposes no WmiMonitorBrightness instance (desktop monitor)' }
       : { present: true, level: 0.66, ok: true, reason: '' },
     nightlight: { present: true, on: false, ok: true, reason: '' },
-    power:      { onBattery: true, percent: 72, minutesLeft: 184, saver: false, ok: true, reason: '' }
+    power:      batteryNow                  // the sidecar's `power` is the battery reading (Battery.cs)
   };
   var qsWatching = false, qsTimer = 0;
 
@@ -608,6 +641,7 @@
     switch (channel) {
       case 'state.get':   return state();
       case 'sys.stats':   return { battery: { percent: 72, charging: false }, volume: { level: volume.level, muted: volume.muted } };
+      case 'battery.get': return batteryNow;
       case 'volume.get':  return { level: volume.level, muted: volume.muted };
       case 'volume.set':
         if (payload && typeof payload.level === 'number') volume.level = Math.max(0, Math.min(1, payload.level));
@@ -800,6 +834,7 @@
         else if (channel === 'tray') cb(TRAY || []);  // [] = tray unavailable on this build
         else if (channel === 'media') { if (MEDIA) cb(mediaPayload()); }   // main replays only once it has read
         else if (channel === 'notifications') cb(ntfPayload());
+        else if (channel === 'battery') cb(batteryNow);
         else if (channel === 'state') cb(state());
       }, 30);
       return function off() {
@@ -835,7 +870,16 @@
      Mock only: inside Electron this file returned at the top and there is no such object. */
   window.__mockMain = {
     reveal: function (why) { revealed = true; emit('bar.reveal', { why: why || 'mock: harness reveal', mode: MODE, ms: DUR_IN }); },
-    hide: function (why) { revealed = false; emit('bar.hide', { why: why || 'mock: harness hide', ms: DUR_OUT }); }
+    hide: function (why) { revealed = false; emit('bar.hide', { why: why || 'mock: harness hide', ms: DUR_OUT }); },
+    /* A plug, an unplug, a charge limit reached: main pushes the new reading, and the panel's
+       `power` part reads the same one. */
+    battery: function (name) {
+      batteryNow = batteryReading(name);
+      qsState.power = batteryNow;
+      emit('battery', batteryNow);
+      qsPush();
+      return batteryNow;
+    }
   };
 
   /* THE BACKDROP main would photograph. There is no screen behind a file:// page, so the mock
