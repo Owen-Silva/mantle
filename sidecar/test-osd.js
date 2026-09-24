@@ -190,6 +190,8 @@ async function main() {
     await powerMode(s);
     await powerPlans(s);
     if (typeof module.exports.osdTests === 'function') await module.exports.osdTests(s, check);
+    check('ping lists osd.bright', !feats || (feats.commands || []).includes('osd.bright'), JSON.stringify(feats && feats.commands));
+    if (typeof module.exports.brightTests === 'function') await module.exports.brightTests(s, check);
   } catch (e) {
     check('no exception', false, e.stack);
   } finally {
@@ -276,5 +278,309 @@ module.exports = {
     check('Owen\'s volume did not move (level and mute read before and after)',
       after.level === before.level && after.muted === before.muted, JSON.stringify({ before, after }));
   },
+
+  /* osd.bright: Windows' BRIGHTNESS pop-up, replaced (osd3, 2026-09-24). Nothing here changes the
+     brightness (not even a same-value write) and nothing of explorer's is ever moved: the rules run
+     on made-up windows (op:'match'), the passive dry run is proved with op:'simulate', and the real
+     hook -> move -> verify -> put-back road runs on a STAND-IN window of this test's own helper
+     process (class XamlExplorerHostIslandWindow, alpha 0 + click-through + no-activate: it never
+     draws a pixel or takes a click, and lives under 20 s), named with targetPid (passive only). */
+  async brightTests(s, check) {
+    const m = async (window, showAt, brightAt, now) => ((await s.send('osd.bright', { op: 'match', window, showAt, brightAt, now })).result || {});
+    const mon = [0, 0, 1920, 1080];
+    const fly = { cls: 'XamlExplorerHostIslandWindow', proc: 'explorer', x: 827, y: 1004, w: 266, h: 76, scale: 1.25, monitor: mon };
+    const W = (o) => Object.assign({}, fly, o);
+    let r = await m(fly, 1000, [1020], 1100);
+    check('match: the flyout + a brightness change 20 ms AFTER its SHOW is hidden', r.verdict === 'hide', JSON.stringify(r));
+    r = await m(fly, 1000, [700], 1100);
+    check('match: a brightness change 300 ms BEFORE the SHOW is hidden', r.verdict === 'hide' && /before/.test(r.reason), JSON.stringify(r));
+    r = await m(W({ w: 211, h: 76 }), 1000, [1030], 1100);
+    check('match: the narrower 169x61 variant is hidden too', r.verdict === 'hide', JSON.stringify(r));
+    r = await m(fly, 1000, [], 2000);
+    check('match: the same class WITHOUT a brightness change is never touched', r.verdict === 'ignore' && /no brightness change/.test(r.reason), JSON.stringify(r));
+    r = await m(fly, 1000, [], 1100);
+    check('match: no brightness change yet (100 ms after the SHOW) waits', r.verdict === 'wait', JSON.stringify(r));
+    r = await m(fly, 1000, [2200], 2300);
+    check('match: a brightness change 1.2 s after is not this pop-up', r.verdict === 'ignore', JSON.stringify(r));
+    r = await m(fly, 1000, [100], 2000);
+    check('match: a brightness change 0.9 s before is not this pop-up', r.verdict === 'ignore', JSON.stringify(r));
+    r = await m(W({ cls: 'Shell_TrayWnd' }), 1000, [1020], 1100);
+    check('match: another class with a brightness change is never touched', r.verdict === 'ignore' && /class/.test(r.reason), JSON.stringify(r));
+    r = await m(W({ cls: 'TopLevelWindowForOverflowXamlIsland' }), 1000, [1020], 1100);
+    check('match: explorer\'s other XAML island class is never touched', r.verdict === 'ignore', JSON.stringify(r));
+    r = await m(W({ proc: 'chrome' }), 1000, [1020], 1100);
+    check('match: the same class in another process is never touched', r.verdict === 'ignore' && /chrome/.test(r.reason), JSON.stringify(r));
+    r = await m(W({ x: 0, y: 0, w: 1920, h: 1080 }), 1000, [1020], 1100);
+    check('match: the full-screen explorer XAML layer (same class) is never touched', r.verdict === 'ignore' && /size/.test(r.reason), JSON.stringify(r));
+    r = await m(W({ x: 10, y: 10 }), 1000, [1020], 1100);
+    check('match: a flyout-sized window at the top-left is never touched', r.verdict === 'ignore' && /centred|bottom/.test(r.reason), JSON.stringify(r));
+    r = await m(W({ x: 1654, y: 1004 }), 1000, [1020], 1100);
+    check('match: a flyout-sized window bottom-RIGHT (a toast/tray flyout) is never touched', r.verdict === 'ignore', JSON.stringify(r));
+
+    // ---- the watch, passive
+    const seen = () => s.events.length;
+    const waitFor = async (from, pred, ms) => {
+      const end = Date.now() + ms;
+      for (;;) {
+        for (let i = from; i < s.events.length; i++) if (pred(s.events[i])) return s.events[i];
+        if (Date.now() > end) return null;
+        await new Promise((res) => setTimeout(res, 15));
+      }
+    };
+    const osdEv = (e) => e.ev === 'osd' && e.kind === 'brightness';
+    r = (await s.send('osd.bright', { op: 'watch', on: true }, 10000));
+    check('osd.bright watch starts in --passive (the watch itself is read-only)', r.ok && r.result.watching === true && r.result.dry === true, JSON.stringify(r));
+    const explorerPid = r.result && r.result.shellPid;
+    r = await s.send('osd.bright', { op: 'watch', on: true, targetPid: explorerPid });
+    check('targetPid may never be explorer\'s', r.ok === false && /explorer/.test(r.error), JSON.stringify(r));
+    let at = seen();
+    await s.send('osd.bright', { op: 'inject', level: 40 });
+    let e = await waitFor(at, osdEv, 1500);
+    check('a brightness change with no Windows pop-up: flyout "none" (Mantle shows nothing)', e && e.flyout === 'none' && e.level === 40, JSON.stringify(e));
+    at = seen();
+    r = await s.send('osd.bright', { op: 'simulate', level: 70 });
+    e = await waitFor(at, osdEv, 1500);
+    const log = await waitFor(at, (x) => x.ev === 'log' && /DRY RUN/.test(x.message || ''), 1500);
+    check('simulate (passive): a made-up pop-up is a DRY RUN event with the level', r.ok && e && e.flyout === 'dry' && e.dry === true && e.level === 70, JSON.stringify({ r, e }));
+    check('simulate: the dry run has its log line', !!log, JSON.stringify(log));
+
+    // ---- the stand-in window
+    let fake;
+    try { fake = await startFake('recentre'); } catch (err) { check('the stand-in window helper starts', false, err.message); }
+    if (!fake) return;
+    try {
+      const home = fake.ready.rect;
+      // 1. passive, NOT named: a flyout-shaped window of another process, WITH a brightness change: untouched
+      at = seen();
+      await s.send('osd.bright', { op: 'inject', level: 50 });
+      await fake.cmd('show', 'shown');
+      await new Promise((res) => setTimeout(res, 400));
+      let rc = await fake.cmd('rect', 'rect');
+      e = await waitFor(at, (x) => osdEv(x) && x.flyout !== 'none', 50);
+      check('another process\'s flyout-shaped window + a brightness change: never moved', rc.x === home.x && rc.y === home.y && rc.visible && !e, JSON.stringify({ rc, home, e }));
+      await fake.cmd('hide', 'hidden');
+
+      // 2. named stand-in: really moved, verified, measured (brightness change just BEFORE the SHOW)
+      r = await s.send('osd.bright', { op: 'watch', on: true, targetPid: fake.pid });
+      check('watch with the test\'s own stand-in named', r.ok && r.result.targetPid === fake.pid, JSON.stringify(r));
+      await new Promise((res) => setTimeout(res, 300));   // the hook thread re-hooks on its next message
+      const lat = [], after = [];
+      for (let i = 0; i < 8; i++) {
+        at = seen();
+        await s.send('osd.bright', { op: 'inject', level: 10 * i });
+        const shown = await fake.cmd('show', 'shown');
+        const moved = await fake.next('moved', 1500);
+        e = await waitFor(at, (x) => osdEv(x) && x.phase === 'change' && x.flyout === 'hidden', 1500);
+        if (moved) lat.push(moved.t - shown.t);
+        if (e && typeof e.hiddenAfterMs === 'number') after.push(e.hiddenAfterMs);
+        if (i === 0) {
+          rc = await fake.cmd('rect', 'rect');
+          check('stand-in: parked off screen at (Park + x, Park + y), still "shown"', rc.x === -24000 + home.x && rc.y === -24000 + home.y && rc.visible, JSON.stringify({ rc, home }));
+          check('stand-in: the push says hidden, parked, with the level', e && e.how === 'parked' && e.level === 0 && e.dry === false, JSON.stringify(e));
+        }
+        const end0 = seen();
+        await fake.cmd('hide', 'hidden');
+        const end = await waitFor(end0, (x) => osdEv(x) && x.phase === 'end', 1500);
+        if (i === 0) check('stand-in: its HIDE ends the session with a summary', end && end.why === 'Windows hid it' && /off screen/.test(end.summary || ''), JSON.stringify(end));
+      }
+      const med = (a) => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
+      check('stand-in: every one of 8 shows was moved off screen', lat.length === 8 && after.length === 8, JSON.stringify({ lat, after }));
+      console.log(`  measured: SHOW -> off screen, as the stand-in saw it: median ${med(lat) && med(lat).toFixed(2)} ms, max ${Math.max(...lat).toFixed(2)} ms (${lat.length}); as the sidecar measured it: median ${med(after)} ms`);
+      check('stand-in: moved off screen within one 60 Hz frame (median < 16 ms)', med(lat) !== null && med(lat) < 16, JSON.stringify(lat));
+
+      // 3. brightness change AFTER the SHOW: waits, then moves
+      await new Promise((res) => setTimeout(res, 700));   // clear of the last injected change
+      at = seen();
+      await fake.cmd('show', 'shown');
+      await new Promise((res) => setTimeout(res, 60));
+      rc = await fake.cmd('rect', 'rect');
+      check('stand-in: SHOW with no brightness change yet is left alone while it waits', rc.x === home.x, JSON.stringify(rc));
+      await s.send('osd.bright', { op: 'inject', level: 55 });
+      e = await waitFor(at, (x) => osdEv(x) && x.flyout === 'hidden', 1500);
+      rc = await fake.cmd('rect', 'rect');
+      check('stand-in: the brightness change 60 ms later moves it', e && e.level === 55 && rc.x === -24000 + home.x, JSON.stringify({ e, rc }));
+      await fake.cmd('hide', 'hidden');
+      await waitFor(at, (x) => osdEv(x) && x.phase === 'end', 1500);
+
+      // 4. watch off puts it back (it is parked and hidden now)
+      rc = await fake.cmd('rect', 'rect');
+      r = await s.send('osd.bright', { op: 'watch', on: false });
+      await new Promise((res) => setTimeout(res, 150));
+      const back = await fake.cmd('rect', 'rect');
+      check('watch off: the parked stand-in is put back where it was', rc.x === -24000 + home.x && back.x === home.x && back.y === home.y && r.result.restored >= 1, JSON.stringify({ rc, back, r }));
+    } finally { fake.quit(); }
+
+    // 5. "keep" mode (the helper never re-places itself, like an explorer that honours the park)
+    try { fake = await startFake('keep'); } catch (err) { check('the stand-in helper starts (keep)', false, err.message); return; }
+    try {
+      const home = fake.ready.rect;
+      await s.send('osd.bright', { op: 'watch', on: true, targetPid: fake.pid });
+      await new Promise((res) => setTimeout(res, 300));
+      at = seen();
+      await s.send('osd.bright', { op: 'inject', level: 30 });
+      await fake.cmd('show', 'shown');
+      await waitFor(at, (x) => osdEv(x) && x.flyout === 'hidden', 1500);
+      await fake.cmd('hide', 'hidden');
+      await waitFor(at, (x) => osdEv(x) && x.phase === 'end', 1500);
+      at = seen();
+      await s.send('osd.bright', { op: 'inject', level: 40 });
+      await fake.cmd('show', 'shown');
+      e = await waitFor(at, (x) => osdEv(x) && x.flyout === 'hidden', 1500);
+      check('keep: shown again ALREADY parked = "prepark", 0 ms on screen', e && e.how === 'prepark' && e.hiddenAfterMs === 0 && e.level === 40, JSON.stringify(e));
+      await fake.cmd('hide', 'hidden');
+      await waitFor(at, (x) => osdEv(x) && x.phase === 'end', 1500);
+      // a parked window that shows with NO brightness change is not the brightness pop-up: put back
+      at = seen();
+      await new Promise((res) => setTimeout(res, 700));   // clear of the last injected change
+      await fake.cmd('show', 'shown');
+      await new Promise((res) => setTimeout(res, 1100));
+      const rc = await fake.cmd('rect', 'rect');
+      e = await waitFor(at, (x) => osdEv(x) && x.flyout === 'hidden', 50);
+      check('keep: a parked window shown WITHOUT a brightness change is put back on screen', rc.x === home.x && rc.y === home.y && !e, JSON.stringify({ rc, home, e }));
+      await fake.cmd('hide', 'hidden');
+    } finally { fake.quit(); }
+
+    // 6. "fight" mode: the window moves itself back every time; re-parked 3x, then SW_HIDE
+    try { fake = await startFake('fight'); } catch (err) { check('the stand-in helper starts (fight)', false, err.message); return; }
+    try {
+      await s.send('osd.bright', { op: 'watch', on: true, targetPid: fake.pid });
+      await new Promise((res) => setTimeout(res, 300));
+      at = seen();
+      await s.send('osd.bright', { op: 'inject', level: 20 });
+      await fake.cmd('show', 'shown');
+      e = await waitFor(at, (x) => osdEv(x) && (x.flyout === 'hidden' && x.how === 'hidden' || x.flyout === 'failed'), 2500);
+      await new Promise((res) => setTimeout(res, 200));
+      const rc = await fake.cmd('rect', 'rect');
+      check('fight: a window that keeps coming back is hidden instead (SW_HIDE fallback)', e && e.flyout === 'hidden' && e.how === 'hidden' && e.fights >= 3 && rc.visible === false, JSON.stringify({ e, rc }));
+      const st = (await s.send('osd.bright', { op: 'state' })).result || {};
+      check('state counts the sessions', st.hidden >= 10 && st.prepark >= 1 && st.dryRuns === 0, JSON.stringify(st));
+    } finally {
+      fake.quit();
+      await s.send('osd.bright', { op: 'watch', on: false });
+    }
+  },
 };
+
+/** The stand-in: this test's own window of class XamlExplorerHostIslandWindow, invisible (alpha 0),
+ *  click-through, never activated, bottom-centre of the primary work area at 213x61 logical px.
+ *  modes: keep (placed once), recentre (re-placed before every show), fight (moves itself back). */
+const FAKE_CS = String.raw`
+using System; using System.Diagnostics; using System.Globalization; using System.Runtime.InteropServices; using System.Threading;
+static class Fake {
+  delegate IntPtr WndProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct WNDCLASS { public uint style; public WndProc proc; public int cls, wnd; public IntPtr inst, icon, cursor, bg; public string menu, name; }
+  [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+  [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr h; public uint m; public IntPtr w, l; public uint t; public int x, y; }
+  [StructLayout(LayoutKind.Sequential)] struct WINDOWPOS { public IntPtr h, after; public int x, y, cx, cy; public uint flags; }
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern ushort RegisterClassW(ref WNDCLASS c);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowExW(uint ex, string cls, string t, uint st, int x, int y, int w, int h, IntPtr p, IntPtr m, IntPtr i, IntPtr l);
+  [DllImport("user32.dll")] static extern IntPtr DefWindowProcW(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] static extern bool SetLayeredWindowAttributes(IntPtr h, uint k, byte a, uint f);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int c);
+  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f);
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern int GetMessageW(out MSG m, IntPtr h, uint a, uint b);
+  [DllImport("user32.dll")] static extern IntPtr DispatchMessageW(ref MSG m);
+  [DllImport("user32.dll")] static extern bool PostThreadMessageW(uint t, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] static extern bool PeekMessageW(out MSG m, IntPtr h, uint a, uint b, uint r);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr c);
+  [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool SystemParametersInfoW(uint a, uint b, out RECT r, uint c);
+  static WndProc keep; static IntPtr win; static string mode; static int hx, hy; static bool armed;
+  static double Now() { return Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency; }
+  static string N(double d) { return d.ToString("F3", CultureInfo.InvariantCulture); }
+  static void Out(string s) { Console.Out.WriteLine(s); Console.Out.Flush(); }
+  static void Rect(string ev) { RECT r; GetWindowRect(win, out r); Out("{\"ev\":\"" + ev + "\",\"t\":" + N(Now()) + ",\"x\":" + r.L + ",\"y\":" + r.T + ",\"w\":" + (r.R - r.L) + ",\"h\":" + (r.B - r.T) + ",\"visible\":" + (IsWindowVisible(win) ? "true" : "false") + "}"); }
+  static IntPtr Proc(IntPtr h, uint m, IntPtr w, IntPtr l) {
+    if (m == 0x0047 && h == win) {
+      var p = (WINDOWPOS)Marshal.PtrToStructure(l, typeof(WINDOWPOS));
+      if ((p.flags & 0x0002) == 0 && p.x < -10000) {
+        if (armed) { armed = false; Out("{\"ev\":\"moved\",\"t\":" + N(Now()) + ",\"x\":" + p.x + ",\"y\":" + p.y + "}"); }
+        if (mode == "fight") SetWindowPos(win, IntPtr.Zero, hx, hy, 0, 0, 0x0001 | 0x0004 | 0x0010 | 0x4000);
+      }
+    }
+    return DefWindowProcW(h, m, w, l);
+  }
+  static int Main(string[] a) {
+    mode = a.Length > 0 ? a[0] : "keep";
+    SetProcessDpiAwarenessContext(new IntPtr(-4));
+    keep = Proc;
+    var wc = new WNDCLASS(); wc.proc = keep; wc.name = "XamlExplorerHostIslandWindow"; wc.inst = Marshal.GetHINSTANCE(typeof(Fake).Module);
+    RegisterClassW(ref wc);
+    win = CreateWindowExW(0x08000000 | 0x00080000 | 0x00000020 | 0x00000080 | 0x00000008, "XamlExplorerHostIslandWindow", "", 0x80000000, -32000, -32000, 10, 10, IntPtr.Zero, IntPtr.Zero, wc.inst, IntPtr.Zero);
+    SetLayeredWindowAttributes(win, 0, 0, 2);
+    RECT work; SystemParametersInfoW(0x0030, 0, out work, 0);
+    double sc = GetDpiForWindow(win) / 96.0; if (sc <= 0) sc = 1;
+    int W = (int)Math.Round(213 * sc), H = (int)Math.Round(61 * sc);
+    hx = (work.L + work.R) / 2 - W / 2; hy = work.B - H - (int)Math.Round(12 * sc);
+    SetWindowPos(win, IntPtr.Zero, hx, hy, W, H, 0x0004 | 0x0010);
+    uint tid = GetCurrentThreadId(); MSG m; PeekMessageW(out m, IntPtr.Zero, 0, 0, 0);
+    var th = new Thread(delegate () {
+      string line;
+      while ((line = Console.In.ReadLine()) != null) {
+        uint c = line == "show" ? 1u : line == "hide" ? 2u : line == "rect" ? 3u : line == "quit" ? 4u : 0u;
+        if (c != 0) PostThreadMessageW(tid, 0x8000 + c, IntPtr.Zero, IntPtr.Zero);
+      }
+      PostThreadMessageW(tid, 0x8004, IntPtr.Zero, IntPtr.Zero);
+    });
+    th.IsBackground = true; th.Start();
+    Out("{\"ev\":\"ready\",\"pid\":" + Process.GetCurrentProcess().Id + "}");
+    Rect("home");
+    while (GetMessageW(out m, IntPtr.Zero, 0, 0) > 0) {
+      if (m.h == IntPtr.Zero && m.m > 0x8000 && m.m <= 0x8004) {
+        uint c = m.m - 0x8000;
+        if (c == 1) {
+          if (mode != "keep") SetWindowPos(win, IntPtr.Zero, hx, hy, 0, 0, 0x0001 | 0x0004 | 0x0010);
+          armed = true; double t0 = Now(); ShowWindow(win, 4);
+          Out("{\"ev\":\"shown\",\"t\":" + N(t0) + "}");
+        } else if (c == 2) { armed = false; ShowWindow(win, 0); Out("{\"ev\":\"hidden\"}"); }
+        else if (c == 3) Rect("rect");
+        else break;
+        continue;
+      }
+      DispatchMessageW(ref m);
+    }
+    return 0;
+  }
+}`;
+
+async function startFake(mode) {
+  const fs = require('fs'), os = require('os'), crypto = require('crypto');
+  const dir = path.join(os.tmpdir(), 'mantle-osd-fakeflyout');
+  fs.mkdirSync(dir, { recursive: true });
+  const tag = crypto.createHash('sha1').update(FAKE_CS).digest('hex').slice(0, 10);
+  const exe = path.join(dir, `fakeflyout-${tag}.exe`);
+  if (!fs.existsSync(exe)) {
+    const src = path.join(dir, `fakeflyout-${tag}.cs`);
+    fs.writeFileSync(src, FAKE_CS);
+    execFileSync('C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe', ['-nologo', '-out:' + exe, src], { windowsHide: true });
+  }
+  const proc = spawn(exe, [mode], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const got = [];
+  let buf = '';
+  proc.stdout.on('data', (c) => {
+    buf += c.toString('utf8');
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (line) try { got.push(JSON.parse(line)); } catch (e) { /* not ours */ }
+    }
+  });
+  let read = 0;
+  async function next(ev, ms) {
+    const end = Date.now() + (ms || 2000);
+    for (;;) {
+      while (read < got.length) { const x = got[read++]; if (x.ev === ev) return x; }
+      if (Date.now() > end) return null;
+      await new Promise((res) => setTimeout(res, 5));
+    }
+  }
+  const cmd = async (c, ev) => { read = got.length; proc.stdin.write(c + '\n'); const x = await next(ev, 2000); if (!x) throw new Error(`stand-in: no "${ev}" after "${c}"`); return x; };
+  const ready = await next('ready', 8000);
+  const home = await next('home', 2000);
+  if (!ready || !home) { try { proc.kill(); } catch (e) { /* gone */ } throw new Error('the stand-in window helper did not start'); }
+  return { pid: ready.pid, ready: { rect: home }, cmd, next, quit() { try { proc.stdin.write('quit\n'); } catch (e) { /* gone */ } setTimeout(() => { try { proc.kill(); } catch (e) { /* gone */ } }, 500); } };
+}
 if (require.main === module) main();

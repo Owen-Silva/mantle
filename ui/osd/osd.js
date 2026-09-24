@@ -3,9 +3,9 @@
  *
  * WHAT MAIN SENDS (lib/features/osd.js):
  *   osd.show   {kind:'volume'|'brightness', state:{ok, level 0-100, muted, reason}, expand, below, via}
- *              a volume key (Mantle takes them), the bar's wheel or right-click. The page can
- *              still draw kind 'brightness', but main sends none today: the brightness keys are
- *              firmware's and Windows' own flyout shows for them (lib/features/osd.js, 2026-09-24)
+ *              a volume key (Mantle takes them), the bar's wheel or right-click; kind 'brightness'
+ *              when the sidecar has moved Windows' own brightness pop-up off screen (the keys are
+ *              firmware's, so they cannot be taken: lib/features/osd.js, osd3 2026-09-24)
  *   osd.level  {kind, state}   the level moved while the pop-up is up (the sidecar's volume watch)
  *   osd.hide   {why}           gone at once (the feature was switched off, the display changed)
  * WHAT THE PAGE ASKS:
