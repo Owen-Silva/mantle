@@ -804,6 +804,29 @@
     setTimeout(function () { emit('powermode', Object.assign({ via: 'set' }, pmState)); }, 5);
     return { ok: true, mode: want, same: false, state: Object.assign({}, pmState), reason: null };
   }
+  // The installed PLANS (2026-09-24, Owen's machine: Balanced + Hone). powermode.plan switches between
+  // them as PowerMode.cs SetPlan does: the state READ BACK, and a 'powermode' push; ?pm=refuse refuses.
+  var PM_BAL = '381b4222-f694-41f0-9685-ff5bb260df2e', PM_HONE = '44444444-4444-4444-4444-444444444452';
+  function pmPlans(active) {
+    return [{ guid: PM_BAL, name: 'Balanced', active: active === PM_BAL, balanced: true },
+      { guid: PM_HONE, name: 'Hone Ultimate Power Plan V5', active: active === PM_HONE, balanced: false }];
+  }
+  if (pmState.ok) pmState.plans = pmPlans(pmState.available ? PM_BAL : PM_HONE);
+  function powerPlan(p) {
+    var want = p && p.plan;
+    if (want !== PM_BAL && want !== PM_HONE) throw new Error('powermode.plan: no installed power plan has the GUID ' + want);
+    var cur = pmState.available ? PM_BAL : PM_HONE;
+    if (PM === 'refuse' && want !== cur)
+      return { ok: false, plan: want, same: false, state: Object.assign({}, pmState), reason: 'refused: sidecar is passive (test mode): it would have switched the power plan from "' + (cur === PM_BAL ? 'Balanced' : 'Hone Ultimate Power Plan V5') + '" to "' + (want === PM_BAL ? 'Balanced' : 'Hone Ultimate Power Plan V5') + '"' };
+    var bal = want === PM_BAL;
+    pmState = Object.assign({}, pmState, {
+      available: bal, plans: pmPlans(want),
+      plan: { guid: want, name: bal ? 'Balanced' : 'Hone Ultimate Power Plan V5', balanced: bal },
+      reason: bal ? null : 'Power mode works only on the Balanced power plan, and this PC is on "Hone Ultimate Power Plan V5". Choose the Balanced plan to use it',
+    });
+    setTimeout(function () { emit('powermode', Object.assign({ via: 'plan' }, pmState)); }, 5);
+    return { ok: true, plan: want, same: want === cur, state: Object.assign({}, pmState), reason: null };
+  }
   window.__mockPower = function (mode) {       // a change made in Windows Settings, for the harness
     pmState = Object.assign({}, pmState, { mode: mode });
     emit('powermode', Object.assign({ via: 'mode' }, pmState));
@@ -861,6 +884,11 @@
 
       case 'osd.mixer': case 'osd.show': return { ok: true, shown: false, test: true, reason: null };   // ui/osd is its own page
       case 'powermode.get': return Object.assign({}, pmState);
+      case 'powermode.plan': {
+        var pp = powerPlan(payload);
+        if (PM === 'slow') return new Promise(function (res) { setTimeout(function () { res(pp); }, 1500); });
+        return pp;
+      }
       case 'powermode.set': {
         var pr = powerSet(payload);
         if (PM === 'slow') return new Promise(function (res) { setTimeout(function () { res(pr); }, 1500); });

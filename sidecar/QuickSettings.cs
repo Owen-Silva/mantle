@@ -213,6 +213,12 @@ namespace Mantle {
     static readonly object _watchLock = new object();
     static Thread _watchThread;
     static long _leaseEndTs;            // Stopwatch ticks; 0 = no lease
+
+    /// Is the quick-settings panel open (its watch lease is held)? Osd.cs asks on every volume key:
+    /// the open panel already shows the level, so Mantle's pop-up stays down. A public accessor so
+    /// Osd.cs no longer reads the private field by reflection (osd lane, 2026-09-24).
+    public static bool PanelOpen { get { return Interlocked.Read(ref _leaseEndTs) > Stopwatch.GetTimestamp(); } }
+
     static bool _watchAll;              // push every part on the next pass
     static readonly AutoResetEvent _watchWake = new AutoResetEvent(false);
     static int _watchPushes, _watchPasses;

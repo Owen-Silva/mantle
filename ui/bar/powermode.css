@@ -40,3 +40,55 @@
 .pmwhy { margin-top: 5px; color: var(--lg-ink-2); line-height: 1.4; }
 .pmwhy[hidden], .pmnote[hidden] { display: none; }
 .pmnote { margin-top: 5px; color: var(--lg-warn); line-height: 1.4; }
+
+/* The power PLANS (2026-09-24): off Balanced they replace the mode switch; on Balanced they open
+   from the small "Plan: ..." toggle. A plain list in the same tile recess, the current plan as the
+   accent block, like the modes. */
+.pmseg[hidden], .pmplans[hidden], .pmplantoggle[hidden] { display: none; }
+.pmplans {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+  margin-top: 4px;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-tile);
+}
+.pmplan {
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--lg-ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.pmplan:hover { background: var(--lg-hover); }
+.pmplan:active { background: var(--lg-press); }
+.pmplan:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.pmplan.on, .pmplan.on:hover { background: var(--lg-acc); color: var(--lg-acc-on); }
+.pmplan.pending { opacity: .6; }
+.pmplantoggle {
+  display: block;
+  max-width: 100%;
+  margin-top: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--lg-ink-2);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+.pmplantoggle:hover { color: var(--lg-ink); text-decoration: underline; }
+.pmplantoggle:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: 2px; border-radius: 3px; }

@@ -877,7 +877,8 @@ const CHORD_KEYS = {
   'Win+Right': [VKS.RIGHT, false], 'Win+Up': [VKS.UP, false], 'Win+Down': [VKS.DOWN, false], 'Win+Z': [VKS.Z, false],
   'Win+Shift+S': [VKS.S, true],
 };
-const ALL_CHORDS = Object.keys(CHORD_KEYS).concat(['PrintScreen']);
+const VOL_CHORDS = ['VolumeUp', 'VolumeDown', 'VolumeMute'];   // bare keys (osd lane, 2026-09-24)
+const ALL_CHORDS = Object.keys(CHORD_KEYS).concat(['PrintScreen'], VOL_CHORDS);
 const ALL_KEYS = ['VolumeUp', 'VolumeDown', 'VolumeMute'];
 const MOD_UP_VKS = new Set([VKS.LWIN, 0x5C, VKS.LALT, 0xA5, 0x12, VKS.LSHIFT, 0xA1, VKS.LCTRL, 0xA3]);
 
@@ -1043,6 +1044,56 @@ async function featureSeamChecks(s) {
   }
   await sim('an observed key with Win held is still reported and passed', { observe: ALL_KEYS, winTap: true },
     [winD, kv(VKS.VOLUP, true, { win: true }), kv(VKS.VOLUP, false, { win: true }), winU], ['P', 'P key:VolumeUp', 'P', 'P']);
+  // The volume keys as CHORDS (osd lane, 2026-09-24): Mantle takes them so Windows' flyout never
+  // shows (its host cannot be found on 25H2 to hide it). Bare keys only; a held Up/Down REPEATS (one
+  // event per auto-repeat, one step each, as Windows does); a held Mute is ONE toggle; unclaimed they
+  // are never swallowed. Owen's two keyboards: the IdeaPad's built-in one (ACPI IDEA0102, PS/2:
+  // Fn+F2/F3 with typematic repeat = many keydowns, one keyup) and the Logitech USB receiver's media
+  // keys (HID consumer control, which may instead send a down/up per step). The hook sees both as
+  // the same VKs (0xAF/0xAE/0xAD), so both patterns are rows here.
+  const VOLS = [['VolumeUp', VKS.VOLUP], ['VolumeDown', VKS.VOLDOWN], ['VolumeMute', VKS.MUTE]];
+  const MODS = [['Win', winD, winU, { win: true }], ['Shift', shD, shU, { shift: true }],
+    ['Ctrl', kv(VKS.LCTRL, true), kv(VKS.LCTRL, false), { ctrl: true }], ['Alt', kv(VKS.LALT, true), kv(VKS.LALT, false), { alt: true }]];
+  for (const [name, vk] of VOLS) {
+    const others = ALL_CHORDS.filter((c) => c !== name);
+    await sim(`${name} is taken when claimed (no Win, so no partner key)`, { chords: [name] },
+      [kv(vk, true), kv(vk, false)], [`S chord:${name}`, 'S']);
+    await sim(`${name} is taken with every chord on and every key observed`, { chords: ALL_CHORDS, observe: ALL_KEYS },
+      [kv(vk, true), kv(vk, false)], [`S chord:${name}`, 'S']);
+    await sim(`${name} is never swallowed when not claimed (every other chord on)`, { chords: others },
+      [kv(vk, true), kv(vk, true), kv(vk, false)], ['P', 'P', 'P']);
+    await sim(`${name} not claimed but observed: reported and passed`, { chords: others, observe: [name] },
+      [kv(vk, true), kv(vk, false)], [`P key:${name}`, 'P']);
+    for (const [mod, d, u, m] of MODS) {
+      await sim(`${mod}+${name} stays Windows'`, { chords: ALL_CHORDS },
+        [d, kv(vk, true, m), kv(vk, false, m), u], ['P', 'P', 'P', 'P']);
+    }
+    await sim(`an injected ${name} (an OEM hotkey tool, Mantle's own keys) is never taken`, { chords: ALL_CHORDS },
+      [kv(vk, true, { injected: true }), kv(vk, false, { injected: true })], ['I', 'I']);
+  }
+  await sim('laptop keyboard: a held Volume Up steps on EVERY repeat, its one keyup swallowed', { chords: VOL_CHORDS },
+    [kv(VKS.VOLUP, true), kv(VKS.VOLUP, true), kv(VKS.VOLUP, true), kv(VKS.VOLUP, true), kv(VKS.VOLUP, false)],
+    ['S chord:VolumeUp', 'S chord:VolumeUp', 'S chord:VolumeUp', 'S chord:VolumeUp', 'S']);
+  await sim('laptop keyboard: a held Volume Down steps on every repeat', { chords: VOL_CHORDS },
+    [kv(VKS.VOLDOWN, true), kv(VKS.VOLDOWN, true), kv(VKS.VOLDOWN, true), kv(VKS.VOLDOWN, false)],
+    ['S chord:VolumeDown', 'S chord:VolumeDown', 'S chord:VolumeDown', 'S']);
+  await sim('a held Mute is ONE toggle: its repeats are swallowed with no event', { chords: VOL_CHORDS },
+    [kv(VKS.MUTE, true), kv(VKS.MUTE, true), kv(VKS.MUTE, true), kv(VKS.MUTE, false)], ['S chord:VolumeMute', 'S', 'S', 'S']);
+  await sim('USB media keys: a down/up per step is one step each', { chords: VOL_CHORDS },
+    [kv(VKS.VOLUP, true), kv(VKS.VOLUP, false), kv(VKS.VOLUP, true), kv(VKS.VOLUP, false), kv(VKS.VOLDOWN, true), kv(VKS.VOLDOWN, false)],
+    ['S chord:VolumeUp', 'S', 'S chord:VolumeUp', 'S', 'S chord:VolumeDown', 'S']);
+  await sim('Volume Down pressed while Volume Up is held: each its own event, both keyups swallowed', { chords: VOL_CHORDS },
+    [kv(VKS.VOLUP, true), kv(VKS.VOLUP, true), kv(VKS.VOLDOWN, true), kv(VKS.VOLDOWN, false), kv(VKS.VOLUP, false)],
+    ['S chord:VolumeUp', 'S chord:VolumeUp', 'S chord:VolumeDown', 'S', 'S']);
+  await sim("a volume key that began with Win held stays Windows' to its keyup, repeats included", { chords: VOL_CHORDS },
+    [winD, kv(VKS.VOLUP, true, { win: true }), winU, kv(VKS.VOLUP, true), kv(VKS.VOLUP, false)], ['P', 'P', 'P', 'P', 'P']);
+  await sim('Shift pressed while a taken Volume Up is held: that repeat is a fresh press, not a chord', { chords: VOL_CHORDS },
+    [kv(VKS.VOLUP, true), shD, kv(VKS.VOLUP, true, { shift: true }), kv(VKS.VOLUP, false, { shift: true }), shU],
+    ['S chord:VolumeUp', 'P', 'P', 'P', 'P']);
+  await sim('the volume chords leave Win chords, Alt+Tab and typing alone', { chords: VOL_CHORDS, winTap: true },
+    [winD, kv(VKS.S, true, { win: true }), kv(VKS.S, false, { win: true }), winU, kv(VKS.LALT, true), kv(VKS.TAB, true, { alt: true }),
+     kv(VKS.TAB, false, { alt: true }), kv(VKS.LALT, false), kv(VKS.X, true), kv(VKS.X, false)],
+    ['P', 'P', 'P', 'P', 'P', 'S open:1', 'S', 'D commit:1', 'P', 'P']);
   await sim('injected keys never reach a chord', { chords: ALL_CHORDS },
     [winD, kv(VKS.S, true, { win: true, injected: true }), kv(VKS.S, false, { win: true, injected: true }), winU], ['P', 'I', 'I', 'P']);
   try {

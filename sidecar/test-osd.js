@@ -132,6 +132,54 @@ async function powerMode(s) {
   check('powermode.watch off answers', off.result && off.result.watching === false, JSON.stringify(off));
 }
 
+/** The power PLANS (powermode.plan): the list against `powercfg /list`, then ONLY a same-value
+ *  switch (the active plan onto itself), confirmed by `powercfg /getactivescheme` before and after. */
+async function powerPlans(s) {
+  const before = independent();
+  let listed = [];
+  try {
+    const out = execFileSync('powercfg', ['/list'], { encoding: 'utf8', windowsHide: true });
+    const re = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s+\(([^)]*)\)(\s*\*)?/gi;
+    let m;
+    while ((m = re.exec(out))) listed.push({ guid: m[1].toLowerCase(), name: m[2], active: !!m[3] });
+  } catch (e) { check('powercfg /list runs', false, e.message); }
+  const t0 = Date.now();
+  const g = await s.send('powermode.get');
+  const getMs = Date.now() - t0;
+  const r = g.result || {};
+  const plans = Array.isArray(r.plans) ? r.plans : [];
+  check('powermode.get lists the installed plans', plans.length > 0 && plans.every((p) => p.guid && typeof p.name === 'string'), JSON.stringify(r.plans));
+  check('exactly one plan is active, and it is powercfg\'s active one',
+    plans.filter((p) => p.active).length === 1 && plans.find((p) => p.active).guid === before.plan, JSON.stringify({ plans, powercfg: before.plan }));
+  check('the plans are powercfg /list\'s plans (same GUIDs and names)',
+    listed.length === plans.length && listed.every((l) => plans.some((p) => p.guid === l.guid && p.name === l.name)),
+    JSON.stringify({ sidecar: plans.map((p) => [p.guid, p.name]), powercfg: listed.map((l) => [l.guid, l.name]) }));
+  check('Balanced is flagged by its GUID', plans.every((p) => p.balanced === (p.guid === '381b4222-f694-41f0-9685-ff5bb260df2e')));
+  console.log(`  powermode plans: ${plans.map((p) => `${p.name}${p.active ? ' *' : ''}`).join(' | ')} (get with plans ${getMs} ms)`);
+
+  const bad = await s.send('powermode.plan', { plan: 'balanced please' });
+  check('powermode.plan refuses a non-GUID in words', bad.ok === false && /needs plan: the GUID/.test(bad.error || ''), JSON.stringify(bad));
+  const none = await s.send('powermode.plan', { plan: '12345678-1234-1234-1234-123456789abc' });
+  check('powermode.plan refuses a plan that is not installed', none.ok === false && /no installed power plan/.test(none.error || ''), JSON.stringify(none));
+  const other = plans.find((p) => !p.active);
+  if (other) {
+    const d = await s.send('powermode.plan', { plan: other.guid });
+    const dr = d.result || {};
+    check('a switch to ANOTHER plan is refused in --passive, naming both plans',
+      dr.ok === false && /passive/.test(dr.reason || '') && dr.reason.includes(other.name), JSON.stringify(d));
+  }
+  const active = plans.find((p) => p.active);
+  if (active) {
+    const same = await s.send('powermode.plan', { plan: active.guid });
+    const sr = same.result || {};
+    check('the SAME-VALUE plan switch succeeds and reads back the same plan',
+      sr.ok === true && sr.same === true && sr.state && sr.state.plan && sr.state.plan.guid === before.plan, JSON.stringify(same));
+    console.log(`  powermode.plan same-value: PowerSetActiveScheme ${sr.setMs} ms`);
+  }
+  const after = independent();
+  check('independent read (powercfg /getactivescheme): the plan is unchanged', after.plan === before.plan, JSON.stringify({ before, after }));
+}
+
 async function main() {
   const s = start(['--passive', '--parent-pid=' + process.pid]);
   try {
@@ -140,6 +188,7 @@ async function main() {
     check('ping lists the powermode commands', !feats || (feats.commands || []).includes('powermode.get'), JSON.stringify(feats));
     check('no feature failed to register', !feats || !(feats.problems || []).length, JSON.stringify(feats && feats.problems));
     await powerMode(s);
+    await powerPlans(s);
     if (typeof module.exports.osdTests === 'function') await module.exports.osdTests(s, check);
   } catch (e) {
     check('no exception', false, e.stack);
@@ -151,25 +200,81 @@ async function main() {
   setTimeout(() => process.exit(failures.length ? 1 : 0), 1600);
 }
 module.exports = {
-  /* osd.*: the panel-state read, the brightness watch (start/stop, no change made), and the
-     read-only flyout search; a hide in --passive must be refused. */
+  /* osd.*: the panel-state read, and osd.volume - one volume-key press. Every step here is a DRY
+     run (the arithmetic, no write) or a real step that --passive must refuse; the volume is read
+     before and after, and must not have moved. */
   async osdTests(s, check) {
     const q = await s.send('osd.qs');
     const qr = q.result || {};
     check('osd.qs answers', qr.ok === true && (qr.qsOpen === false || qr.qsOpen === true), JSON.stringify(q));
-    check('osd.qs: the panel is closed in a fresh sidecar', qr.qsOpen === false, JSON.stringify(qr));
-    const w = await s.send('osd.watch', { on: true }, 15000);
-    const wr = w.result || {};
-    check('osd.watch on: watching, or the reason why not', wr.watching === true || (wr.ok === false && typeof wr.reason === 'string'), JSON.stringify(w));
-    console.log('  osd.watch: watching=' + wr.watching + (wr.reason ? ' (' + wr.reason + ')' : ''));
-    const off = await s.send('osd.watch', { on: false }, 15000);
-    check('osd.watch off', off.result && off.result.watching === false, JSON.stringify(off));
-    const fl = await s.send('osd.flyout', { op: 'find' });
-    const fr = fl.result || {};
-    check('osd.flyout find answers with found and a reason', fr.ok === true && typeof fr.found === 'boolean' && typeof fr.reason === 'string', JSON.stringify(fl));
-    console.log('  osd.flyout: found=' + fr.found + ' host=' + fr.host + ' (' + fr.reason + ')');
-    const hide = await s.send('osd.flyout', { op: 'hide' });
-    check('osd.flyout hide is refused in --passive', hide.ok === false && /passive/.test(hide.error || ''), JSON.stringify(hide));
+    check('osd.qs: the panel is closed in a fresh sidecar (QuickSettings.PanelOpen)', qr.qsOpen === false, JSON.stringify(qr));
+
+    const before = (await s.send('volume', {}, 8000)).result || {};
+    check('the volume can be read', typeof before.level === 'number', JSON.stringify(before));
+
+    // A dry step from the REAL level: what VolumeUp would do right now.
+    const d = await s.send('osd.volume', { op: 'up', dry: true }, 8000);
+    const dr = d.result || {};
+    const wantUp = Math.min(100, Math.floor(before.level / 2) * 2 + 2);
+    check('osd.volume dry up from the device: from = the real level, level = the next even step, unmuted',
+      d.ok !== false && dr.dry === true && dr.from && dr.from.level === before.level && dr.level === wantUp && dr.muted === false,
+      JSON.stringify({ reply: d, before }));
+
+    // The arithmetic, from pretend levels (Windows' keys: 2 per press, snapped to even, unmute).
+    const table = [
+      ['up', 33, false, 34, false], ['up', 34, false, 36, false], ['up', 99, false, 100, false], ['up', 100, false, 100, false],
+      ['up', 0, false, 2, false], ['down', 33, false, 32, false], ['down', 34, false, 32, false], ['down', 1, false, 0, false],
+      ['down', 0, false, 0, false], ['up', 40, true, 42, false], ['down', 40, true, 38, false], ['mute', 40, false, 40, true],
+      ['mute', 40, true, 40, false], ['mute', 0, false, 0, true], ['up', 150, false, 100, false],   // 150 is read as 100
+    ];
+    for (const [op, level, muted, wl, wm] of table) {
+      const r = await s.send('osd.volume', { op, dry: true, from: { level, muted } });
+      const x = r.result || {};
+      check(`osd.volume dry ${op} from ${level}${muted ? ' muted' : ''} -> ${wl}${wm ? ' muted' : ''}`,
+        r.ok !== false && x.level === wl && x.muted === wm && x.changed === (wl !== Math.min(100, level) || wm !== muted), JSON.stringify(r));
+    }
+    const s5 = await s.send('osd.volume', { op: 'up', dry: true, step: 5, from: { level: 33, muted: false } });
+    check('osd.volume step 5: 33 -> 35', s5.result && s5.result.level === 35, JSON.stringify(s5));
+
+    // Refusals, in words.
+    const bad = [
+      [{ op: 'louder', dry: true }, /needs op 'up', 'down' or 'mute'/, 'an unknown op'],
+      [{ dry: true }, /needs op/, 'no op'],
+      [{ op: 'up', dry: true, step: 0 }, /step must be 1-10/, 'step 0'],
+      [{ op: 'up', from: { level: 10 } }, /dry run only/, '`from` without dry'],
+      [{ op: 'up', dry: true, from: { muted: true } }, /needs a level/, '`from` without a level'],
+    ];
+    for (const [args, re, what] of bad) {
+      const r = await s.send('osd.volume', args);
+      check(`osd.volume refuses ${what} in words`, r.ok === false && re.test(r.error || ''), JSON.stringify(r));
+    }
+    for (const op of ['up', 'down', 'mute']) {
+      const r = await s.send('osd.volume', { op });
+      check(`a REAL ${op} step is refused in --passive`, r.ok === false && /passive/.test(r.error || '') && /stepped the volume/.test(r.error || ''), JSON.stringify(r));
+    }
+
+    // A held key: 30 dry steps back to back (the audio lane runs them in order).
+    const ms = [];
+    let from = { level: 10, muted: false };
+    for (let i = 0; i < 30; i++) {
+      const t0 = Date.now();
+      const r = await s.send('osd.volume', { op: 'up', dry: true, from });
+      ms.push(Date.now() - t0);
+      if (r.result) from = { level: r.result.level, muted: r.result.muted };
+    }
+    check('30 held-key dry steps climb 10 -> 70', from.level === 70, JSON.stringify(from));
+    const dev = [];
+    for (let i = 0; i < 10; i++) {
+      const t0 = Date.now();
+      await s.send('osd.volume', { op: 'up', dry: true });
+      dev.push(Date.now() - t0);
+    }
+    const med = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
+    console.log(`  osd.volume round trip: pretend level median ${med(ms)} ms (max ${Math.max(...ms)}); from the device median ${med(dev)} ms (max ${Math.max(...dev)})`);
+
+    const after = (await s.send('volume', {}, 8000)).result || {};
+    check('Owen\'s volume did not move (level and mute read before and after)',
+      after.level === before.level && after.muted === before.muted, JSON.stringify({ before, after }));
   },
 };
 if (require.main === module) main();

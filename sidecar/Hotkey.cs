@@ -7,7 +7,8 @@
 //   winKeys  Win+N / Win+A open Mantle's notification centre / quick settings
 //   chords   (wave 3) the feature chords lib/features/*.js take while they are on and
 //            healthy (Win+S, Win+V, Win+Tab, Win+arrows, Win+Z, Win+Shift+S,
-//            PrintScreen), and `observe`: keys reported but never swallowed (volume).
+//            PrintScreen, and the bare VolumeUp / VolumeDown / VolumeMute keys, which
+//            repeat while held), and `observe`: keys reported but never swallowed (volume).
 //            `hotkey {chords:[names], observe:[names]}`; events {ev:'chord'} / {ev:'key'}.
 // Every keyboard decision is made by KeyMachine (AltTab.cs), a pure state
 // machine the test harness drives with scripted keys; this file is only the

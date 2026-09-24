@@ -36,7 +36,9 @@ module.exports = {
 ```
 
 Chord names: `Win+S` `Win+V` `Win+Tab` `Win+Left` `Win+Right` `Win+Up` `Win+Down` `Win+Z`
-`Win+Shift+S` `PrintScreen`. Observed keys: `VolumeUp` `VolumeDown` `VolumeMute`.
+`Win+Shift+S` `PrintScreen`, and the bare volume keys `VolumeUp` `VolumeDown` `VolumeMute` (any
+modifier held leaves them Windows'). Observed keys (seen, never taken): the same three volume keys;
+one feature may not list a key both as a chord and as observed.
 A chord may be claimed by ONE feature (the second claim is refused and named, in file order).
 Reserved names (Mantle's own prefixes): features state sys windows bar launcher desktop switcher
 notifs qs wallpaper shell tray media battery volume net apps mantle test.

@@ -61,15 +61,24 @@ namespace Mantle {
     // not match Win+Shift+Left (move to the other monitor), Win+S does not match Win+Shift+S, and
     // Ctrl or Alt held is never any chord. Index = bit in Chords / Observe. The names are the
     // protocol (main sends them, events carry them): append, never reorder.
+    //
+    // THE VOLUME KEYS AS CHORDS (osd lane, 2026-09-24): bare VolumeUp / VolumeDown / VolumeMute, no
+    // modifier (Win/Shift/Ctrl/Alt + a volume key stays Windows'). Windows' own flyout host cannot
+    // be found on 25H2 (sidecar/Osd.cs), so the only way to have Mantle's pop-up and not Windows' is
+    // that Windows never sees the key: taken, Mantle steps the volume itself (osd.volume). Unlike a
+    // Win chord, a held Volume Up/Down REPEATS (each auto-repeat is one more event, one more step,
+    // as Windows does); a held Mute is one toggle (ChordRepeats).
     public static readonly string[] ChordNames = {
       "Win+S", "Win+V", "Win+Tab", "Win+Left", "Win+Right", "Win+Up", "Win+Down", "Win+Z",
-      "Win+Shift+S", "PrintScreen"
+      "Win+Shift+S", "PrintScreen", "VolumeUp", "VolumeDown", "VolumeMute"
     };
-    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C };
-    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false };
-    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false };
+    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD };
+    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false };
+    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false };
+    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false };
     /// Observed keys are REPORTED on every keydown (auto-repeat included: a held Volume Up keeps
-    /// stepping) and NEVER swallowed: Windows still changes the volume itself.
+    /// stepping) and NEVER swallowed: Windows still changes the volume itself. A volume key that
+    /// is also a TAKEN chord is the chord's (swallowed, a chord event); untaken, it is observed.
     public static readonly string[] KeyNames = { "VolumeUp", "VolumeDown", "VolumeMute" };
     static readonly int[] KeyVk = { 0xAF, 0xAE, 0xAD };
     // vk -> which chords use it (bitmask) / which observed key it is (-1 none). Built once, so the
@@ -294,7 +303,12 @@ namespace Mantle {
         // Auto-repeat of a chord we took: swallowed, and no second event (a held Win+Left is one
         // snap, not twenty). Only while its modifiers still match: if they do not, its keyup
         // went where the hook could not see it (an elevated window), and this is a fresh press.
-        if (ChordMatches(_chordOf[vk], altFlag, shift, ctrl, winHeld)) return Swallow;
+        // A held Volume Up/Down is the exception: every repeat is one more step, as in Windows.
+        int held = _chordOf[vk];
+        if (ChordMatches(held, altFlag, shift, ctrl, winHeld)) {
+          if (ChordRepeats[held]) { Event = EvChord; Arg = held; }
+          return Swallow;
+        }
         _chordDown[vk] = false;
       } else if (_notChord[vk]) {
         return -1;                                   // a press that went through stays Windows'

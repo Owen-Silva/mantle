@@ -38,6 +38,28 @@ check('unreadable: dead with the reason', v.dead && v.sub === 'Unavailable' && /
 v = P.view(Object.assign({}, bal, { mode: 'better' }), null, null);
 check('a Windows 10 overlay: no segment lit, and a note says what Windows reports', on(v) === '' && /Better performance/.test(v.note), v.note);
 
+// THE PLANS (2026-09-24): off Balanced, the installed plans are the control; on Balanced, a toggle.
+const HONE = '44444444-4444-4444-4444-444444444452', BAL = '381b4222-f694-41f0-9685-ff5bb260df2e';
+const plansOn = (active) => [{ guid: BAL, name: 'Balanced', active: active === BAL, balanced: true },
+  { guid: HONE, name: 'Hone Ultimate Power Plan V5', active: active === HONE, balanced: false }];
+const honeP = Object.assign({}, hone, { plans: plansOn(HONE) });
+v = P.view(honeP, null, null);
+check('plans, off Balanced: the plan list IS the control (not dead, modes hidden, list open)', !v.dead && v.pickPlan && v.plansOpen && v.head === 'Power plan', v);
+check('...the current plan is lit and named as the sub', v.plans.filter((p) => p.on).map((p) => p.name).join() === 'Hone Ultimate Power Plan V5' && v.sub === 'Hone Ultimate Power Plan V5', v.plans);
+check('...a plain hint says the modes need Balanced, no warning note', /only on the Balanced plan/.test(v.hint) && !v.planNote && !v.planToggle, v);
+check('...Balanced says in its tooltip that the modes work there', /power modes work on this plan/.test(v.plans[0].title), v.plans[0].title);
+v = P.view(honeP, null, null, { plan: BAL });
+check('a plan click in flight: Balanced lit at once, pending', v.plans[0].on && v.plans[0].pending && !v.plans[1].on, v.plans);
+v = P.view(honeP, null, null, { planErr: 'refused: sidecar is passive (test mode): it would have switched the power plan' });
+check('a refused plan switch: sprung back, the reason in a plan note', v.plans[1].on && /^Power plan did not change: refused/.test(v.planNote), v.planNote);
+const balP = Object.assign({}, bal, { plans: plansOn(BAL) });
+v = P.view(balP, null, null);
+check('plans, on Balanced: the modes are the control, the list closed behind "Plan: Balanced"', !v.dead && !v.pickPlan && !v.plansOpen && v.planToggle === 'Plan: Balanced' && on(v) === 'balanced', v);
+v = P.view(balP, null, null, { plansOpen: true });
+check('...the toggle opens the list (the way back to Hone is one click)', v.plansOpen && v.planToggle === 'Hide power plans' && v.plans[0].on, v);
+v = P.view(Object.assign({}, bal, { plans: [plansOn(BAL)[0]] }), null, null);
+check('only one plan installed: no toggle', !v.planToggle && !v.plansOpen, v);
+
 check('fullName', P.fullName('efficiency') === 'Best power efficiency' && P.fullName('performance') === 'Best performance' && P.fullName(null) === 'unknown');
 
 console.log(`powermode: ${passed} passed, ${failures.length} failed`);

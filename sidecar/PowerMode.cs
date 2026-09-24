@@ -49,6 +49,9 @@ namespace Mantle {
       [DllImport("powrprof.dll")] public static extern uint PowerReadFriendlyName(IntPtr rootKey, ref Guid scheme,
           IntPtr subGroup, IntPtr setting, byte[] buffer, ref uint size);
       [DllImport("kernel32.dll")] public static extern IntPtr LocalFree(IntPtr p);
+      [DllImport("powrprof.dll")] public static extern uint PowerEnumerate(IntPtr rootKey, IntPtr scheme, IntPtr subGroup,
+          uint accessFlags, uint index, byte[] buffer, ref uint size);
+      [DllImport("powrprof.dll")] public static extern uint PowerSetActiveScheme(IntPtr rootKey, ref Guid scheme);
 
       [StructLayout(LayoutKind.Sequential)]
       public struct SYSTEM_POWER_STATUS {
@@ -84,6 +87,7 @@ namespace Mantle {
       t.Add("powermode.get", Lanes.Qs, Get);       // the panel's lane: the first read loads powrprof (90 ms here)
       t.Add("powermode.set", Lanes.Qs, Set);
       t.Add("powermode.watch", Lanes.Qs, Watch);
+      t.Add("powermode.plan", Lanes.Qs, SetPlan);    // switch the power PLAN (Owen's click only)
     }
 
     // ------------------------------------------------------------------ reading
@@ -116,6 +120,37 @@ namespace Mantle {
       } catch (Exception) { return null; }
     }
 
+    // ------------------------------------------------------------------ the power PLANS
+    //
+    // WHY (2026-09-24): Owen's active plan is "Hone Ultimate Power Plan V5", and Windows applies a
+    // power MODE only on Balanced, so the mode switch alone is a dead control on his machine. The
+    // panel offers the installed plans instead (PowerEnumerate + PowerReadFriendlyName, the list
+    // Control Panel > Power Options shows) and the modes once Balanced is chosen.
+    const uint AccessScheme = 16;              // POWER_DATA_ACCESSOR ACCESS_SCHEME
+
+    static bool ActivePlan(out Guid plan, out uint rc) {
+      plan = Guid.Empty;
+      IntPtr p;
+      rc = Native.PowerGetActiveScheme(IntPtr.Zero, out p);
+      if (rc != 0) return false;
+      plan = (Guid)Marshal.PtrToStructure(p, typeof(Guid));
+      Native.LocalFree(p);
+      return true;
+    }
+
+    /// Every installed power plan, in Windows' order: [{guid, name, active, balanced}].
+    public static List<object> Plans(Guid active) {
+      var list = new List<object>();
+      var buf = new byte[16];
+      for (uint i = 0; i < 64; i++) {
+        uint size = 16;
+        if (Native.PowerEnumerate(IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, AccessScheme, i, buf, ref size) != 0) break;   // 259 = no more
+        var g = new Guid(buf);
+        list.Add(Json.Obj("guid", g.ToString(), "name", PlanName(g) ?? g.ToString(), "active", g == active, "balanced", g == BalancedPlan));
+      }
+      return list;
+    }
+
     /// The whole picture the panel draws: mode, plan, power source, and - when a mode cannot be
     /// chosen - why, in words the panel shows as they are.
     public static IDictionary Read() {
@@ -129,12 +164,13 @@ namespace Mantle {
       Native.LocalFree(p);
       string planName = PlanName(plan);
       bool onBalanced = plan == BalancedPlan;
+      List<object> plans = Plans(plan);
 
       Guid overlay;
       uint orc = Native.PowerGetEffectiveOverlayScheme(out overlay);
       if (orc != 0)
         return Json.Obj("ok", false, "mode", null, "available", false, "ms", sw.ElapsedMilliseconds,
-                        "plan", Json.Obj("guid", plan.ToString(), "name", planName, "balanced", onBalanced),
+                        "plan", Json.Obj("guid", plan.ToString(), "name", planName, "balanced", onBalanced), "plans", plans,
                         "reason", "Windows would not say which power mode is in effect (error " + orc + ")");
 
       Native.SYSTEM_POWER_STATUS ps;
@@ -147,9 +183,9 @@ namespace Mantle {
       string reason = null;
       if (!onBalanced)
         reason = "Power mode works only on the Balanced power plan, and this PC is on \"" +
-                 (planName ?? plan.ToString()) + "\". Switch to Balanced in Control Panel > Power Options to use it";
+                 (planName ?? plan.ToString()) + "\". Choose the Balanced plan to use it";
       return Json.Obj("ok", true, "mode", mode, "overlay", overlay.ToString(), "available", onBalanced,
-                      "plan", Json.Obj("guid", plan.ToString(), "name", planName, "balanced", onBalanced),
+                      "plan", Json.Obj("guid", plan.ToString(), "name", planName, "balanced", onBalanced), "plans", plans,
                       "source", source, "saver", saver, "ms", sw.ElapsedMilliseconds, "reason", reason);
     }
 
@@ -194,6 +230,51 @@ namespace Mantle {
                             (after["reason"] != null ? " (" + after["reason"] + ")" : "");
       result = Json.Obj("ok", took, "mode", want, "same", same, "setMs", ms, "state", after, "reason", why);
       if (took && !same) Changed("set");
+      return null;
+    }
+
+    /// {plan: guid} -> {ok, plan, same, setMs, state (READ BACK), reason}: make an installed plan the
+    /// active one (PowerSetActiveScheme, what Control Panel > Power Options does). ok means the
+    /// read-back names the plan asked for. In --passive only the plan already active may be "set"
+    /// (a same-value write: sidecar/test-osd.js does exactly that, confirmed by powercfg).
+    static string SetPlan(Dictionary<string, object> req, ref object result) {
+      string raw = Json.GetString(req, "plan");
+      Guid want;
+      try { want = new Guid(raw ?? ""); }
+      catch (Exception) {
+        return "powermode.plan needs plan: the GUID of an installed power plan (got " + (raw == null ? "nothing" : "\"" + raw + "\"") + ")";
+      }
+      Guid active; uint rc0;
+      if (!ActivePlan(out active, out rc0)) {
+        result = Json.Obj("ok", false, "plan", want.ToString(), "state", Read(),
+                          "reason", "Windows would not say which power plan is active (error " + rc0 + ")");
+        return null;
+      }
+      string wantName = null;
+      foreach (object o in Plans(active)) {
+        var d = (IDictionary)o;
+        if ((string)d["guid"] == want.ToString()) { wantName = (string)d["name"]; break; }
+      }
+      if (wantName == null) return "powermode.plan: no installed power plan has the GUID " + want;
+      bool same = want == active;
+      if (Program.Passive && !same) {
+        result = Json.Obj("ok", false, "plan", want.ToString(), "same", false, "state", Read(),
+                          "reason", FeatureTable.PassiveRefusal + ": it would have switched the power plan from \"" +
+                                    (PlanName(active) ?? active.ToString()) + "\" to \"" + wantName + "\"");
+        return null;
+      }
+      var sw = Stopwatch.StartNew();
+      uint rc = Native.PowerSetActiveScheme(IntPtr.Zero, ref want);
+      long ms = sw.ElapsedMilliseconds;
+      Guid after; uint rc1;
+      bool read = ActivePlan(out after, out rc1);
+      bool took = rc == 0 && read && after == want;
+      string why = null;
+      if (rc != 0) why = "Windows refused to switch to \"" + wantName + "\" (error " + rc + ")";
+      else if (!read) why = "Windows accepted the switch but would not say which plan is active now (error " + rc1 + ")";
+      else if (!took) why = "Windows accepted the switch but still reports \"" + (PlanName(after) ?? after.ToString()) + "\"";
+      result = Json.Obj("ok", took, "plan", want.ToString(), "same", same, "setMs", ms, "state", Read(), "reason", why);
+      if (took && !same) Changed("plan");
       return null;
     }
 

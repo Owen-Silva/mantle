@@ -2182,6 +2182,13 @@ async function launchItem(item, fresh) {
   const aumid = (pin && pin.aumid) || item.aumid || null;
   const again = fresh ? ' another copy of' : '';
 
+  // --test: a pinned icon clicked in a test bar starts nothing (osd2 lane, 2026-09-24).
+  if (flags.test && (lnk || aumid)) {
+    const what = lnk ? `open ${lnk}` : `start shell:AppsFolder\\${aumid}`;
+    process.stdout.write(`mantle: launch dry run (--test): would${again} ${what} for ${item.name}\n`);
+    return { ok: true, reason: `dry run: would${again} ${what}`, action: 'dry-run', dryRun: true };
+  }
+
   if (lnk) {
     try {
       const err = await shell.openPath(String(lnk));
@@ -3382,9 +3389,13 @@ const COMMANDS = {
 
   'apps.index': async (a) => apps.index({ refresh: !!(a && a.refresh) }),
   'apps.search': async (a) => apps.search(a && a.q),
+  // --test: every launch/open below is a DRY RUN with a log line (osd2 lane, 2026-09-24: Enter on
+  // an app row in a test instance really started the app). The row is still resolved, so a dry run
+  // proves the id; lib/launcher-index.js says what it WOULD have run. Live behaviour is unchanged.
   'apps.launch': async (a) => {
-    const res = await apps.launch(a && a.id);
-    if (res && res.ok) hideLauncher();
+    const res = await apps.launch(a && a.id, { dryRun: !!flags.test });
+    if (res && res.dryRun) process.stdout.write(`mantle: apps.launch dry run (--test): ${res.reason || 'nothing started'}\n`);
+    if (res && res.ok && !res.dryRun) hideLauncher();
     return res;
   },
   // The launcher's power rows and Windows Search file rows. lib/launcher-index.js does the work;
@@ -3397,8 +3408,12 @@ const COMMANDS = {
   },
   'launcher.files': async (a) => require(modulePathFor(ROOT)).files(a, { sidecar: (c, x, ms) => sidecar.call(c, x, ms) }),
   'launcher.openFile': async (a) => {
-    const res = await require(modulePathFor(ROOT)).openFile(a);
-    if (res && res.ok) hideLauncher();
+    const res = await require(modulePathFor(ROOT)).openFile(a, { dryRun: !!flags.test });
+    if (flags.test && res) {
+      res.dryRun = true;
+      process.stdout.write(`mantle: launcher.openFile dry run (--test): ${res.reason || (res.ok ? 'nothing opened' : 'refused')}\n`);
+    }
+    if (res && res.ok && !res.dryRun) hideLauncher();
     return res;
   },
 

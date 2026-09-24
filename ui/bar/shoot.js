@@ -161,7 +161,13 @@ const SHOTS = [
   { name: 'pm-pending', w: 1280, h: 480, q: '?mode=pill&pm=slow', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmbtn[data-mode="performance"]', { wait: 200 }] },
   { name: 'pm-taken', w: 1280, h: 480, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmbtn[data-mode="efficiency"]', { wait: 300 }] },
   { name: 'pm-refused', w: 1280, h: 480, q: '?mode=pill&pm=refuse', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmbtn[data-mode="performance"]', { wait: 300 }] },
-  { name: 'pm-settings-push', w: 1280, h: 480, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, { js: "__mockPower('performance')" }, { wait: 200 }] }
+  { name: 'pm-settings-push', w: 1280, h: 480, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, { js: "__mockPower('performance')" }, { wait: 200 }] },
+  // The power PLANS (2026-09-24): off Balanced the plans are the control; Balanced chosen -> the modes,
+  // with the plans one click away behind "Plan: Balanced"; a refused plan switch springs back.
+  { name: 'pm-plans-hone', w: 1280, h: 520, q: '?mode=pill&pm=hone', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'pm-plans-chose-balanced', w: 1280, h: 520, q: '?mode=pill&pm=hone', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmplan[data-plan="381b4222-f694-41f0-9685-ff5bb260df2e"]', { wait: 300 }] },
+  { name: 'pm-plans-open', w: 1280, h: 520, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmplantoggle', { wait: 200 }] },
+  { name: 'pm-plans-refused', w: 1280, h: 520, q: '?mode=pill&pm=refuse', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmplantoggle', { wait: 150 }, '.pmplan[data-plan="44444444-4444-4444-4444-444444444452"]', { wait: 300 }] }
 ];
 const ONLY = process.argv.slice(2);
 const RUN = ONLY.length ? SHOTS.filter(s => ONLY.some(w => s.name.includes(w))) : SHOTS;
