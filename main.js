@@ -2642,7 +2642,8 @@ function needHwnd(args) {
  * How a restart brings Mantle back (shell.restart). Never throws.
  *
  *   LIVE, started by the "Mantle" logon task -> via 'task': a DETACHED PowerShell waits for this
- *     process to exit, then runs `schtasks /Run /TN Mantle`. Not app.relaunch(): the relaunched
+ *     process to exit AND for the task to stop saying Running, then runs the task (once more if
+ *     nothing is up 5 s later). Not app.relaunch(): the relaunched
  *     Mantle would be OUR child rather than the Task Scheduler's, so it would lose the task's
  *     crash restarts and could be reaped along with whatever session it ended up under. And it
  *     has to WAIT for the pid: the task is MultipleInstancesPolicy IgnoreNew
@@ -2663,8 +2664,18 @@ async function restartPlan(opts) {
     file: 'powershell.exe',
     args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command',
       // -ErrorAction SilentlyContinue: if this pid is already gone Wait-Process throws, and the
-      // /Run must still happen. 90 s is well past shutdown()'s own 12 s hard stop.
-      `Wait-Process -Id ${process.pid} -Timeout 90 -ErrorAction SilentlyContinue; schtasks /Run /TN Mantle`],
+      // start must still happen. 90 s is well past shutdown()'s own 12 s hard stop.
+      // Then wait for the TASK, not just the pid: Task Scheduler notices the exit a moment later,
+      // and a Run while it still says Running is ignored (IgnoreNew). MEASURED 2026-09-23: a
+      // `schtasks /Run` right after the old instance exited answered "currently running" and
+      // Mantle stayed gone. Schedule.Service COM rather than schtasks' text, because State
+      // (4 = running) does not depend on the Windows display language. One more Run if no
+      // instance is up 5 s later.
+      `Wait-Process -Id ${process.pid} -Timeout 90 -ErrorAction SilentlyContinue; ` +
+      `$s = New-Object -ComObject Schedule.Service; $s.Connect(); $d = $s.GetFolder('\\'); ` +
+      `$n = 0; while ($d.GetTask('Mantle').State -eq 4 -and $n -lt 120) { Start-Sleep -Milliseconds 250; $n++ }; ` +
+      `[void]$d.GetTask('Mantle').Run($null); Start-Sleep -Seconds 5; ` +
+      `if ($d.GetTask('Mantle').State -ne 4) { [void]$d.GetTask('Mantle').Run($null) }`],
   });
   if (opts && opts.assumeTask) return helper('dry run');
   if (flags.test) return { via: 'relaunch', args, why: 'test mode restarts itself' };
