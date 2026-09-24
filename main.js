@@ -2245,6 +2245,32 @@ async function qsMore(cmd, args, label, ms) {
 }
 
 /*
+ * THE PAIRED BLUETOOTH DEVICES behind the Bluetooth tile's '>' (qsx lane,
+ * 2026-09-23; the work is sidecar/BtDevices.cs). Measured on Owen's machine: a
+ * list is 26 ms warm (radio 19, paired devices 18, batteries 15, sound routes
+ * 12, partly overlapping), the watch's first push 0.3 s after it starts. A
+ * connect waits up to 12 s for Windows to say it is connected (a disconnect up
+ * to 8 s), so its timeout sits well past that. While the view is open the
+ * sidecar's DeviceWatcher pushes {ev:'btdevices'}; main only relays it, and the
+ * watch lapses on its own if the view stops renewing it.
+ */
+const QS_BT_MS = { list: 8000, watch: 6000, toggle: 25000 };
+
+sidecar.on('btdevices', (ev) => broadcast('btdevices', ev));
+
+async function qsBtToggle(op, a) {
+  // "device", not "id": lib/sidecar.js refuses an argument named id (the protocol's own).
+  const device = a && typeof a.device === 'string' ? a.device : '';
+  if (!device) return { ok: false, op, reason: `qs.bt.${op} needs device: a row's id from qs.bt.list` };
+  const r = await qsMore('btdevices', { op, device },
+    `the Bluetooth device could not be ${op === 'connect' ? 'connected' : 'disconnected'}`, QS_BT_MS.toggle);
+  // A headset that connects usually becomes the sound output, so the main
+  // panel's volume slider is repainted from a fresh read.
+  if (qsWatching) qsPush(`a Bluetooth device ${r.ok ? (op === 'connect' ? 'connected' : 'disconnected') : 'did not ' + op}`);
+  return r;
+}
+
+/*
  * THE WI-FI PASSWORD FIELD NEEDS THE KEYBOARD, AND THE BAR NEVER HAS IT. The bar
  * is focusable:false (lib/windows.js) so a click on it never takes focus from the
  * app Owen is in -- which also means a text field in it receives NO keys: they go
@@ -3088,6 +3114,15 @@ const COMMANDS = {
     if (a.muted !== undefined) args.muted = a.muted;
     return qsMore('audio', args, "that app's volume could not be changed", QS_MORE_MS.audio);
   },
+
+  // ---- Quick Settings, one level down: the paired Bluetooth devices (see qsBtToggle) ----
+  'qs.bt.list': async () => qsMore('btdevices', { op: 'list' }, 'the Bluetooth devices cannot be read', QS_BT_MS.list),
+  'qs.bt.watch': async (a) => {
+    const on = !!(a && a.on);
+    return qsMore('btdevices', { op: 'watch', on }, `the Bluetooth device watch could not be turned ${on ? 'on' : 'off'}`, QS_BT_MS.watch);
+  },
+  'qs.bt.connect': async (a) => qsBtToggle('connect', a),
+  'qs.bt.disconnect': async (a) => qsBtToggle('disconnect', a),
 
   // The Wi-Fi password field's keyboard: see qsKeyboard for why the bar must ask.
   'qs.keyboard': async (a) => qsKeyboard(!!(a && a.on)),

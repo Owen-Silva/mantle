@@ -1802,8 +1802,8 @@
       });
     }
 
-    // The two '>' buttons (Wi-Fi networks; sound output and mixer) and their views: ui/bar/qs-more.js
-    if (window.MantleQsMore) MantleQsMore.attach(pop, { wifiTile: tiles.wifi.b, volumeLine: v.line, repaint: paint });
+    // The three '>' buttons (Wi-Fi networks; Bluetooth devices; sound output and mixer) and their views: ui/bar/qs-more.js
+    if (window.MantleQsMore) MantleQsMore.attach(pop, { wifiTile: tiles.wifi.b, btTile: tiles.bluetooth.b, volumeLine: v.line, repaint: paint });
     qsPaint = paint;
     paint();                                    // draw from whatever we already know, immediately
     qsSnapshot().then(function () { if (popKey === 'qs') paint(); },
@@ -2549,15 +2549,16 @@
   /* The notification centre (ui/bar/notifications.js) is handed the bar's own popover, bridge and
      failure helpers, so its panel opens, sizes, closes and reports problems like every other one.
      If that file did not load, the bell still works: it opens Windows' centre, and says why. */
-  /* The quick-settings sub-views (ui/bar/qs-more.js): the Wi-Fi list, the output picker and the
-     mixer. Without that file the panel still works, minus its two '>' buttons, and says why. */
+  /* The quick-settings sub-views (ui/bar/qs-more.js): the Wi-Fi list, the Bluetooth devices, the
+     output picker and the mixer. Without that file the panel still works, minus its three '>'
+     buttons, and says why. on: the Bluetooth view's pushes ('btdevices'). */
   if (window.MantleQsMore) {
     MantleQsMore.init({
-      call: call, callR: callR, msg: msg, fail: fail, closePop: closePop,
+      call: call, callR: callR, on: on, msg: msg, fail: fail, closePop: closePop,
       svg: svg, wifiGlyph: wifiGlyph, volumeSvg: volumeSvg, throttled: throttled
     });
   } else {
-    fail('qsmore', 'Wi-Fi list missing', 'ui/bar/qs-more.js did not load, so quick settings has no Wi-Fi list, output picker or mixer', 'warn');
+    fail('qsmore', 'Wi-Fi list missing', 'ui/bar/qs-more.js did not load, so quick settings has no Wi-Fi list, Bluetooth devices, output picker or mixer', 'warn');
   }
 
   if (window.MantleNotifs) {

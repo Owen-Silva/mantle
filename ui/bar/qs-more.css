@@ -240,3 +240,22 @@
 .qsx-appline .qsmute { flex-basis: 26px; height: 26px; }
 .qsx-app.muted .qsx-appline input[type="range"] { opacity: .5; }
 .qsx-apperr { margin: 3px 0 0 26px; }
+
+/* ---------------------------------------------------------------- Bluetooth: the paired devices */
+
+/* The rows are the Wi-Fi list's (.qsx-net): the type icon where the bars go, Connected in the
+   accent the way a joined network is. A connected device's battery sits at the row's right edge,
+   as a small glyph and its percentage. */
+.qsx-btbatt {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--lg-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.qsx-btbatt svg { display: block; }
+/* "Add device" closes the list: a quieter row with a plus, opening Windows' Bluetooth settings */
+.qsx-add { margin-top: 2px; color: var(--lg-ink-2); }
+.qsx-add .qsx-netname { font-size: 12.5px; }

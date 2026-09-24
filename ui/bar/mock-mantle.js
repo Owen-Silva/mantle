@@ -23,8 +23,8 @@
  *   ?apps=N       N pinned items instead of 12 (proves the centred row, the slide and the clip)
  *   ?qs=fail      Bluetooth and brightness come back ok:false, so the panel's muted-with-a-reason
  *                 path is on screen instead of having to be imagined
- *   ?wifi= ?scan= ?kbd= ?audio= ?mixer=   the Wi-Fi list, output picker and mixer states
- *                 (qs-more.js); listed at "quick settings, one level down" below
+ *   ?wifi= ?scan= ?kbd= ?audio= ?mixer= ?bt= ?btwatch=   the Wi-Fi list, output picker, mixer and
+ *                 Bluetooth device states (qs-more.js); listed at "quick settings, one level down" below
  *   ?state=down   sidecar reported down, so the amber status chip is on screen
  *   ?edge=top     pretend the bar is docked at the top (bar.js also honours this)
  *   ?media=X      now playing, in main's 'media' payload shape (main.js NOW PLAYING): playing,
@@ -425,6 +425,98 @@
     return { ok: true, key: a.key, session: row, ms: 5, reason: null };
   }
 
+  /* ---- quick settings, one level down: Bluetooth (2026-09-23) --------------------------------
+     Main's qs.bt.* replies in the sidecar's shape (sidecar/BtDevices.cs), and its 'btdevices' push
+     after a connect or disconnect, the way the sidecar's DeviceWatcher sends one. The kinds and
+     every reason are the real ones measured on Owen's machine; the product names are generic.
+       ?bt=6 (default) | 0 | 1 | connecting | failed | off | none | long | error
+         connecting   the sidecar has a connect in flight when the view opens (a panel that closed
+                      mid-connect), and a new Connect never answers, so "Connecting…" can be held
+         failed       every Connect answers ok:false with the sidecar's own after-12-s reason
+         off / none   the radio is off / there is no adapter (the Bluetooth tile agrees)
+       ?btwatch=fail  the watch will not start, so the view's 3 s re-read and its note show */
+  var BT = q.get('bt') || '6';
+  var BT_WATCH_FAIL = q.get('btwatch') === 'fail';
+  var btWatching = false;
+  var BT_NO_ROUTE = 'Mantle can connect and disconnect audio devices only; Windows connects this one itself when it is used';
+  function btDev(mac, name, kind, o) {
+    var audio = kind === 'headphones' || kind === 'speaker';
+    return Object.assign({
+      id: 'Bluetooth#Bluetooth02:00:5e:00:00:01-' + mac, name: name, kind: kind, kindFrom: kind === 'other' ? null : 'class',
+      connected: false, battery: null, batteryWhy: null, audio: audio, canConnect: audio,
+      connectWhy: audio ? null : BT_NO_ROUTE, le: false, address: mac, cod: null, appearance: null, category: null
+    }, o || {});
+  }
+  function btPreset(name) {
+    if (name === '0' || name === 'none' || name === 'error') return [];
+    if (name === '1') return [btDev('02:00:5e:10:00:01', 'WH-CH520', 'headphones', { connected: true, battery: 80 })];
+    if (name === 'long') {
+      return [
+        btDev('02:00:5e:10:00:01', 'Sony WH-1000XM5 Wireless Noise Cancelling Headphones', 'headphones', { connected: true, battery: 100 }),
+        btDev('02:00:5e:10:00:02', 'Bose QuietComfort Ultra Earbuds — Living Room Second Pairing', 'headphones'),
+        btDev('02:00:5e:10:00:03', 'Logitech MX Keys S Combo for Mac, Business Edition (Office)', 'keyboard',
+          { connected: true, battery: 9, le: true, kindFrom: 'appearance' }),
+        btDev('02:00:5e:10:00:04', 'Pixel 8 Pro — Work Profile Hotspot Phone', 'phone'),
+        btDev('02:00:5e:10:00:05', 'Living Room TV (Android TV) in the Downstairs Den', 'other')
+      ];
+    }
+    return [
+      btDev('02:00:5e:10:00:01', 'WH-CH520', 'headphones', { connected: true, battery: 80 }),
+      btDev('02:00:5e:10:00:06', 'MX Master 3S', 'mouse', { connected: true, battery: 45, le: true, kindFrom: 'appearance' }),
+      btDev('02:00:5e:10:00:03', 'Keys-To-Go 2', 'keyboard',
+        { connected: true, batteryWhy: 'this device does not report its battery to Windows', le: true, kindFrom: 'appearance' }),
+      btDev('02:00:5e:10:00:02', 'JBL Flip 6', 'speaker'),
+      btDev('02:00:5e:10:00:07', 'Xbox Wireless Controller', 'gamepad'),
+      btDev('02:00:5e:10:00:05', 'Living Room TV', 'other')
+    ];
+  }
+  var btDevs = btPreset(BT);
+  if (BT === 'off') qsState.bluetooth.on = false;
+  if (BT === 'none') { qsState.bluetooth.present = false; qsState.bluetooth.on = false; }
+
+  function btList() {
+    var base = { busy: null, last: null, watching: btWatching, watchReason: null, ms: { radio: 19, paired: 18, battery: 15, audio: 12, total: 26 } };
+    if (BT === 'error') {
+      return Object.assign(base, { ok: false, present: true, on: null, radioReason: null, devices: [],
+        reason: 'Windows\' paired-device list did not answer within 3 s' });
+    }
+    if (BT === 'none' || qsState.bluetooth.present === false) {
+      return Object.assign(base, { ok: true, present: false, on: false, radioReason: 'this machine has no Bluetooth radio', devices: [],
+        reason: 'this machine has no Bluetooth radio' });
+    }
+    var on = qsState.bluetooth.on !== false;
+    var devs = btDevs.map(function (d) {
+      var x = Object.assign({}, d);
+      if (!on) { x.connected = false; }
+      if (!x.connected) { x.battery = null; x.batteryWhy = null; }
+      return x;
+    });
+    devs.sort(function (a, b) { return a.connected === b.connected ? 0 : a.connected ? -1 : 1; });   // connected first, as the sidecar sends them
+    if (BT === 'connecting') base.busy = { device: btDevs[3] ? btDevs[3].id : '', name: btDevs[3] ? btDevs[3].name : '', op: 'connect', ms: 1800 };
+    return Object.assign(base, { ok: true, present: true, on: on, radioReason: null, devices: devs, reason: null });
+  }
+
+  function btToggle(p, connect) {
+    var op = connect ? 'connect' : 'disconnect';
+    var d = btDevs.filter(function (x) { return x.id === (p && p.device); })[0];
+    if (!d) return { ok: false, op: op, device: p && p.device, name: null, connected: null, reason: 'Windows does not know that Bluetooth device (the device did not answer)' };
+    if (BT === 'connecting') return new Promise(function () {});        // held, for a look at "Connecting…"
+    return new Promise(function (res) {
+      setTimeout(function () {
+        if (BT === 'failed' && connect) {
+          res({ ok: false, op: op, device: d.id, name: d.name, connected: false, sent: 2, waitedMs: 12000,
+            reason: 'Windows asked ' + d.name + ' to connect, but it was still not connected after 12 s (it may be off, out of range, or connected to another device)' });
+          return;
+        }
+        d.connected = connect;
+        if (connect && d.kind === 'headphones') d.battery = 70;
+        else if (connect && d.battery === null) d.batteryWhy = 'this device does not report its battery to Windows';
+        res({ ok: true, op: op, device: d.id, name: d.name, connected: connect, sent: 2, waitedMs: 1500, reason: null });
+        if (btWatching) setTimeout(function () { emit('btdevices', Object.assign({ ev: 'btdevices', why: 'a device changed' }, btList())); }, 60);
+      }, 1500);                                  // a real connect measured 1-3 s; long enough to see
+    });
+  }
+
   /* The bridge copies arguments when it sends them (structured clone), and the log must never
      print a password: both done here, once, for every call. */
   function redacted(payload) {
@@ -721,6 +813,17 @@
       case 'qs.audio.sessions': return audioSessions();
       case 'qs.audio.session': return audioSession(payload || {});
 
+      /* one level down: the paired Bluetooth devices */
+      case 'qs.bt.list': return btList();
+      case 'qs.bt.watch':
+        if (BT_WATCH_FAIL && payload && payload.on) {
+          return { ok: false, watching: false, reason: 'Windows\' device watcher did not start (HRESULT 0x80070005: Access is denied)' };
+        }
+        btWatching = !!(payload && payload.on);
+        return { ok: true, watching: btWatching, started: btWatching, leaseMs: 90000, events: 0, reason: null };
+      case 'qs.bt.connect': return btToggle(payload, true);
+      case 'qs.bt.disconnect': return btToggle(payload, false);
+
       /* Every set answers with the value that actually took, and a part the mock cannot switch
          answers ok:false WITH a reason — the panel must show that reason, not just fail to move.
          main.js's contract (2026-09-23): levels go in as WHOLE percentages 0-100 (a 0-1 fraction
@@ -879,6 +982,16 @@
       emit('battery', batteryNow);
       qsPush();
       return batteryNow;
+    },
+    /* The sidecar's watch pushing a changed list (a device connected, the radio switched). */
+    bt: function (name) {
+      BT = name;
+      btDevs = btPreset(name);
+      qsState.bluetooth.on = name !== 'off' && name !== 'none';
+      qsState.bluetooth.present = name !== 'none';
+      var r = btList();
+      emit('btdevices', Object.assign({ ev: 'btdevices', why: 'mock: harness push' }, r));
+      return r;
     }
   };
 

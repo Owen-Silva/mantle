@@ -604,6 +604,148 @@ async function qsxChecks(s) {
     try { fs.unlinkSync(wav); } catch (_) { /* never written, or already gone */ }
   }
 
+  // ---- btdevices: the paired Bluetooth devices (BtDevices.cs, 2026-09-23) ----------------------
+  // READ ONLY. Owen may be listening on Bluetooth headphones: nothing here connects or disconnects
+  // anything. connect/disconnect are only ever sent to this PASSIVE sidecar, which refuses them
+  // before it looks the device up. The connect route is proven by the filter's own list of
+  // property sets (KSPROPERTY_TYPE_SETSUPPORT with GUID_NULL), which no driver handler answers.
+  const KINDS = ['headphones', 'speaker', 'mouse', 'keyboard', 'phone', 'gamepad', 'other'];
+  const since = (i, pred) => s.events.slice(i).find(pred) || null;
+  async function eventAfter(i, pred, ms) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const hit = since(i, pred);
+      if (hit) return hit;
+      await sleep(50);
+    }
+    return null;
+  }
+  try {
+    const r = await s.send('ping');
+    const cmds = r.ok && r.result ? r.result.commands : null;
+    check('ping lists btdevices', Array.isArray(cmds) && cmds.indexOf('btdevices') >= 0, JSON.stringify(cmds));
+  } catch (e) { check('ping lists btdevices', false, e.message); }
+
+  let bt = null;
+  try {
+    const t0 = Date.now();
+    const r = await s.send('btdevices', { op: 'list' }, 10000);
+    const ms = Date.now() - t0;
+    bt = r.ok ? r.result : null;
+    const devs = bt && Array.isArray(bt.devices) ? bt.devices : null;
+    check('btdevices list answers with present, on and the paired devices',
+      !!bt && typeof bt.present === 'boolean' && (typeof bt.on === 'boolean' || bt.on === null) && !!devs &&
+      (bt.ok === true || (typeof bt.reason === 'string' && bt.reason.length > 0)),
+      JSON.stringify(r).slice(0, 300));
+    if (bt && bt.present === false) {
+      check('btdevices says why when there is no adapter', typeof bt.reason === 'string' && bt.reason.length > 0, JSON.stringify(bt).slice(0, 200));
+    }
+    if (devs) {
+      const bad = devs.filter((d) => !(
+        typeof d.id === 'string' && /^Bluetooth/.test(d.id) && typeof d.name === 'string' && d.name.length > 0 &&
+        KINDS.indexOf(d.kind) >= 0 && typeof d.connected === 'boolean' &&
+        typeof d.audio === 'boolean' && typeof d.canConnect === 'boolean' &&
+        (d.canConnect ? d.connectWhy === null : typeof d.connectWhy === 'string' && d.connectWhy.length > 0)));
+      check('every device has an id, a name, one of the seven kinds, connected, and a reason where it cannot connect',
+        bad.length === 0, JSON.stringify(bad[0] || null).slice(0, 300));
+      const badBattery = devs.filter((d) => !(
+        d.connected
+          ? (d.battery === null ? typeof d.batteryWhy === 'string' && d.batteryWhy.length > 0
+                                : Number.isInteger(d.battery) && d.battery >= 0 && d.battery <= 100 && d.batteryWhy === null)
+          : d.battery === null && d.batteryWhy === null));
+      check('a battery level only while connected, a whole 0-100, and a reason while connected without one',
+        badBattery.length === 0, JSON.stringify(badBattery[0] || null).slice(0, 300));
+      const order = devs.map((d) => d.connected);
+      check('connected devices are listed first', order.every((c, i) => i === 0 || !c || order[i - 1]), JSON.stringify(order));
+      check('a device that is not audio never offers connect', devs.every((d) => d.audio || !d.canConnect), '');
+      const kinds = {};
+      devs.forEach((d) => { kinds[d.kind] = (kinds[d.kind] || 0) + 1; });
+      notes.push('btdevices: ' + devs.length + ' paired (' + Object.keys(kinds).map((k) => kinds[k] + ' ' + k).join(', ') + '), ' +
+        devs.filter((d) => d.connected).length + ' connected, ' + devs.filter((d) => d.canConnect).length + ' with a connect route; on=' +
+        bt.on + ', ' + ms + ' ms round trip, sidecar ' + JSON.stringify(bt.ms));
+    }
+  } catch (e) { check('btdevices list', false, e.message); }
+
+  // The route proof, and proof that reading it moved nothing: the default output device and every
+  // device's connected flag are the same before and after.
+  try {
+    const before = await s.send('audio', { op: 'devices' });
+    const r = await s.send('btdevices', { op: 'list', raw: true }, 10000);
+    const after = await s.send('audio', { op: 'devices' });
+    const devs = r.ok && r.result && Array.isArray(r.result.devices) ? r.result.devices : [];
+    const routed = devs.filter((d) => d.audio && Array.isArray(d.filters) && d.filters.length > 0);
+    const badProof = routed.filter((d) => !(Array.isArray(d.rawKs) && d.rawKs.length === d.filters.length &&
+      d.rawKs.every((k) => typeof k.btAudio === 'boolean' && (k.btAudio ? k.sets > 0 : typeof k.why === 'string')) &&
+      d.canConnect === d.rawKs.some((k) => k.btAudio)));
+    check('every Bluetooth audio route is decided from the filter\'s own list of property sets (SETSUPPORT, GUID_NULL)',
+      badProof.length === 0, JSON.stringify(badProof[0] || null).slice(0, 400));
+    if (!routed.length) notes.push('btdevices: no paired audio device has sound endpoints, so the KS route was not exercised here');
+    else {
+      notes.push('btdevices: ' + routed.length + ' audio device(s), ' + routed.reduce((n, d) => n + d.filters.length, 0) + ' filters, ' +
+        routed.reduce((n, d) => n + d.rawKs.filter((k) => k.btAudio).length, 0) + ' offering KSPROPSETID_BtAudio');
+    }
+    const defBefore = before.ok && before.result ? before.result.defaultId : null;
+    const defAfter = after.ok && after.result ? after.result.defaultId : null;
+    check('reading the Bluetooth routes changed no sound output (the default device is the same)',
+      !!defBefore && defBefore === defAfter, JSON.stringify([defBefore, defAfter]));
+    if (bt && Array.isArray(bt.devices)) {
+      const was = {};
+      bt.devices.forEach((d) => { was[d.id] = d.connected; });
+      const moved = devs.filter((d) => d.id in was && was[d.id] !== d.connected);
+      check('and connected or disconnected nothing', moved.length === 0, JSON.stringify(moved.map((d) => d.name)));
+    }
+  } catch (e) { check('btdevices route proof', false, e.message); }
+
+  // The watch: a push once Windows' first enumeration completes, a renewal that starts nothing,
+  // a stop, and a lease that ends a watch nobody renews.
+  try {
+    let i = s.events.length;
+    const on = await s.send('btdevices', { op: 'watch', on: true, leaseMs: 2000 });
+    check('btdevices watch starts', on.ok === true && on.result.ok === true && on.result.watching === true && on.result.started === true,
+      JSON.stringify(on).slice(0, 200));
+    const ev = await eventAfter(i, (e) => e.ev === 'btdevices', 4000);
+    check('the watch pushes the list once Windows has enumerated (ev btdevices)',
+      !!ev && Array.isArray(ev.devices) && ev.watching === true && typeof ev.why === 'string',
+      ev ? JSON.stringify(ev).slice(0, 200) : 'no btdevices event within 4 s');
+    const again = await s.send('btdevices', { op: 'watch', on: true, leaseMs: 2000 });
+    check('renewing starts nothing new', again.ok === true && again.result.watching === true && again.result.started === false,
+      JSON.stringify(again).slice(0, 200));
+    const off = await s.send('btdevices', { op: 'watch', on: false });
+    const off2 = await s.send('btdevices', { op: 'watch', on: false });
+    check('btdevices watch stops, and stopping twice is harmless',
+      off.ok === true && off.result.watching === false && off.result.stopped === true &&
+      off2.ok === true && off2.result.stopped === false, JSON.stringify([off, off2]).slice(0, 300));
+    i = s.events.length;
+    await s.send('btdevices', { op: 'watch', on: true, leaseMs: 1000 });
+    const lapse = await eventAfter(i, (e) => e.ev === 'log' && /btdevices: the watch lapsed/.test(e.message || ''), 4000);
+    const after = await s.send('btdevices', { op: 'list' }, 10000);
+    check('a watch nobody renews stops itself when its lease runs out',
+      !!lapse && after.ok === true && after.result.watching === false && /lapsed/.test(after.result.watchReason || ''),
+      JSON.stringify([lapse, after.result && after.result.watchReason]).slice(0, 300));
+  } catch (e) { check('btdevices watch', false, e.message); }
+
+  for (const [extra, want, label] of [
+    [{ op: 'watch' }, /needs on/, 'a watch without on'],
+    [{ op: 'watch', on: 'yes' }, /on must be true or false/, "on:'yes'"],
+    [{ op: 'watch', on: true, leaseMs: 5 }, /leaseMs must be/, 'a 5 ms lease'],
+    [{ op: 'connect' }, /needs device/, 'a connect without a device'],
+    [{ op: 'pair' }, /unknown op/, 'an unknown op'],
+  ]) {
+    try {
+      const r = await s.send('btdevices', extra);
+      check('btdevices refuses ' + label + ' as a bad argument', r.ok === false && want.test(r.error || '') && !/passive/.test(r.error || ''),
+        JSON.stringify(r).slice(0, 200));
+    } catch (e) { check('btdevices refuses ' + label, false, e.message); }
+  }
+  for (const op of ['connect', 'disconnect']) {
+    try {
+      const device = bt && bt.devices && bt.devices[0] ? bt.devices[0].id : 'Bluetooth#Bluetooth00:00:00:00:00:00-00:00:00:00:00:01';
+      const r = await s.send('btdevices', { op, device });
+      check('btdevices ' + op + ' is refused in passive, before anything is touched',
+        r.ok === false && /passive/.test(r.error || ''), JSON.stringify(r).slice(0, 200));
+    } catch (e) { check('btdevices ' + op + ' is refused in passive', false, e.message); }
+  }
+
   // ---- nothing secret in anything the sidecar printed -------------------------
   const printed = JSON.stringify(s.events) + s.stderr;
   check('no Wi-Fi key from these tests appears in the sidecar\'s logs or events',

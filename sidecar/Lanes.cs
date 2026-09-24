@@ -194,6 +194,7 @@ namespace Mantle {
       // report, 2026-09-23). `wlan` is NOT listed, on purpose: like `search`
       // its case only validates and hands off to its own pool threads, so it
       // never waits behind an icon load for a 4 s scan to even start.
+      // `btdevices` (BtDevices.cs) is unlisted for the same reason.
       { "audio", Audio },
       // Media.cs: WinRT session manager and thumbnails, run on its own MTA
       // thread while the slow lane waits.

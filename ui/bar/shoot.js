@@ -58,6 +58,11 @@ const WIFI = ['#network', '.qsx-chev', { wait: 1300 }];
 const net = (ssid) => '.qsx-net[data-ssid="' + ssid + '"] .qsx-nethead';
 const PASSWORD = WIFI.concat([net('Cafe WiFi'), '.qsx-net.open .qsx-btn.acc', { fill: '#qsxpw', text: 'not-a-real-key' }]);
 const SOUND = ['#volume', '.qsx-more', { wait: 600 }];
+/* Bluetooth (2026-09-23): the Bluetooth tile's '>' (the grid's SECOND chevron, so it is named by
+   its title), with ?bt=<preset> from mock-mantle.js. A row opens by its name; .acc is Connect. */
+const BTV = ['#network', '.qsx-chev[title="Show Bluetooth devices"]', { wait: 500 }];
+const btRow = (name) => '.qsx-bt[data-bt="' + name + '"] .qsx-nethead';
+const BT_CONNECT = BTV.concat([btRow('JBL Flip 6'), '.qsx-net.open .qsx-btn.acc']);
 /* The battery (2026-09-23): every state the readout and the panel's footer can be in, from the
    readings the sidecar sends (?battery=<name>, mock-mantle.js). `plugged` is on AC and NOT
    charging (a charge limit): a plug, never a bolt. `none` has no readout, so its panel is opened
@@ -120,6 +125,25 @@ const SHOTS = [
   { name: 'qsx-mixer-0', w: 1280, h: 560, q: '?mode=pill&audio=1&mixer=0', steps: SOUND },
   { name: 'qsx-mixer-8', w: 1280, h: 560, q: '?mode=pill&audio=1&mixer=8', steps: SOUND.concat([{ scroll: '.qsx-view .qsx-scroll' }]) },
   { name: 'qsx-mixer-error', w: 1280, h: 560, q: '?mode=pill&mixer=error', steps: SOUND },
+  { name: 'qsx-bt-panel', w: 1280, h: 400, q: '?mode=pill', steps: ['#network', { wait: 400 }] },
+  { name: 'qsx-bt-6', w: 1280, h: 560, q: '?mode=pill', steps: BTV },
+  { name: 'qsx-bt-1', w: 1280, h: 560, q: '?mode=pill&bt=1', steps: BTV },
+  { name: 'qsx-bt-0', w: 1280, h: 560, q: '?mode=pill&bt=0', steps: BTV },
+  { name: 'qsx-bt-long', w: 1280, h: 560, q: '?mode=pill&bt=long', steps: BTV },
+  { name: 'qsx-bt-row-connect', w: 1280, h: 560, q: '?mode=pill', steps: BTV.concat([btRow('JBL Flip 6')]) },
+  { name: 'qsx-bt-row-disconnect', w: 1280, h: 560, q: '?mode=pill', steps: BTV.concat([btRow('WH-CH520')]) },
+  { name: 'qsx-bt-row-noroute', w: 1280, h: 560, q: '?mode=pill', steps: BTV.concat([btRow('Xbox Wireless Controller')]) },
+  { name: 'qsx-bt-row-nobattery', w: 1280, h: 560, q: '?mode=pill', steps: BTV.concat([btRow('Keys-To-Go 2')]) },
+  { name: 'qsx-bt-connecting', w: 1280, h: 560, q: '?mode=pill', steps: BT_CONNECT },
+  { name: 'qsx-bt-connected', w: 1280, h: 560, q: '?mode=pill', steps: BT_CONNECT.concat([{ wait: 1600 }]) },
+  { name: 'qsx-bt-failed', w: 1280, h: 560, q: '?mode=pill&bt=failed', steps: BT_CONNECT.concat([{ wait: 1600 }]) },
+  { name: 'qsx-bt-inflight', w: 1280, h: 560, q: '?mode=pill&bt=connecting', steps: BTV },
+  { name: 'qsx-bt-off', w: 1280, h: 560, q: '?mode=pill&bt=off', steps: BTV },
+  { name: 'qsx-bt-turnon', w: 1280, h: 560, q: '?mode=pill&bt=off', steps: BTV.concat(['.qsx-state .qsx-btn.acc', { wait: 1400 }]) },
+  { name: 'qsx-bt-none', w: 1280, h: 560, q: '?mode=pill&bt=none', steps: BTV },
+  { name: 'qsx-bt-error', w: 1280, h: 560, q: '?mode=pill&bt=error', steps: BTV },
+  { name: 'qsx-bt-watchfail', w: 1280, h: 560, q: '?mode=pill&btwatch=fail', steps: BTV },
+  { name: 'qsx-bt-push', w: 1280, h: 560, q: '?mode=pill&bt=1', steps: BTV.concat([{ js: "__mockMain.bt('6')" }, { wait: 200 }]) },
   ...BATT.map((b) => ({ name: 'battery-' + b, w: 1280, h: 60, q: '?mode=pill&battery=' + b, steps: [{ wait: 900 }] })),
   ...BATT.map((b) => ({ name: 'battery-' + b + '-qs', w: 1280, h: 400, q: '?mode=pill&battery=' + b,
     steps: [{ wait: 900 }, b === 'none' ? '#network' : '#battery'] })),

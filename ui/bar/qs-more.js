@@ -19,10 +19,19 @@
  * device the default for all three roles. Below: one row per app with sound
  * (IAudioSessionManager2), each with its own level and mute (ISimpleAudioVolume).
  *
- * COST: nothing here runs while the panel is closed. An open Wi-Fi view re-reads the list every
+ * COST: nothing here runs while the panel is closed. An open Bluetooth view costs one 26 ms list per
+ * change Windows reports (measured 2026-09-23), plus a lease renewal every 30 s. An open Wi-Fi view re-reads the list every
  * 4 s (23-34 ms of sidecar time, measured 2026-09-23). An open sound view re-reads the apps every
  * 1.5 s (5-10 ms) and the devices every third tick (4-5 ms). Both stop when their view or the
  * panel closes.
+ *
+ * BLUETOOTH (the tile's '>', 2026-09-23): the PAIRED devices, Windows 11's shape. Each row has a
+ * type icon, Connected / Not connected and, while connected, the battery where Windows knows it
+ * (sidecar/BtDevices.cs; the words are ui/bar/bt.js). A row opens to Connect / Disconnect on an
+ * audio device with Windows' Bluetooth audio control under it, else the reason and Windows' own
+ * settings. "Add device" is Windows' Settings: pairing stays Windows'. While the view is open the
+ * sidecar's DeviceWatcher pushes changes ('btdevices'), renewed every 30 s so a dead view cannot
+ * leave it running; without the watch the list is re-read every 3 s instead, and says so.
  *
  * THE PASSWORD is typed into a field that appears only once main says the bar holds the keyboard
  * (qs.keyboard). The bar is focusable:false, so without that the keys would go to the app in
@@ -32,7 +41,7 @@
  * NO SILENT FAILURES: every refusal comes back with a reason, and the reason is shown in words in
  * the view, next to what was clicked.
  *
- * bar.js hands this file its bridge helpers (init) and, each time it builds the panel, the two
+ * bar.js hands this file its bridge helpers (init) and, each time it builds the panel, the three
  * places the '>' buttons go (attach); it calls closed() when the panel closes.
  */
 (function () {
@@ -45,13 +54,16 @@
   var WIFI_POLL_MS = 4000;
   var SOUND_POLL_MS = 1500;
   var DEVICES_EVERY = 3;        // sound ticks per device re-read
+  var BT_RENEW_MS = 30000;      // the sidecar's watch lapses 90 s after its last renewal
+  var BT_POLL_MS = 3000;        // only when the watch cannot run: a list is 26 ms (measured 2026-09-23)
   /* The sub-view's own height. The popover adds 24 (padding and border) and main's room request
      another 16, so 360 asks for 400 of main's 480 cap (POPOVER_MAX), leaving slack for a note. */
   var VIEW_H = 360;
 
   /* The last reads, so reopening a view draws at once and then refreshes. Names, levels and
      reasons only: nothing here ever holds a password. */
-  var wifiData = null, devData = null, mixData = null;
+  var wifiData = null, devData = null, mixData = null, btData = null;
+  var btEventsBroken = null;    // why 'btdevices' pushes cannot arrive, if they cannot
 
   /* Windows' reason texts are exact but technical ("PSK mismatch suspected"), so the commonest
      ones get a plain first line. The texts beside each code are what WlanReasonCodeToString
@@ -129,14 +141,23 @@
 
   /* ------------------------------------------------------------------ wiring */
 
-  function init(helpers) { B = helpers; }
+  function init(helpers) {
+    B = helpers;
+    /* The Bluetooth watch's pushes. One subscription for the bar's life; a push lands only while
+       the Bluetooth view is open (onBtPush checks). */
+    if (typeof B.on === 'function') {
+      B.on('btdevices', onBtPush, function (reason) { btEventsBroken = reason; });
+    } else {
+      btEventsBroken = 'bar.js gave this file no event channel';
+    }
+  }
 
   /* bar.js calls this every time it builds the quick-settings panel. ctx: wifiTile (the tile's
      button), volumeLine (the volume slider's row), repaint (the panel's paint). */
   function attach(pop, ctx) {
     if (!B) return;
     gen++;
-    S = { pop: pop, ctx: ctx, view: null, el: null, timer: 0, room: 0, kbd: false, w: null, a: null };
+    S = { pop: pop, ctx: ctx, view: null, el: null, timer: 0, room: 0, kbd: false, w: null, a: null, b: null };
 
     /* Wi-Fi: Windows 11 splits the tile. The tile itself still toggles the radio; its '>'
        opens the list. The chevron takes the tile's colours in CSS (on = accent, dead = sunk),
@@ -150,6 +171,18 @@
       wchev.innerHTML = svg(CHEV_R);
       wchev.addEventListener('click', function () { enter('wifi'); });
       split.appendChild(wchev);
+    }
+    /* Bluetooth: the same split as Wi-Fi; the tile toggles the radio, its '>' opens the paired
+       devices, and always opens, for the same reason. */
+    var btile = ctx.btTile;
+    if (btile && btile.parentNode) {
+      var bsplit = h('div', 'qsx-split');
+      btile.parentNode.insertBefore(bsplit, btile);
+      bsplit.appendChild(btile);
+      var bchev = button('qsx-chev', null, 'Show Bluetooth devices');
+      bchev.innerHTML = svg(CHEV_R);
+      bchev.addEventListener('click', function () { enter('bt'); });
+      bsplit.appendChild(bchev);
     }
     /* Sound: after the mute button, where Windows 11 puts its '>' */
     if (ctx.volumeLine) {
@@ -166,6 +199,7 @@
     gen++;
     stopPoll();
     if (S.kbd) releaseKeyboard(true);
+    if (S.b) stopBtWatch();
     if (S.pop) { S.pop.style.width = ''; S.pop.classList.remove('qsx-sub'); }
     S = null;
   }
@@ -186,6 +220,7 @@
     S.view = kind;
     S.el = el;
     if (kind === 'wifi') buildWifi(el);
+    else if (kind === 'bt') buildBt(el);
     else buildSound(el);
     room();
   }
@@ -195,8 +230,9 @@
     gen++;
     stopPoll();
     if (S.kbd) releaseKeyboard(false);
+    if (S.b) stopBtWatch();
     if (S.el && S.el.parentNode) S.el.parentNode.removeChild(S.el);
-    S.el = null; S.view = null; S.w = null; S.a = null;
+    S.el = null; S.view = null; S.w = null; S.a = null; S.b = null;
     S.pop.classList.remove('qsx-sub');
     S.pop.style.width = '';
     room();
@@ -253,7 +289,7 @@
 
   /* Notes along the bottom of a view: one per source, each replaced by that source's next word. */
   function viewNote(key, text) {
-    var v = S && (S.w || S.a);
+    var v = S && (S.w || S.a || S.b);
     if (!v) {
       if (text) B.fail('qsx', 'quick settings', text, 'warn');
       return;
@@ -263,7 +299,7 @@
     paintNotes();
   }
   function paintNotes() {
-    var v = S && (S.w || S.a);
+    var v = S && (S.w || S.a || S.b);
     if (!v || !v.noteEl) return;
     v.noteEl.textContent = '';
     Object.keys(v.notes).forEach(function (k) {
@@ -707,6 +743,287 @@
       }, 900);
     }, function (e) {
       if (alive(g)) viewNote('radio', 'Wi-Fi could not be turned on: ' + B.msg(e));
+    });
+  }
+
+  /* ================================================================== BLUETOOTH */
+
+  function BTW() { return window.MantleBt || null; }
+  function sentence(s) { s = String(s || ''); return /[.!?…]$/.test(s) ? s : s + '.'; }
+
+  function buildBt(el) {
+    var T = S.b = {
+      list: null, status: null, noteEl: null, notes: {},
+      open: null,          // the id of the expanded row
+      busy: null,          // { id, what: 'connect' | 'disconnect' } while one of ours is in flight
+      fail: {},            // id -> { op, lead, reason } from the last attempt on that row
+      watch: false,        // the sidecar's watch is running for this view
+      tick: 0, sig: ''
+    };
+    var head = header(el, 'Bluetooth');
+    T.status = h('span', 'qsx-status');
+    head.appendChild(T.status);
+    T.list = h('div', 'qsx-scroll');
+    el.appendChild(T.list);
+    T.noteEl = h('div', 'qsx-notes');
+    T.noteEl.hidden = true;
+    el.appendChild(T.noteEl);
+    footer(el, 'More Bluetooth settings', 'Settings › Bluetooth & devices', 'ms-settings:bluetooth', 'Bluetooth settings');
+
+    if (!BTW()) {
+      stateBlock(T.list, null, 'Bluetooth devices can’t be shown', 'ui/bar/bt.js did not load, so this view has no words or icons',
+        [['Bluetooth settings', addDevice]], true);
+      return;
+    }
+    if (btData) renderBt(true);
+    else stateBlock(T.list, null, 'Looking for devices…', null, null);
+    readBt();
+    startBtWatch();
+  }
+
+  function readBt() {
+    var g = gen;
+    return B.call('qs.bt.list').then(function (r) {
+      if (!alive(g) || !S.b) return;
+      btData = r || { ok: false, reason: 'qs.bt.list gave no answer' };
+      renderBt(false);
+    }, function (e) {
+      if (!alive(g) || !S.b) return;
+      btData = { ok: false, reason: 'the Bluetooth devices could not be asked for: ' + B.msg(e) };
+      renderBt(false);
+    });
+  }
+
+  /* THE WATCH: the sidecar's DeviceWatcher, for as long as this view is open. It is renewed every
+     BT_RENEW_MS and lapses on its own 90 s after the last renewal, so a bar that dies cannot leave
+     it running. Without it (an older sidecar, a refusal, no event channel) the view re-reads the
+     list every BT_POLL_MS instead, and its note says so and why. */
+  function startBtWatch() {
+    var g = gen;
+    if (btEventsBroken) {
+      viewNote('watch', fallbackNote('the view cannot hear its pushes: ' + btEventsBroken));
+      btLoop();
+      return;
+    }
+    renewBt(g).then(function () { if (alive(g) && S.b) btLoop(); });
+  }
+
+  function fallbackNote(why) {
+    return 'Re-reading every ' + (BT_POLL_MS / 1000) + ' s, because the live watch is off: ' + sentence(why);
+  }
+
+  function renewBt(g) {
+    return B.call('qs.bt.watch', { on: true }).then(function (r) {
+      if (!alive(g) || !S.b) return;
+      r = r || { ok: false, reason: 'qs.bt.watch gave no answer' };
+      S.b.watch = !!(r.ok && r.watching);
+      viewNote('watch', S.b.watch ? '' : fallbackNote(r.reason || 'the sidecar did not say why'));
+    }, function (e) {
+      if (!alive(g) || !S.b) return;
+      S.b.watch = false;
+      viewNote('watch', fallbackNote('qs.bt.watch was refused: ' + B.msg(e)));
+    });
+  }
+
+  /* One chain, like poll(): the next step is chosen after each reply. With the watch on, a
+     renewal every 30 s; without it, a list every 3 s and another try at the watch every 30 s. */
+  function btLoop() {
+    stopPoll();
+    var T = S && S.b;
+    if (!T) return;
+    var g = gen;
+    S.timer = setTimeout(function () {
+      if (!alive(g) || !S.b) return;
+      S.timer = 0;
+      var T2 = S.b;
+      T2.tick++;
+      var step = T2.watch ? renewBt(g)
+        : (!btEventsBroken && T2.tick % (BT_RENEW_MS / BT_POLL_MS) === 0) ? renewBt(g).then(readBt)
+        : readBt();
+      step.then(function () { if (alive(g) && S.b) btLoop(); });
+    }, T.watch ? BT_RENEW_MS : BT_POLL_MS);
+  }
+
+  /* Always sent on the way out, whatever the view believes: a stop is idempotent, and a start still
+     in flight when the panel closed would otherwise run until its lease lapsed. */
+  function stopBtWatch() {
+    B.call('qs.bt.watch', { on: false }).then(function (r) {
+      if (r && r.ok === false) {
+        B.fail('qsbt', 'Bluetooth watch', 'the Bluetooth device watch did not stop (' + (r.reason || 'no reason given') +
+          '); it stops itself within 90 s', 'warn');
+      }
+    }, function (e) {
+      B.fail('qsbt', 'Bluetooth watch', 'the Bluetooth device watch did not stop (' + B.msg(e) + '); it stops itself within 90 s', 'warn');
+    });
+  }
+
+  /* A push from the watch: the whole list after a change settled, or word that the watch stopped. */
+  function onBtPush(ev) {
+    if (!S || !S.b || !ev) return;
+    if (!Array.isArray(ev.devices) && ev.ok !== false) {
+      if (ev.watching === false) {
+        S.b.watch = false;
+        viewNote('watch', fallbackNote(ev.watchReason || 'it stopped'));
+        btLoop();
+      }
+      return;
+    }
+    btData = ev;
+    renderBt(false);
+  }
+
+  function paintBtStatus(busy) {
+    var T = S && S.b;
+    if (!T) return;
+    T.status.textContent = busy ? (busy.what === 'connect' ? 'Connecting…' : 'Disconnecting…') : '';
+  }
+
+  /* force: redraw even if nothing changed (a row opened, an attempt started or ended). */
+  function renderBt(force) {
+    var T = S && S.b, r = btData, M = BTW();
+    if (!T || !r || !M) return;
+    var busy = T.busy || M.busyOf(r);
+    paintBtStatus(busy);
+    viewNote('radio', M.radioNote(r));
+    viewNote('last', M.lastNote(r, T.fail));
+    var v = M.view(r);
+    var list = v.state === 'list' ? r.devices : [];
+    var sig = JSON.stringify([v.state, v.why, list.map(function (d) {
+      return [d.id, d.name, d.kind, d.connected, d.battery, d.batteryWhy, d.canConnect, d.connectWhy];
+    }), T.open, busy, T.fail]);
+    if (!force && sig === T.sig) return;
+    T.sig = sig;
+    var keepScroll = T.list.scrollTop;
+    T.list.textContent = '';
+
+    if (v.state === 'error') {
+      stateBlock(T.list, M.NO_BT, v.title, v.why, [['Try again', function () { readBt(); }]], true);
+      return;
+    }
+    if (v.state === 'none') {
+      stateBlock(T.list, M.NO_BT, v.title, v.why, [['Bluetooth settings', addDevice]]);
+      return;
+    }
+    if (v.state === 'off') {
+      stateBlock(T.list, M.NO_BT, v.title, v.why, [['Turn on Bluetooth', btTurnOn, false, true]]);
+      return;
+    }
+    if (v.state === 'empty') {
+      stateBlock(T.list, M.RUNE, v.title, v.why, [['Add device', addDevice, false, true]]);
+      return;
+    }
+    list.forEach(function (d) { T.list.appendChild(btRow(d, busy)); });
+    T.list.appendChild(addRow());
+    T.list.scrollTop = keepScroll;
+    if (force && T.open) {
+      var openRow = T.list.querySelector('.qsx-net.open');
+      if (openRow && openRow.scrollIntoView) openRow.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function btRow(d, busy) {
+    var T = S.b, M = BTW();
+    var x = M.describe(d, { busy: busy, fail: T.fail });
+    var row = h('div', 'qsx-net qsx-bt');
+    row.setAttribute('data-bt', x.name);
+    row.classList.toggle('on', x.state === 'connected');
+    row.classList.toggle('open', T.open === d.id);
+    row.classList.toggle('busy', x.state === 'connecting' || x.state === 'disconnecting');
+    row.classList.toggle('fail', x.state === 'failed');
+
+    var head = button('qsx-nethead');
+    var ico = h('span', 'qsx-netico');
+    ico.innerHTML = svg(x.icon);
+    var txt = h('span', 'qsx-nettext');
+    txt.appendChild(h('span', 'qsx-netname', x.name));
+    txt.appendChild(h('span', 'qsx-netsub', x.sub));
+    head.appendChild(ico);
+    head.appendChild(txt);
+    if (x.battery !== null) {
+      var bat = h('span', 'qsx-btbatt');
+      bat.innerHTML = svg(M.batteryGlyph(x.battery));
+      bat.appendChild(h('span', null, x.batteryText));
+      head.appendChild(bat);
+    }
+    head.title = x.tip;
+    head.setAttribute('aria-expanded', String(T.open === d.id));
+    head.addEventListener('click', function () {
+      T.open = T.open === d.id ? null : d.id;
+      renderBt(true);
+    });
+    row.appendChild(head);
+    if (T.open === d.id) row.appendChild(btBody(d, x, busy));
+    return row;
+  }
+
+  function btBody(d, x, busy) {
+    var body = h('div', 'qsx-netbody');
+    if (x.failLead) {
+      var err = h('div', 'qsx-err');
+      err.appendChild(h('div', 'qsx-errlead', x.failLead));
+      err.appendChild(h('div', 'qsx-errwhy', x.failWhy));
+      body.appendChild(err);
+    }
+    if (x.batteryWhy) body.appendChild(h('div', 'qsx-hint', 'Battery: ' + sentence(x.batteryWhy)));
+    if (x.action === 'settings') {
+      body.appendChild(h('div', 'qsx-hint', sentence(x.actionWhy)));
+      buttons(body, [['Open Bluetooth settings', addDevice]]);
+      return body;
+    }
+    var mine = !!(busy && busy.id === d.id);
+    var other = !!(busy && busy.id !== d.id);
+    buttons(body, [[x.actionLabel, function () { btToggle(d, x.action); }, mine || other, x.action === 'connect',
+      other ? 'Mantle is busy with another device; wait for it to finish' : '']]);
+    return body;
+  }
+
+  /* Pairing stays Windows': its Settings page is where devices are added. */
+  function addRow() {
+    var b = button('qsx-nethead qsx-add');
+    var ico = h('span', 'qsx-netico');
+    ico.innerHTML = svg(BTW().PLUS);
+    b.appendChild(ico);
+    b.appendChild(h('span', 'qsx-netname', 'Add device'));
+    b.title = 'Pair a new device in Settings › Bluetooth & devices';
+    b.addEventListener('click', addDevice);
+    return b;
+  }
+  function addDevice() { openOut('ms-settings:bluetooth', 'Bluetooth settings', null); }
+
+  function btToggle(d, what) {
+    var T = S.b, g = gen, M = BTW();
+    if (T.busy || M.busyOf(btData)) return;
+    T.busy = { id: d.id, what: what };
+    delete T.fail[d.id];
+    renderBt(true);
+    B.call(what === 'connect' ? 'qs.bt.connect' : 'qs.bt.disconnect', { device: d.id }).then(function (r) {
+      done(r || { ok: false, reason: 'qs.bt.' + what + ' gave no answer' });
+    }, function (e) {
+      done({ ok: false, reason: 'the ' + what + ' could not be asked for: ' + B.msg(e) });
+    });
+    function done(r) {
+      if (!alive(g) || !S.b) return;
+      T.busy = null;
+      if (r.ok) delete T.fail[d.id];
+      else T.fail[d.id] = { op: what, lead: what === 'connect' ? 'Couldn’t connect.' : 'Couldn’t disconnect.', reason: r.reason || 'no reason given' };
+      // THE STATE COMES FROM THE READ-BACK: the sidecar re-read Windows' own flag before answering.
+      if (typeof r.connected === 'boolean' && btData && Array.isArray(btData.devices)) {
+        btData.devices.forEach(function (x) { if (x.id === d.id) x.connected = r.connected; });
+      }
+      renderBt(true);
+      readBt();
+    }
+  }
+
+  function btTurnOn() {
+    var g = gen;
+    viewNote('radioOn', '');
+    B.callR('qs.set', { part: 'bluetooth', value: true }).then(function () {
+      if (!alive(g)) return;
+      // the radio takes a moment before Windows reports the paired devices' state again
+      setTimeout(function () { if (alive(g) && S.b) readBt(); }, 900);
+    }, function (e) {
+      if (alive(g)) viewNote('radioOn', 'Bluetooth could not be turned on: ' + B.msg(e));
     });
   }
 

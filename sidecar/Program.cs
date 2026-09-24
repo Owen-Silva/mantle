@@ -100,7 +100,7 @@ namespace Mantle {
       "glass", "corners", "place", "morph", "region",
       "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop",
       "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power", "battery",
-      "wlan", "audio",
+      "wlan", "audio", "btdevices",
       "tray", "trayClick", "media", "notifications", "search", "session", "sleep", "quit"
     };
 
@@ -969,6 +969,24 @@ namespace Mantle {
           string werr = Wlan.Run(req, req.ContainsKey("id") ? req["id"] : null, Passive, out wres);
           if (werr != null) return werr;
           result = wres;
+          return null;
+        }
+
+        case "btdevices": {
+          // The PAIRED DEVICES behind the Bluetooth tile's '>' (BtDevices.cs): list,
+          // watch, connect, disconnect. Handed off like wlan: this lane only
+          // validates and queues, a pool thread replies, so a connect that waits
+          // 12 s for Windows' verdict never holds a lane. connect/disconnect are
+          // refused in passive.
+          if (Json.HasKey(req, "on")) {
+            bool bon;
+            string bonErr = StrictBool(req, "on", out bon);
+            if (bonErr != null) return bonErr;
+          }
+          object bres;
+          string berr = BtDevices.Run(req, req.ContainsKey("id") ? req["id"] : null, Passive, out bres);
+          if (berr != null) return berr;
+          result = bres;
           return null;
         }
 
