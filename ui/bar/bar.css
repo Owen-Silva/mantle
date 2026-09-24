@@ -497,6 +497,16 @@ button.chip:hover { background: var(--lg-press); }
 }
 body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
 .pop[hidden] { display: none; }
+/* THE ENTRANCE (2026-09-24). It used to be the WINDOW growing up behind the popover for 200 ms, and
+   those resizes are what made the pill jump when a button was pressed (main.js barTall). The window
+   no longer changes size, so the same wipe is drawn here: uncovered from its bottom edge up, 200 ms
+   on the Northwind curve (POP_WIPE_MS in main). display:none restarts it, so it runs on every open and
+   never when one flyout replaces another in place. -60px keeps the shadow (56px blur) uncut, and
+   `backwards` drops the clip once it has run. */
+.pop { animation: pop-wipe 200ms var(--lg-ease) backwards; }
+body[data-edge="top"] .pop { animation-name: pop-wipe-down; }
+@keyframes pop-wipe { from { clip-path: inset(100% -60px -60px -60px); } to { clip-path: inset(-60px); } }
+@keyframes pop-wipe-down { from { clip-path: inset(-60px -60px 100% -60px); } to { clip-path: inset(-60px); } }
 
 .pop h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 600; color: var(--lg-ink-3); letter-spacing: .04em; text-transform: uppercase; }
 .pop .row { display: flex; align-items: center; gap: 10px; }

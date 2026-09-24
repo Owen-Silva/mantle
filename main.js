@@ -19,6 +19,8 @@ const { createBar, createLauncher, createDesktop, hwndOf, BAR_H } = require('./l
 // The hover flyout's live window previews (DWM thumbnails through koffi). Requiring it is free:
 // koffi itself is only loaded the first time a flyout asks for a picture. See lib/thumbs.js.
 const thumbs = require('./lib/thumbs');
+// The bar window's shape: the part of an always-tall window that is the bar (see barTall).
+const barShape = require('./lib/bar-shape');
 // Mantle plays the desktop wallpaper itself (2026-09-22; Lively's player sat under the desktop
 // layer and its panes hid it). Required HERE, before app 'ready', because it registers the
 // mantle-wp:// scheme a web wallpaper is served on, which Electron only accepts before ready.
@@ -209,6 +211,18 @@ flags.edgeclip = !ARGV.some((a) => a === '--no-edgeclip');
  * The default now: the window is placed once and the PAGE animates the pill.
  */
 flags.osMorph = ARGV.some((a) => a === '--os-morph');
+/*
+ * --test-live-bar, --test-trace=<dir> (TEST ONLY, 2026-09-24). Owen: "when i press any of these
+ * buttons the taskbar glitches down and then back up rq". A test bar is a framed window whose
+ * popovers are one setContentBounds, so it could not show what the live bar does. --test-live-bar
+ * makes the test bar the live way (frameless, transparent, placed and morphed by the sidecar)
+ * but never on top of anything: every raise sends it to the back. --test-trace clicks each
+ * right-cluster button through the page and records, frame by frame, the window's physical rect
+ * and where the page draws the pill (runTrace). Both are ignored without --test.
+ */
+flags.testLiveBar = !!flags.test && ARGV.some((a) => a === '--test-live-bar');
+const TRACE_ARG = ARGV.find((a) => typeof a === 'string' && a.startsWith('--test-trace='));
+flags.trace = flags.test && TRACE_ARG ? TRACE_ARG.slice('--test-trace='.length) : null;
 const REVEAL_BY = flags.osMorph ? 'morph' : 'page';
 
 /*
@@ -510,6 +524,10 @@ let lastRestoreEvent = null;
 // The most the bar may grow for a popover. A cap, not a suggestion: a bar that
 // asked for 4000px would become a full-screen always-on-top window.
 const POPOVER_MAX = 480;   // was 320: the Quick Settings panel asked for 429 live (2026-09-21) and had its top cut off
+// In hover mode the window is ALWAYS POPOVER_MAX taller than the bar (barTall), so this is also
+// how much invisible window sits above the pill -- cut away by its shape until a popover opens.
+// The popover's entrance: .pop's wipe in ui/bar/bar.css runs this long (the window's old 200 ms grow).
+const POP_WIPE_MS = 200;
 let restoreChain = Promise.resolve();
 
 // --- the hover bar -----------------------------------------------------------
@@ -815,6 +833,15 @@ function barGeometry() {
     height: h,
   };
 
+  // THE WINDOW while it is on screen: the resting rect, or in tall mode (barTall) the resting
+  // rect plus POPOVER_MAX reaching away from the edge, so a popover never has to resize it.
+  // Same bottom rule as `rest`: computed from the screen edge, never a rounded height.
+  const winDip = barTall()
+    ? { x: restDip.x, y: atTop ? restDip.y : restDip.y - POPOVER_MAX, width: restDip.width, height: restDip.height + POPOVER_MAX }
+    : restDip;
+  const winPhys = toPhys(winDip);
+  if (!atTop) winPhys.h = bottomPhys - winPhys.y;
+
   return {
     shape: BAR_SHAPE,
     edge: atTop ? 'top' : 'bottom',
@@ -824,6 +851,7 @@ function barGeometry() {
     rest: { dip: Object.assign({ r: rDip }, restDip), phys: Object.assign({ r }, restPhys) },
     start: { dip: Object.assign({ r: rDip }, startDip), phys: Object.assign({ r }, toPhys(startDip)) },
     pill: { dip: pillDip, phys: toPhys(pillDip) },
+    win: { dip: Object.assign({ r: rDip }, winDip), phys: Object.assign({ r }, winPhys) },
   };
 }
 
@@ -866,9 +894,74 @@ function popoverDipRect(extra) {
   };
 }
 
-/** The bar window's rectangle in DIP, or null if there is no bar. */
+/*
+ * THE BAR WINDOW NEVER CHANGES SIZE WHILE IT IS ON SCREEN (2026-09-24).
+ *
+ * Owen: "when i press any of these buttons the taskbar glitches down and then back up rq" (the
+ * speaker, Wi-Fi, battery, clock, bell and "..." buttons). Every popover used to make its room
+ * by MORPHING THE WINDOW: ~20 SetWindowPos resizes in 200 ms, up on open, down on close. The
+ * bar is a transparent DirectComposition window, and after a resize DWM goes on showing the
+ * page's PREVIOUS frame, pinned to the window's new top-left, until Chromium presents one at the
+ * new size. The page is bottom-anchored, so on the way up the pill was drawn too HIGH and on the
+ * way down it fell out of the bottom of the window. Measured through Windows' own capture of
+ * the window (--test-trace, 2026-09-24): opening "..." drew the pill 80 px above its place for a
+ * frame; closing it, DWM showed the bar with NO pill for four captured frames in a row (~110 ms)
+ * and then 5 px low before it settled -- the dip. Same road for the pinned apps' flyouts.
+ *
+ * So in hover mode the window is ALWAYS POPOVER_MAX taller than the bar, reaching away from the
+ * screen edge (barGeometry's `win`), and a popover changes only its SHAPE: a window region that
+ * is the resting rect plus the room asked for (lib/bar-shape.js). A region changes what DWM
+ * shows and what takes clicks, never the page's size, so nothing is re-laid out and nothing is
+ * drawn stale. Outside it clicks go through to what is behind, as they did when the window was
+ * only that big. Parking is unchanged: the window still shrinks to `start` below the screen,
+ * where nothing can see it happen.
+ *
+ * Off for --dock (its rect is the app bar's), --os-morph (the old road animates the window
+ * itself) and the framed --test bar (testFitPage); on for --test-live-bar, which is how it is
+ * traced. And off, with the reason in State, if the first shape does not read back from
+ * Windows: a tall window without its shape would be 480 DIP of invisible glass taking the
+ * clicks above the bar.
+ */
+let barShapeBroken = null;   // why the tall window is off, once armBarShape found it could not work
+function barTall() {
+  return !flags.dock && !flags.osMorph && (!flags.test || flags.testLiveBar) && !barShapeBroken;
+}
+
+/* Set the shape for `extra` DIP of popover room; `check` also reads it back from Windows. A
+   failure is logged and put in State (a popover may be clipped), never thrown. */
+function setBarShape(extra, why, check) {
+  if (!barTall() || !barWin || barWin.isDestroyed()) return { ok: true, reason: null };
+  const geo = barGeometry();
+  const rect = barShape.shapeRect({ edge: geo.edge, win: geo.win.dip, rest: geo.rest.dip, extra });
+  let res = barShape.apply(barWin, rect);
+  if (res.ok && check) res = barShape.verify(hwndOf(barWin), rect, geo.scale);
+  if (!res.ok) {
+    process.stdout.write(`mantle: the bar's shape could not be set for ${extra} dip of popover room (${why}): ${res.reason}\n`);
+    setBar({ reason: `the bar's shape could not be set, so a popover may be cut off: ${res.reason}` });
+  }
+  return res;
+}
+
+/* The first shape, on the still-hidden window, READ BACK before the tall window is ever used. */
+function armBarShape() {
+  if (!barTall()) return;
+  const res = setBarShape(0, 'the bar window was made', true);
+  const geo = barGeometry();
+  if (res.ok) {
+    process.stdout.write(`mantle: bar shape armed: the window is ${JSON.stringify(sideRect(geo.win))} on screen and only ${JSON.stringify(res.box)} of it (window-relative px) is the bar; a popover changes that, never the window\n`);
+    return;
+  }
+  barShapeBroken = res.reason;
+  barShape.apply(barWin, null);   // no stray region on the rectangle the bar goes back to
+  process.stdout.write(`mantle: bar shape NOT armed (${res.reason}): popovers resize the window again, and the pill may jump while one opens or closes\n`);
+  setBar({ reason: `popovers resize the bar window, so the pill may jump while one opens or closes: its shape could not be set (${res.reason})` });
+}
+
+/** The bar window's rectangle in DIP, or null if there is no bar. In tall mode that is the bar's
+    SHAPE (rest plus any popover room), not the window: the rest of the window is not there. */
 function barRect() {
   if (!barWin || barWin.isDestroyed()) return null;
+  if (barTall()) return popoverDipRect(barPopover ? barPopover.height : 0);
   try {
     return barWin.getBounds();
   } catch (_) {
@@ -1064,7 +1157,8 @@ function testFitPage(heightDip) {
 }
 
 async function revealByPage(geo, why, visible) {
-  const rect = sideRect(geo.rest);
+  // the WINDOW's rect: the resting one, or in tall mode the resting one plus the popover room
+  const rect = sideRect(geo.win);
   // Capture the PILL, place the WINDOW: the page hangs this image on the pill, and
   // the window also covers the transparent strip under it -- 17 px of scenery that
   // does not belong in the pill's blur.
@@ -1077,8 +1171,12 @@ async function revealByPage(geo, why, visible) {
       }
     } catch (_) { /* the loop retries after landing; a reveal never waits on this */ }
     if (!barRevealed || !barWin || barWin.isDestroyed()) return;   // hidden again while we waited
+    // Tall mode: the shape goes on BEFORE the window lands on screen, so the empty part of it
+    // never takes a click, and is read back after (a region Windows lost would say so here).
+    setBarShape(barPopover ? barPopover.height : 0, why);
     await placeBar([rect.x, rect.y, rect.x + rect.w, rect.y + rect.h], sidecarDpiAware, { quiet: true });
-    if (flags.test) {
+    setBarShape(barPopover ? barPopover.height : 0, `${why}, read back after placing`, true);
+    if (flags.test && !flags.testLiveBar) {
       const fit = testFitPage(geo.rest.dip.height);
       if (fit) process.stdout.write(`mantle: test bar page fitted to the live bar's: ${fit.from} -> ${fit.to} css px (live ${fit.want})\n`);
     }
@@ -1131,7 +1229,7 @@ async function raiseBar(why) {
   // --test --flyout drives the bar with no one at it, possibly while Owen works (or records a
   // lesson) in front: every "raise" becomes "send to the back", so the test bar never covers
   // him. Its pictures are captured with PrintWindow, which does not need it on top.
-  if (flags.test && flags.flyout !== null) { thumbs.toBack(hwndOf(barWin)); return; }
+  if (flags.test && (flags.flyout !== null || flags.testLiveBar)) { thumbs.toBack(hwndOf(barWin)); return; }
   try { barWin.moveTop(); } catch (_) { /* free when it works, nothing when it does not */ }
   if (sidecar.blockedReason()) return;
 
@@ -3075,9 +3173,12 @@ const COMMANDS = {
   // opens one and gives it back when it closes. The window grows AWAY from its
   // screen edge: the bottom bar keeps its bottom edge and rises, the top bar
   // keeps its top edge and descends, so the bar itself never appears to move.
+  // In hover mode (barTall, 2026-09-24) the window already HAS the room and only its shape
+  // grows: resizing it was what made the pill jump.
   'bar.popover': async (a) => {
     if (!barWin || barWin.isDestroyed()) throw new Error('the bar window is gone, so there is nothing to make room in');
     const open = !!(a && a.open);
+    if (traceMarks) traceMarks.push({ t: traceNow(), what: 'popover', open, key: (a && a.key) || null, height: Number(a && a.height) || 0 });
     // A popover is the bar being used, so it pins the bar on screen for as long
     // as it is open (the hover poll checks barPopover on every tick) and brings
     // it back if something raced it into hiding.
@@ -3090,8 +3191,15 @@ const COMMANDS = {
     const asked = Number(a && a.height);
     const extra = open ? Math.max(0, Math.min(POPOVER_MAX, Number.isFinite(asked) ? Math.round(asked) : 0)) : 0;
     const total = BAR_H + extra;
+    const wasOpen = !!barPopover;
+    let shapeErr = null;
 
-    if (flags.test) {
+    if (barTall()) {
+      // TALL MODE (barTall, 2026-09-24): the window already has the room, so only its SHAPE
+      // changes -- no resize, no relayout, nothing drawn stale, and the pill cannot move.
+      const set = setBarShape(extra, open ? `a popover opened (${(a && a.key) || 'unnamed'})` : 'the popover closed');
+      if (!set.ok) shapeErr = set.reason;
+    } else if (flags.test && !flags.testLiveBar) {
       // A framed test window: sized by its CONTENT from fixed numbers (testFitPage), so the
       // frame stays out of the arithmetic and repeated popovers cannot creep the page wider.
       // Pill mode gets the live window's height (rest.height + extra, popoverDipRect's), so the
@@ -3135,8 +3243,9 @@ const COMMANDS = {
     }
 
     barPopover = extra ? { key: (a && a.key) || 'unnamed', height: extra } : null;
+    if (traceMarks) traceMarks.push({ t: traceNow(), what: 'popover done', open, extra });
     try {
-      process.stdout.write(`mantle: bar.popover ${open ? `open (${(a && a.key) || 'unnamed'}, asked ${asked}px, got ${extra}px)` : 'closed'} -> window now ${JSON.stringify(barWin.getBounds())} (DIP)\n`);
+      process.stdout.write(`mantle: bar.popover ${open ? `open (${(a && a.key) || 'unnamed'}, asked ${asked}px, got ${extra}px)` : 'closed'} -> window now ${JSON.stringify(barWin.getBounds())} (DIP)${barTall() ? `, the bar's shape ${JSON.stringify(barRect())}` : ''}\n`);
     } catch (_) { /* the window may be gone; the line is only a trace */ }
     // The window just changed size, which is another moment Windows can re-order
     // the topmost band -- and a popover nobody can click is worse than no popover.
@@ -3144,6 +3253,13 @@ const COMMANDS = {
     if (open && extra < asked) {
       process.stdout.write(`mantle: the bar asked for ${asked}px of popover room and got ${extra}px (the cap is ${POPOVER_MAX}px)\n`);
     }
+    // The page says so inside the popover ("this popover may be clipped"), not just the log.
+    if (shapeErr && open) throw new Error(`its room could not be opened: ${shapeErr}`);
+    // A FRESH open answers once the page's wipe (.pop in bar.css, POP_WIPE_MS) has uncovered it:
+    // a flyout sends its live previews when this resolves, and DWM draws those over the page, so
+    // sooner would put pictures on cards the wipe has not reached -- the order they had when
+    // the window itself took 200 ms to grow. Not for a popover already open (no wipe runs).
+    if (barTall() && open && extra && !wasOpen) await wait(POP_WIPE_MS);
     return { height: extra, total, capped: open && extra < asked, max: POPOVER_MAX };
   },
 
@@ -3815,6 +3931,7 @@ async function applyMode() {
     // to keep Windows recoverable" is exactly the thing a test run should be
     // able to tell you BEFORE anyone types --live.
     const age = await sidecar.protocolAge();
+    if (flags.testLiveBar) sidecarDpiAware = age.dpiAware === true ? true : (age.dpiAware === false ? false : null);
     if (!age.current) {
       state.set('sidecar', { reason: `${state.get().sidecar.reason} -- but ${age.reason}` });
       process.stderr.write(`mantle: ${age.reason}\n`);
@@ -4212,8 +4329,10 @@ async function placeBottomStrip(why, dpiAware) {
   // every reveal start from the same place: showInactive() puts nothing on screen
   // and the morph is the whole arrival. If the bar happens to be up when a
   // re-check fires, it goes to its resting rectangle instead of being yanked away.
-  const side = barRevealed ? geo.rest : geo.start;
+  // (`win` is `rest` unless the window is tall, when it is rest plus the popover room: barTall)
+  const side = barRevealed ? geo.win : geo.start;
   const r = sideRect(side);
+  if (barRevealed) setBarShape(barPopover ? barPopover.height : 0, why);
   const placed = await placeBar([r.x, r.y, r.x + r.w, r.y + r.h], dpiAware, { quiet: true });
   process.stdout.write(`mantle: bar ${barRevealed ? 'resting' : 'parked off-screen'} (${why}): ${geo.shape} ${JSON.stringify(r)} -- ${placed.how}\n`);
   return placed;
@@ -5085,6 +5204,299 @@ async function runScreenshots(dir) {
 }
 
 /*
+ * --test-trace=<dir> (TEST ONLY; see the flag). For each right-cluster button: 300 ms at rest,
+ * a click through the page (the same click handler a mouse runs), 1 s, a second click to close
+ * it, 1 s. Meanwhile the page records every frame (its size, the pill's rect, the popover's) and
+ * main reads the window's physical rect every millisecond (GetWindowRect, timer resolution
+ * raised to 1 ms for the run). Also: a panel swapped for another while open, and a pinned app's
+ * window flyout. trace.json holds every sample; one line per target says how far the WINDOW
+ * moved and how far the PILL moved on screen, where the pill on screen is the window's top plus
+ * where the page's last frame drew it (a DirectComposition window shows its last frame at the
+ * window's top-left until the page draws one at the new size).
+ */
+let traceMarks = null;
+const traceNow = () => performance.timeOrigin + performance.now();
+
+async function runTrace(dir) {
+  const say = (s) => process.stdout.write(`mantle: --test-trace: ${s}\n`);
+  const out = path.resolve(dir);
+  try { fs.mkdirSync(out, { recursive: true }); } catch (err) { say(`cannot write to ${out}: ${err.message}`); shutdown('the trace directory could not be made'); return; }
+  await settled(barWin);
+  // the live roads need the sidecar (placement) and, for the flyout, a running app in the pins
+  for (let i = 0; i < 60 && (sidecar.status !== 'ok' || (flags.testLiveBar && sidecarDpiAware === null)); i++) await wait(500);
+  for (let i = 0; i < 40; i++) {
+    const items = lastPinned && Array.isArray(lastPinned.items) ? lastPinned.items : [];
+    if (items.some((it) => Array.isArray(it.windows) && it.windows.length)) break;
+    await wait(500);
+  }
+  revealBar('a trace run asked for the bar');
+  stopHoverWatch();                     // the real cursor is Owen's: it must not hide or reveal this bar
+  await wait(REVEAL_MS + 1800);         // landed, and the backdrop loop running, as it is when Owen clicks
+
+  let koffi, getRect, beginPeriod, endPeriod;
+  try {
+    koffi = require('koffi');
+    try { koffi.struct('MANTLE_TRACE_RECT', { left: 'int32', top: 'int32', right: 'int32', bottom: 'int32' }); } catch (_) { /* defined by an earlier run in this process */ }
+    const user32 = koffi.load('user32.dll');
+    const winmm = koffi.load('winmm.dll');
+    getRect = user32.func('int __stdcall GetWindowRect(intptr_t hwnd, _Out_ MANTLE_TRACE_RECT *rect)');
+    beginPeriod = winmm.func('uint32 __stdcall timeBeginPeriod(uint32 p)');
+    endPeriod = winmm.func('uint32 __stdcall timeEndPeriod(uint32 p)');
+  } catch (err) {
+    say(`GetWindowRect could not be bound (${err.message}), so there is nothing to trace`);
+    shutdown('the trace could not start');
+    return;
+  }
+  const hwnd = Number(hwndOf(barWin));
+  const sf = screen.getPrimaryDisplay().scaleFactor || 1;
+  const wc = barWin.webContents;
+  const js = (code) => wc.executeJavaScript(code, true);
+  // the page's clock against main's, both epoch milliseconds: the midpoint of one round trip
+  const t0 = traceNow();
+  const pageT = await js('performance.timeOrigin + performance.now()');
+  const skew = pageT - (t0 + traceNow()) / 2;
+  const REC = "(function(){var T=window.__trace={frames:[],on:true};var bar=document.querySelector('.bar'),pop=document.getElementById('pop');" +
+    "function f(){if(!T.on)return;var r=bar.getBoundingClientRect(),p=pop&&!pop.hidden?pop.getBoundingClientRect():null;" +
+    "T.frames.push([performance.timeOrigin+performance.now(),innerWidth,innerHeight,Math.round(r.left*10)/10,Math.round(r.top*10)/10,Math.round(r.width*10)/10,Math.round(r.height*10)/10,p?Math.round(p.top):null,p?Math.round(p.height):null]);" +
+    "requestAnimationFrame(f);}requestAnimationFrame(f);return true;})()";
+  const clickJs = (sel) => `(function(){var e=document.querySelector(${JSON.stringify(sel)});if(!e)return 'no '+${JSON.stringify(sel)};e.click();return 'clicked';})()`;
+
+  const targets = [
+    { name: 'speaker (quick settings)', open: '#volume', close: '#volume' },
+    { name: 'network (quick settings)', open: '#network', close: '#network' },
+    { name: 'battery (quick settings)', open: '#battery', close: '#battery' },
+    { name: 'clock (calendar)', open: '#clock', close: '#clock' },
+    { name: 'bell (notifications)', open: '#notifs', close: '#notifs' },
+    { name: '... (more)', open: '#more', close: '#more' },
+    { name: 'speaker, then clock while it is open', open: '#volume', swap: '#clock', close: '#clock' },
+    { name: 'a pinned app\'s window flyout', fly: true },
+  ];
+  const results = [];
+  const cap = await traceCaptureStart(out, barWin);
+  say(cap.why ? `DWM's own frames are NOT recorded (${cap.why}); only the model is` : 'recording DWM\'s own frames of the bar window as well');
+  beginPeriod(1);
+  try {
+    for (const tg of targets) {
+      const tStart = traceNow();
+      const samples = [];
+      let last = null;
+      const rect = {};
+      const sample = () => {
+        if (!getRect(hwnd, rect)) return;
+        const k = rect.left + ',' + rect.top + ',' + rect.right + ',' + rect.bottom;
+        const t = traceNow();
+        if (k !== last) { samples.push([t, rect.left, rect.top, rect.right, rect.bottom]); last = k; }
+      };
+      const timer = setInterval(sample, 1);
+      traceMarks = [];
+      await js(REC);
+      await wait(300);
+      const events = [];
+      if (tg.fly) {
+        const items = lastPinned && Array.isArray(lastPinned.items) ? lastPinned.items : [];
+        const it = items.find((x) => Array.isArray(x.windows) && x.windows.length);
+        const match = it ? (it.name || it.title || it.id || '') : '';
+        events.push({ t: traceNow(), what: 'flyout open', match });
+        broadcast('bar.test.flyout', { match });
+        await wait(1500);
+        events.push({ t: traceNow(), what: 'flyout close' });
+        broadcast('bar.test.click', { what: 'close' });
+        await wait(1000);
+      } else {
+        events.push({ t: traceNow(), what: 'click ' + tg.open, r: await js(clickJs(tg.open)) });
+        await wait(1000);
+        if (tg.swap) {
+          events.push({ t: traceNow(), what: 'click ' + tg.swap, r: await js(clickJs(tg.swap)) });
+          await wait(1000);
+        }
+        events.push({ t: traceNow(), what: 'click ' + tg.close + ' (close)', r: await js(clickJs(tg.close)) });
+        await wait(1000);
+      }
+      clearInterval(timer);
+      const tEnd = traceNow();
+      const frames = await js('(function(){var T=window.__trace;T.on=false;return T.frames;})()');
+      const marks = traceMarks;
+      traceMarks = null;
+      results.push(Object.assign(traceAnalyse(tg.name, samples, frames.map((f) => [f[0] - skew].concat(f.slice(1))), events, marks, sf), { samples, frames, events, marks, tStart, tEnd }));
+      await wait(300);
+    }
+  } finally {
+    endPeriod(1);
+  }
+  let dwm = null;
+  if (!cap.why) {
+    dwm = await cap.stop();
+    say(`DWM frames: ${dwm.frames.length} captured${dwm.err ? `, then the capture failed: ${dwm.err}` : ''}; stream ${JSON.stringify(dwm.settings)}`);
+    for (const r of results) {
+      r.dwm = traceDwmAnalyse(dwm.frames, r.tStart, r.events.length ? r.events[0].t : r.tStart, r.tEnd);
+      r.line += `; DWM: ${r.dwm.line}`;
+    }
+  }
+  fs.writeFileSync(path.join(out, 'trace.json'), JSON.stringify({ at: new Date().toISOString(), liveBar: flags.testLiveBar, scale: sf, skewMs: skew, dwm, results }, null, 1));
+  for (const r of results) say(r.line);
+  say(`wrote ${path.join(out, 'trace.json')}`);
+  shutdown('the trace is done');
+}
+
+/* One target's numbers. The pill on screen at time t is where DWM draws it: the window's top at t
+   (physical, /sf) plus the pill's top in the page's LAST frame before t. At rest the two agree;
+   while the window's size changes faster than the page redraws, they do not. */
+function traceAnalyse(name, samples, frames, events, marks, sf) {
+  const at = (arr, t) => { let v = null; for (const x of arr) { if (x[0] <= t) v = x; else break; } return v; };
+  const tClick = events.length ? events[0].t : 0;
+  const base = at(samples, tClick) || samples[0];
+  const baseFrame = at(frames, tClick) || frames[0];
+  const onScreen = (s, f) => s[2] / sf + f[4];            // window top (DIP) + pill top in the page
+  const restTop = base && baseFrame ? onScreen(base, baseFrame) : null;
+  let winMoves = 0, maxWinDy = 0, maxWinDh = 0, maxPill = 0, maxPillAt = null, stale = 0;
+  const times = samples.map((s) => s[0]).concat(frames.map((f) => f[0])).sort((a, b) => a - b);
+  for (const t of times) {
+    if (t < tClick) continue;
+    const s = at(samples, t), f = at(frames, t);
+    if (!s || !f || restTop === null) continue;
+    const d = onScreen(s, f) - restTop;
+    if (Math.abs(d) > Math.abs(maxPill)) { maxPill = d; maxPillAt = Math.round(t - tClick); }
+  }
+  for (const s of samples) {
+    if (s[0] < tClick || !base) continue;
+    if (s !== base) winMoves++;
+    maxWinDy = Math.max(maxWinDy, Math.abs(s[2] - base[2]));
+    maxWinDh = Math.max(maxWinDh, Math.abs((s[4] - s[2]) - (base[4] - base[2])));
+  }
+  for (const f of frames) {
+    if (f[0] < tClick) continue;
+    const s = at(samples, f[0]);
+    if (s && Math.abs(f[2] - (s[4] - s[2]) / sf) > 1.5) stale++;
+  }
+  const line = `${name}: window rect changed ${winMoves} time(s), top moved up to ${maxWinDy} px, height up to ${maxWinDh} px; ` +
+    `the pill on screen moved up to ${Math.round(maxPill * 10) / 10} dip (${maxPillAt === null ? 'never' : `at +${maxPillAt} ms`}); ` +
+    `${stale} page frame(s) drawn for a window size it no longer had`;
+  return { name, line, winMoves, maxWinDy, maxWinDh, maxPill, maxPillAt, stale };
+}
+
+/*
+ * What DWM actually composed for the bar window, frame by frame (TEST ONLY, --test-trace).
+ * The page's frames say what it DREW and GetWindowRect says where the window WAS; neither is the
+ * picture. So this asks Windows for the window's own composed image through Chromium's desktop
+ * capturer (Windows.Graphics.Capture for a window: it sees the window while others cover it, and
+ * it sees ONLY this window -- nothing of Owen's screen is captured). Nothing is kept but numbers:
+ * per frame its size and the rows where glass as wide as the pill is lit.
+ */
+async function traceCaptureStart(out, target) {
+  // The bar's own id: no list of other windows is ever asked for.
+  let id;
+  try { id = target.getMediaSourceId(); } catch (err) { return { why: `the bar window has no capture id (${err.message})` }; }
+  // a file:// page, because getUserMedia needs a secure context; it lives in the trace dir
+  const html = path.join(out, 'capture.html');
+  fs.writeFileSync(html, '<!doctype html><meta charset="utf-8"><title>mantle trace capture</title>');
+  const win = new BrowserWindow({ show: false, width: 200, height: 200, webPreferences: { backgroundThrottling: false, contextIsolation: true, sandbox: true, nodeIntegration: false } });
+  try {
+    await win.loadFile(html);
+    const t0 = traceNow();
+    const pageT = await win.webContents.executeJavaScript('performance.timeOrigin + performance.now()', true);
+    const skew = pageT - (t0 + traceNow()) / 2;
+    const started = await win.webContents.executeJavaScript(`(${traceCaptureInPage.toString()})(${JSON.stringify(id)})`, true);
+    if (started !== true) { win.destroy(); return { why: String(started) }; }
+    return {
+      why: null,
+      async stop() {
+        let res;
+        try { res = await win.webContents.executeJavaScript('window.__cap.stop()', true); } catch (err) { res = { err: err.message, frames: [] }; }
+        try { win.destroy(); } catch (_) { /* gone already */ }
+        return { settings: res.settings || null, err: res.err || null, frames: (res.frames || []).map((f) => [f[0] - skew].concat(f.slice(1))) };
+      },
+    };
+  } catch (err) {
+    try { win.destroy(); } catch (_) { /* gone already */ }
+    return { why: `the capture page failed: ${err.message}` };
+  }
+}
+
+/* Runs INSIDE the capture page: traceCaptureStart stringifies it; main never calls it. Per frame:
+   [t, width, height, timestamp us, runs], runs = [top, bottom] rows where most of 9 columns
+   (10%..90% across) are lit. The window's transparent parts come through black; the glass does
+   not. A popover is narrower than the pill, so only the pill (and the calendar) make a run. */
+function traceCaptureInPage(id) {
+  const C = window.__cap = { frames: [], settings: null, err: null, on: true };
+  const N = 9;
+  const LIT = 40;
+  return navigator.mediaDevices.getUserMedia({ audio: false, video: { mandatory: {
+    chromeMediaSource: 'desktop', chromeMediaSourceId: id,
+    minWidth: 1, maxWidth: 4096, minHeight: 1, maxHeight: 4096, minFrameRate: 30, maxFrameRate: 60,
+  } } }).then((stream) => {
+    const track = stream.getVideoTracks()[0];
+    C.settings = track.getSettings();
+    const reader = new MediaStreamTrackProcessor({ track }).readable.getReader();
+    const cv = new OffscreenCanvas(N, 8);
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    let done;
+    const finished = new Promise((r) => { done = r; });
+    C.stop = () => { C.on = false; try { track.stop(); } catch (_) { /* stopped */ } return finished.then(() => ({ settings: C.settings, err: C.err, frames: C.frames })); };
+    (async () => {
+      try {
+        while (C.on) {
+          const r = await reader.read();
+          if (r.done) break;
+          const fr = r.value;
+          const t = performance.timeOrigin + performance.now();
+          const w = fr.displayWidth;
+          const h = fr.displayHeight;
+          if (cv.height !== h) cv.height = h;
+          for (let i = 0; i < N; i++) g.drawImage(fr, Math.round(w * (0.1 + 0.8 * i / (N - 1))), 0, 1, h, i, 0, 1, h);
+          const ts = fr.timestamp;
+          fr.close();
+          const d = g.getImageData(0, 0, N, h).data;
+          const runs = [];
+          let start = -1;
+          let gap = 0;
+          let anyTop = -1;   // the highest row ANY column is lit on: a popover shows up here
+          for (let y = 0; y < h; y++) {
+            let n = 0;
+            for (let i = 0; i < N; i++) { const k = (y * N + i) * 4; if (0.2126 * d[k] + 0.7152 * d[k + 1] + 0.0722 * d[k + 2] > LIT) n++; }
+            if (n && anyTop < 0) anyTop = y;
+            if (n * 2 > N) { if (start < 0) start = y; gap = 0; } else if (start >= 0 && ++gap > 2) { runs.push([start, y - gap]); start = -1; gap = 0; }
+          }
+          if (start >= 0) runs.push([start, h - 1 - gap]);
+          C.frames.push([t, w, h, ts, runs, anyTop]);
+        }
+      } catch (e) { C.err = String((e && e.message) || e); }
+      done();
+    })();
+    return true;
+  }).catch((e) => `the capture would not start: ${(e && e.message) || e}`);
+}
+
+/* One target's DWM frames: where the pill was drawn relative to the window's bottom edge (which
+   is the screen's), against where it was in the frames before the click. */
+function traceDwmAnalyse(frames, t0, tClick, t1) {
+  const pillOf = (f) => { const runs = f[4].filter((r) => r[1] - r[0] + 1 >= 20); return runs.length ? runs[runs.length - 1] : null; };
+  const inRange = frames.filter((f) => f[0] >= t0 && f[0] <= t1);
+  const gaps = inRange.filter((f) => f[0] < tClick).map((f) => { const p = pillOf(f); return p ? f[2] - 1 - p[1] : null; }).filter((v) => v !== null).sort((a, b) => a - b);
+  if (!gaps.length) return { n: inRange.length, line: `${inRange.length} frame(s), none before the click showed the pill, so nothing to compare with` };
+  const base = gaps[Math.floor(gaps.length / 2)];
+  let n = 0, moved = 0, missing = 0, up = 0, down = 0, firstAt = null, above = 0, highest = null;
+  for (const f of inRange) {
+    if (f[0] < tClick) continue;
+    n++;
+    const p = pillOf(f);
+    // something lit well above the pill = a popover DWM actually showed
+    if (p && f[5] >= 0 && f[5] < p[0] - 20) { above++; highest = highest === null ? p[0] - f[5] : Math.max(highest, p[0] - f[5]); }
+    if (!p) { missing++; if (firstAt === null) firstAt = Math.round(f[0] - tClick); continue; }
+    const dy = (f[2] - 1 - p[1]) - base;          // > 0: drawn HIGHER than at rest
+    if (Math.abs(dy) > 1) {
+      moved++;
+      if (firstAt === null) firstAt = Math.round(f[0] - tClick);
+      if (dy > up) up = dy;
+      if (-dy > down) down = -dy;
+    }
+  }
+  const line = `${n} frame(s) after the click, the pill out of place in ${moved} (up to ${up} px higher, ${down} px lower) and missing from ${missing}` +
+    (firstAt === null ? '' : ` (first at +${firstAt} ms)`) +
+    `; a popover drawn above it in ${above}${highest === null ? '' : ` (reaching ${highest} px above the pill)`}`;
+  return { n, moved, missing, up, down, base, firstAt, above, highest, line };
+}
+
+/*
  * --test --flyout=<app> [--screenshot=<dir>]: open the bar's window flyout for the first
  * running app matching <app>, exactly as a 400 ms hover would, and (with a dir) photograph it
  * WITH its live previews. Nobody's mouse moves and no input is injected: the page is sent
@@ -5257,8 +5669,9 @@ async function logMemory(tag) {
 }
 
 app.whenReady().then(() => {
-  const bar = createBar({ root: ROOT, test: flags.test, barEdge: flags.barEdge });
+  const bar = createBar({ root: ROOT, test: flags.test, barEdge: flags.barEdge, liveShape: flags.testLiveBar });
   barWin = bar.win;
+  armBarShape();   // hover mode: the always-tall window's shape, proved before it is ever shown
   watchPage(barWin, 'The bar');
   // NO show here any more. The bar is a hover bar: it is created hidden and the
   // cursor poll is the only thing that puts it on screen (plus --dock, which
@@ -5368,5 +5781,6 @@ app.whenReady().then(() => {
 
   // --flyout owns --screenshot when both are given: it photographs the flyout, not the three windows
   if (flags.flyout !== null) runFlyoutTest(flags.flyout, flags.screenshot ? path.resolve(flags.screenshot) : null);
+  else if (flags.trace) runTrace(flags.trace);
   else if (flags.screenshot) runScreenshots(path.resolve(flags.screenshot));
 });

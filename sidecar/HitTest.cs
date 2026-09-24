@@ -16,7 +16,8 @@
 //             class, title, pid and exe - so "my button does nothing" becomes
 //             "LockScreenBackstopFrame, explorer.exe" in one line.
 //   raise     the fix, and it PROVES ITSELF. It re-asserts topmost on the
-//             caller's own window, then hit-tests that window's own centre and
+//             caller's own window, then hit-tests that window's own centre (the
+//             centre of its REGION when it has one; `at` says which point) and
 //             reports whether the root there really is that window. When it is
 //             not, `over` names what won - a raise that silently failed would
 //             put us straight back in the same debugging session.
@@ -85,6 +86,7 @@ namespace Mantle {
       Win32.RECT r;
       bool onTop = false;
       object over = null;
+      object testedAt = null;
       if (!Win32.GetWindowRect(hwnd, out r)) {
         reason = (reason == null ? "" : reason + "; ") + "the window's rect could not be read, so being on top could not be verified";
       } else if (r.right <= r.left || r.bottom <= r.top) {
@@ -93,6 +95,20 @@ namespace Mantle {
         var pt = new Win32.POINT();
         pt.x = r.left + (r.right - r.left) / 2;
         pt.y = r.top + (r.bottom - r.top) / 2;
+        // A SHAPED window is tested at the centre of its REGION, not of its rect (2026-09-24).
+        // The bar window now reaches 480 DIP past the bar so a popover never has to resize it,
+        // and a region is what makes only the bar part of it real. The rect's centre is then in
+        // the empty part, where WindowFromPoint goes straight through to whatever is behind,
+        // and that window would be reported as covering the bar. The region's box is in window
+        // coordinates; for the bar at rest it is the pill (plus the air under it).
+        Win32.RECT box;
+        int kind = RegionApi.GetWindowRgnBox(hwnd, out box);
+        if ((kind == RegionApi.SIMPLEREGION || kind == RegionApi.COMPLEXREGION) &&
+            box.right > box.left && box.bottom > box.top) {
+          pt.x = r.left + box.left + (box.right - box.left) / 2;
+          pt.y = r.top + box.top + (box.bottom - box.top) / 2;
+        }
+        testedAt = new object[] { pt.x, pt.y };
         IntPtr hit = Win32.WindowFromPoint(pt);
         IntPtr root = hit == IntPtr.Zero ? IntPtr.Zero : Win32.GetAncestor(hit, Win32.GA_ROOT);
         if (root == IntPtr.Zero) root = hit;
@@ -111,8 +127,16 @@ namespace Mantle {
         }
       }
 
-      result = Json.Obj("ok", reason == null, "onTop", onTop, "over", over, "reason", reason);
+      result = Json.Obj("ok", reason == null, "onTop", onTop, "over", over, "at", testedAt, "reason", reason);
       return null;
+    }
+
+    // Kept here rather than in Win32.cs: only `raise` reads a window's region.
+    static class RegionApi {
+      public const int SIMPLEREGION = 2;
+      public const int COMPLEXREGION = 3;
+      [DllImport("user32.dll")]
+      public static extern int GetWindowRgnBox(IntPtr hWnd, out Win32.RECT lprc);
     }
   }
 }
