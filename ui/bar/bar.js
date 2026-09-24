@@ -1374,6 +1374,7 @@
     if (popKey === 'qs') {
       qsPaint = null; qsWatch(false);
       if (window.MantleQsMore) MantleQsMore.closed();   // its polls stop and the keyboard goes back
+      if (window.MantlePowerMode) MantlePowerMode.closed(); // its 3 s re-read and its push stop
     }
     if (popKey === 'media') { mediaPaint = null; mediaNote = ''; mediaRoom = 0; }
     if (isFlyKey(popKey)) flyTeardown();
@@ -1769,6 +1770,12 @@
     notes.className = 'qsnotes';
     pop.appendChild(notes);
 
+    /* POWER MODE (osd lane, 2026-09-24): Best power efficiency / Balanced / Best performance, the
+       panel's optimistic pattern with the read-back deciding (ui/bar/powermode.js). Muted with its
+       reason when Windows would not apply it (any plan but Balanced). */
+    if (window.MantlePowerMode) MantlePowerMode.attach(pop, { call: call, on: on }, notes);
+    else fail('powermode', 'power mode missing', 'ui/bar/powermode.js did not load, so quick settings has no power-mode switch', 'warn');
+
     var foot = document.createElement('div'); foot.className = 'qsfoot';
     var power = document.createElement('div'); power.className = 'qspower';
     var acts = document.createElement('div'); acts.className = 'qsacts';
@@ -1913,7 +1920,37 @@
   el.volume.addEventListener('click', function () { openQs(el.volume); });
   el.network.addEventListener('click', function () { openQs(el.network); });
   el.battery.addEventListener('click', function () { openQs(el.battery); });
-  el.volume.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openQs(el.volume); });
+  /* THE SPEAKER, ANDROID-STYLE (osd lane, 2026-09-24). Owen: "can you make it so that i can adjust
+     volumes of different apps like the android feature". Right- or middle-click opens the pop-up's
+     per-app panel (every app playing sound, each with its slider and mute: ui/osd/); the wheel
+     over the speaker changes the master volume 2 a notch, with the pop-up showing it. If the pop-up
+     feature is off or down, right-click falls back to the quick-settings panel and says why. */
+  function openMixer() {
+    closePop();
+    callR('osd.mixer').then(function () { clearFail('osdmixer'); }, function (e) {
+      fail('osdmixer', 'app volumes', 'the per-app volume panel did not open (' + msg(e) + '), so quick settings opened instead', 'warn');
+      openQs(el.volume);
+    });
+  }
+  el.volume.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openMixer(); });
+  el.volume.addEventListener('auxclick', function (ev) { if (ev.button === 1) { ev.preventDefault(); openMixer(); } });
+  el.volume.addEventListener('mousedown', function (ev) { if (ev.button === 1) ev.preventDefault(); });  // no autoscroll
+  var wheelTarget = null, wheelIdle = 0;
+  var wheelSend = window.MantleQsSend
+    ? MantleQsSend.sender(function (v) { return call('qs.set', { part: 'volume', value: v }); },
+        { minGapMs: 16, onIdle: function () { clearTimeout(wheelIdle); wheelIdle = setTimeout(function () { wheelTarget = null; }, 400); } })
+    : { push: function (v) { call('qs.set', { part: 'volume', value: v }); }, busy: function () { return false; } };
+  el.volume.addEventListener('wheel', function (ev) {
+    ev.preventDefault();
+    if (vol.level === null && wheelTarget === null) return;      // nothing read yet: the glyph's tooltip says why
+    var base = wheelTarget !== null ? wheelTarget : Math.round(vol.level * 100);
+    var v = Math.max(0, Math.min(100, base + (ev.deltaY < 0 ? 2 : -2)));
+    wheelTarget = v;
+    clearTimeout(wheelIdle);
+    vol.level = v / 100; volumeGlyph();                         // the glyph follows at once; the watch has the last word
+    wheelSend.push(v);
+    call('osd.show', { via: 'wheel', state: { ok: true, level: v, muted: !!vol.muted, reason: null } }).catch(function () { /* the glyph still moved */ });
+  }, { passive: false });
   el.network.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openQs(el.network); });
   el.battery.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openQs(el.battery); });
 

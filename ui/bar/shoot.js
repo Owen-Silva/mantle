@@ -149,7 +149,19 @@ const SHOTS = [
     steps: [{ wait: 900 }, b === 'none' ? '#network' : '#battery'] })),
   // Plugged in while the panel is open: main's push must redraw the readout AND the footer.
   { name: 'battery-push-qs', w: 1280, h: 400, q: '?mode=pill&battery=battery',
-    steps: [{ wait: 900 }, '#battery', { js: "__mockMain.battery('charging')" }, { wait: 300 }] }
+    steps: [{ wait: 900 }, '#battery', { js: "__mockMain.battery('charging')" }, { wait: 300 }] },
+  /* POWER MODE (osd lane, 2026-09-24, ui/bar/powermode.js): the switch in every state it has - live,
+     on battery, muted off the Balanced plan (Owen's machine today), unreadable, a click pending, a
+     click taken, a click refused (springs back, says why), and a change made in Windows Settings
+     while the panel is open (the 'powermode' push). */
+  { name: 'pm-balanced', w: 1280, h: 480, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'pm-battery', w: 1280, h: 480, q: '?mode=pill&pm=battery', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'pm-hone', w: 1280, h: 480, q: '?mode=pill&pm=hone', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'pm-error', w: 1280, h: 480, q: '?mode=pill&pm=error', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'pm-pending', w: 1280, h: 480, q: '?mode=pill&pm=slow', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmbtn[data-mode="performance"]', { wait: 200 }] },
+  { name: 'pm-taken', w: 1280, h: 480, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmbtn[data-mode="efficiency"]', { wait: 300 }] },
+  { name: 'pm-refused', w: 1280, h: 480, q: '?mode=pill&pm=refuse', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmbtn[data-mode="performance"]', { wait: 300 }] },
+  { name: 'pm-settings-push', w: 1280, h: 480, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, { js: "__mockPower('performance')" }, { wait: 200 }] }
 ];
 const ONLY = process.argv.slice(2);
 const RUN = ONLY.length ? SHOTS.filter(s => ONLY.some(w => s.name.includes(w))) : SHOTS;

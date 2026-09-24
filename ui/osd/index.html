@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- light frosted glass, so the UA's own bits (the range inputs) are drawn for a light surface -->
+<meta name="color-scheme" content="light">
+<!-- the launcher's policy: file:// is an opaque origin, so scheme sources; data: is for the app
+     icons main sends with qs.audio.sessions. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle volume</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="osd.css">
+</head>
+<body>
+<!-- ONE surface. Collapsed it is the pill: glyph (a click mutes), the level as a bar you can drag,
+     the number, and the chevron that opens the apps. Expanded, the panel grows away from the bar
+     over the pill: every app playing sound, each with its own slider and mute (Android's volume
+     panel, Owen 2026-09-24). The window never takes focus: it is a non-activating window that
+     takes clicks, so whatever Owen was typing into keeps the keyboard. -->
+<div id="osd" class="osd" data-kind="volume" hidden>
+  <div id="panel" class="panel" hidden>
+    <div class="phead">
+      <span class="ptitle">Sound</span>
+      <span id="dev" class="dev"></span>
+    </div>
+    <div id="apps" class="apps" role="list" aria-label="Apps playing sound"></div>
+    <div id="note" class="note" hidden></div>
+  </div>
+  <div id="pill" class="pill">
+    <button id="glyph" class="glyph" type="button"></button>
+    <input id="level" class="level" type="range" min="0" max="100" step="1" aria-label="Volume">
+    <span id="num" class="num"></span>
+    <button id="more" class="more" type="button" title="Show every app's volume" aria-expanded="false">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><path d="M4.5 9.8L8 6.3l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+  <div id="why" class="why" hidden></div>
+</div>
+<script src="mock-mantle.js"></script>
+<script src="../bar/qs-send.js"></script>
+<script src="osd-model.js"></script>
+<script src="osd.js"></script>
+</body>
+</html>

@@ -1,0 +1,233 @@
+/* osd.css - Mantle's volume/brightness pop-up and its Android-style per-app panel (osd lane,
+ * wave 3, 2026-09-24).
+ *
+ * EVERY colour is a --lg-* token from ../shared/glass-light.css: light frost, dark ink, plain
+ * hairlines, one accent. No backdrop-filter (in a transparent Electron window it blurs this page
+ * and nothing else), no text-shadow, no glow.
+ *
+ * THE SURFACE is --lg-fill-strong, the popovers' "real surface", not the bar's thin .45: the pop-up
+ * has to be up within ~50 ms of a key, too soon to photograph the screen behind it for a blur the
+ * way the bar and the switcher do, so the pane carries its text alone. Measured in the mock shots
+ * over a black and a white desktop: ink-2 text on it clears 4.5:1 on both (ui/osd/shoot.js).
+ *
+ * THE WINDOW is transparent and main sizes it to what the page reports (osd.size): the surface plus
+ * --m of margin for the drop shadow. Bottom-docked bar: the surface sits at the bottom of the window
+ * and an expanded panel grows UP over the pill; top-docked (body[data-below]) it is mirrored.
+ */
+:root {
+  --m: 18px;          /* transparent margin round the surface, for its shadow */
+  --pill-w: 288px;
+  --open-w: 348px;
+  --row-h: 44px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;           /* anything painted here would be a rectangle of fog */
+  overflow: hidden;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px;
+  -webkit-font-smoothing: antialiased;
+  color: var(--lg-ink-2);
+  user-select: none;
+  cursor: default;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding: var(--m);
+}
+body[data-below] { align-items: flex-start; }
+
+.osd {
+  flex: none;          /* never squeezed by the window: the page reports its true size and main fits the window to it */
+  width: var(--pill-w);
+  display: flex;
+  flex-direction: column;
+  background-color: var(--lg-fill-strong);
+  border: 1px solid var(--lg-edge-in);
+  border-radius: var(--lg-r-pill);
+  box-shadow: inset 0 1px 0 var(--lg-edge-in), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  color: var(--lg-ink-2);
+  /* IN: at once, like Windows' own flyout and the switcher (a key press wants the answer now).
+     OUT: a short fade, the bar's own exit curve. */
+  transition: opacity var(--lg-dur-out) var(--lg-ease);
+}
+.osd[hidden] { display: none; }
+.osd.fading { opacity: 0; }
+.osd.open { width: var(--open-w); border-radius: var(--lg-r-pop); }
+body[data-below] .osd { flex-direction: column-reverse; }
+
+/* ---------------------------------------------------------------- the pill (and the master row) */
+.pill {
+  display: grid;
+  grid-template-columns: 28px 1fr 30px 26px;
+  align-items: center;
+  gap: 8px;
+  height: var(--row-h);
+  padding: 0 9px 0 8px;
+}
+.osd[data-kind="brightness"] .pill { grid-template-columns: 28px 1fr 30px; }
+.osd[data-kind="brightness"] .more { display: none; }
+.osd.open .pill { border-top: 1px solid var(--lg-edge-out); }
+body[data-below] .osd.open .pill { border-top: 0; border-bottom: 1px solid var(--lg-edge-out); }
+
+.glyph, .more, .amute, .retry {
+  display: grid;
+  place-items: center;
+  height: 28px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink);
+  font: inherit;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.glyph { width: 28px; }
+.more { width: 26px; color: var(--lg-ink-2); }
+.glyph:hover, .more:hover, .amute:hover, .retry:hover { background: var(--lg-hover); }
+.glyph:active, .more:active, .amute:active, .retry:active { background: var(--lg-press); }
+.glyph.on, .amute.on { background: var(--lg-acc); color: var(--lg-acc-on); }
+.glyph.pending, .amute.pending { opacity: .6; }
+.osd[data-kind="brightness"] .glyph:hover { background: transparent; }  /* nothing to toggle */
+.more svg { transition: transform 200ms var(--lg-ease); }
+.osd.open .more svg { transform: rotate(180deg); }
+body[data-below] .more svg { transform: rotate(180deg); }
+body[data-below] .osd.open .more svg { transform: none; }
+
+.num {
+  text-align: right;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--lg-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* THE LEVEL: a real slider (drag it, or click along it), drawn as the thick bar Windows' flyout
+   has. --p is the fill in percent, set by the page with the value, so the fill never lags the
+   thumb. Muted: the fill goes to quiet ink - the level is still there, it is just not heard. */
+.level {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  margin: 0;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--lg-acc) 0, var(--lg-acc) calc(var(--p, 0) * 1%),
+                                        var(--lg-tile) calc(var(--p, 0) * 1%), var(--lg-tile) 100%);
+  outline: none;
+  cursor: default;
+}
+.level::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--lg-acc-on);
+  border: 1px solid var(--lg-edge-out);
+  box-shadow: 0 1px 2px rgba(14,18,38,.28);
+}
+.level:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: 4px; }
+.level.muted, .osd.muted .pill .level {
+  background: linear-gradient(to right, var(--lg-ink-3) 0, var(--lg-ink-3) calc(var(--p, 0) * 1%),
+                                        var(--lg-tile) calc(var(--p, 0) * 1%), var(--lg-tile) 100%);
+}
+.level:disabled { opacity: .5; }
+.osd.dead .num { color: var(--lg-ink-2); font-weight: 400; }
+
+/* ---------------------------------------------------------------- a line of why
+   INK, NOT --lg-warn, for the words: with no backdrop blur the pane over a black desktop is ~72 %
+   white, where the burnt-orange warn measured 3.6:1 (ui/osd/shoot.js, 2026-09-24). The warn colour
+   stays as the hairline beside the words, which is what says "this is a problem". */
+.why {
+  margin: -3px 14px 9px;
+  padding-left: 8px;
+  border-left: 2px solid var(--lg-warn);
+  color: var(--lg-ink);
+  line-height: 1.4;
+}
+.why[hidden] { display: none; }
+
+/* ---------------------------------------------------------------- the per-app panel */
+.panel { padding: 10px 12px 4px; }
+.panel[hidden] { display: none; }
+.phead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.ptitle { font-weight: 600; color: var(--lg-ink); }
+.dev {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--lg-ink-2);
+}
+.apps {
+  max-height: 336px;                 /* six rows; more scroll */
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.app {
+  display: grid;
+  grid-template-columns: 26px 1fr 28px;
+  align-items: center;
+  gap: 2px 9px;
+  padding: 6px 0;
+}
+.app + .app { border-top: 1px solid var(--lg-edge-out); }
+.aico {
+  grid-row: 1 / 3;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--lg-r-ctl);
+  overflow: hidden;
+}
+.aico img { width: 24px; height: 24px; }
+.aletter {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-tile);
+  color: var(--lg-ink);
+  font-weight: 600;
+}
+.atop { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.aname {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--lg-ink);
+}
+.aval { flex: 0 0 auto; color: var(--lg-ink-2); font-variant-numeric: tabular-nums; }
+.app .level { grid-column: 2; }
+.amute { grid-column: 3; grid-row: 1 / 3; width: 28px; }
+.aerr { grid-column: 1 / -1; padding-left: 8px; border-left: 2px solid var(--lg-warn); color: var(--lg-ink); line-height: 1.4; }
+.aerr[hidden] { display: none; }
+.app.idle .aname::after { content: ' \00b7  stopped'; color: var(--lg-ink-2); }
+
+.state {
+  padding: 12px 2px 10px;
+  line-height: 1.45;
+  color: var(--lg-ink-2);
+}
+.state b { display: block; font-weight: 600; color: var(--lg-ink); margin-bottom: 2px; }
+.state.bad { padding-left: 10px; border-left: 2px solid var(--lg-warn); }
+.retry { display: inline-grid; width: auto; padding: 0 10px; margin-top: 8px; background: var(--lg-sunk); }
+.note { margin: 4px 2px 6px; padding-left: 8px; border-left: 2px solid var(--lg-warn); color: var(--lg-ink); line-height: 1.4; }
+.note[hidden] { display: none; }

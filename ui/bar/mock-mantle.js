@@ -777,6 +777,38 @@
 
   /* Replies. Anything not listed rejects by name, which is what the real bridge should also do:
      a typo in a channel name must surface in the UI, never resolve to undefined. */
+  /* ---- power mode (osd lane, 2026-09-24): main's powermode.* over sidecar/PowerMode.cs, in its shape.
+       ?pm=balanced (default) | efficiency | performance | battery | hone | error | refuse | slow
+         hone     the plan Owen's machine is on (2026-09-24): muted, with PowerMode.cs's own reason
+         error    the plan cannot be read
+         refuse   every change is refused with the passive sidecar's reason (springs back)
+         slow     a set takes 1.5 s, so pending can be seen
+       A set answers with the state READ BACK, and pushes 'powermode' as the sidecar's listener does. */
+  var PM = q.get('pm') || 'balanced';
+  var pmState = PM === 'error'
+    ? { ok: false, mode: null, available: false, reason: 'Windows would not say which power plan is active (error 5)' }
+    : PM === 'hone'
+      ? { ok: true, mode: 'balanced', overlay: '00000000-0000-0000-0000-000000000000', available: false,
+          plan: { guid: '44444444-4444-4444-4444-444444444452', name: 'Hone Ultimate Power Plan V5', balanced: false }, source: 'ac', saver: false,
+          reason: 'Power mode works only on the Balanced power plan, and this PC is on "Hone Ultimate Power Plan V5". Switch to Balanced in Control Panel > Power Options to use it' }
+      : { ok: true, mode: PM === 'efficiency' || PM === 'performance' ? PM : 'balanced', available: true,
+          plan: { guid: '381b4222-f694-41f0-9685-ff5bb260df2e', name: 'Balanced', balanced: true },
+          source: PM === 'battery' ? 'battery' : 'ac', saver: false, reason: null };
+  function powerSet(p) {
+    var want = p && p.mode;
+    if (want !== 'efficiency' && want !== 'balanced' && want !== 'performance') throw new Error('powermode.set needs mode: "efficiency", "balanced" or "performance"');
+    if (!pmState.ok || !pmState.available) return { ok: false, mode: want, state: Object.assign({}, pmState), reason: pmState.reason };
+    if (PM === 'refuse' && want !== pmState.mode)
+      return { ok: false, mode: want, state: Object.assign({}, pmState), reason: 'refused: sidecar is passive (test mode): it would have changed the power mode from ' + pmState.mode + ' to ' + want };
+    pmState = Object.assign({}, pmState, { mode: want });
+    setTimeout(function () { emit('powermode', Object.assign({ via: 'set' }, pmState)); }, 5);
+    return { ok: true, mode: want, same: false, state: Object.assign({}, pmState), reason: null };
+  }
+  window.__mockPower = function (mode) {       // a change made in Windows Settings, for the harness
+    pmState = Object.assign({}, pmState, { mode: mode });
+    emit('powermode', Object.assign({ via: 'mode' }, pmState));
+  };
+
   function reply(channel, payload) {
     switch (channel) {
       case 'state.get':   return state();
@@ -827,6 +859,13 @@
       case 'qs.get': return qsSnapshot();
       case 'net.get': return netNow;
 
+      case 'osd.mixer': case 'osd.show': return { ok: true, shown: false, test: true, reason: null };   // ui/osd is its own page
+      case 'powermode.get': return Object.assign({}, pmState);
+      case 'powermode.set': {
+        var pr = powerSet(payload);
+        if (PM === 'slow') return new Promise(function (res) { setTimeout(function () { res(pr); }, 1500); });
+        return pr;
+      }
       case 'qs.watch':
         qsWatching = !!(payload && payload.on);
         qsLoop();

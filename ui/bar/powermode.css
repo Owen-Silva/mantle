@@ -1,0 +1,42 @@
+/* powermode.css - the Power mode switch in the quick-settings panel (ui/bar/powermode.js).
+ * A segmented control in the panel's own vocabulary: --lg-tile recess, the accent block for the
+ * current mode (like an ON tile), pending at .6 like every other QS switch, muted with its reason
+ * when Windows would not apply it (not on the Balanced plan). */
+.pmrow { margin: 2px 0 9px; }
+.pmrow .pmsub { max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmseg {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-tile);
+}
+.pmbtn {
+  height: 26px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--lg-ink);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.pmbtn:hover { background: var(--lg-hover); }
+.pmbtn:active { background: var(--lg-press); }
+.pmbtn:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.pmbtn.on, .pmbtn.on:hover { background: var(--lg-acc); color: var(--lg-acc-on); }
+.pmbtn.pending { opacity: .6; }
+/* DEAD: readable, obviously inert, the reason written under it (and in every tooltip) */
+.pmrow.dead .pmseg { background: var(--lg-sunk); }
+.pmrow.dead .pmbtn { color: var(--lg-ink-3); }
+.pmrow.dead .pmbtn:hover { background: transparent; }
+.pmrow.dead .pmbtn.on { background: var(--lg-tile); color: var(--lg-ink-2); }
+.pmwhy { margin-top: 5px; color: var(--lg-ink-2); line-height: 1.4; }
+.pmwhy[hidden], .pmnote[hidden] { display: none; }
+.pmnote { margin-top: 5px; color: var(--lg-warn); line-height: 1.4; }
