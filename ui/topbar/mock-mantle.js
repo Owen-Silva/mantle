@@ -1,0 +1,101 @@
+/* mock-mantle.js — plays main for the top bar page when it is opened over file:// without
+ * Electron (headless shots: ui/topbar/shoot.js). The real preload.js defines window.mantle first,
+ * so under Electron this file does nothing. Nothing here is from Owen's machine: every app, menu
+ * and number is made up.
+ *
+ * Query: app=npp|chrome|uwp|dialog|desktop  open=<title index>  sub=<row index>  stat=cpu|mem|gpu|net
+ *        stats=ok|nogpu|paused  dark=1  armed=1 (Restart armed)  fail=1 (every command fails)
+ */
+(function () {
+  'use strict';
+  if (window.mantle) return;
+  const q = new URLSearchParams(location.search);
+  document.documentElement.classList.add('mock');
+  document.addEventListener('DOMContentLoaded', () => {
+    document.body.classList.add('mock');
+    if (q.get('dark') === '1') document.body.classList.add('dark');
+  });
+  let pos = 0;
+  const it = (label, key, extra) => Object.assign({ t: 'item', pos: pos++, label, key: key || '', mn: label[0].toLowerCase(), id: 100 + pos, enabled: true, checked: false, radio: false, items: null, lazy: false }, extra || {});
+  const sep = () => ({ t: 'sep', pos: pos++ });
+  const sub = (label, items, extra) => { const x = it(label, '', Object.assign({ id: null, items }, extra || {})); pos = 0; return x; };
+  const W32 = () => {
+    pos = 0;
+    const file = sub('File', [it('New', 'Ctrl+N'), it('Open…', 'Ctrl+O'), sub('Recent Files', [it('notes.txt'), it('todo.md'), it('build.log')]),
+      sep(), it('Save', 'Ctrl+S'), it('Save As…', 'Ctrl+Alt+S'), it('Save a Copy As…', '', { enabled: false }), sep(), it('Print…', 'Ctrl+P'), sep(), it('Exit', 'Alt+F4')]);
+    const edit = sub('Edit', [it('Undo', 'Ctrl+Z'), it('Redo', 'Ctrl+Y', { enabled: false }), sep(), it('Cut', 'Ctrl+X'), it('Copy', 'Ctrl+C'), it('Paste', 'Ctrl+V'),
+      sep(), it('Select All', 'Ctrl+A')]);
+    const view = sub('View', [it('Always on Top', '', { checked: true }), it('Word Wrap', '', { checked: true }), sep(),
+      it('Tab size 2', '', { radio: true, checked: true }), it('Tab size 4', '', { radio: true }), sep(), sub('Zoom', [it('Zoom In', 'Ctrl+Num +'), it('Zoom Out', 'Ctrl+Num -'), it('Restore Default Zoom', 'Ctrl+Num /')])]);
+    const items = [file, edit, sub('Search', [it('Find…', 'Ctrl+F'), it('Replace…', 'Ctrl+H')]), view,
+      sub('Encoding', [it('UTF-8', '', { radio: true, checked: true }), it('UTF-16 LE', '', { radio: true })]), sub('Language', [], { lazy: true }),
+      sub('Settings', [it('Preferences…')]), sub('Tools', [it('MD5')]), sub('Macro', [it('Start Recording')]), sub('Run', [it('Run…', 'F5')]),
+      sub('Plugins', [it('Plugins Admin…')]), sub('Window', [it('Windows…')]), sub('?', [it('About Notepad++', 'F1')])];
+    items.forEach((x, i) => { x.pos = i; });
+    return { source: 'win32', hwnd: '4242', owner: false, items, count: 80, truncated: false, readMs: 0.4 };
+  };
+  const base = { hwnd: '4242', cls: 'Notepad++', title: 'todo.md - Notepad++', exe: 'C:\\Program Files\\Notepad++\\notepad++.exe', pid: 7, appPid: 7,
+    desc: 'Notepad++', product: 'Notepad++', self: false, shell: false, fullscreen: false, zoomed: true, topmost: false, enabled: true, uia: 'not needed', ms: 0.4 };
+  const APPS = {
+    npp: () => Object.assign({}, base, { menu: W32() }),
+    chrome: () => Object.assign({}, base, { hwnd: '5151', cls: 'Chrome_WidgetWin_1', title: 'Inbox - Chrome', exe: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      desc: 'Google Chrome', product: 'Google Chrome', menu: null, menuReason: 'no Win32 menu bar', uia: 'Chromium and Electron windows draw their own menus' }),
+    uwp: () => Object.assign({}, base, { hwnd: '6161', cls: 'ApplicationFrameWindow', title: 'Calculator', exe: 'C:\\Program Files\\WindowsApps\\Calc\\CalculatorApp.exe',
+      desc: 'Calculator', product: 'Calculator', menu: null, menuReason: 'no Win32 menu bar', uia: 'try' }),
+    dialog: () => Object.assign({}, base, { title: 'Save As', menu: Object.assign(W32(), { owner: true }), blocked: 'a dialog of this app is open, so it is not taking menu commands until it closes' }),
+    desktop: () => Object.assign({}, base, { hwnd: '1', cls: 'Progman', title: 'Program Manager', exe: 'C:\\Windows\\explorer.exe', desc: 'Windows Explorer', shell: true, menu: null, uia: 'the desktop' }),
+  };
+  const focus = (APPS[q.get('app')] || APPS.npp)();
+  const cores = [22, 61, 9, 14, 37, 5, 71, 18];
+  const STATS = {
+    ok: { t: 1, cpu: { pct: 23.4, cores, top: [{ name: 'Code', pct: 11.2 }, { name: 'chrome', pct: 6.1 }, { name: 'Mantle', pct: 1.3 }, { name: 'MsMpEng', pct: 0.9 }, { name: 'explorer', pct: 0.4 }] },
+      mem: { used: 9.7 * 1073741824, total: 15.7 * 1073741824, commit: 13.1 * 1073741824, commitLimit: 23.4 * 1073741824,
+        top: [{ name: 'chrome', bytes: 2.1 * 1073741824 }, { name: 'Code', bytes: 1.4 * 1073741824 }, { name: 'Mantle', bytes: 0.31 * 1073741824 }] },
+      gpu: { pct: 7.8, name: 'Intel(R) UHD Graphics', engines: [{ type: '3D', pct: 7.8 }, { type: 'VideoDecode', pct: 2.2 }, { type: 'Copy', pct: 0 }],
+        dedicated: 0.13 * 1073741824, shared: 1.2 * 1073741824, top: [{ name: 'dwm', pct: 4.1 }, { name: 'chrome', pct: 2.9 }] },
+      net: { down: 2.4 * 1048576, up: 88 * 1024, adapters: [{ name: 'Wi-Fi', down: 2.4 * 1048576, up: 88 * 1024 }] }, costMs: 1.8 },
+  };
+  STATS.nogpu = JSON.parse(JSON.stringify(STATS.ok));
+  STATS.nogpu.gpu = { pct: null, reason: 'Windows has no GPU performance counters here (\\GPU Engine is missing), so the GPU cannot be measured' };
+  const stats = q.get('stats') === 'paused' ? null : (STATS[q.get('stats')] || STATS.ok);
+  const handlers = {};
+  const fail = q.get('fail') === '1';
+  window.__mockCalls = [];
+  window.mantle = {
+    on(ev, fn) { (handlers[ev] = handlers[ev] || []).push(fn); return () => {}; },
+    emit(ev, payload) { (handlers[ev] || []).forEach((fn) => fn(payload)); },
+    call(name, args) {
+      window.__mockCalls.push({ name, args });
+      if (fail && !/hello|menuState|menus|statsDetail|uia$/.test(name)) return Promise.resolve({ ok: false, reason: 'the app did not accept the command (PostMessage failed: it runs as administrator above Mantle)' });
+      switch (name) {
+        case 'topbar.hello': return Promise.resolve({ focus, stats });
+        case 'topbar.menus': return Promise.resolve({ menu: focus.menu, inited: 1 });
+        case 'topbar.uia': return Promise.resolve({ menu: { source: 'uia', hwnd: focus.hwnd, items: [
+          { t: 'item', pos: 0, label: 'View', mn: 'v', items: [], lazy: true, enabled: true }, { t: 'item', pos: 1, label: 'History', mn: 'h', items: null, enabled: true }] } });
+        case 'topbar.power': return Promise.resolve(args.confirmed || /lock|sleep/.test(args.action) ? { ok: true, dryRun: true, reason: 'dry run: would run shutdown.exe' } : { ok: false, reason: 'asks first' });
+        default: return Promise.resolve({ ok: true });
+      }
+    },
+  };
+  window.addEventListener('load', () => {
+    if (q.get('stats') === 'paused') window.mantle.emit('topbar.stats', { paused: true, reason: 'the screen is locked' });
+    setTimeout(() => {
+      const open = q.get('open'), stat = q.get('stat');
+      const S = window.__topbar;
+      const down = (el) => el && el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      if (stat) down(document.querySelector(`.st[data-k="${stat}"]`));
+      if (open != null) {
+        down(document.querySelector(`.t[data-i="${open}"]`));
+        const r = q.get('sub');
+        if (r != null && S && S.open) {
+          setTimeout(() => {
+            const row = document.querySelector(`.r[data-l="0"][data-r="${r}"]`);
+            if (row) row.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+            if (q.get('armed') === '1' && row) row.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+          }, 30);
+        }
+      }
+      document.documentElement.dataset.ready = '1';
+    }, 60);
+  });
+}());

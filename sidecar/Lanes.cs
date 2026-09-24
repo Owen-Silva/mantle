@@ -331,6 +331,12 @@ namespace Mantle {
         case "desktop": return Json.GetBool(req, "detach", false);
         case "morph": return Json.GetBool(req, "cancel", false);
         case "workarea": return Json.GetBool(req, "reset", false);
+        // The top bar (MenuBar.cs, TopbarStats.cs): giving the strip back, and switching its
+        // hooks and its 1 s sampler off, are undos - a caller that timed out still wants them.
+        case "topbar.release": return true;
+        case "topbar.watch": return Json.HasKey(req, "on") && !Json.GetBool(req, "on", true);
+        case "topbar.stats": return Json.HasKey(req, "on") && !Json.GetBool(req, "on", true);
+        case "topbar.guard": return Json.HasKey(req, "on") && !Json.GetBool(req, "on", true);
         default: return false;
       }
     }
