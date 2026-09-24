@@ -174,6 +174,9 @@ namespace Mantle {
       ShellState.Configure(StateFilePath);
       ShellState.CaptureOriginal();
       WindowList.Start();               // read-only, so it runs in passive too
+      // Feature commands register their lanes now, before the first request is dispatched
+      // (Lanes picks the lane before Run is ever reached).
+      var featureTable = Features.Table;
 
       Emit(Json.Obj("ev", "ready", "pid", OwnPid, "passive", Passive, "version", Version));
 
@@ -573,6 +576,9 @@ namespace Mantle {
           ping["load"] = Lanes.Snapshot();
           ping["caches"] = QuickSettings.Snapshot();
           ping["watches"] = Json.Obj("volume", VolumeWatch.Snapshot(), "net", NetState.Snapshot());
+          // Which feature commands (Features.cs) exist in this exe and which feature files failed
+          // to register, with why: "the clipboard does nothing" starts here.
+          ping["features"] = Features.Describe();
           result = ping;
           return null;
         }
@@ -1243,8 +1249,12 @@ namespace Mantle {
           RequestShutdown(0, "quit requested");
           return null;
 
-        default:
+        default: {
+          // Feature files (Features.cs) own every "feature.verb" command not handled above.
+          string ferr;
+          if (Features.TryRun(cmd, req, ref result, out ferr)) return ferr;
           return "unknown command: " + cmd;
+        }
       }
     }
 

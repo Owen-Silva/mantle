@@ -31,6 +31,9 @@ const notifications = require('./lib/notifications');
 // itself are the sidecar's (Hotkey.cs + AltTab.cs), so Alt+Tab works even when this process
 // or the overlay page is stuck; lib/switcher.js only draws it.
 const switcher = require('./lib/switcher');
+// The feature seam (wave 3, 2026-09-24): every lib/features/<name>.js is found and started here,
+// isolated, with its chords taken from Windows only while it is on AND healthy (lib/features.js).
+const { createFeatures } = require('./lib/features');
 
 /*
  * The pinned-taskbar reader (lane C's file). It is REQUIRED IN A TRY on purpose:
@@ -532,6 +535,8 @@ const POPOVER_MAX = 480;   // was 320: the Quick Settings panel asked for 429 li
 // The popover's entrance: .pop's wipe in ui/bar/bar.css runs this long (the window's old 200 ms grow).
 const POP_WIPE_MS = 200;
 let restoreChain = Promise.resolve();
+// lib/features.js's handle, from app ready on (null before, and in any path that runs before it).
+let features = null;
 
 // --- the hover bar -----------------------------------------------------------
 // How close to the bottom edge the cursor has to get, in DIP. Two, not one:
@@ -1791,6 +1796,70 @@ function hideLauncher() {
   launcherBackdrop.stop('the launcher closed');
   launcherWin.hide();
   broadcast('launcher:visible', false);
+}
+
+// ---------------------------------------------------------------------------
+// The feature seam (wave 3, 2026-09-24): lib/features.js does the work, this is its wiring.
+// ---------------------------------------------------------------------------
+
+/**
+ * Discover and start every lib/features/<name>.js. MANTLE_FEATURES_DIR swaps the folder for a
+ * fixture one, in --test ONLY: a live Mantle runs the features in its own tree and nothing else.
+ */
+function startFeatures() {
+  const envDir = process.env.MANTLE_FEATURES_DIR;
+  if (envDir && !flags.test) process.stdout.write(`mantle: MANTLE_FEATURES_DIR is set but ignored: only a --test run may load features from anywhere but lib/features\n`);
+  const dir = envDir && flags.test ? path.resolve(envDir) : path.join(ROOT, 'lib', 'features');
+  try {
+    features = createFeatures({
+      dir,
+      test: flags.test,
+      root: ROOT,
+      userData: app.getPath('userData'),
+      state,
+      sidecar,
+      commands: COMMANDS,
+      broadcast,
+      host: { openLauncher: openLauncherFor, barRect: () => barRect(), display: featureDisplay },
+    });
+    COMMANDS['features.list'] = async () => features.list();
+    if (flags.test) {
+      // A page (or a test's page) can drive a feature's chord in a test run: {chord} or {key}.
+      COMMANDS['features.fire'] = async (a) => (a && a.chord ? features.fireChord(a.chord, 'a page') : features.fireKey(a && a.key, 'a page'));
+    }
+    features.load();
+  } catch (err) {
+    // lib/features.js isolates each feature; this is the seam itself failing, which must not take
+    // the shell with it either.
+    process.stderr.write(`mantle: the feature seam could not start: ${err && err.stack ? err.stack : err}\n`);
+    state.set('features', { seam: { label: 'Features', on: true, ok: false, reason: `no feature started: the feature seam threw ${err && err.message ? err.message : err}`, keys: false, keysReason: '', broken: null, stopped: false } });
+  }
+}
+
+/** Every feature's stop(), bounded (lib/features.js stopAll). Never throws. */
+async function stopFeatures(why) {
+  if (!features) return;
+  try { await features.stopAll(why); } catch (err) { process.stderr.write(`mantle: stopping the features threw: ${err && err.message ? err.message : err}\n`); }
+}
+
+/**
+ * ctx.host.openLauncher({mode, query}): the launcher page gets 'launcher.open' {mode, query, from}
+ * BEFORE it is shown, so it can paint the right mode on its first frame ('search' is the search
+ * lane's). Throws, in plain words, when there is no launcher to open.
+ */
+function openLauncherFor(a, from) {
+  if (!launcherWin || launcherWin.isDestroyed()) throw new Error('there is no launcher window to open (MANTLE_NO_LAUNCHER, or it was closed)');
+  const payload = { mode: String((a && a.mode) || 'apps'), query: String((a && a.query) || ''), from: from || null };
+  try { launcherWin.webContents.send('mantle:event', { name: 'launcher.open', payload }); } catch (_) { /* the page is reloading; showLauncher still shows it */ }
+  showLauncher();
+  return payload;
+}
+
+/** ctx.host.display(): the display under the cursor, which is where a feature's panel belongs. */
+function featureDisplay() {
+  const cursor = screen.getCursorScreenPoint();
+  const d = screen.getDisplayNearestPoint(cursor);
+  return { id: d.id, bounds: d.bounds, workArea: d.workArea, scaleFactor: d.scaleFactor, primary: d.id === screen.getPrimaryDisplay().id, cursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -3697,7 +3766,8 @@ ipcMain.handle('mantle:replay', async (_e, name) => {
       ? { has: true, payload: { why: 'the bar was already up when this page subscribed', mode: BAR_SHAPE, ms: 0 } }
       : { has: false };
     // 'wallpaper', 'wallpaper.library', 'wallpaper.pause': lib/wallpaper.js answers for its own.
-    default: return wallpaper.replay(name);
+    // A feature's own standing events (ctx.replay) first, then lib/wallpaper.js answers for its own.
+    default: return (features && features.replay(name)) || wallpaper.replay(name);
   }
 });
 
@@ -4629,6 +4699,10 @@ async function applyLive() {
 
   // 5. Alt+Tab, Win+N and Win+A, on the same hook, as the tray menu's switches say (lib/switcher.js).
   await switcher.applyLive('the sidecar is up and Mantle owns the shell');
+
+  // 6. The feature chords (Win+S, Win+V, ...), on the same hook, for every feature that is on and
+  //    healthy (lib/features.js). Every sidecar start: a new sidecar process holds no chords.
+  if (features) await features.applyLive('the sidecar is up and Mantle owns the shell');
 }
 
 // ---------------------------------------------------------------------------
@@ -4737,6 +4811,7 @@ function markRestored(why) {
   state.set('desktop', { attached: false, mode: null, reason: `the desktop layer is detached: ${why}` });
   state.set('hotkey', { winTap: false, reason: `the Win key opens the Windows Start menu again: ${why}` });
   switcher.released(why);
+  if (features) features.released(why);
 }
 
 /**
@@ -4791,6 +4866,9 @@ function restoreShell(why) {
     if (flags.test) {
       state.set('taskbar', { autohide: false, reason: 'test mode: nothing was changed, so there is nothing to restore' });
       state.set('workarea', { reserved: false, reason: 'test mode: no app bar was registered, so there is nothing to give back' });
+      // A test run's features still get their stop(): it is how a lane proves its stop() puts back
+      // what it would have changed (and a test feature may have made windows and timers).
+      await stopFeatures(why);
       return;
     }
 
@@ -4852,9 +4930,16 @@ function restoreShell(why) {
       failures.push(`the taskbar's auto-hide flag could not be put back (${err.message})`);
     }
 
+    // 2b. Every feature's stop(): the Windows settings a feature changed (a hidden OSD, a
+    //     registry value) go back. All at once, each with its own deadline (lib/features.js), so a
+    //     stuck one costs at most 2.5 s and never the restore. Before the hook comes out, so no
+    //     feature is still re-asking for its chords while they are being taken back.
+    await stopFeatures(why);
+
     // 3. The pieces that were always safe: the hook and the wallpaper layer.
-    // ALL of the hook's features, or Alt+Tab would stay Mantle's after Windows was "put back".
-    const rest = [['the keyboard hook (Win key, Alt+Tab, Win+N, Win+A)', () => sidecar.call('hotkey', { winTap: false, altTab: false, winKeys: false }, 4000)]];
+    // ALL of the hook's features, or Alt+Tab would stay Mantle's after Windows was "put back" --
+    // and every feature chord and observed key with them (chords/observe: [] = none).
+    const rest = [['the keyboard hook (Win key, Alt+Tab, Win+N, Win+A, feature shortcuts)', () => sidecar.call('hotkey', { winTap: false, altTab: false, winKeys: false, chords: [], observe: [] }, 4000)]];
     stopDesktopRecheck();   // or it re-places the layer while it is being detached
     if (desktopWin && !desktopWin.isDestroyed()) {
       rest.push(['the desktop layer', () => sidecar.call('desktop', { hwnd: hwndOf(desktopWin), detach: true }, 4000)]);
@@ -4946,6 +5031,22 @@ app.on('second-instance', (_event, argv) => {
     broadcast('bar.test.click', { what: click.slice('--test-click='.length) });
     return;
   }
+  // TEST ONLY: `electron . --test --profile-name=<x> --test-chord=Win+V` (or --test-key=VolumeUp)
+  // makes THIS test instance act as if the hook had seen that chord: the feature lanes' end-to-end
+  // proof, with no keyboard hook and no synthetic keystroke anywhere near Owen's desktop.
+  const fire = flags.test && features && Array.isArray(argv)
+    ? argv.find((a) => typeof a === 'string' && (a.startsWith('--test-chord=') || a.startsWith('--test-key='))) : null;
+  if (fire) {
+    const isChord = fire.startsWith('--test-chord=');
+    const what = fire.slice(fire.indexOf('=') + 1);
+    try {
+      const r = isChord ? features.fireChord(what, 'a second instance') : features.fireKey(what, 'a second instance');
+      process.stdout.write(`mantle: ${what} from a second instance: ${JSON.stringify(r)}\n`);
+    } catch (err) {
+      process.stdout.write(`mantle: ${what} from a second instance was refused: ${err.message}\n`);
+    }
+    return;
+  }
   const asked = Array.isArray(argv) && argv.some((a) => a === '--quit');
   if (!asked) {
     process.stdout.write('mantle: another Mantle tried to start; this one is already running, so that one exited.\n');
@@ -5001,6 +5102,8 @@ function updateTray() {
       // Alt+Tab and Win+N / Win+A: the off switches (off = Windows' own), each with the
       // state piece's sentence under it, so "why is it Windows' Alt+Tab" is answered right here.
       ...switcher.trayItems(),
+      // One checkbox per feature (lib/features/*.js), with the reason under any that is on and not working.
+      ...(features && features.size ? [{ type: 'separator' }, ...features.trayItems()] : []),
       { type: 'separator' },
       // Two items, and neither of them can make things worse. There is
       // deliberately NO "hide the Windows taskbar" any more: that item called the
@@ -5748,6 +5851,7 @@ app.whenReady().then(() => {
     iconFor: (candidates) => iconFor(candidates),
     onWinKey: (key) => broadcast('bar.winkey', { key }),
   });
+  startFeatures();
 
   // Order matters: the shortcuts write their own state before the tray reads the
   // state to build its menu, and test mode's four "deliberately not done" reasons

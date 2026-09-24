@@ -5,6 +5,10 @@
 //   winTap   a solo Win tap opens Mantle's launcher (the original gesture)
 //   altTab   Alt+Tab opens Mantle's switcher instead of Windows' (AltTab.cs)
 //   winKeys  Win+N / Win+A open Mantle's notification centre / quick settings
+//   chords   (wave 3) the feature chords lib/features/*.js take while they are on and
+//            healthy (Win+S, Win+V, Win+Tab, Win+arrows, Win+Z, Win+Shift+S,
+//            PrintScreen), and `observe`: keys reported but never swallowed (volume).
+//            `hotkey {chords:[names], observe:[names]}`; events {ev:'chord'} / {ev:'key'}.
 // Every keyboard decision is made by KeyMachine (AltTab.cs), a pure state
 // machine the test harness drives with scripted keys; this file is only the
 // plumbing that feeds it real ones.
@@ -87,17 +91,27 @@ namespace Mantle {
     /// Turn features on or off; null leaves one as it is. Returns null, or the
     /// reason the hook could not be installed (every feature is then off).
     public static string Configure(bool? winTap, bool? altTab, bool? winKeys) {
+      return Configure(winTap, altTab, winKeys, -1, -1);
+    }
+
+    /// The same, plus the feature chords and observed keys as bitmasks (-1 = leave as it is).
+    /// The hook exists while ANY of the five wants it.
+    public static string Configure(bool? winTap, bool? altTab, bool? winKeys, int chords, int observe) {
       lock (_gate) {
         bool wt = winTap.HasValue ? winTap.Value : Machine.WinTap;
         bool at = altTab.HasValue ? altTab.Value : Machine.AltTab;
         bool wk = winKeys.HasValue ? winKeys.Value : Machine.WinKeys;
-        bool want = wt || at || wk;
+        int ch = chords >= 0 ? chords : Machine.Chords;
+        int ob = observe >= 0 ? observe : Machine.Observe;
+        bool want = wt || at || wk || ch != 0 || ob != 0;
         if (want && !Installed) {
           Machine.Reset();
           Machine.WinTap = wt; Machine.AltTab = at; Machine.WinKeys = wk;
+          Machine.Chords = ch; Machine.Observe = ob;
           string err = StartThread();
           if (err != null) {
             Machine.WinTap = false; Machine.AltTab = false; Machine.WinKeys = false;
+            Machine.Chords = 0; Machine.Observe = 0;
             _lastReason = err;
             Announce();
             return err;
@@ -105,8 +119,10 @@ namespace Mantle {
         } else if (!want) {
           if (Installed || _thread != null) StopThread();
           Machine.WinTap = false; Machine.AltTab = false; Machine.WinKeys = false;
+          Machine.Chords = 0; Machine.Observe = 0;
         } else {
           Machine.WinTap = wt; Machine.AltTab = at; Machine.WinKeys = wk;
+          Machine.Chords = ch; Machine.Observe = ob;
           // Turning Alt+Tab off mid-switch has to close the switcher, on the
           // thread that owns it.
           Post(MSG_CONFIG, 0, 0);
@@ -124,6 +140,7 @@ namespace Mantle {
       try {
         locked = Monitor.TryEnter(_gate, 2000);
         Machine.WinTap = false; Machine.AltTab = false; Machine.WinKeys = false;
+        Machine.Chords = 0; Machine.Observe = 0;
         StopThread();
         _lastReason = "Mantle is putting Windows back";
       } catch (Exception) {
@@ -139,7 +156,10 @@ namespace Mantle {
 
     public static IDictionary Status() {
       return Json.Obj("installed", Installed, "winTap", Machine.WinTap, "altTab", Machine.AltTab,
-                      "winKeys", Machine.WinKeys, "tracking", Switcher.Tracking,
+                      "winKeys", Machine.WinKeys,
+                      "chords", KeyMachine.NamesOf(Machine.Chords, KeyMachine.ChordNames),
+                      "observe", KeyMachine.NamesOf(Machine.Observe, KeyMachine.KeyNames),
+                      "tracking", Switcher.Tracking,
                       "session", Machine.Active, "seq", Switcher.Seq, "rehooks", _rehooks,
                       "reason", _lastReason);
     }
@@ -176,12 +196,12 @@ namespace Mantle {
         // Too late is as good as never: tell the thread to stand down if it
         // ever gets there, and say so.
         Post(MSG_QUIT, 0, 0);
-        return "the keyboard hook thread did not start within 3 s, so the Win key, Alt+Tab, Win+N and Win+A " +
+        return "the keyboard hook thread did not start within 3 s, so the Win key, Alt+Tab, Win+N, Win+A and every feature shortcut " +
                "are all Windows' own";
       }
       if (_hook == IntPtr.Zero) {
         return "could not install the keyboard hook (" + (why[0] ?? ("Win32 error " + err[0])) +
-               "), so the Win key, Alt+Tab, Win+N and Win+A are all Windows' own; the launcher still opens from the bar";
+               "), so the Win key, Alt+Tab, Win+N, Win+A and every feature shortcut are all Windows' own; the launcher still opens from the bar";
       }
       _thread = t;
       return null;
@@ -317,7 +337,7 @@ namespace Mantle {
               bool altFlag = (flags & KeysNative.LLKHF_ALTDOWN) != 0;
               bool shift = false, ctrl = false, win = false, otherAlt = false;
               if (down) {
-                if (KeyMachine.NeedsModifiers(vk)) {
+                if (Machine.NeedsMods(vk)) {
                   shift = KeysNative.KeyDown(KeyMachine.VK_SHIFT);
                   ctrl = KeysNative.KeyDown(KeyMachine.VK_CONTROL);
                   win = KeysNative.KeyDown(KeyMachine.VK_LWIN) || KeysNative.KeyDown(KeyMachine.VK_RWIN);
@@ -381,6 +401,8 @@ namespace Mantle {
     /// Every form of `hotkey`. Program.cs hands the whole request here so the
     /// hook's protocol lives next to the hook.
     ///   {winTap?, altTab?, winKeys?}   switch features (refused in passive)
+    ///   {chords?:[names], observe?:[names]}  the feature chords / watched keys, the WHOLE set
+    ///                                  each time ([] = none; refused in passive; names checked first)
     ///   {op:'simulate'|'order'}        pure, for tests (passive too)
     ///   {op:'list'|'status'}           read-only (passive too)
     ///   {op:'pick'|'cancel'|'grid', seq, ...}  main acting on an open switcher
@@ -424,10 +446,18 @@ namespace Mantle {
       if (perr != null) return perr;
       perr = OptBool(req, "winKeys", out wk);
       if (perr != null) return perr;
-      if (!wt.HasValue && !at.HasValue && !wk.HasValue)
+      // lib/features.js: the chords of every feature that is on and healthy, and the keys they
+      // watch. Names, not codes, so the protocol reads the same as the feature files.
+      int ch, ob;
+      perr = ParseNames(req, "chords", KeyMachine.ChordNames, out ch);
+      if (perr != null) return perr;
+      perr = ParseNames(req, "observe", KeyMachine.KeyNames, out ob);
+      if (perr != null) return perr;
+      // (The words predate chords and a test pins them; chords/observe also count as something to do.)
+      if (!wt.HasValue && !at.HasValue && !wk.HasValue && ch < 0 && ob < 0)
         return "hotkey needs winTap, altTab or winKeys: true or false";
       if (passive) return refusal;
-      string err = Configure(wt, at, wk);
+      string err = Configure(wt, at, wk, ch, ob);
       if (err != null) return err;
       result = Status();
       return null;
@@ -439,6 +469,28 @@ namespace Mantle {
       if (!Json.TryGet(req, key, out raw)) return null;
       if (!(raw is bool)) return "hotkey: " + key + " must be true or false, not " + Json.Write(raw);
       v = (bool)raw;
+      return null;
+    }
+
+    /// `chords` / `observe`: a list of names from `table` -> a bitmask. mask = -1 when the key is
+    /// absent (leave it as it is); an empty list is 0 (take nothing). An unknown name is an error
+    /// that lists the known ones, so a typo in a feature's chord list says what it should be.
+    public static string ParseNames(Dictionary<string, object> req, string key, string[] table, out int mask) {
+      mask = -1;
+      object raw;
+      if (!Json.TryGet(req, key, out raw) || raw == null) return null;
+      var list = raw as IList;
+      if (list == null) return "hotkey: " + key + " must be a list of names, not " + Json.Write(raw);
+      int m = 0;
+      foreach (object o in list) {
+        string name = o as string;
+        int bit = name == null ? -1 : Array.IndexOf(table, name);
+        if (bit < 0)
+          return "hotkey: unknown " + (key == "chords" ? "chord" : "key") + " " + Json.Write(o) +
+                 " (known: " + string.Join(", ", table) + ")";
+        m |= 1 << bit;
+      }
+      mask = m;
       return null;
     }
   }

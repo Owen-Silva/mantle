@@ -50,11 +50,55 @@ namespace Mantle {
 
     public const int EvNone = 0, EvWinTap = 1, EvOpen = 2, EvNext = 3, EvPrev = 4,
                      EvLeft = 5, EvRight = 6, EvUp = 7, EvDown = 8, EvCommit = 9,
-                     EvCancel = 10, EvStale = 11, EvWinKey = 12;
+                     EvCancel = 10, EvStale = 11, EvWinKey = 12, EvChord = 13, EvKey = 14;
     public static readonly string[] EventNames = {
       "none", "wintap", "open", "next", "prev", "left", "right", "up", "down",
-      "commit", "cancel", "stale", "winkey"
+      "commit", "cancel", "stale", "winkey", "chord", "key"
     };
+
+    // FEATURE CHORDS (wave 3, 2026-09-24). The chords lib/features/*.js may take from Windows,
+    // and the keys they may watch. A chord is its key plus an EXACT modifier set: Win+Left does
+    // not match Win+Shift+Left (move to the other monitor), Win+S does not match Win+Shift+S, and
+    // Ctrl or Alt held is never any chord. Index = bit in Chords / Observe. The names are the
+    // protocol (main sends them, events carry them): append, never reorder.
+    public static readonly string[] ChordNames = {
+      "Win+S", "Win+V", "Win+Tab", "Win+Left", "Win+Right", "Win+Up", "Win+Down", "Win+Z",
+      "Win+Shift+S", "PrintScreen"
+    };
+    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C };
+    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false };
+    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false };
+    /// Observed keys are REPORTED on every keydown (auto-repeat included: a held Volume Up keeps
+    /// stepping) and NEVER swallowed: Windows still changes the volume itself.
+    public static readonly string[] KeyNames = { "VolumeUp", "VolumeDown", "VolumeMute" };
+    static readonly int[] KeyVk = { 0xAF, 0xAE, 0xAD };
+    // vk -> which chords use it (bitmask) / which observed key it is (-1 none). Built once, so the
+    // hook proc answers "is this key anyone's?" with one array read and no allocation.
+    static readonly int[] _vkChords = BuildVkChords();
+    static readonly int[] _vkKey = BuildVkKey();
+
+    static int[] BuildVkChords() {
+      var t = new int[256];
+      for (int c = 0; c < ChordVk.Length; c++) t[ChordVk[c]] |= 1 << c;
+      return t;
+    }
+    static int[] BuildVkKey() {
+      var t = new int[256];
+      for (int i = 0; i < t.Length; i++) t[i] = -1;
+      for (int k = 0; k < KeyVk.Length; k++) t[KeyVk[k]] = k;
+      return t;
+    }
+
+    /// A chord or key name -> its bit number, or -1. For the protocol parser, not the hook.
+    public static int ChordBit(string name) { return Array.IndexOf(ChordNames, name); }
+    public static int KeyBit(string name) { return Array.IndexOf(KeyNames, name); }
+
+    /// A bitmask -> its names, in table order (Status, simulate).
+    public static List<object> NamesOf(int mask, string[] names) {
+      var o = new List<object>();
+      for (int i = 0; i < names.Length; i++) if ((mask & (1 << i)) != 0) o.Add(names[i]);
+      return o;
+    }
 
     public const int VK_TAB = 0x09, VK_ESCAPE = 0x1B, VK_LEFT = 0x25, VK_UP = 0x26,
                      VK_RIGHT = 0x27, VK_DOWN = 0x28, VK_MENU = 0x12, VK_LMENU = 0xA4,
@@ -64,6 +108,9 @@ namespace Mantle {
     // Which features are on. Written by the ui lane (Hotkey.Configure), read by
     // the hook thread: plain bools that only ever flip whole.
     public volatile bool WinTap, AltTab, WinKeys;
+    // The feature chords taken and the keys watched, as bitmasks over ChordNames / KeyNames.
+    // Written whole by the ui lane (Hotkey.Configure), read by the hook thread.
+    public volatile int Chords, Observe;
 
     // The answer to the last Step, besides its return value.
     public int Event, Arg;
@@ -76,6 +123,13 @@ namespace Mantle {
     bool _altHeld, _swallowedInAlt;
     bool _tabDown, _tabSwallowed, _escSwallowed;
     int _arrowMask, _letterMask;
+    // Per vk, for the chord keys only: this press was TAKEN as a chord (its repeats and keyup are
+    // swallowed with it) / this press WENT THROUGH to Windows (its repeats never turn into a
+    // chord: a Tab held down and THEN Win is not Win+Tab, or the app would see a Tab-down whose
+    // keyup we ate). Allocated once; Reset clears them in place.
+    readonly bool[] _chordDown = new bool[256];
+    readonly bool[] _notChord = new bool[256];
+    readonly int[] _chordOf = new int[256];
 
     public bool AltHeld { get { return _altHeld; } }
     public bool SwallowedInAlt { get { return _swallowedInAlt; } }
@@ -88,12 +142,23 @@ namespace Mantle {
     /// from the event alone, so an ordinary keystroke costs no system call.
     public static bool NeedsModifiers(int vk) { return vk == VK_TAB || vk == VK_N || vk == VK_A; }
 
+    /// NeedsModifiers plus the keys of the feature chords that are ON (or one already taken, so
+    /// its repeats are judged against the modifiers really held). With no chords on, a key costs
+    /// exactly what it did before chords existed.
+    public bool NeedsMods(int vk) {
+      if (NeedsModifiers(vk)) return true;
+      if ((uint)vk >= 256) return false;
+      return (Chords & _vkChords[vk]) != 0 || _chordDown[vk];
+    }
+
     public void Reset() {
       Active = false; Event = EvNone; Arg = 0;
       _winDown = _otherPressed = _swallowedInWin = false;
       _altHeld = _swallowedInAlt = false;
       _tabDown = _tabSwallowed = _escSwallowed = false;
       _arrowMask = _letterMask = 0;
+      Array.Clear(_chordDown, 0, _chordDown.Length);
+      Array.Clear(_notChord, 0, _notChord.Length);
     }
 
     /// One key event. altFlag is the event's LLKHF_ALTDOWN; shift/ctrl/winHeld
@@ -138,6 +203,15 @@ namespace Mantle {
       // Rule 2: a keydown that says Alt is NOT down while we think it is means
       // we never saw its keyup. Believe the event.
       if (!altFlag) Stale();
+
+      if ((uint)vk < 256) {
+        if (_vkChords[vk] != 0) {
+          int cr = ChordDown(vk, altFlag, shift, ctrl, winHeld);
+          if (cr >= 0) return cr;
+        }
+        int key = _vkKey[vk];
+        if (key >= 0 && (Observe & (1 << key)) != 0) { Event = EvKey; Arg = key; return Pass; }
+      }
 
       switch (vk) {
         case VK_TAB: return TabDown(altFlag, shift, ctrl, winHeld);
@@ -209,7 +283,43 @@ namespace Mantle {
       return Swallow;
     }
 
+    static bool ChordMatches(int c, bool altFlag, bool shift, bool ctrl, bool winHeld) {
+      return !altFlag && !ctrl && winHeld == ChordWin[c] && shift == ChordShift[c];
+    }
+
+    /// A keydown of a key some chord uses: Swallow, or -1 = not a chord, carry on as before (Tab,
+    /// the arrows and the letters still get the switcher's and Win+N's rules after this).
+    int ChordDown(int vk, bool altFlag, bool shift, bool ctrl, bool winHeld) {
+      if (_chordDown[vk]) {
+        // Auto-repeat of a chord we took: swallowed, and no second event (a held Win+Left is one
+        // snap, not twenty). Only while its modifiers still match: if they do not, its keyup
+        // went where the hook could not see it (an elevated window), and this is a fresh press.
+        if (ChordMatches(_chordOf[vk], altFlag, shift, ctrl, winHeld)) return Swallow;
+        _chordDown[vk] = false;
+      } else if (_notChord[vk]) {
+        return -1;                                   // a press that went through stays Windows'
+      }
+      int chords = Chords & _vkChords[vk];
+      for (int c = 0; chords != 0 && c < ChordVk.Length; c++) {
+        if ((chords & (1 << c)) == 0 || !ChordMatches(c, altFlag, shift, ctrl, winHeld)) continue;
+        _chordDown[vk] = true;
+        _chordOf[vk] = c;
+        // Windows saw Win go down and (because we ate the key) nothing else: without a partner
+        // key before the Win-up, Start would open. Exactly as for Win+N.
+        if (ChordWin[c]) _swallowedInWin = true;
+        Event = EvChord; Arg = c;
+        return Swallow;
+      }
+      _notChord[vk] = true;
+      return -1;
+    }
+
     int KeyUp(int vk) {
+      if ((uint)vk < 256) {
+        _notChord[vk] = false;
+        // A chord's keyup goes with its keydown, whatever is held now.
+        if (_chordDown[vk]) { _chordDown[vk] = false; return Swallow; }
+      }
       switch (vk) {
         case VK_TAB: {
           bool sw = _tabSwallowed;
@@ -525,6 +635,16 @@ namespace Mantle {
         case KeyMachine.EvWinKey:
           KeyEvents.Enqueue(Json.Obj("ev", "switcher", "op", "winkey", "key", arg == KeyMachine.VK_N ? "n" : "a"));
           break;
+        // A feature chord (swallowed) or an observed key (not): main routes it to the feature
+        // (lib/features.js). The key was already decided in the hook; this is only the telling.
+        case KeyMachine.EvChord:
+          if (arg >= 0 && arg < KeyMachine.ChordNames.Length)
+            KeyEvents.Enqueue(Json.Obj("ev", "chord", "chord", KeyMachine.ChordNames[arg]));
+          break;
+        case KeyMachine.EvKey:
+          if (arg >= 0 && arg < KeyMachine.KeyNames.Length)
+            KeyEvents.Enqueue(Json.Obj("ev", "key", "key", KeyMachine.KeyNames[arg]));
+          break;
       }
     }
 
@@ -790,6 +910,9 @@ namespace Mantle {
     ///       or {do:'pick', index} (a click on a tile)
     ///   n / cols / fgFirst: the pretend session's tile count, grid and whether
     ///       the current window is tile 0 (default 5, 0, true).
+    ///   winTap / altTab / winKeys (default false, true, false), chords / observe
+    ///       (lists of names, default none): which features the pretend machine has on.
+    ///   A step reports {swallow, dummy, event, sel, active} plus chord / key names.
     public static string Simulate(Dictionary<string, object> req, out object result) {
       result = null;
       object raw;
@@ -799,6 +922,13 @@ namespace Mantle {
       m.WinTap = Json.GetBool(req, "winTap", false);
       m.AltTab = Json.GetBool(req, "altTab", true);
       m.WinKeys = Json.GetBool(req, "winKeys", false);
+      int chordMask, keyMask;
+      string cerr = Hotkey.ParseNames(req, "chords", KeyMachine.ChordNames, out chordMask);
+      if (cerr != null) return cerr;
+      cerr = Hotkey.ParseNames(req, "observe", KeyMachine.KeyNames, out keyMask);
+      if (cerr != null) return cerr;
+      m.Chords = chordMask < 0 ? 0 : chordMask;
+      m.Observe = keyMask < 0 ? 0 : keyMask;
       int n = Json.GetInt(req, "n", 5), cols = Json.GetInt(req, "cols", 0);
       bool fgFirst = Json.GetBool(req, "fgFirst", true);
       int sel = -1, committed = -2;
@@ -838,6 +968,8 @@ namespace Mantle {
         var step = Json.Obj("i", i, "swallow", (r & KeyMachine.Swallow) != 0, "dummy", (r & KeyMachine.DummyFirst) != 0,
                             "event", KeyMachine.EventNames[ev], "sel", sel, "active", m.Active);
         if (ev == KeyMachine.EvWinKey) step["key"] = arg == KeyMachine.VK_N ? "n" : "a";
+        if (ev == KeyMachine.EvChord) step["chord"] = KeyMachine.ChordNames[arg];
+        if (ev == KeyMachine.EvKey) step["key"] = KeyMachine.KeyNames[arg];
         if (ignored) step["ignored"] = true;
         steps.Add(step);
         i++;

@@ -317,6 +317,16 @@
       if (key === 'backdrop.desktop') saidBackdrop = true;
       rows.push(row(label, (key === 'switcher' ? piece.broken : piece.reason) || 'no reason given, which is itself a bug'));
     }
+    // One row per feature (lib/features/*.js) that is switched on and not working -- the same
+    // rule as lib/state.js problems(): its own health (test mode too), or chords that should be
+    // Mantle's and are not (never in a test run, which never hooks). Off and stopped say nothing.
+    const feats = s.features && typeof s.features === 'object' ? s.features : {};
+    for (const name of Object.keys(feats)) {
+      const p = feats[name];
+      if (!p || typeof p !== 'object' || !p.on || p.stopped) continue;
+      if (p.ok === false) rows.push(row(p.label || name, p.reason || 'not working, and no reason given'));
+      else if (p.broken && s.mode !== 'test') rows.push(row(p.label || name, p.broken));
+    }
     // ...and the failure this page had with a picture that DID arrive, which no
     // state piece can know about. Only when main is not already saying it, so
     // one broken backdrop is one row.

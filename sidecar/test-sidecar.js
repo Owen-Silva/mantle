@@ -26,6 +26,7 @@ const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { spawnSidecar } = require('./test-lib');
 
 const HERE = __dirname;
 // Which exe to test. Default: the one Mantle runs. A running Mantle holds that
@@ -161,80 +162,10 @@ function check(name, ok, detail) {
   return false;
 }
 
-/** A running sidecar, with request/reply correlation over its stdout lines. */
+/** A running sidecar, with request/reply correlation over its stdout lines (sidecar/test-lib.js,
+ *  shared with every feature lane's sidecar/test-<name>.js since 2026-09-24). */
 function start(args) {
-  const proc = spawn(EXE, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-  const pending = new Map();
-  const events = [];
-  const eventWaiters = [];
-  let nextId = 1;
-  let buf = '';
-  let stderr = '';
-  let exited = null;
-
-  proc.stderr.on('data', (c) => { stderr += c.toString('utf8'); });
-  proc.on('exit', (code, signal) => { exited = { code, signal, at: Date.now() }; });
-
-  proc.stdout.on('data', (chunk) => {
-    buf += chunk.toString('utf8');
-    let i;
-    while ((i = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, i).replace(/\r$/, '');
-      buf = buf.slice(i + 1);
-      if (!line.trim()) continue;
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch (e) {
-        events.push({ ev: '__unparseable', line });
-        continue;
-      }
-      if (msg.ev !== undefined) {
-        events.push(msg);
-        for (let k = eventWaiters.length - 1; k >= 0; k--) {
-          if (eventWaiters[k].name === msg.ev) { eventWaiters[k].resolve(msg); eventWaiters.splice(k, 1); }
-        }
-      } else if (pending.has(msg.id)) {
-        const done = pending.get(msg.id);
-        pending.delete(msg.id);
-        done(msg);
-      } else {
-        events.push({ ev: '__unmatched', msg });
-      }
-    }
-  });
-
-  function send(cmd, extra, timeoutMs) {
-    const id = nextId++;
-    const req = Object.assign({ id, cmd }, extra || {});
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        pending.delete(id);
-        reject(new Error(`no reply to "${cmd}" within ${timeoutMs || 8000}ms`));
-      }, timeoutMs || 8000);
-      pending.set(id, (msg) => { clearTimeout(timer); resolve(msg); });
-      proc.stdin.write(JSON.stringify(req) + '\n');
-    });
-  }
-
-  function waitEvent(name, timeoutMs) {
-    const already = events.find((e) => e.ev === name);
-    if (already) return Promise.resolve(already);
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`no "${name}" event within ${timeoutMs}ms`)), timeoutMs);
-      eventWaiters.push({ name, resolve: (m) => { clearTimeout(timer); resolve(m); } });
-    });
-  }
-
-  function waitExit(timeoutMs) {
-    if (exited) return Promise.resolve(exited);
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`still running after ${timeoutMs}ms`)), timeoutMs);
-      proc.on('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal, at: Date.now() }); });
-    });
-  }
-
-  return { proc, send, waitEvent, waitExit, events, get stderr() { return stderr; } };
+  return spawnSidecar(EXE, args);
 }
 
 /*
@@ -930,6 +861,198 @@ async function qsxChecks(s) {
   return notes;
 }
 
+/*
+ * THE FEATURE SEAM (wave 3, 2026-09-24): Features.cs in ping, feature commands falling through
+ * Program.Run, and the feature chords in KeyMachine. The chords are proved the way Alt+Tab is -
+ * `hotkey {op:'simulate'}` drives the PURE key machine with scripted keys - so not one real
+ * keystroke is involved and no hook is ever installed (passive refuses to take a chord, below).
+ * Step format: S = swallowed, D = partner key (0xFF) before it, P = passed, then the event.
+ */
+const VKS = {
+  LWIN: 0x5B, LSHIFT: 0xA0, LCTRL: 0xA2, LALT: 0xA4, TAB: 0x09, S: 0x53, V: 0x56, Z: 0x5A, X: 0x58,
+  LEFT: 0x25, UP: 0x26, RIGHT: 0x27, DOWN: 0x28, PRTSC: 0x2C, VOLUP: 0xAF, VOLDOWN: 0xAE, MUTE: 0xAD,
+};
+const CHORD_KEYS = {
+  'Win+S': [VKS.S, false], 'Win+V': [VKS.V, false], 'Win+Tab': [VKS.TAB, false], 'Win+Left': [VKS.LEFT, false],
+  'Win+Right': [VKS.RIGHT, false], 'Win+Up': [VKS.UP, false], 'Win+Down': [VKS.DOWN, false], 'Win+Z': [VKS.Z, false],
+  'Win+Shift+S': [VKS.S, true],
+};
+const ALL_CHORDS = Object.keys(CHORD_KEYS).concat(['PrintScreen']);
+const ALL_KEYS = ['VolumeUp', 'VolumeDown', 'VolumeMute'];
+const MOD_UP_VKS = new Set([VKS.LWIN, 0x5C, VKS.LALT, 0xA5, 0x12, VKS.LSHIFT, 0xA1, VKS.LCTRL, 0xA3]);
+
+function kv(vk, down, o) { return Object.assign({ vk, down }, o || {}); }
+function stepWords(st) {
+  const head = st.swallow ? 'S' : st.dummy ? 'D' : st.ignored ? 'I' : 'P';
+  if (st.event === 'none') return head;
+  const tail = st.chord ? `:${st.chord}` : st.key ? `:${st.key}` :
+    /^(open|next|prev|left|right|up|down|commit)$/.test(st.event) ? `:${st.sel}` : '';
+  return `${head} ${st.event}${tail}`;
+}
+
+async function featureSeamChecks(s) {
+  // ---- Features.cs: ping says what registered, and an unknown feature command is named ----
+  try {
+    const r = await s.send('ping');
+    const f = r.ok && r.result ? r.result.features : null;
+    check('ping has a features block: {commands:[], problems:[]}',
+      !!f && Array.isArray(f.commands) && Array.isArray(f.problems), JSON.stringify(f));
+    check('every registered feature command is named feature.verb',
+      !!f && f.commands.every((n) => typeof n === 'string' && n.indexOf('.') > 0), JSON.stringify(f && f.commands));
+    check('no feature file failed to register', !!f && f.problems.length === 0, JSON.stringify(f && f.problems));
+  } catch (e) { check('ping (features block)', false, e.message); }
+  try {
+    const r = await s.send('x.y');
+    check('an unknown feature command "x.y" says unknown command', r.ok === false && r.error === 'unknown command: x.y', JSON.stringify(r));
+  } catch (e) { check('unknown feature command', false, e.message); }
+
+  // ---- the chord protocol, before any key: names are checked, passive never takes one ----
+  const REFUSAL = 'refused: sidecar is passive (test mode)';
+  const want = async (name, extra, test) => {
+    try {
+      const r = await s.send('hotkey', extra);
+      check(name, test(r), JSON.stringify(r).slice(0, 300));
+    } catch (e) { check(name, false, e.message); }
+  };
+  await want('passive refuses to take a feature chord', { chords: ['Win+V'] }, (r) => r.ok === false && r.error === REFUSAL);
+  await want('passive refuses to watch a key', { observe: ['VolumeUp'] }, (r) => r.ok === false && r.error === REFUSAL);
+  await want('an unknown chord is named, with the known ones', { chords: ['Win+Q'] },
+    (r) => r.ok === false && /unknown chord "Win\+Q"/.test(r.error) && /Win\+Shift\+S/.test(r.error) && /PrintScreen/.test(r.error));
+  await want('an unknown observed key is named', { observe: ['VolumeLouder'] }, (r) => r.ok === false && /unknown key "VolumeLouder"/.test(r.error));
+  await want('chords must be a list', { chords: 'Win+V' }, (r) => r.ok === false && /chords must be a list/.test(r.error));
+  await want('status reports the (empty) chord and observe sets', { op: 'status' },
+    (r) => r.ok === true && Array.isArray(r.result.chords) && r.result.chords.length === 0 &&
+           Array.isArray(r.result.observe) && r.result.observe.length === 0 && r.result.installed === false);
+
+  // ---- the key machine ----
+  let modUps = 0;
+  const sim = async (name, opts, events, wantSteps) => {
+    let r;
+    try { r = await s.send('hotkey', Object.assign({ op: 'simulate', events }, opts || {})); } catch (e) { check(name, false, e.message); return; }
+    if (!r.ok) { check(name, false, r.error); return; }
+    const steps = r.result.steps;
+    events.forEach((e, i) => {
+      if (e.vk !== undefined && e.down === false && MOD_UP_VKS.has(e.vk)) {
+        modUps++;
+        check(`${name}: step ${i}, a modifier keyup, is never swallowed`, !steps[i].swallow, JSON.stringify(steps[i]));
+      }
+    });
+    const got = steps.map(stepWords);
+    check(`chords: ${name}`, JSON.stringify(got) === JSON.stringify(wantSteps), `got ${JSON.stringify(got)}, want ${JSON.stringify(wantSteps)}`);
+  };
+  const winD = kv(VKS.LWIN, true), winU = kv(VKS.LWIN, false);
+  const shD = kv(VKS.LSHIFT, true), shU = kv(VKS.LSHIFT, false);
+
+  // Every Win chord: taken when on (key down AND up swallowed, a partner key before the Win-up so
+  // Start stays shut), untouched when off, and never with Ctrl or Alt held.
+  for (const [chord, [vk, shift]] of Object.entries(CHORD_KEYS)) {
+    const m = { win: true, shift };
+    const press = shift
+      ? [winD, shD, kv(vk, true, m), kv(vk, false, m), shU, winU]
+      : [winD, kv(vk, true, m), kv(vk, false, m), winU];
+    const took = shift ? ['P', 'P', `S chord:${chord}`, 'S', 'P', 'D'] : ['P', `S chord:${chord}`, 'S', 'D'];
+    await sim(`${chord} is taken when on`, { chords: [chord] }, press, took);
+    await sim(`${chord} is taken with every chord on`, { chords: ALL_CHORDS }, press, took);
+    await sim(`${chord} is Windows' own when off`, { chords: [] }, press, press.map(() => 'P'));
+    await sim(`Ctrl+${chord} is not ${chord}`, { chords: ALL_CHORDS },
+      [kv(VKS.LCTRL, true), winD, kv(vk, true, Object.assign({ ctrl: true }, m)), kv(vk, false, m), winU, kv(VKS.LCTRL, false)],
+      ['P', 'P', 'P', 'P', 'P', 'P']);
+    await sim(`Alt+${chord} is not ${chord}`, { chords: ALL_CHORDS, altTab: false },
+      [kv(VKS.LALT, true), winD, kv(vk, true, Object.assign({ alt: true }, m)), kv(vk, false, Object.assign({ alt: true }, m)), winU, kv(VKS.LALT, false)],
+      ['P', 'P', 'P', 'P', 'P', 'P']);
+  }
+  await sim('PrintScreen is taken when on (no Win, so no partner key)', { chords: ['PrintScreen'] },
+    [kv(VKS.PRTSC, true), kv(VKS.PRTSC, false)], ['S chord:PrintScreen', 'S']);
+  await sim("PrintScreen is Windows' own when off", { chords: ['Win+S'] }, [kv(VKS.PRTSC, true), kv(VKS.PRTSC, false)], ['P', 'P']);
+  await sim("Alt+PrintScreen (the active window) stays Windows'", { chords: ALL_CHORDS },
+    [kv(VKS.LALT, true), kv(VKS.PRTSC, true, { alt: true }), kv(VKS.PRTSC, false, { alt: true }), kv(VKS.LALT, false)], ['P', 'P', 'P', 'P']);
+  await sim("Win+PrintScreen (save to Pictures) stays Windows'", { chords: ALL_CHORDS },
+    [winD, kv(VKS.PRTSC, true, { win: true }), kv(VKS.PRTSC, false, { win: true }), winU], ['P', 'P', 'P', 'P']);
+  await sim("Shift+PrintScreen and Ctrl+PrintScreen stay Windows'", { chords: ALL_CHORDS },
+    [shD, kv(VKS.PRTSC, true, { shift: true }), kv(VKS.PRTSC, false, { shift: true }), shU,
+     kv(VKS.LCTRL, true), kv(VKS.PRTSC, true, { ctrl: true }), kv(VKS.PRTSC, false, { ctrl: true }), kv(VKS.LCTRL, false)],
+    ['P', 'P', 'P', 'P', 'P', 'P', 'P', 'P']);
+
+  // Exact modifiers: the Shift variants are different chords (or none).
+  await sim('Win+Shift+Left (move to the other monitor) does NOT match Win+Left', { chords: ['Win+Left'] },
+    [winD, shD, kv(VKS.LEFT, true, { win: true, shift: true }), kv(VKS.LEFT, false, { win: true, shift: true }), shU, winU],
+    ['P', 'P', 'P', 'P', 'P', 'P']);
+  await sim('Win+Shift+Right/Up/Down are not chords even with every chord on', { chords: ALL_CHORDS },
+    [winD, shD, kv(VKS.RIGHT, true, { win: true, shift: true }), kv(VKS.RIGHT, false, { win: true, shift: true }),
+     kv(VKS.UP, true, { win: true, shift: true }), kv(VKS.UP, false, { win: true, shift: true }),
+     kv(VKS.DOWN, true, { win: true, shift: true }), kv(VKS.DOWN, false, { win: true, shift: true }), shU, winU],
+    ['P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P']);
+  await sim('Win+Shift+S does not match Win+S', { chords: ['Win+S'] },
+    [winD, shD, kv(VKS.S, true, { win: true, shift: true }), kv(VKS.S, false, { win: true, shift: true }), shU, winU],
+    ['P', 'P', 'P', 'P', 'P', 'P']);
+  await sim('Win+S does not match Win+Shift+S', { chords: ['Win+Shift+S'] },
+    [winD, kv(VKS.S, true, { win: true }), kv(VKS.S, false, { win: true }), winU], ['P', 'P', 'P', 'P']);
+  await sim('with both on, each S goes to its own chord', { chords: ['Win+S', 'Win+Shift+S'] },
+    [winD, kv(VKS.S, true, { win: true }), kv(VKS.S, false, { win: true }), shD,
+     kv(VKS.S, true, { win: true, shift: true }), kv(VKS.S, false, { win: true, shift: true }), shU, winU],
+    ['P', 'S chord:Win+S', 'S', 'P', 'S chord:Win+Shift+S', 'S', 'P', 'D']);
+
+  // Held Win, repeats, and keys already down.
+  await sim('Win+S, S again with Win still held: two chords', { chords: ['Win+S'] },
+    [winD, kv(VKS.S, true, { win: true }), kv(VKS.S, false, { win: true }), kv(VKS.S, true, { win: true }), kv(VKS.S, false, { win: true }), winU],
+    ['P', 'S chord:Win+S', 'S', 'S chord:Win+S', 'S', 'D']);
+  await sim('auto-repeat of a taken chord is swallowed with no second event', { chords: ['Win+Left'] },
+    [winD, kv(VKS.LEFT, true, { win: true }), kv(VKS.LEFT, true, { win: true }), kv(VKS.LEFT, true, { win: true }), kv(VKS.LEFT, false, { win: true }), winU],
+    ['P', 'S chord:Win+Left', 'S', 'S', 'S', 'D']);
+  await sim('a Tab held BEFORE Win stays a plain Tab to its keyup (no half keystroke)', { chords: ['Win+Tab'] },
+    [kv(VKS.TAB, true), winD, kv(VKS.TAB, true, { win: true }), kv(VKS.TAB, false, { win: true }), winU],
+    ['P', 'P', 'P', 'P', 'P']);
+  await sim('an S held before Win is not Win+S; the next S press is', { chords: ['Win+S'] },
+    [kv(VKS.S, true), winD, kv(VKS.S, true, { win: true }), kv(VKS.S, false, { win: true }), kv(VKS.S, true, { win: true }), kv(VKS.S, false, { win: true }), winU],
+    ['P', 'P', 'P', 'P', 'S chord:Win+S', 'S', 'D']);
+  await sim('a chord whose keyup was never seen does not eat the next plain press', { chords: ['Win+S'] },
+    [winD, kv(VKS.S, true, { win: true }), winU, kv(VKS.S, true), kv(VKS.S, false)],
+    ['P', 'S chord:Win+S', 'D', 'P', 'P']);
+  await sim('Win released before the chord key: the keyup still goes with its keydown', { chords: ['Win+V'] },
+    [winD, kv(VKS.V, true, { win: true }), winU, kv(VKS.V, false)], ['P', 'S chord:Win+V', 'D', 'S']);
+
+  // Everything that already worked still works with every chord on.
+  await sim('Alt+Tab still works with every chord on', { chords: ALL_CHORDS, observe: ALL_KEYS },
+    [kv(VKS.LALT, true), kv(VKS.TAB, true, { alt: true }), kv(VKS.TAB, false, { alt: true }), kv(VKS.LALT, false)],
+    ['P', 'S open:1', 'S', 'D commit:1']);
+  await sim('arrows inside an Alt+Tab still move the switcher, not Win+arrow', { chords: ALL_CHORDS },
+    [kv(VKS.LALT, true), kv(VKS.TAB, true, { alt: true }), kv(VKS.TAB, false, { alt: true }),
+     kv(VKS.RIGHT, true, { alt: true }), kv(VKS.RIGHT, false, { alt: true }), kv(VKS.LALT, false)],
+    ['P', 'S open:1', 'S', 'S right:2', 'S', 'D commit:2']);
+  await sim("Win+Alt+Tab stays Windows' with Win+Tab on", { chords: ['Win+Tab'] },
+    [winD, kv(VKS.LALT, true), kv(VKS.TAB, true, { alt: true, win: true }), kv(VKS.TAB, false, { alt: true, win: true }), kv(VKS.LALT, false), winU],
+    ['P', 'P', 'P', 'P', 'P', 'P']);
+  await sim('Win+Tab is a chord while Alt+Tab is on too', { chords: ['Win+Tab'] },
+    [winD, kv(VKS.TAB, true, { win: true }), kv(VKS.TAB, false, { win: true }), winU], ['P', 'S chord:Win+Tab', 'S', 'D']);
+  await sim('a Win tap still opens the launcher with every chord on', { winTap: true, chords: ALL_CHORDS, observe: ALL_KEYS },
+    [winD, winU], ['P', 'D wintap']);
+  await sim('a Win hold that took a chord is not a tap', { winTap: true, chords: ALL_CHORDS },
+    [winD, kv(VKS.Z, true, { win: true }), kv(VKS.Z, false, { win: true }), winU], ['P', 'S chord:Win+Z', 'S', 'D']);
+  await sim('Win+N still opens notifications with every chord on', { winKeys: true, chords: ALL_CHORDS },
+    [winD, kv(0x4E, true, { win: true }), kv(0x4E, false, { win: true }), winU], ['P', 'S winkey:n', 'S', 'D']);
+  await sim('plain typing is untouched with every chord on', { chords: ALL_CHORDS, observe: ALL_KEYS },
+    [kv(VKS.S, true), kv(VKS.S, false), kv(VKS.V, true), kv(VKS.V, false), kv(VKS.TAB, true), kv(VKS.TAB, false),
+     kv(VKS.LEFT, true), kv(VKS.LEFT, false), kv(VKS.X, true), kv(VKS.X, false)],
+    ['P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P']);
+
+  // Observed keys: reported on every keydown (repeats too), NEVER swallowed.
+  for (const [name, vk] of [['VolumeUp', VKS.VOLUP], ['VolumeDown', VKS.VOLDOWN], ['VolumeMute', VKS.MUTE]]) {
+    await sim(`${name} is reported and passed through, repeats included`, { observe: [name] },
+      [kv(vk, true), kv(vk, true), kv(vk, false)], [`P key:${name}`, `P key:${name}`, 'P']);
+    await sim(`${name} says nothing when not observed`, { observe: [] }, [kv(vk, true), kv(vk, false)], ['P', 'P']);
+  }
+  await sim('an observed key with Win held is still reported and passed', { observe: ALL_KEYS, winTap: true },
+    [winD, kv(VKS.VOLUP, true, { win: true }), kv(VKS.VOLUP, false, { win: true }), winU], ['P', 'P key:VolumeUp', 'P', 'P']);
+  await sim('injected keys never reach a chord', { chords: ALL_CHORDS },
+    [winD, kv(VKS.S, true, { win: true, injected: true }), kv(VKS.S, false, { win: true, injected: true }), winU], ['P', 'I', 'I', 'P']);
+  try {
+    const r = await s.send('hotkey', { op: 'simulate', events: [], chords: ['Win+Nope'] });
+    check('simulate names an unknown chord', r.ok === false && /unknown chord "Win\+Nope"/.test(r.error), JSON.stringify(r));
+  } catch (e) { check('simulate unknown chord', false, e.message); }
+  // 40 on 2026-09-24. Fewer means scenarios stopped running, not that the rule got easier.
+  check(`chords: every Win/Alt/Shift/Ctrl keyup passed through (${modUps} of them)`, modUps >= 40, `only ${modUps} were exercised`);
+}
+
 async function main() {
   if (EXE_ARG && !fs.existsSync(EXE)) {
     console.log('SIDECAR TEST: 0 passed, 1 failed');
@@ -983,6 +1106,9 @@ async function main() {
       typeof selfHwnd === 'string' && /^\d+$/.test(selfHwnd) && selfHwnd !== '0',
       JSON.stringify(r.result));
   } catch (e) { check('ping', false, e.message); }
+
+  // ---- the feature seam: Features.cs in ping, unknown feature commands, the chord machine ----
+  await featureSeamChecks(s);
 
   // ---- state file (the recovery note) -----------------------------------
   // Written before anything could have been changed, so a recovery script has
