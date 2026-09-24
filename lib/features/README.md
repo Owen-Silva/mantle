@@ -41,6 +41,7 @@ A chord may be claimed by ONE feature (the second claim is refused and named, in
 Reserved names (Mantle's own prefixes): features state sys windows bar launcher desktop switcher
 notifs qs wallpaper shell tray media battery volume net apps mantle test.
 
+**Never name a sidecar request argument `id`** (found twice on 2026-09-24, by taskview and topbar):the protocol's request id travels in the same object, so an `id` argument silently overwrites it andthe reply is lost. Use `desktop`, `item`, `window` or similar.
 ## ctx
 
 | member | what it does |

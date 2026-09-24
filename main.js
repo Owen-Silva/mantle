@@ -1935,7 +1935,9 @@ function nameForExe(exe, fallback) {
  * the dock, the flyout and anything else reading lastWindows all agree.
  */
 const MANTLE_AUMID = 'com.owensilva.mantle';
-const MANTLE_TITLES = new Set(['mantle bar', 'mantle desktop', 'mantle launcher', 'mantle wallpapers', 'mantle switcher']);
+const MANTLE_TITLES = new Set(['mantle bar', 'mantle desktop', 'mantle launcher', 'mantle wallpapers', 'mantle switcher',
+  // wave 3 (2026-09-24): the feature pages (sidecar AltTab.cs MantleTitles has the same list)
+  'mantle task view', 'mantle volume', 'mantle clipboard', 'mantle snap', 'mantle screenshot', 'mantle top bar']);
 function isMantleWindow(w) {
   if (!w) return false;
   if (w.aumid && String(w.aumid).toLowerCase() === MANTLE_AUMID) return true;

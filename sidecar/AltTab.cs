@@ -461,7 +461,9 @@ namespace Mantle {
     // Another Mantle's windows (a test instance next to the live one): the same
     // titles main.js's isMantleWindow() drops, on Chromium's window class.
     static readonly HashSet<string> MantleTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-      "Mantle bar", "Mantle desktop", "Mantle launcher", "Mantle wallpapers", "Mantle switcher"
+      "Mantle bar", "Mantle desktop", "Mantle launcher", "Mantle wallpapers", "Mantle switcher",
+      // wave 3 (2026-09-24): every feature page is Mantle's own too, never a window to switch to
+      "Mantle task view", "Mantle volume", "Mantle clipboard", "Mantle snap", "Mantle screenshot", "Mantle top bar"
     };
 
     public sealed class Item {
