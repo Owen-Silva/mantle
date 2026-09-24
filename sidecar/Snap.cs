@@ -18,6 +18,12 @@
 // and the window rect sent to SetWindowPos is that plus the window's own margins, so two windows
 // side by side meet at exactly one pixel line, like Windows' own snap.
 //
+// APPS WINDOWS SCALES. A DPI-unaware (or system-aware) app cannot take every physical pixel: at
+// 125 % one position and one size in five does not exist for it (SnapGeom.Virt, measured). The
+// move is planned onto the nearest frame it CAN take (SnapGeom.Reach): never over an app bar or a
+// neighbouring zone, a shared edge exact whenever reachable. Such a move answers fit "rounded"
+// with the edge and the reason in fitReason; fit false stays "it does not fit" (a notice).
+//
 // THE SPEED BUDGET. One SetWindowPos for a normal window. A maximized or minimized window goes
 // through ONE SetWindowPlacement instead (restore + move in a single animation; a restore then a
 // move would be the "visible double move" Owen does not want). A second, corrective SetWindowPos
@@ -193,6 +199,105 @@ namespace Mantle {
     }
 
     static int Sc(int v, int from, int to) { return (int)Math.Round((double)v * to / from, MidpointRounding.AwayFromZero); }
+
+    // ---- DPI virtualization. An app that is NOT per-monitor DPI aware lives in pretend pixels:
+    // a DPI-unaware one at 96 DPI, a system-aware one at the DPI it started with. Measured
+    // 2026-09-24 (1920x1080 at 125 %, a DPI-unaware WinForms window moved by a per-monitor-aware
+    // process, 52 SetWindowPos probes): Windows turns the requested POSITION and the requested
+    // SIZE into the app's pixels SEPARATELY, each rounded to the nearest (half away from zero, as
+    // MulDiv does), and scales each back the same way. So at 125 % one physical position and one
+    // physical size in five does not exist for such an app: y 37 lands at 38, a height of 532
+    // comes out 533. With Mantle's top bar the work area is y 35..1080 (1045 px, odd), the
+    // top-left quarter's window would need top 35 + height 532, and it landed 1 px taller than
+    // the zone, OVER the bottom-left quarter. Reach() below picks the best edges that do exist.
+
+    /// Win32 MulDiv: a*b/c rounded to the nearest, halves away from zero.
+    public static int MulDiv(int a, int b, int c) {
+      if (c == 0) return a;
+      long n = (long)a * b, d = c;
+      if (d < 0) { n = -n; d = -d; }
+      long h = d / 2;
+      return (int)(n >= 0 ? (n + h) / d : -((-n + h) / d));
+    }
+
+    /// True when Windows scales this app's pixels on a monitor of `monDpi` (appDpi 0 = the app is
+    /// per-monitor aware and sees physical pixels).
+    public static bool Virtualized(int monDpi, int appDpi) { return appDpi > 0 && monDpi > 0 && appDpi != monDpi; }
+
+    /// A physical length, or a position relative to the monitor's top-left, after Windows' round
+    /// trip through the app's pixels: what the app REALLY gets when asked for `v`.
+    public static int Virt(int v, int monDpi, int appDpi) {
+      if (!Virtualized(monDpi, appDpi)) return v;
+      return MulDiv(MulDiv(v, appDpi, monDpi), monDpi, appDpi);
+    }
+
+    /// Cost of one visible edge landing `outward` px outside where the zone wants it (negative =
+    /// inside). `outer` = that edge lies on the work area's edge. In order of badness: outside the
+    /// work area (it would cover the top bar, the taskbar or the next monitor), over the
+    /// neighbouring zone (two snapped windows overlap), a gap at a shared edge, a gap at the
+    /// work area's edge. So neighbours meet on one pixel line whenever the app can reach it.
+    static long EdgeCost(int outward, bool outer) {
+      if (outward == 0) return 0;
+      if (outward > 0) return (outer ? 100000L : 1000L) * outward;
+      return (outer ? 1L : 10L) * -outward;
+    }
+
+    /// One axis of Reach: the visible edges [s, e) wanted, the invisible borders ms/me on this
+    /// axis, the work area [ws, we) and the monitor origin `org`. Returns the window position and
+    /// size to REQUEST and the visible edges [fs, fe) Windows will actually produce. Ties go to the
+    /// start edge being exact, then the lower start, then the request nearest the plain one, so
+    /// the same inputs always give the same answer.
+    public static void Axis(int s, int e, int ms, int me, int ws, int we, int org, int monDpi, int appDpi,
+                            out int pos, out int len, out int fs, out int fe) {
+      pos = s - ms; len = e + me - pos; fs = s; fe = e;
+      if (!Virtualized(monDpi, appDpi) || len <= 0) return;
+      int step = (monDpi + appDpi - 1) / appDpi + 1;      // one app pixel spans at most this many physical ones
+      int p0 = pos, l0 = len;
+      long bestCost = long.MaxValue; int bestOff = 0, bestA = 0, bestNear = 0;
+      for (int dp = -step; dp <= step; dp++) {
+        for (int dl = -2 * step; dl <= 2 * step; dl++) {
+          int p = p0 + dp, l = l0 + dl;
+          if (l <= 0) continue;
+          int rp = org + Virt(p - org, monDpi, appDpi);
+          int a = rp + ms, b = rp + Virt(l, monDpi, appDpi) - me;
+          long cost = EdgeCost(s - a, s <= ws) + EdgeCost(b - e, e >= we);
+          int off = Math.Abs(a - s), near = Math.Abs(dp) + Math.Abs(dl);
+          bool better = cost < bestCost ||
+                        (cost == bestCost && (off < bestOff || (off == bestOff && (a < bestA || (a == bestA && near < bestNear)))));
+          if (!better) continue;
+          bestCost = cost; bestOff = off; bestA = a; bestNear = near;
+          pos = p; len = l; fs = a; fe = b;
+        }
+      }
+    }
+
+    /// The visible frame an app can really take for `target` on `mon`, and the window rect to
+    /// request for it. For a per-monitor-aware app (appDpi 0) that is `target` itself and
+    /// WindowFor(target, m). Positions are taken relative to the monitor's top-left: measured on
+    /// the primary monitor (origin 0,0) only; the move's measurement still catches a mismatch.
+    public static SnapRect Reach(SnapRect target, SnapMargins m, SnapMonitor mon, int appDpi, out SnapRect window) {
+      int x, w, l, r, y, h, t, b;
+      Axis(target.Left, target.Right, m.L, m.R, mon.Work.Left, mon.Work.Right, mon.Bounds.Left, mon.Dpi, appDpi, out x, out w, out l, out r);
+      Axis(target.Top, target.Bottom, m.T, m.B, mon.Work.Top, mon.Work.Bottom, mon.Bounds.Top, mon.Dpi, appDpi, out y, out h, out t, out b);
+      window = new SnapRect(x, y, x + w, y + h);
+      return new SnapRect(l, t, r, b);
+    }
+
+    /// "top edge 1 px inside the zone and right edge 1 px outside it": how `got` differs from `want`.
+    public static string EdgeWords(SnapRect want, SnapRect got) {
+      var parts = new List<string>();
+      AddEdge(parts, "left", got.Left - want.Left);
+      AddEdge(parts, "top", got.Top - want.Top);
+      AddEdge(parts, "right", want.Right - got.Right);
+      AddEdge(parts, "bottom", want.Bottom - got.Bottom);
+      return parts.Count == 0 ? "every edge exactly on the zone" : string.Join(" and ", parts.ToArray());
+    }
+
+    static void AddEdge(List<string> parts, string edge, int inside) {
+      if (inside == 0) return;
+      int n = Math.Abs(inside);
+      parts.Add(edge + " edge " + n + " px " + (inside > 0 ? "inside the zone" : "outside it"));
+    }
 
     /// Monitors left to right (then top to bottom): the order Win+Left / Win+Right walk.
     public static List<SnapMonitor> Ordered(List<SnapMonitor> mons) {
@@ -468,6 +573,8 @@ namespace Mantle {
       public SnapMargins Margins;
       public bool MarginsOk;
       public int Dpi;
+      public int VirtDpi;                 // the DPI Windows pretends for it; 0 = per-monitor aware (none)
+      public string Awareness = "unknown";
       public uint Style, ExStyle;
       public bool Minimized, Maximized, Foreground, Visible, Arranged;
       public SnapMonitor Monitor;
@@ -502,6 +609,7 @@ namespace Mantle {
       w.Monitor = ReadMonitor(N.MonitorFromWindow(hwnd, 2 /* MONITOR_DEFAULTTONEAREST */));
       if (w.Monitor == null && mons.Count > 0) w.Monitor = SnapGeom.MonitorFor(w.Frame, mons);
       if (w.Dpi <= 0) w.Dpi = w.Monitor != null ? w.Monitor.Dpi : 96;
+      w.VirtDpi = VirtDpiOf(hwnd, w.Dpi, out w.Awareness);
       w.Margins = SnapGeom.MarginsOf(w.Rect, w.Frame, w.Dpi, out w.MarginsOk);
       try { w.Arranged = N.IsWindowArranged(hwnd); } catch (Exception) { w.Arranged = false; }
       var pl = new N.WINDOWPLACEMENT();
@@ -514,6 +622,21 @@ namespace Mantle {
         w.HasPlacement = !w.PlacementFrame.Empty;
       }
       return w;
+    }
+
+    /// The DPI Windows pretends this window's monitor has, or 0 when it pretends nothing (a
+    /// per-monitor-aware window sees physical pixels). DPI-unaware = 96; system-aware = the DPI
+    /// its process started with, which is what GetDpiForWindow returns for it. Unknown = 0: the
+    /// move is then planned in physical pixels and its measurement reports any rounding.
+    static int VirtDpiOf(IntPtr hwnd, int dpi, out string awareness) {
+      awareness = "unknown";
+      try {
+        int a = N.GetAwarenessFromDpiAwarenessContext(N.GetWindowDpiAwarenessContext(hwnd));
+        if (a == 0) { awareness = "unaware"; return 96; }
+        if (a == 1) { awareness = "system"; return dpi > 0 ? dpi : 96; }
+        if (a == 2) { awareness = "per-monitor"; return 0; }
+      } catch (Exception) { }
+      return 0;
     }
 
     /// WINDOWPLACEMENT's rects are WORKSPACE coordinates for a window without WS_EX_TOOLWINDOW:
@@ -679,8 +802,10 @@ namespace Mantle {
     sealed class Moved {
       public int Moves;
       public bool Corrected, Fit = true;
+      public bool Rounded;            // in its zone, but not on every pixel of it (FitWhy says which edge and why)
       public string FitWhy, Error;
       public SnapRect Frame, Rect;
+      public SnapRect Goal;           // the frame planned: the zone, or the nearest one the app can reach
       public SnapRect First;          // the frame after the FIRST move, when a second one was needed
       public double Ms;               // the move(s) and their measurements
     }
@@ -696,12 +821,17 @@ namespace Mantle {
       var mv = new Moved();
       SnapMargins m = NormalMargins(w);
       if (w.Monitor != null && mon != null && w.Monitor.Id != mon.Id) m = SnapGeom.Scale(m, w.Dpi, mon.Dpi);
-      SnapRect want = SnapGeom.WindowFor(target, m);
+      // A window Windows scales (not per-monitor DPI aware) cannot take every pixel: plan the
+      // nearest frame it CAN take, so the result is the same every time and a shared edge stays
+      // exact wherever the app can reach it (SnapGeom.Reach).
+      SnapRect want;
+      if (mon != null) mv.Goal = SnapGeom.Reach(target, m, mon, w.VirtDpi, out want);
+      else { mv.Goal = target; want = SnapGeom.WindowFor(target, m); }
       var sw = Stopwatch.StartNew();
-      try { return PlaceFrameTimed(w, target, want, mons, mv); } finally { mv.Ms = Math.Round(sw.Elapsed.TotalMilliseconds, 2); }
+      try { return PlaceFrameTimed(w, target, want, mon, mons, mv); } finally { mv.Ms = Math.Round(sw.Elapsed.TotalMilliseconds, 2); }
     }
 
-    static Moved PlaceFrameTimed(Win w, SnapRect target, SnapRect want, List<SnapMonitor> mons, Moved mv) {
+    static Moved PlaceFrameTimed(Win w, SnapRect target, SnapRect want, SnapMonitor mon, List<SnapMonitor> mons, Moved mv) {
       if (w.Maximized || w.Minimized) {
         var pl = w.Placement;
         pl.length = Marshal.SizeOf(typeof(N.WINDOWPLACEMENT));
@@ -722,31 +852,50 @@ namespace Mantle {
       mv.Frame = FrameOf(w.Hwnd, mv.Rect);
       mv.First = mv.Frame;
 
-      if (!SnapGeom.Near(mv.Frame, target, 1)) {
+      if (!SnapGeom.Near(mv.Frame, mv.Goal, 1)) {
         // Measure the borders the window has NOW (its DPI may have changed with the monitor, or
-        // they were estimated out of a maximized state) and correct once.
+        // they were estimated out of a maximized state) and correct once, re-planned with them.
         int dpi = 0;
         try { dpi = (int)N.GetDpiForWindow(w.Hwnd); } catch (Exception) { }
         bool ok;
         SnapMargins now = SnapGeom.MarginsOf(mv.Rect, mv.Frame, dpi > 0 ? dpi : 96, out ok);
         if (ok) {
-          SnapRect again = SnapGeom.WindowFor(target, now);
+          SnapRect again, goal;
+          if (mon != null) goal = SnapGeom.Reach(target, now, mon, w.VirtDpi, out again);
+          else { goal = target; again = SnapGeom.WindowFor(target, now); }
           if (N.SetWindowPos(w.Hwnd, IntPtr.Zero, again.Left, again.Top, again.Width, again.Height, SWP_MOVE)) {
             mv.Moves = 2;
             mv.Corrected = true;
+            mv.Goal = goal;
             N.GetWindowRect(w.Hwnd, out mv.Rect);
             mv.Frame = FrameOf(w.Hwnd, mv.Rect);
           }
         }
-        if (!SnapGeom.Near(mv.Frame, target, 1)) {
-          mv.Fit = false;
-          if (mv.Frame.Width > target.Width + 1 || mv.Frame.Height > target.Height + 1)
-            mv.FitWhy = (w.Exe.Length > 0 ? w.Exe : "the app") + " will not go smaller than " + mv.Frame.Width + " x " +
-                        mv.Frame.Height + " px, so it overlaps the zone (" + target.Width + " x " + target.Height + ")";
-          else
-            mv.FitWhy = (w.Exe.Length > 0 ? w.Exe : "the app") + " sized itself to " + mv.Frame.Width + " x " + mv.Frame.Height +
-                        " px instead of " + target.Width + " x " + target.Height;
-        }
+      }
+      if (!SnapGeom.Near(mv.Frame, target, 0) &&
+          (SnapGeom.Near(mv.Frame, mv.Goal, 0) || SnapGeom.Near(mv.Frame, target, 1))) {
+        // In its zone, only not on every pixel of it: say which edge and why, but it is NOT a
+        // "does not fit" (lib/features/snap.js shows a notice only for fit === false).
+        mv.Rounded = true;
+        string name = w.Exe.Length > 0 ? w.Exe : "the app";
+        string edges = SnapGeom.EdgeWords(target, mv.Frame);
+        if (mon != null && SnapGeom.Virtualized(mon.Dpi, w.VirtDpi) && SnapGeom.Near(mv.Frame, mv.Goal, 0))
+          mv.FitWhy = name + (w.Awareness == "unaware" ? " is DPI-unaware" : w.Awareness == "system" ? " is only system-DPI-aware" :
+                      " is not per-monitor DPI aware") + ", so Windows scales it to " +
+                      Math.Round(100.0 * mon.Dpi / w.VirtDpi) + " % and not every pixel position and size exists for it; " +
+                      "the nearest it can take puts its " + edges + " (an edge shared with a neighbouring zone is kept " +
+                      "exact whenever the app can reach it, and it never covers a neighbour or an app bar)";
+        else
+          mv.FitWhy = name + " landed with its " + edges + " (" + (mv.Frame.Width != target.Width || mv.Frame.Height != target.Height
+                      ? "it rounded its own size" : "Windows rounded its position") + ")";
+      } else if (!SnapGeom.Near(mv.Frame, target, 1)) {
+        mv.Fit = false;
+        if (mv.Frame.Width > target.Width + 1 || mv.Frame.Height > target.Height + 1)
+          mv.FitWhy = (w.Exe.Length > 0 ? w.Exe : "the app") + " will not go smaller than " + mv.Frame.Width + " x " +
+                      mv.Frame.Height + " px, so it overlaps the zone (" + target.Width + " x " + target.Height + ")";
+        else
+          mv.FitWhy = (w.Exe.Length > 0 ? w.Exe : "the app") + " sized itself to " + mv.Frame.Width + " x " + mv.Frame.Height +
+                      " px instead of " + target.Width + " x " + target.Height;
       }
       return mv;
     }
@@ -907,7 +1056,11 @@ namespace Mantle {
         "rect", mv != null && mv.Moves > 0 ? mv.Rect.ToJson() : null,
         "moves", mv != null ? mv.Moves : 0,
         "corrected", mv != null && mv.Corrected,
-        "fit", mv == null || mv.Fit,
+        // true = on every pixel of its zone; "rounded" = in its zone but an edge is off by what the
+        // app can reach (fitReason says which and why; NOT a failure, no notice); false = it does not fit
+        "fit", mv == null || (mv.Fit && !mv.Rounded) ? (object)true : mv.Fit ? (object)"rounded" : (object)false,
+        "goal", mv != null && mv.Moves > 0 ? mv.Goal.ToJson() : null,
+        "awareness", w.Awareness, "virtDpi", w.VirtDpi,
         "fitReason", mv != null ? mv.FitWhy : null,
         "restoredFrom", plan.RestoredFrom,
         "foreground", w.Foreground,
@@ -1013,6 +1166,7 @@ namespace Mantle {
         "exe", w.Exe, "title", w.Title, "class", w.Class, "pid", w.Pid,
         "rect", w.Rect.ToJson(), "frame", w.Frame.ToJson(),
         "margins", w.Margins.ToJson(), "marginsOk", w.MarginsOk, "dpi", w.Dpi,
+        "awareness", w.Awareness, "virtDpi", w.VirtDpi,
         "state", state, "minimized", w.Minimized, "maximized", w.Maximized, "arranged", w.Arranged,
         "foreground", w.Foreground, "visible", w.Visible,
         "resizable", (w.Style & 0x00040000) != 0,
@@ -1115,12 +1269,21 @@ namespace Mantle {
       SnapMargins tm = SnapGeom.Scale(margins, cur.Dpi, target.Dpi);
       var assist = new List<object>();
       foreach (SnapZone z in plan.Assist) assist.Add(Json.Obj("zone", z.ToJson(), "frame", SnapGeom.Cell(target.Work, z).ToJson()));
+      // appDpi: the DPI Windows pretends for the app (96 = DPI-unaware, snap.info's virtDpi);
+      // omitted or 0 = per-monitor aware. `reach` = the frame the app really gets, `window` the rect
+      // requested for it: the same SnapGeom.Reach the live move uses.
+      int appDpi = Json.GetInt(req, "appDpi", 0);
+      SnapRect win = new SnapRect(), reach = new SnapRect();
+      if (plan.HasFrame) reach = SnapGeom.Reach(plan.Frame, tm, target, appDpi, out win);
       result = Json.Obj(
         "from", plan.From, "to", plan.To, "action", plan.Action, "why", plan.Why,
         "zone", plan.Zone != null ? plan.Zone.ToJson() : null,
         "monitor", target.Id,
         "frame", plan.HasFrame ? plan.Frame.ToJson() : null,
-        "window", plan.HasFrame ? SnapGeom.WindowFor(plan.Frame, tm).ToJson() : null,
+        "window", plan.HasFrame ? win.ToJson() : null,
+        "reach", plan.HasFrame ? reach.ToJson() : null,
+        "fit", !plan.HasFrame || SnapGeom.Near(reach, plan.Frame, 0) ? (object)true : (object)"rounded",
+        "fitReason", plan.HasFrame && !SnapGeom.Near(reach, plan.Frame, 0) ? SnapGeom.EdgeWords(plan.Frame, reach) : null,
         "margins", tm.ToJson(), "marginsOk", ok,
         "restoredFrom", plan.RestoredFrom,
         "assist", assist);
@@ -1176,6 +1339,8 @@ namespace Mantle {
       [DllImport("user32.dll")] public static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonitorEnumProc cb, IntPtr data);
       [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
       [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
+      [DllImport("user32.dll")] public static extern IntPtr GetWindowDpiAwarenessContext(IntPtr hwnd);
+      [DllImport("user32.dll")] public static extern int GetAwarenessFromDpiAwarenessContext(IntPtr ctx);
       [DllImport("user32.dll")] public static extern int GetSystemMetricsForDpi(int index, uint dpi);
       [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int InternalGetWindowText(IntPtr hwnd, StringBuilder s, int max);
       [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr hwnd, StringBuilder s, int max);

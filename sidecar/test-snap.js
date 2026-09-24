@@ -200,6 +200,106 @@ async function pure(s) {
     r.result.monitor === 'A' && same(r.result.frame, xywh([-1920 + 400, 240, -1920 + 400 + 800, 240 + 640])), JSON.stringify(r.result && r.result.frame));
   r = await s.send('snap.plan', { monitors: three, frame: onB, dir: 'left', monitor: 'B', window: onB });
   check('plan: assist after a cross-monitor snap is on the NEW monitor', r.ok && r.result.assist.length === 1 && same(r.result.assist[0].frame, xywh(zone(three[0].work, 'left'))));
+
+  await virtualized(s);
+}
+
+// ---------------------------------------------------------------- odd work areas, apps Windows scales
+// The top bar made Owen's work area 0,35 1920x1045 at 125 % (2026-09-24), and a DPI-unaware
+// window's top-left quarter landed 1 px OVER the bottom-left one: Windows rounds such an app's
+// position and size through its own 96-DPI pixels separately (measured, see SnapGeom.Virt), so at
+// 125 % a height of 532 does not exist for it. These cases are pure: none depends on the live layout.
+const mulDiv = (a, b, c) => { const n = a * b, h = Math.floor(c / 2); return n >= 0 ? Math.floor((n + h) / c) : -Math.floor((-n + h) / c); };
+const virt = (v, mon, app) => (!app || app === mon) ? v : mulDiv(mulDiv(v, app, mon), mon, app);
+/** Independent brute force: can the app put one edge exactly on `line` with its other edge inside the zone? */
+function canReach(s0, e0, ms, me, org, mon, app, which) {
+  const k = Math.ceil(mon / app) + 1;
+  for (let p = s0 - ms - k; p <= s0 - ms + k; p++) {
+    for (let l = e0 + me - (s0 - ms) - 2 * k; l <= e0 + me - (s0 - ms) + 2 * k; l++) {
+      const a = org + virt(p - org, mon, app) + ms, b = a - ms + virt(l, mon, app) - me;
+      if (which === 'end' ? (b === e0 && a >= s0 && a <= s0 + k) : (a === s0 && b <= e0 && b >= e0 - k)) return true;
+    }
+  }
+  return false;
+}
+
+async function virtualized(s) {
+  // Owen's live layout, by hand
+  const owen = [{ id: 'T', bounds: [0, 0, 1920, 1080], work: [0, 35, 1920, 1080], dpi: 120, primary: true }];
+  const f9 = [100, 100, 900, 700], w9 = [91, 100, 909, 709];    // 9/0/9/9: the measured 125 % borders
+  const op = (z, appDpi) => s.send('snap.plan', { monitors: owen, frame: f9, window: w9, zone: z, appDpi }).then((x) => x.result || {});
+  let tl = await op('tl', 0), bl = await op('bl', 0);
+  check('plan (top bar, 125 %, 1045 tall): a per-monitor-aware tl is exactly 35..558 and meets bl on one line',
+    tl.fit === true && same(tl.reach, xywh([0, 35, 960, 558])) && bl.fit === true && tl.reach.y + tl.reach.h === bl.reach.y, fmt(tl.reach) + ' / ' + fmt(bl.reach));
+  tl = await op('tl', 96); bl = await op('bl', 96);
+  check('plan (top bar, 125 %): a DPI-unaware tl cannot be 35..558 (a 532 px window height does not exist for it), so 36..558, fit "rounded"',
+    tl.fit === 'rounded' && same(tl.reach, xywh([0, 36, 960, 558])) && same(tl.window, xywh([-9, 36, 969, 567])) && /top edge 1 px inside/.test(tl.fitReason || ''),
+    JSON.stringify({ reach: tl.reach, window: tl.window, fit: tl.fit, why: tl.fitReason }));
+  check('plan (top bar, 125 %): ... and it still meets the DPI-unaware bl (558..1080, exact) on one line, no overlap',
+    bl.fit === true && same(bl.reach, xywh([0, 558, 960, 1080])) && tl.reach.y + tl.reach.h === bl.reach.y, fmt(bl.reach));
+  const lh = await op('left', 96);
+  check('plan (top bar, 125 %): a DPI-unaware left half is reachable, so it is exact', lh.fit === true && same(lh.reach, xywh([0, 35, 960, 1080])), fmt(lh.reach));
+
+  // a sweep: top bar at 1.0 / 1.25 / 1.5x, odd heights and widths, a monitor that is not at 0,0
+  const cases = [
+    ['1.0x, top bar 28 px', 96, [0, 0, 1920, 1080], [0, 28, 1920, 1080]],
+    ['1.25x, top bar 35 px (1045 tall)', 120, [0, 0, 1920, 1080], [0, 35, 1920, 1080]],
+    ['1.5x, top bar 42 px', 144, [0, 0, 1920, 1080], [0, 42, 1920, 1080]],
+    ['1.0x, 1079 tall', 96, [0, 0, 1920, 1080], [0, 0, 1920, 1079]],
+    ['1.25x, 1079 tall', 120, [0, 0, 1920, 1080], [0, 0, 1920, 1079]],
+    ['1.5x, 1919 x 1079', 144, [0, 0, 1919, 1079], [0, 0, 1919, 1079]],
+    ['1.25x, top bar + taskbar, 1919 wide', 120, [0, 0, 1919, 1080], [0, 35, 1919, 1032]],
+    ['1.5x, right of the primary, top bar', 144, [1920, 0, 3840, 1080], [1920, 42, 3840, 1080]],
+  ];
+  const Z = { left: [2, 1, 0, 0, 1, 1], right: [2, 1, 1, 0, 1, 1], tl: [2, 2, 0, 0, 1, 1], tr: [2, 2, 1, 0, 1, 1], bl: [2, 2, 0, 1, 1, 1], br: [2, 2, 1, 1, 1, 1],
+    t1: [3, 1, 0, 0, 1, 1], t2: [3, 1, 1, 0, 1, 1], t3: [3, 1, 2, 0, 1, 1], two: [3, 1, 0, 0, 2, 1] };
+  // [A, B, axis]: A's end edge is B's start edge
+  const PAIRS = [['left', 'right', 'x'], ['tl', 'tr', 'x'], ['bl', 'br', 'x'], ['t1', 't2', 'x'], ['t2', 't3', 'x'], ['two', 't3', 'x'], ['tl', 'bl', 'y'], ['tr', 'br', 'y']];
+  const lt = (r) => [r.x, r.y, r.x + r.w, r.y + r.h];
+  for (const [label, dpi, bounds, work] of cases) {
+    const b = Math.round(7 * dpi / 96);                            // 7 px standard borders, scaled
+    const frame = [bounds[0] + 100, work[1] + 100, bounds[0] + 900, work[1] + 700];
+    const window = [frame[0] - b, frame[1], frame[2] + b, frame[3] + b];
+    const mons = [{ id: 'S', bounds, work, dpi, primary: bounds[0] === 0 }];
+    for (const app of [0, 96]) {
+      const got = {}, bad = [];
+      for (const [n, g] of Object.entries(Z)) {
+        const r = await s.send('snap.plan', { monitors: mons, monitor: 'S', frame, window, grid: g.slice(0, 2), cell: g.slice(2), appDpi: app });
+        if (!r.ok) { bad.push(n + ': ' + r.error); continue; }
+        got[n] = { zone: lt(r.result.frame), reach: lt(r.result.reach), fit: r.result.fit, why: r.result.fitReason };
+      }
+      // how far an edge may move: an edge shared with a neighbour 1 px (reachable values are at most
+      // 2 apart below 2x); an edge on the work area's rim up to one app pixel, because Reach moves
+      // it inward to keep the shared edge exact (1.5x: x -10 does not exist, -11 and -9 do)
+      const scaled = app > 0 && app !== dpi, kIn = scaled ? 1 : 0, kOut = scaled ? Math.ceil(dpi / app) : 0;
+      let rounded = 0;
+      for (const [n, g] of Object.entries(got)) {
+        const [l, t, r, bt] = g.reach, [zl, zt, zr, zb] = g.zone;
+        if (l < work[0] || t < work[1] || r > work[2] || bt > work[3]) bad.push(`${n} leaves the work area ${JSON.stringify(g.reach)}`);
+        const off = [l - zl, t - zt, r - zr, bt - zb], rim = [zl === work[0], zt === work[1], zr === work[2], zb === work[3]];
+        if (off.some((d, i) => Math.abs(d) > (rim[i] ? kOut : kIn))) bad.push(`${n} is too far off its zone ${JSON.stringify(g.reach)} vs ${JSON.stringify(g.zone)}`);
+        const exact = [0, 1, 2, 3].every((i) => g.reach[i] === g.zone[i]);
+        if (exact !== (g.fit === true) || (!exact && g.fit !== 'rounded')) bad.push(`${n} fit ${g.fit} but reach ${exact ? '==' : '!='} zone`);
+        if (!exact) rounded++;
+      }
+      for (const [a, c, axis] of PAIRS) {
+        const A = got[a], B = got[c];
+        if (!A || !B) continue;
+        const i = axis === 'x' ? 0 : 1, line = A.zone[i + 2];
+        if (A.reach[i + 2] > B.reach[i]) bad.push(`${a} overlaps ${c} by ${A.reach[i + 2] - B.reach[i]} px`);
+        // an edge whose zone's OTHER edge is on the work area's edge must land exactly on the shared
+        // line whenever both apps can reach it (the independent brute force above says)
+        const aOuter = A.zone[i] === work[i], bOuter = B.zone[i + 2] === work[i + 2];
+        if (!aOuter || !bOuter) continue;
+        const ms = axis === 'x' ? b : 0, org = bounds[i];
+        const aCan = canReach(A.zone[i], line, ms, b, org, dpi, app || dpi, 'end'), bCan = canReach(line, B.zone[i + 2], ms, b, org, dpi, app || dpi, 'start');
+        if (aCan && bCan && (A.reach[i + 2] !== line || B.reach[i] !== line)) bad.push(`${a}|${c} do not meet on ${line} although both can (${A.reach[i + 2]} / ${B.reach[i]})`);
+      }
+      check(`plan sweep ${label}, ${app ? 'DPI-unaware' : 'per-monitor-aware'}: inside the work area, no overlap, neighbours meet where reachable` +
+        (scaled ? '' : ', every zone exact'), bad.length === 0 && (scaled || rounded === 0), bad.slice(0, 4).join('; '));
+      if (scaled) notes.push(`sweep ${label}, DPI-unaware: ${rounded} of ${Object.keys(got).length} zones rounded`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------- our own test windows
@@ -290,13 +390,26 @@ async function live(s) {
       check(`${label}: its invisible borders measured sane`, info && info.marginsOk && info.margins.l > 0 && info.margins.t === 0, JSON.stringify(info && info.margins));
       check(`${label}: WINDOWPLACEMENT workspace coords convert back to its own rect`, info && same(info.placementRect, info.rect, 1),
         fmt(info && info.placementRect) + ' vs ' + fmt(info && info.rect));
-      notes.push(`${label}: dpi ${info && info.dpi}, borders ${info && JSON.stringify(info.margins)}, frame ${fmt(info && info.frame)}`);
+      notes.push(`${label}: dpi ${info && info.dpi}, awareness ${info && info.awareness} (virtDpi ${info && info.virtDpi}), borders ${info && JSON.stringify(info.margins)}, frame ${fmt(info && info.frame)}`);
+      check(`${label}: snap.info reads its DPI awareness (what Windows scales it by)`, !!info &&
+        (label === 'DPI-unaware' ? info.awareness === 'unaware' && info.virtDpi === 96 : info.awareness === 'per-monitor' && info.virtDpi === 0),
+        JSON.stringify(info && { a: info.awareness, v: info.virtDpi }));
       const pre = info.frame;
       const mon = mons.result.monitors.find((m) => m.id === info.monitor.id);
       const work = [mon.work.x, mon.work.y, mon.work.x + mon.work.w, mon.work.y + mon.work.h];
       const ms = [], timing = [];
       const med = (k) => { const v = timing.map((t) => t[k]).sort((p, q) => p - q); return v.length ? v[v.length >> 1] : null; };
-      const step = async (dir, to, want, extra) => {
+      // Where the window SHOULD land: the zone, or for an app Windows scales (DPI-unaware) the
+      // nearest frame it can reach, from the same pure planner (snap.plan with its virtDpi). The
+      // checks below then prove the model matches what Windows really does, pixel for pixel.
+      const lt = (r) => [r.x, r.y, r.x + r.w, r.y + r.h];
+      const planMons = mons.result.monitors.map((m) => ({ id: m.id, bounds: lt(m.bounds), work: lt(m.work), dpi: m.dpi, primary: m.primary }));
+      const expect = async (z) => {
+        const r = await s.send('snap.plan', Object.assign({ monitors: planMons, monitor: mon.id, frame: lt(info.frame), window: lt(info.rect), appDpi: info.virtDpi }, z));
+        return r.ok ? r.result : null;
+      };
+      const step = async (dir, to, z, extra) => {
+        const p = z ? await expect({ zone: z }) : null;
         const r = await s.send('snap.move', Object.assign({ hwnd, dir }, extra));
         const x = r.result || {};
         if (typeof x.ms === 'number') ms.push(x.ms);
@@ -304,42 +417,50 @@ async function live(s) {
         const fg = await s.send('snap.info', {});
         const now = fg.ok ? fg.result.hwnd : 'none';
         if (now !== (fgHwnd || 'none') && !fgMoved) fgMoved = `after ${label} Win+${dir}: ${now}` + (ourHwnds.includes(now) ? ' (ONE OF OUR TEST WINDOWS)' : ' (not one of ours)');
-        const ok = r.ok && x.ok && x.to === to && (!want || same(x.frame, xywh(want), 0));
-        check(`${label}: Win+${dir} -> ${to}${want ? ' at exactly ' + fmt(xywh(want)) : ''}`, ok,
-          JSON.stringify(r.error || { ok: x.ok, from: x.from, to: x.to, frame: x.frame, moves: x.moves, reason: x.reason, fit: x.fitReason }));
+        const ok = r.ok && x.ok && x.to === to && (!p || (same(x.frame, p.reach, 0) && x.fit === p.fit && same(x.goal, p.reach, 0)));
+        check(`${label}: Win+${dir} -> ${to}${p ? ' at exactly ' + fmt(p.reach) + (p.fit === true ? '' : ' (fit "rounded": ' + p.fitReason + ')') : ''}`, ok,
+          JSON.stringify(r.error || { ok: x.ok, from: x.from, to: x.to, frame: x.frame, fit: x.fit, moves: x.moves, reason: x.reason, fitReason: x.fitReason }));
+        if (x.fit === 'rounded') notes.push(`${label} ${to}: fit "rounded": ${x.fitReason}`);
         return x;
       };
       const single = mons.result.monitors.length === 1;
-      let x = await step('left', 'left', zone(work, 'left'));
+      let x = await step('left', 'left', 'left');
       check(`${label}: a normal window moves with ONE SetWindowPos`, x.moves === 1, 'moves ' + x.moves);
       check(`${label}: the snap never touched the focus`, x.foreground === false);
-      await step('up', 'tl', zone(work, 'tl'));
-      await step('down', 'left', zone(work, 'left'));
-      await step('down', 'bl', zone(work, 'bl'));
-      await step('right', 'br', zone(work, 'br'));
-      await step('up', 'right', zone(work, 'right'));
+      const tl = await step('up', 'tl', 'tl');
+      await step('down', 'left', 'left');
+      const bl = await step('down', 'bl', 'bl');
+      check(`${label}: the top and bottom quarters meet on ONE pixel line (no gap, no overlap)`, !!tl.frame && !!bl.frame &&
+        tl.frame.y + tl.frame.h === bl.frame.y && tl.frame.y >= mon.work.y && bl.frame.y + bl.frame.h <= mon.work.y + mon.work.h,
+        fmt(tl.frame) + ' / ' + fmt(bl.frame) + ' in work ' + fmt(mon.work));
+      const br = await step('right', 'br', 'br');
+      check(`${label}: the bottom quarters meet on ONE pixel line`, !!br.frame && bl.frame.x + bl.frame.w === br.frame.x, fmt(bl.frame) + ' / ' + fmt(br.frame));
+      await step('up', 'right', 'right');
       x = await step('left', 'normal', null);
       check(`${label}: Win+Left from the right half puts the pre-snap frame back exactly`, same(x.frame, pre, 0) && x.restoredFrom === 'remembered',
         fmt(x.frame) + ' vs ' + fmt(pre) + ' ' + x.restoredFrom);
-      await step('right', 'right', zone(work, 'right'));
-      if (single) await step('right', 'left', zone(work, 'left'));   // one monitor: Win+Right wraps onto the same one
+      await step('right', 'right', 'right');
+      if (single) await step('right', 'left', 'left');   // one monitor: Win+Right wraps onto the same one
       x = (await s.send('snap.move', { hwnd, dir: 'up' })).result || {};
       check(`${label}: Win+Up on a half -> the top quarter`, x.ok && (x.to === 'tl' || x.to === 'tr'), JSON.stringify(x).slice(0, 200));
       x = (await s.send('snap.move', { hwnd, dir: 'up' })).result || {};
       check(`${label}: Win+Up is refused on a window that is not the active one, with the reason`, x.ok === false && x.action === 'maximize' &&
         /only maximizes the active window/.test(x.reason || ''), JSON.stringify(x).slice(0, 300));
       // a Win+Z third, then Win+Down back out of it
+      const mid = await expect({ grid: [3, 1], cell: [1, 0, 1, 1] });
       let z = (await s.send('snap.zone', { hwnd, grid: [3, 1], cell: [1, 0, 1, 1] })).result || {};
-      check(`${label}: snap.zone puts it in the middle third exactly`, z.ok && same(z.frame, xywh(cell(work, 3, 1, 1, 0, 1, 1))), JSON.stringify(z).slice(0, 300));
+      check(`${label}: snap.zone puts it in the middle third exactly (${fmt(mid && mid.reach)}, the zone ${fmt(xywh(cell(work, 3, 1, 1, 0, 1, 1)))})`,
+        z.ok && !!mid && same(z.frame, mid.reach) && z.fit === mid.fit, JSON.stringify(z).slice(0, 300));
       z = (await s.send('snap.move', { hwnd, dir: 'down' })).result || {};
       check(`${label}: Win+Down on a Win+Z zone goes back to the pre-snap frame`, z.ok && z.action === 'unsnap' && same(z.frame, pre, 0), fmt(z.frame));
       // minimize (no activation), then a zone restores it through SetWindowPlacement, still without activation
-      await step('left', 'left', zone(work, 'left'));
-      await step('down', 'bl', zone(work, 'bl'));
+      await step('left', 'left', 'left');
+      await step('down', 'bl', 'bl');
       x = (await s.send('snap.move', { hwnd, dir: 'down' })).result || {};
       check(`${label}: Win+Down on the bottom quarter minimizes (SW_SHOWMINNOACTIVE)`, x.ok && x.action === 'minimize' && x.to === 'min', JSON.stringify(x).slice(0, 200));
+      const rightP = await expect({ zone: 'right' });
       z = (await s.send('snap.zone', { hwnd, zone: 'right' })).result || {};
-      check(`${label}: a zone restores a minimized window straight into place`, z.ok && same(z.frame, xywh(zone(work, 'right')), 1) && z.moves >= 1,
+      check(`${label}: a zone restores a minimized window straight into place`, z.ok && !!rightP && same(z.frame, rightP.reach, 1) && z.moves >= 1,
         JSON.stringify({ ok: z.ok, frame: z.frame, moves: z.moves, corrected: z.corrected, reason: z.reason }));
       notes.push(`${label}: minimized -> zone took ${z.moves} move(s)${z.corrected ? `, first landed at ${fmt(z.firstFrame)} for ${fmt(z.target)}` : ''}`);
       const sorted = ms.slice().sort((a, b) => a - b);
