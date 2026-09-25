@@ -15,8 +15,11 @@
   const leftEl = document.getElementById('left');
   const rightEl = document.getElementById('right');
   const menusEl = document.getElementById('menus');
-  const S = { focus: null, menu: null, uia: {}, stats: null, paused: null, note: null, open: null, armed: null, titles: [] };
+  const barEl = document.getElementById('bar');
+  const S = { focus: null, menu: null, uia: {}, stats: null, paused: null, note: null, open: null, armed: null, titles: [],
+              fit: null, vis: 0, rightKey: null };
   const ARM_MS = 4000, ARM_MIN_MS = 300, HOVER_SUB_MS = 110;
+  const APP_MIN = 96;   // the app's name ellipsizes down to this before any menu moves into »
   const GLYPH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
     '<rect x="2" y="2.5" width="12" height="11" rx="2.5"/><path d="M2 6h12"/></svg>';
 
@@ -25,15 +28,66 @@
   const menuSource = () => S.menu || (S.focus && S.uia[S.focus.hwnd]) || null;
 
   /* ---- the strip --------------------------------------------------------------------------- */
-  function renderBar() {
-    S.titles = M.titles(S.focus, menuSource());
-    leftEl.innerHTML = S.titles.map((t, i) =>
-      `<button class="t${t.bold ? ' bold' : ''}${t.glyph ? ' glyph' : ''}${t.enabled === false ? ' dim' : ''}${S.open && S.open.ti === i ? ' open' : ''}"` +
-      ` data-i="${i}" role="menuitem" aria-haspopup="true" title="${t.glyph ? 'Mantle' : ''}">${t.glyph ? GLYPH : esc(t.label)}</button>`).join('');
-    renderStats();
+  /* The part of this window that is on its screen, in CSS px: normally innerWidth. Owen's "CPU 82%"
+     cut at the right edge (2026-09-25) is what a window WIDER than its display shows: headless at
+     1920 CSS px on a 1536 px screen puts CPU at 1454-1528 and RAM / GPU / NET past the edge, exactly
+     his screenshot, and an Electron probe window resized to 1920 DIP while hidden laid its page out
+     1920 CSS px wide on the 1536 DIP panel (scratchpad eprobe2, case C). So the strip is sized to
+     the screen, not the window. screen.* and screenX are DIP and innerWidth is CSS px, equal at page
+     zoom 1, which main pins (lib/features/topbar.js). NOT outerWidth / innerWidth as a zoom guess:
+     in the same probe a window resized 1536 -> 1920 -> 1536 in one tick reported outerWidth 1920
+     with innerWidth 1536 for its resize event, which read as zoom 0.8 and cut the strip 308 px short. */
+  function visibleWidth() {
+    const iw = window.innerWidth || document.documentElement.clientWidth || 0;
+    const scr = window.screen, sw = scr && scr.width;
+    if (!iw || !sw) return iw;
+    const onScreen = (scr.availLeft || 0) + sw - (window.screenX || 0);
+    if (!(onScreen >= 320)) return iw;          // nonsense (no screen yet, another display): trust the window
+    return Math.floor(Math.min(iw, onScreen));
   }
 
-  function renderStats() {
+  const titleHtml = (t, i, appW) =>
+    `<button class="t${t.bold ? ' bold' : ''}${t.glyph ? ' glyph' : ''}${t.enabled === false ? ' dim' : ''}${S.open && S.open.ti === i ? ' open' : ''}"` +
+    ` data-i="${i}" role="menuitem" aria-haspopup="true" title="${t.glyph ? 'Mantle' : appW != null && t.bold ? esc(t.label) : ''}">` +
+    `${t.glyph ? GLYPH : `<span class="lbl">${esc(t.label)}</span>`}</button>`;
+  const moreHtml = (i) => `<button class="t more${S.open && S.open.ti === i ? ' open' : ''}" data-i="${i}" role="menuitem"` +
+    ` aria-haspopup="true" aria-label="More menus" title="More menus">»</button>`;
+  const hiddenCount = () => (S.fit ? S.titles.length - S.fit.shown : 0);
+  const barCount = () => (S.fit ? S.fit.shown + (hiddenCount() > 0 ? 1 : 0) : S.titles.length);
+
+  // the strip ends at the screen's edge even when the window runs past it
+  function sizeBar() {
+    const vis = visibleWidth();
+    S.vis = vis;
+    barEl.style.right = Math.max(0, (window.innerWidth || vis) - vis) + 'px';
+    return vis;
+  }
+
+  function renderBar() {
+    S.titles = M.titles(S.focus, menuSource());
+    renderStats(true);
+    layoutLeft();
+  }
+
+  // Measure every title at its natural width (one synchronous pass, nothing painted in between),
+  // then let model.js decide what fits. Frozen while a menu is open, so the open title's index and
+  // the » menu's contents cannot move under the pointer; closing a menu re-fits.
+  function layoutLeft() {
+    if (!S.open || !S.fit || S.fit.n !== S.titles.length) {
+      sizeBar();
+      leftEl.innerHTML = S.titles.map((t, i) => titleHtml(t, i, null)).join('') + moreHtml(S.titles.length);
+      const w = [...leftEl.children].map((b) => b.getBoundingClientRect().width);
+      const moreW = w.pop();
+      S.fit = M.fitTitles(w, moreW, leftEl.getBoundingClientRect().width, APP_MIN);
+    }
+    const f = S.fit;
+    leftEl.innerHTML = S.titles.slice(0, f.shown).map((t, i) => titleHtml(t, i, f.appW)).join('') + (hiddenCount() > 0 ? moreHtml(f.shown) : '');
+    // through the CSSOM: the page's CSP (style-src file:) drops inline style="" attributes
+    const app = f.appW != null && leftEl.querySelector('.t.bold');
+    if (app) app.style.maxWidth = f.appW + 'px';
+  }
+
+  function renderStats(fromBar) {
     let html = '';
     if (S.note) html += `<span class="warn" title="${esc(S.note)}">${esc(S.note.length > 60 ? S.note.slice(0, 57) + '…' : S.note)}</span>`;
     if (S.paused) html += `<span class="paused" title="${esc(S.paused)}">stats paused</span>`;
@@ -43,6 +97,11 @@
         ` title="${esc(c.why || '')}"><span class="k">${c.label}</span><span class="v">${esc(c.value)}</span></button>`).join('');
     }
     rightEl.innerHTML = html;
+    // a note or "stats paused" changes how much room the left side has: re-fit it (not on every
+    // 1 s sample: the cells keep their width, so the key does not change). The window's width is in
+    // the key too, so the 1 s samples also catch a resize whose event never came.
+    const key = Math.round(rightEl.getBoundingClientRect().width) + '/' + visibleWidth() + '/' + window.innerWidth;
+    if (key !== S.rightKey) { S.rightKey = key; if (!fromBar) { sizeBar(); layoutLeft(); } }
   }
 
   /* ---- dropdowns --------------------------------------------------------------------------- */
@@ -74,8 +133,8 @@
       if (lv.y != null) dd.style.top = lv.y + 'px';
       menusEl.appendChild(dd);
       // keep a submenu on screen: flip it to the left of its parent when it would run off the right
-      const r = dd.getBoundingClientRect();
-      if (r.right > window.innerWidth - 4) dd.style.left = Math.max(4, (level > 0 ? lv.flipX : window.innerWidth - 4 - r.width)) + 'px';
+      const r = dd.getBoundingClientRect(), vis = visibleWidth();
+      if (r.right > vis - 4) dd.style.left = Math.max(4, (level > 0 ? lv.flipX : vis - 4 - r.width)) + 'px';
       lv.el = dd;
     });
     notifyMain();
@@ -87,6 +146,7 @@
   }
 
   function openMenu(ti) {
+    if (S.fit && ti === S.fit.shown && hiddenCount() > 0) { openMore(); return; }
     const t = S.titles[ti];
     if (!t) return;
     S.armed = null;
@@ -104,6 +164,19 @@
     // Fresh greyed/checked states: the app is asked to prepare this menu (WM_INITMENUPOPUP, live
     // only) and it is read again. The first paint above uses what the focus event carried.
     if (t.source === 'win32') refreshLevel(0, t.path);
+  }
+
+  // » : the titles that did not fit, one row each; a row opens that title's menu as a submenu
+  // (ArrowRight / Enter / hover), so every hidden menu works exactly as it does on the bar.
+  function openMore() {
+    const first = S.fit.shown;
+    S.armed = null;
+    const items = S.titles.slice(first).map((t, k) => ({
+      t: 'item', label: t.label, items: t.items || null, pos: t.pos, id: t.id, lazy: !!t.lazy,
+      enabled: t.enabled !== false, source: t.source || null, ti: first + k }));
+    S.open = { ti: first, more: true, stack: [{ items, sel: -1, x: titleX(first), path: [], more: true }] };
+    renderBar();
+    renderMenus();
   }
 
   function refreshLevel(level, path) {
@@ -136,6 +209,8 @@
     const o = S.open;
     const lv = o.stack[level];
     const it = lv.items[i];
+    // a hidden UIA title the app builds only when it opens: the same route as clicking it on the bar
+    if (lv.more && it && it.source === 'uia' && it.lazy && it.enabled !== false) { openMenu(it.ti); return; }
     if (!it || !it.items || it.enabled === false) return;
     o.stack.length = level + 1;
     const row = lv.el && lv.el.querySelector(`[data-r="${i}"]`);
@@ -148,6 +223,8 @@
       o.stack[level + 1].info = 'Asking the app for this menu…';
       renderMenus();
       refreshLevel(level + 1, path);
+    } else if (lv.more && it.source === 'win32' && src && src.source === 'win32') {
+      refreshLevel(level + 1, path);   // fresh greyed / checked states, as opening it on the bar does
     }
   }
 
@@ -218,7 +295,7 @@
   }
 
   function stepTitle(dir) {
-    const n = S.titles.length;
+    const n = barCount();   // the titles on the bar, then » when some are hidden
     if (!n || !S.open) return;
     const cur = S.open.stat ? 0 : S.open.ti;
     openMenu((cur + dir + n) % n);
@@ -311,6 +388,14 @@
     if (S.open && e.target.isConnected && !e.target.closest('.dd') && !e.target.closest('#bar')) closeAll(false);   // click-away
   });
   window.addEventListener('blur', () => closeAll(false));
+  // Every resize re-sizes the strip: a window growing PAST its screen keeps the same visible width,
+  // so only the strip's end moves (the Electron probe's case C, 2026-09-25: 1536 -> 1920 DIP while
+  // hidden). A new visible width re-fits the left too; the height changes every time a menu opens,
+  // and an open menu keeps its fit anyway (layoutLeft).
+  window.addEventListener('resize', () => {
+    const before = S.vis;
+    if (sizeBar() !== before && !S.open) layoutLeft();
+  });
   document.addEventListener('keydown', (e) => {
     const o = S.open;
     if (!o) return;

@@ -18,21 +18,32 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 
 #bar {
   position: absolute; left: 0; right: 0; top: 0; height: var(--tb-h);
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 0 8px;
   background-color: var(--lg-fill-fb);
   box-shadow: inset 0 -1px 0 var(--lg-edge-out), var(--lg-lip-up);
 }
-#left, #right { display: flex; align-items: center; height: 100%; min-width: 0; }
+/* FIT (2026-09-25, Owen: the stats were cut at "CPU 82%" at the screen's right edge). The stats
+ * never shrink and always end one inset (8px, the same as the Mantle glyph's) from the right edge
+ * of the SCREEN: topbar.js sets #bar's `right` when the window is wider than its display, which is
+ * what put them off screen. The left side gives way instead: the app name ellipsizes first, then
+ * the menus that still do not fit move into the » menu (topbar.js layoutLeft, model.js fitTitles).
+ * #left keeps overflow:hidden only as the last guard: nothing is ever cut mid-word by it. */
+#left, #right { display: flex; align-items: center; height: 100%; min-width: 0; white-space: nowrap; }
 #left { flex: 1 1 auto; overflow: hidden; }
 #right { flex: 0 0 auto; gap: 2px; }
+/* the dropdowns are clipped to the window, so they can never make the page scrollable */
+#menus { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+#menus > * { pointer-events: auto; }
 
 .t {
   height: 22px; padding: 0 9px; border: 0; border-radius: var(--lg-r-ctl);
   background: transparent; color: var(--lg-ink); font: inherit; white-space: nowrap;
   display: inline-flex; align-items: center; flex: 0 0 auto;
 }
-.t.bold { font-weight: 600; }
+.t.bold { font-weight: 600; min-width: 0; }
+.t .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t.more { padding: 0 8px; font-size: 14px; line-height: 1; color: var(--lg-ink-2); }
 .t.glyph { padding: 0 8px; }
 .t.glyph svg { width: 14px; height: 14px; display: block; }
 .t:hover { background: var(--lg-hover); }
@@ -48,8 +59,10 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 .st[data-k="mem"] .v { min-width: 11.5ch; }
 .st[data-k="net"] .v { min-width: 20.5ch; }   /* "↓999 MB/s ↑99.0 MB/s" */
 .st.na .v { color: var(--lg-ink-3); }
-.paused { color: var(--lg-ink-3); font-size: 11.5px; padding: 0 8px; }
-.warn { color: var(--lg-warn); background: var(--lg-warn-soft); border-radius: var(--lg-r-ctl); padding: 2px 7px; font-size: 11.5px; }
+.paused { color: var(--lg-ink-3); font-size: 11.5px; padding: 0 8px; white-space: nowrap; }
+/* one line, capped, so a long reason can never push the stats: the full text is its tooltip */
+.warn { color: var(--lg-warn); background: var(--lg-warn-soft); border-radius: var(--lg-r-ctl); padding: 2px 7px; font-size: 11.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: min(360px, 28vw); min-width: 0; }
 
 /* dropdowns: the popover glass the bar's quick settings use, square to the bar like a Mac menu */
 .dd {

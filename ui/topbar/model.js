@@ -118,6 +118,25 @@
     return out;
   }
 
+  /* ---- fit: which titles the left side shows (pure; the page measures, this decides) ----
+     w[0] the Mantle glyph, w[1] the app's bold name, w[2..] its menus (natural widths, px); moreW the
+     » button; avail the left side's room. Owen's order (2026-09-25): the app name gives way first
+     (ellipsis, down to appMin), then the menus that still do not fit go into », from the right, and
+     whatever room is left over goes back to the app name. Returns { n, shown, appW }: titles
+     [0, shown) are on the bar, the rest are in »; appW is the app name's max width, or null for its
+     natural width. A 1 px margin absorbs sub-pixel rounding at 125% / 150%. */
+  function fitTitles(w, moreW, avail, appMin) {
+    var n = w.length, i, sum = 0, room = avail - 1;
+    for (i = 0; i < n; i++) sum += w[i];
+    if (n < 2 || sum <= room) return { n: n, shown: n, appW: null };
+    var menus = sum - w[0] - w[1], minApp = Math.min(w[1], appMin);
+    if (w[0] + minApp + menus <= room) return { n: n, shown: n, appW: Math.floor(room - w[0] - menus) };
+    var used = w[0] + minApp + moreW, shown = 2;
+    while (shown < n && used + w[shown] <= room) { used += w[shown]; shown++; }
+    var appW = Math.floor(Math.max(24, Math.min(w[1], minApp + (room - used))));
+    return { n: n, shown: shown, appW: appW < w[1] ? appW : null };
+  }
+
   /* ---- stats: the tiny-numbers rule. Fixed decimals so a figure never changes width. ---- */
   function pct(n) {
     if (typeof n !== 'number' || !isFinite(n)) return '--';
@@ -147,5 +166,5 @@
   }
 
   return { appName: appName, cleanItems: cleanItems, newWindowArgs: newWindowArgs, appMenu: appMenu,
-           titles: titles, MANTLE_MENU: MANTLE_MENU, pct: pct, gb: gb, rate: rate, statCells: statCells, base: base };
+           titles: titles, fitTitles: fitTitles, MANTLE_MENU: MANTLE_MENU, pct: pct, gb: gb, rate: rate, statCells: statCells, base: base };
 }));

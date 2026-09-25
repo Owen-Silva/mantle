@@ -3,13 +3,17 @@
  * so under Electron this file does nothing. Nothing here is from Owen's machine: every app, menu
  * and number is made up.
  *
- * Query: app=npp|chrome|uwp|dialog|desktop  open=<title index>  sub=<row index>  stat=cpu|mem|gpu|net
- *        stats=ok|nogpu|paused  dark=1  armed=1 (Restart armed)  fail=1 (every command fails)
+ * Query: app=npp|chrome|uwp|dialog|desktop|word|explorer|term  open=<title index>  sub=<row index>
+ *        stat=cpu|mem|gpu|net  stats=ok|nogpu|paused  dark=1  armed=1 (Restart armed)
+ *        fail=1 (every command fails)  note=1 (a long plain-words warning on the bar)
  */
 (function () {
   'use strict';
   if (window.mantle) return;
   const q = new URLSearchParams(location.search);
+  // The real bar's window sits at its display's left edge (screenX 0); headless Chromium puts its
+  // window at 10,10, which would make topbar.js's visibleWidth() 10 px short. screenX is replaceable.
+  try { window.screenX = 0; } catch (_) { /* read-only here: the fit is then 10 px conservative */ }
   document.documentElement.classList.add('mock');
   document.addEventListener('DOMContentLoaded', () => {
     document.body.classList.add('mock');
@@ -44,6 +48,19 @@
       desc: 'Calculator', product: 'Calculator', menu: null, menuReason: 'no Win32 menu bar', uia: 'try' }),
     dialog: () => Object.assign({}, base, { title: 'Save As', menu: Object.assign(W32(), { owner: true }), blocked: 'a dialog of this app is open, so it is not taking menu commands until it closes' }),
     desktop: () => Object.assign({}, base, { hwnd: '1', cls: 'Progman', title: 'Program Manager', exe: 'C:\\Windows\\explorer.exe', desc: 'Windows Explorer', shell: true, menu: null, uia: 'the desktop' }),
+    // the fit cases (shoot.js): an Office-style app with a long name and 17 Win32 menus, File Explorer, Windows Terminal
+    word: () => Object.assign({}, base, { hwnd: '7777', cls: 'OpusApp', title: 'Quarterly planning notes (final, reviewed) - Word',
+      exe: 'C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE', desc: 'Microsoft Word for Microsoft 365 Apps for enterprise', product: 'Microsoft Office',
+      menu: { source: 'win32', hwnd: '7777', owner: false, count: 17, truncated: false, readMs: 0.5, items: ['File', 'Home', 'Insert', 'Draw', 'Design', 'Layout',
+        'References', 'Mailings', 'Review', 'View', 'Developer', 'Help', 'Acrobat', 'Table Design', 'Table Layout', 'Picture Format', 'Shape Format'].map((label, i) => {
+        pos = 0;
+        return Object.assign(it(label, '', { id: null, items: [it(label + ' options…', 'Ctrl+' + (i % 9 + 1)), it('Customize ' + label + '…')] }), { pos: i });
+      }) } }),
+    explorer: () => Object.assign({}, base, { hwnd: '8888', cls: 'CabinetWClass', title: 'Downloads', exe: 'C:\\Windows\\explorer.exe', desc: 'Windows Explorer',
+      menu: null, menuReason: 'no Win32 menu bar', uia: 'not tried' }),
+    term: () => Object.assign({}, base, { hwnd: '9999', cls: 'CASCADIA_HOSTING_WINDOW_CLASS', title: 'user@laptop: ~/mantle',
+      exe: 'C:\\Program Files\\WindowsApps\\Microsoft.WindowsTerminal\\WindowsTerminal.exe', desc: 'Windows Terminal', product: 'Windows Terminal',
+      menu: null, menuReason: 'no Win32 menu bar', uia: 'not tried' }),
   };
   const focus = (APPS[q.get('app')] || APPS.npp)();
   const cores = [22, 61, 9, 14, 37, 5, 71, 18];
@@ -79,6 +96,7 @@
   };
   window.addEventListener('load', () => {
     if (q.get('stats') === 'paused') window.mantle.emit('topbar.stats', { paused: true, reason: 'the screen is locked' });
+    if (q.get('note') === '1') window.mantle.emit('topbar.note', { text: 'the top bar cannot follow the focused app: the sidecar did not answer within 4 s' });
     setTimeout(() => {
       const open = q.get('open'), stat = q.get('stat');
       const S = window.__topbar;

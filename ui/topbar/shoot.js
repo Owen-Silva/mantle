@@ -6,6 +6,11 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
  *   2. keyboard: ArrowDown/Right/Left/Escape walk the menus the way a Mac menu does, and Enter on
  *      a native item sends topbar.invoke with that item's command id;
  *   3. a failed command shows its reason on the bar.
+ *   4. FIT (2026-09-25, Owen's stats cut at "CPU 82%"): at 1280 / 1366 / 1536 / 1920 CSS px x DPR
+ *      1 / 1.25 / 1.5, short and very long menus, a warning note, stats paused / GPU missing, AND a
+ *      window wider than its screen (the live symptom): the stats end exactly one left-inset from
+ *      the screen's right edge, the page never scrolls (scrollWidth == clientWidth), nothing wraps,
+ *      nothing on the left is cut mid-word, and hidden menus are reachable from » by mouse and keys.
  *   node ui/topbar/shoot.js     (MANTLE_SHOOT_OUT=<dir> for the PNGs)
  */
 'use strict';
@@ -37,6 +42,141 @@ const SHOTS = [
   ['16-dark-file', 'app=npp&open=2&dark=1'],
   ['17-desktop', 'app=desktop&open=1'],
 ];
+
+/* ---- 4. fit ---------------------------------------------------------------------------------- */
+// One page state, measured: where the stats end against the SCREEN's right edge, scrolling, wrapping.
+function measureFit() {
+  const S = window.__topbar, bar = document.getElementById('bar'), left = document.getElementById('left'), right = document.getElementById('right');
+  const vis = Math.min(innerWidth, screen.width - screenX);
+  const r = right.getBoundingClientRect(), l = left.getBoundingClientRect();
+  const glyph = left.firstElementChild.getBoundingClientRect();
+  const kids = [...left.children].map((b) => b.getBoundingClientRect());
+  const wrapped = [...bar.querySelectorAll('.t, .warn, .paused, .lbl')].filter((e) => e.scrollHeight > e.clientHeight + 1 || e.getBoundingClientRect().height > 24.5).length;
+  const cells = [...right.querySelectorAll('.st')].map((c) => c.getBoundingClientRect());
+  return {
+    vis, leftInset: glyph.left, rightInset: vis - r.right, rightEnd: r.right,
+    cellsOn: cells.every((c) => c.left >= 0 && c.right <= vis + 0.5), cellCount: cells.length, paused: !!right.querySelector('.paused'),
+    scroll: [document.documentElement.scrollWidth, document.documentElement.clientWidth, document.body.scrollWidth, document.body.clientWidth, scrollX],
+    barH: bar.scrollHeight, wrapped,
+    leftCut: kids.length ? kids[kids.length - 1].right - l.right : 0,
+    total: S.titles.length, shown: S.fit ? S.fit.shown : S.titles.length, more: !!left.querySelector('.t.more'),
+    appW: (left.querySelector('.t.bold') || { getBoundingClientRect: () => ({ width: 0 }) }).getBoundingClientRect().width,
+  };
+}
+
+async function fitChecks(browser, check) {
+  const M = require('./model.js');
+  // pure: the order things give way in
+  const w = [30, 300, 50, 50, 50, 50];
+  let f = M.fitTitles(w, 24, 1000, 96);
+  check('fit: everything fits -> all shown, natural app name', f.shown === 6 && f.appW === null, JSON.stringify(f));
+  f = M.fitTitles(w, 24, 400, 96);
+  check('fit: the app name gives way first (ellipsis), no menu hidden', f.shown === 6 && f.appW === 169, JSON.stringify(f));
+  f = M.fitTitles(w, 24, 260, 96);
+  check('fit: then menus go into », from the right, and the left-over room returns to the app name', f.shown === 4 && f.appW === 105, JSON.stringify(f));
+  f = M.fitTitles([30, 60, 50, 50], 24, 150, 96);
+  check('fit: a short app name is never widened past its natural width', f.shown === 2 && f.appW === null, JSON.stringify(f));
+
+  const CASES = [['app=word&note=1', 'long menus + warning'], ['app=word', 'long menus'], ['app=npp', 'Notepad++ menus'], ['app=term', 'Windows Terminal'],
+    ['app=explorer&stats=paused', 'File Explorer, stats paused'], ['app=chrome&stats=nogpu', 'Chromium window, GPU missing'], ['app=desktop', 'desktop']];
+  let n = 0, bad = [];
+  for (const dpr of [1, 1.25, 1.5]) {
+    for (const [sw, vw] of [[1280, 1280], [1366, 1366], [1536, 1536], [1920, 1920], [1536, 1920], [1280, 1600]]) {   // [screen, window]: the last two are a window WIDER than its screen
+      const page = await browser.newPage({ viewport: { width: vw, height: 38 }, screen: { width: sw, height: 864 }, deviceScaleFactor: dpr });
+      for (const [q, what] of CASES) {
+        await page.goto(PAGE + '?' + q);
+        await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 5000 });
+        const m = await page.evaluate(measureFit);
+        const tag = `${sw}${vw !== sw ? '(window ' + vw + ')' : ''}@${dpr} ${what}`;
+        n++;
+        const errs = [];
+        if (!(Math.abs(m.rightInset - m.leftInset) <= 1 && m.rightEnd <= m.vis - m.leftInset + 0.5)) errs.push(`stats end ${m.rightInset.toFixed(1)} px from the screen edge, left inset ${m.leftInset.toFixed(1)}`);
+        if (!m.paused && (m.cellCount !== 4 || !m.cellsOn)) errs.push(`stat cells ${m.cellCount}, all on screen ${m.cellsOn}`);
+        if (m.scroll[0] !== m.scroll[1] || m.scroll[2] !== m.scroll[3] || m.scroll[4] !== 0) errs.push('scrolls: ' + JSON.stringify(m.scroll));
+        if (m.wrapped || m.barH > 28) errs.push(`wrapped ${m.wrapped}, bar content height ${m.barH}`);
+        if (m.leftCut > 0.5) errs.push(`the last title on the left is cut by ${m.leftCut.toFixed(1)} px`);
+        if (m.shown < m.total && !m.more) errs.push(`${m.total - m.shown} titles hidden with no » button`);
+        if (errs.length) bad.push(tag + ': ' + errs.join('; '));
+        if (dpr === 1.25 && q === 'app=word&note=1') await page.screenshot({ path: path.join(OUT, `fit-${sw}${vw !== sw ? 'w' + vw : ''}-word-note.png`), clip: { x: 0, y: 0, width: sw, height: 38 } });
+      }
+      await page.close();
+    }
+  }
+  check(`fit: ${n} cases (4 widths + 2 too-wide windows x 3 DPRs x 7 states): stats one inset from the screen edge, no scroll, no wrap, no cut title`, bad.length === 0, bad.slice(0, 6).join(' | '));
+
+  // a window that GROWS past its screen after the page loaded (the Electron probe's case C), and one
+  // that bounces 1536 -> 1920 -> 1536 at once (case B, which fooled an outerWidth-based zoom guess)
+  {
+    const g = await browser.newPage({ viewport: { width: 1536, height: 38 }, screen: { width: 1536, height: 864 }, deviceScaleFactor: 1.25 });
+    await g.goto(PAGE + '?app=word');
+    await g.waitForFunction(() => document.documentElement.dataset.ready === '1');
+    await g.setViewportSize({ width: 1920, height: 38 });
+    await g.waitForTimeout(150);
+    const grown = await g.evaluate(measureFit);
+    check('fit: a window that grows past its screen keeps the stats one inset from the screen edge', Math.abs(grown.rightInset - grown.leftInset) <= 1 && grown.cellsOn, JSON.stringify([grown.rightEnd, grown.vis]));
+    await g.setViewportSize({ width: 1536, height: 38 });
+    await g.setViewportSize({ width: 1920, height: 38 });
+    await g.setViewportSize({ width: 1536, height: 38 });
+    await g.waitForTimeout(150);
+    const back = await g.evaluate(measureFit);
+    check('fit: after a 1536 -> 1920 -> 1536 bounce the strip is the full screen again', Math.abs(back.rightInset - back.leftInset) <= 1 && back.vis === 1536, JSON.stringify([back.rightEnd, back.vis]));
+    await g.close();
+  }
+
+  // » by mouse and keyboard, on the tightest real case (1280 @ 1.25, 17 menus, a warning)
+  const page = await browser.newPage({ viewport: { width: 1280, height: 420 }, screen: { width: 1280, height: 720 }, deviceScaleFactor: 1.25 });
+  await page.goto(PAGE + '?app=word&note=1');
+  await page.waitForFunction(() => document.documentElement.dataset.ready === '1');
+  const k = await page.evaluate(() => {
+    const S = window.__topbar;
+    const key = (x) => document.dispatchEvent(new KeyboardEvent('keydown', { key: x, bubbles: true }));
+    const out = { shown: S.fit.shown, total: S.titles.length };
+    document.querySelector('.t.more').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    out.moreOpen = !!(S.open && S.open.more);
+    out.rows = S.open ? S.open.stack[0].items.map((i) => i.label) : [];
+    out.want = S.titles.slice(S.fit.shown).map((t) => t.label);
+    const dd = document.querySelector('.dd').getBoundingClientRect();
+    out.ddOn = dd.left >= 0 && dd.right <= innerWidth;
+    key('ArrowDown'); out.sel = S.open.stack[0].sel;
+    key('ArrowRight'); out.sub = S.open.stack.length === 2 && S.open.stack[1].sel === 0 && S.open.stack[1].items.length > 0;
+    key('Enter');
+    const inv = window.__mockCalls.filter((c) => c.name === 'topbar.invoke').pop();
+    out.invoked = inv ? inv.args : null; out.closed = !S.open;
+    // walk the bar with the keys: from the last title on the bar, ArrowRight reaches », ArrowLeft comes back
+    document.querySelector(`.t[data-i="${S.fit.shown - 1}"]`).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    key('ArrowRight'); out.stepToMore = !!(S.open && S.open.more && S.open.ti === S.fit.shown);
+    key('ArrowRight'); out.moreSub = !!(S.open && S.open.more && S.open.stack.length === 2);   // the selected hidden menu opens, as on a Mac
+    key('ArrowRight'); out.wrapToMantle = !!(S.open && S.open.ti === 0);                        // its first item has no submenu: next title, wrapping
+    key('ArrowLeft'); out.backToMore = !!(S.open && S.open.more);
+    key('ArrowLeft'); out.backToLast = !!(S.open && S.open.ti === S.fit.shown - 1);
+    key('Escape'); out.esc = !S.open;
+    return out;
+  });
+  check('fit: 1280@1.25 with 17 menus hides some behind »', k.shown < k.total, JSON.stringify([k.shown, k.total]));
+  check('fit: » opens a menu listing exactly the hidden titles, on screen', k.moreOpen && JSON.stringify(k.rows) === JSON.stringify(k.want) && k.ddOn, JSON.stringify(k.rows));
+  check('fit: in », ArrowDown selects, ArrowRight opens that menu, Enter runs its item', k.sel === 0 && k.sub && k.invoked && typeof k.invoked.item === 'number' && k.closed, JSON.stringify(k.invoked));
+  check('fit: ArrowRight/Left walk the bar through » and wrap', k.stepToMore && k.moreSub && k.wrapToMantle && k.backToMore && k.backToLast && k.esc, JSON.stringify(k));
+  await page.goto(PAGE + '?app=word&note=1');
+  await page.waitForFunction(() => document.documentElement.dataset.ready === '1');
+  await page.evaluate(() => { document.querySelector('.t.more').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); });
+  await page.waitForTimeout(200);
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })));
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+  await page.waitForTimeout(200);
+  const sc = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+  check('fit: an open » and its submenu never make the page scrollable', sc[0] === sc[1], JSON.stringify(sc));
+  await page.screenshot({ path: path.join(OUT, '1280-19-more-open.png') });
+  // the stat menu at the far right, in a window wider than its screen, stays on the screen
+  await page.close();
+  const wide = await browser.newPage({ viewport: { width: 1920, height: 420 }, screen: { width: 1536, height: 864 }, deviceScaleFactor: 1.25 });
+  await wide.goto(PAGE + '?app=npp&stat=net');
+  await wide.waitForFunction(() => document.documentElement.dataset.ready === '1');
+  await wide.waitForTimeout(200);
+  const dr = await wide.evaluate(() => { const d = document.querySelector('.dd').getBoundingClientRect(); return [Math.round(d.left), Math.round(d.right), screen.width]; });
+  check('fit: the NET menu in a too-wide window ends on the screen', dr[1] <= dr[2] - 4, JSON.stringify(dr));
+  await wide.screenshot({ path: path.join(OUT, '1536w1920-20-net-open.png'), clip: { x: 0, y: 0, width: 1536, height: 420 } });
+  await wide.close();
+}
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
@@ -105,6 +245,8 @@ const SHOTS = [
     const warn = await page.evaluate(() => (document.querySelector('.warn') || {}).textContent || '');
     check('a failed command shows its reason on the bar', /New: the app did not accept/.test(warn), warn);
     await page.screenshot({ path: path.join(OUT, '1536-18-failed-command.png') });
+    await page.close();
+    await fitChecks(browser, check);
   } finally {
     await browser.close();
   }
