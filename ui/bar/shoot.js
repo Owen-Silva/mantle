@@ -156,6 +156,7 @@ const SHOTS = [
      while the panel is open (the 'powermode' push). */
   { name: 'pm-balanced', w: 1280, h: 480, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'pm-battery', w: 1280, h: 480, q: '?mode=pill&pm=battery', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'pm-saver', w: 1280, h: 520, q: '?mode=pill&pm=saver', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'pm-hone', w: 1280, h: 480, q: '?mode=pill&pm=hone', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'pm-error', w: 1280, h: 480, q: '?mode=pill&pm=error', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'pm-pending', w: 1280, h: 480, q: '?mode=pill&pm=slow', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmbtn[data-mode="performance"]', { wait: 200 }] },

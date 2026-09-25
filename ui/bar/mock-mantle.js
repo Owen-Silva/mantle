@@ -809,7 +809,9 @@
   /* Replies. Anything not listed rejects by name, which is what the real bridge should also do:
      a typo in a channel name must surface in the UI, never resolve to undefined. */
   /* ---- power mode (osd lane, 2026-09-24): main's powermode.* over sidecar/PowerMode.cs, in its shape.
-       ?pm=balanced (default) | efficiency | performance | battery | hone | error | refuse | slow
+       ?pm=balanced (default) | efficiency | performance | battery | saver | hone | error | refuse | slow
+         saver    Owen's machine on battery (2026-09-25): Best performance chosen for battery, Energy saver on
+                  (it turns on at 100%), so Windows runs efficiency and PowerMode.cs locks the switch
          hone     the plan Owen's machine is on (2026-09-24): muted, with PowerMode.cs's own reason
          error    the plan cannot be read
          refuse   every change is refused with the passive sidecar's reason (springs back)
@@ -818,6 +820,12 @@
   var PM = q.get('pm') || 'balanced';
   var pmState = PM === 'error'
     ? { ok: false, mode: null, available: false, reason: 'Windows would not say which power plan is active (error 5)' }
+    : PM === 'saver'
+      ? { ok: true, mode: 'performance', overlay: 'ded574b5-45a0-4f42-8737-46345c09c238', inForce: 'efficiency', available: true, settable: false,
+          by: 'dc', configured: { ac: 'balanced', battery: 'performance' },
+          plan: { guid: '381b4222-f694-41f0-9685-ff5bb260df2e', name: 'Balanced', balanced: true }, source: 'battery', saver: true, saverLevel: 1, saverAt: 100,
+          reason: 'Energy saver is on, so Windows runs Best power efficiency and the power mode can’t be set; Best performance (your choice on battery) comes back when it is off. ' +
+            'It is set to turn on at 100% battery, so it is on whenever this PC is unplugged: to change that, open Settings > System > Power & battery > Energy saver and turn off "Always use energy saver" (or lower "Turn energy saver on automatically")' }
     : PM === 'hone'
       ? { ok: true, mode: 'balanced', overlay: '00000000-0000-0000-0000-000000000000', available: false,
           plan: { guid: '44444444-4444-4444-4444-444444444452', name: 'Hone Ultimate Power Plan V5', balanced: false }, source: 'ac', saver: false,
@@ -828,7 +836,7 @@
   function powerSet(p) {
     var want = p && p.mode;
     if (want !== 'efficiency' && want !== 'balanced' && want !== 'performance') throw new Error('powermode.set needs mode: "efficiency", "balanced" or "performance"');
-    if (!pmState.ok || !pmState.available) return { ok: false, mode: want, state: Object.assign({}, pmState), reason: pmState.reason };
+    if (!pmState.ok || !pmState.available || pmState.settable === false) return { ok: false, mode: want, state: Object.assign({}, pmState), reason: pmState.reason };
     if (PM === 'refuse' && want !== pmState.mode)
       return { ok: false, mode: want, state: Object.assign({}, pmState), reason: 'refused: sidecar is passive (test mode): it would have changed the power mode from ' + pmState.mode + ' to ' + want };
     pmState = Object.assign({}, pmState, { mode: want });

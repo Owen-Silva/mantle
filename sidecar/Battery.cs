@@ -122,7 +122,8 @@ namespace Mantle {
       bool charging = flagKnown && (s.BatteryFlag & 8) != 0;
       bool low = flagKnown && (s.BatteryFlag & 2) != 0;
       bool critical = flagKnown && (s.BatteryFlag & 4) != 0;
-      bool saver = s.SystemStatusFlag == 1;
+      // Windows 11 Energy saver is invisible to SystemStatusFlag (Windows 10 battery saver only), 2026-09-25.
+      bool saver = s.SystemStatusFlag == 1 || PowerMode.SaverStatus() >= 1;
       // A time left only on battery and only once Windows has one: on AC it
       // sends 0xFFFFFFFF, and so it does for a while after an unplug (32 s, measured).
       object seconds = onBattery && s.BatteryLifeTime != 0xFFFFFFFF ? (object)(long)s.BatteryLifeTime : null;

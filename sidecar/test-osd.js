@@ -2,7 +2,8 @@
 /* test-osd.js - the osd lane's sidecar commands (wave 3, 2026-09-24): powermode.* and osd.*.
  *
  * Runs the sidecar in --passive, like test-sidecar.js. WHAT IT MAY CHANGE ON OWEN'S MACHINE:
- * nothing. The only power-mode write is a SAME-VALUE one (the mode already in effect), and it is
+ * nothing. The only power-mode write is a SAME-VALUE one (the mode already chosen for the power
+ * source the PC is on; none at all while Energy saver locks the switch), and it is
  * confirmed by an independent read (`powercfg /getactivescheme` for the plan, the registry
  * overlay values for the mode). The Windows OSD is never hidden from here: in --passive
  * osd.flyout refuses every change, and this test checks that it does.
@@ -88,7 +89,20 @@ async function powerMode(s) {
   const regMode = MODE_OF[(r.source === 'battery' ? before.dc : before.ac) || ''];
   check('mode agrees with the registry overlay for this power source', regMode === undefined || regMode === r.mode,
     JSON.stringify({ sidecar: r.mode, registry: before }));
-  console.log(`  powermode.get: mode=${r.mode} plan="${r.plan && r.plan.name}" available=${r.available} source=${r.source} in ${getMs} ms (sidecar ${r.ms} ms)`);
+  // 2026-09-25: the mode is Settings' per-source choice (PowerGetUserConfigured{AC,DC}PowerMode);
+  // the mode in force travels beside it, and Energy saver locks the switch with a reason.
+  const cfg = r.configured || {};
+  check('configured carries both sources, and mode is the one for this source',
+    'ac' in cfg && 'battery' in cfg && (r.source === 'unknown' || r.mode === cfg[r.source === 'battery' ? 'battery' : 'ac']), JSON.stringify(r));
+  check('registry agrees with configured for BOTH sources',
+    (MODE_OF[before.ac || ''] === undefined || MODE_OF[before.ac || ''] === cfg.ac) &&
+    (MODE_OF[before.dc || ''] === undefined || MODE_OF[before.dc || ''] === cfg.battery), JSON.stringify({ cfg, before }));
+  check('settable = on Balanced and Energy saver off', r.settable === (r.available && !r.saver), JSON.stringify(r));
+  check('Energy saver on -> the reason names it and how to turn it off',
+    !r.saver || !r.available || (/Energy saver is on/.test(r.reason || '') && /Energy saver/.test((r.reason || '').split('.').slice(1).join('.'))), r.reason);
+  check('inForce is a mode name', ['efficiency', 'balanced', 'performance', 'better', 'other', null].includes(r.inForce), r.inForce);
+  console.log(`  powermode.get: mode=${r.mode} inForce=${r.inForce} by=${r.by} configured=${JSON.stringify(cfg)} saver=${r.saver}` +
+    `(${r.saverLevel}, at ${r.saverAt}) plan="${r.plan && r.plan.name}" settable=${r.settable} source=${r.source} in ${getMs} ms (sidecar ${r.ms} ms)`);
 
   // A bad mode is refused in words, before anything is called.
   const bad = await s.send('powermode.set', { mode: 'turbo' });
@@ -98,8 +112,8 @@ async function powerMode(s) {
   const other = r.mode === 'performance' ? 'balanced' : 'performance';
   const diff = await s.send('powermode.set', { mode: other });
   const dr = diff.result || {};
-  check('a different-mode set is refused in --passive (or off Balanced) with a reason',
-    dr.ok === false && typeof dr.reason === 'string' && (/passive/.test(dr.reason) || /Balanced/.test(dr.reason)), JSON.stringify(diff));
+  check('a different-mode set is refused in --passive (or off Balanced, or under Energy saver) with a reason',
+    dr.ok === false && typeof dr.reason === 'string' && (/passive/.test(dr.reason) || /Balanced/.test(dr.reason) || /Energy saver/.test(dr.reason)), JSON.stringify(diff));
   check('the refusal carries the read-back state', dr.state && dr.state.mode === r.mode, JSON.stringify(dr.state));
 
   // The SAME-VALUE write: the mode already in effect. Off Balanced it is refused like any other
@@ -107,8 +121,13 @@ async function powerMode(s) {
   if (['efficiency', 'balanced', 'performance'].includes(r.mode)) {
     const same = await s.send('powermode.set', { mode: r.mode });
     const sr = same.result || {};
-    if (r.available) {
+    if (r.settable) {
       check('same-value set succeeds', sr.ok === true && sr.same === true, JSON.stringify(same));
+      check('...it wrote this power source\'s value', sr.wroteFor === r.source, JSON.stringify(same));
+      console.log(`  powermode.set same-value (${sr.wroteFor}): ${sr.setMs} ms`);
+    } else if (r.available) {
+      check('same-value set under Energy saver is refused with its reason, nothing written', sr.ok === false && /Energy saver/.test(sr.reason || ''), JSON.stringify(same));
+      console.log('  NOT PROVEN HERE: the per-source write itself (Energy saver is on, so no write is made)');
     } else {
       check('same-value set off Balanced is refused with the plan reason', sr.ok === false && /Balanced/.test(sr.reason || ''), JSON.stringify(same));
       console.log('  NOT PROVEN HERE: PowerSetActiveOverlayScheme itself (the active plan is not Balanced, so no write is made)');
@@ -116,8 +135,15 @@ async function powerMode(s) {
   }
   const after = independent();
   check('independent read: plan unchanged', after.plan === before.plan, JSON.stringify({ before, after }));
-  check('independent read: AC overlay unchanged', after.ac === before.ac, JSON.stringify({ before, after }));
-  check('independent read: DC overlay unchanged', after.dc === before.dc, JSON.stringify({ before, after }));
+  // Compared as MODES: absent, empty and the all-zero GUID all mean Balanced. Measured 2026-09-25:
+  // a same-value PowerSetUserConfiguredACPowerMode(Balanced) turns an ABSENT AC value into the
+  // explicit zero GUID - the same mode for every reader (Settings' own getter returns zeros for
+  // both), but a different registry form, so it is logged rather than hidden.
+  const m = (x) => MODE_OF[x || ''] || x;
+  check('independent read: AC overlay unchanged (as a mode)', m(after.ac) === m(before.ac), JSON.stringify({ before, after }));
+  check('independent read: DC overlay unchanged (as a mode)', m(after.dc) === m(before.dc), JSON.stringify({ before, after }));
+  if (after.ac !== before.ac || after.dc !== before.dc)
+    console.log(`  NOTE: the registry FORM changed with the same mode: AC ${JSON.stringify(before.ac)} -> ${JSON.stringify(after.ac)}, DC ${JSON.stringify(before.dc)} -> ${JSON.stringify(after.dc)}`);
 
   // The listeners: register, report, unregister. No change is made, so no push is expected.
   const w = await s.send('powermode.watch', { on: true });
@@ -130,6 +156,78 @@ async function powerMode(s) {
   check('no powermode push without a change', pushes.length === 0, JSON.stringify(pushes).slice(0, 200));
   const off = await s.send('powermode.watch', { on: false });
   check('powermode.watch off answers', off.result && off.result.watching === false, JSON.stringify(off));
+}
+
+/** THE PURE READ/VERIFY LOGIC (powermode.decide, 2026-09-25): made-up Windows readings in, the
+ *  state the panel draws out. No Windows call is made. Row 1 is Owen's machine on battery the
+ *  moment the tile said "Efficiency" and a landed set was reported as refused. */
+async function powerDecide(s) {
+  const EFF = '961cc777-2547-4f9d-8174-7d86181b8a7a', PERF = 'ded574b5-45a0-4f42-8737-46345c09c238';
+  const BAL = '00000000-0000-0000-0000-000000000000', HONE = '44444444-4444-4444-4444-444444444452';
+  const owen = { source: 'battery', ac: BAL, dc: PERF, actual: PERF, effective: EFF, saver: 1, saverAt: 100 };
+  const d = async (facts) => { const r = await s.send('powermode.decide', facts); return r.ok === false ? { error: r.error } : (r.result || {}); };
+  const j = (x) => JSON.stringify(x);
+
+  let r = await d(owen);
+  check('decide: on battery, Energy saver on: the mode is the battery choice (performance), efficiency in force',
+    r.ok === true && r.mode === 'performance' && r.inForce === 'efficiency' && r.by === 'dc' && r.saver === true, j(r));
+  check('...locked (not settable) but on Balanced', r.available === true && r.settable === false, j(r));
+  check('...the reason: Energy saver, what comes back, and how to turn it off (always on battery at 100%)',
+    /^Energy saver is on, so Windows runs Best power efficiency/.test(r.reason || '') && /Best performance \(your choice on battery\) comes back/.test(r.reason || '') &&
+    /Always use energy saver/.test(r.reason || '') && /Settings > System > Power & battery > Energy saver/.test(r.reason || ''), r.reason);
+  check('...configured carries both sources', r.configured && r.configured.ac === 'balanced' && r.configured.battery === 'performance', j(r.configured));
+
+  r = await d(Object.assign({}, owen, { source: 'ac', effective: BAL, actual: BAL, saver: 0 }));
+  check('decide: plugged in, Energy saver off: the AC choice, settable, no reason',
+    r.mode === 'balanced' && r.by === 'ac' && r.inForce === 'balanced' && r.settable === true && r.reason === null && r.saver === false, j(r));
+
+  r = await d(Object.assign({}, owen, { effective: BAL, saver: 0 }));
+  check('decide: effective and actual disagree with no Energy saver: the choice shown, the in-force mode beside it, still settable',
+    r.mode === 'performance' && r.inForce === 'balanced' && r.settable === true && r.reason === null, j(r));
+
+  r = await d(Object.assign({}, owen, { saverAt: 20 }));
+  check('decide: Energy saver on at a 20% threshold: quick-settings route and the level, no "Always use"',
+    /Win\+A/.test(r.reason || '') && /20% battery/.test(r.reason || '') && !/Always use/.test(r.reason || ''), r.reason);
+  r = await d(Object.assign({}, owen, { saver: 2 }));
+  check('decide: Energy saver at high savings (2) counts as on', r.saver === true && r.settable === false, j(r));
+  r = await d(Object.assign({}, owen, { dc: EFF, saver: 1 }));
+  check('decide: Energy saver on when efficiency is the choice anyway: no "comes back" clause', /Energy saver is on/.test(r.reason || '') && !/comes back/.test(r.reason || ''), r.reason);
+  r = await d(Object.assign({}, owen, { saver: -1, legacySaver: true, saverAt: -1 }));
+  check('decide: no Energy saver status, but Windows 10 battery saver flag set: locked', r.saver === true && r.settable === false && /Energy saver is on/.test(r.reason || ''), j(r));
+
+  r = await d(Object.assign({}, owen, { ac: null, dc: null, configuredWhy: 'this Windows has no per-source power mode call', saver: 0 }));
+  check('decide: no per-source call (older Windows): falls back to the ACTUAL overlay', r.ok === true && r.mode === 'performance' && r.by === 'actual', j(r));
+  r = await d({ source: 'battery', effective: EFF, saver: 0 });
+  check('decide: only the effective overlay readable: last resort', r.ok === true && r.mode === 'efficiency' && r.by === 'effective', j(r));
+  r = await d({ source: 'battery', effectiveRc: 5, configuredWhy: 'this Windows has no per-source power mode call' });
+  check('decide: nothing readable: not ok, the error and why in words', r.ok === false && r.settable === false && /error 5/.test(r.reason || '') && /per-source/.test(r.reason || ''), j(r));
+  r = await d({ planOk: false, planRc: 2 });
+  check('decide: the plan unreadable: not ok, says so', r.ok === false && /power plan is active \(error 2\)/.test(r.reason || ''), j(r));
+  r = await d(Object.assign({}, owen, { plan: HONE, planName: 'Hone Ultimate Power Plan V5' }));
+  check('decide: off Balanced (even with Energy saver on): the plan reason first, not available',
+    r.available === false && r.settable === false && /only on the Balanced power plan/.test(r.reason || '') && /Hone/.test(r.reason || ''), j(r));
+  r = await d(Object.assign({}, owen, { source: 'unknown', actual: EFF, saver: 0 }));
+  check('decide: power source unknown: the actual overlay (Windows\' pick for the source it is on)', r.mode === 'efficiency' && r.by === 'actual', j(r));
+
+  // VERIFY: judged on the value written for that source, never on the mode in force.
+  const v = async (facts, want, wroteFor, rc) => d(Object.assign({}, facts, { want, wroteFor, rc }));
+  r = await v(owen, 'performance', 'battery', 0);
+  check('verify: THE BUG - a battery write of performance that landed, efficiency pinned by Energy saver: ok', r.ok === true && r.reason === null, j(r));
+  r = await v(Object.assign({}, owen, { dc: BAL }), 'performance', 'battery', 0);
+  check('verify: the battery value did not move: not ok, says what it still reports and for which source',
+    r.ok === false && /still reports Balanced for on battery/.test(r.reason || ''), j(r));
+  r = await v(owen, 'performance', 'battery', 5);
+  check('verify: powrprof error: not ok with the code', r.ok === false && /refused the power mode change \(error 5\)/.test(r.reason || ''), j(r));
+  r = await v(Object.assign({}, owen, { ac: PERF }), 'performance', 'ac', 0);
+  check('verify: written for plugged in, unplugged meanwhile: judged on the AC value that was written', r.ok === true, j(r));
+  r = await v(Object.assign({}, owen, { effective: PERF, saver: 0 }), 'performance', null, 0);
+  check('verify: the overlay call (no source): judged on the current mode', r.ok === true, j(r));
+  r = await v(Object.assign({}, owen, { dc: BAL, actual: BAL, saver: 0 }), 'performance', null, 0);
+  check('verify: the overlay call that did not take: names the current source', r.ok === false && /still reports Balanced for on battery/.test(r.reason || ''), j(r));
+  r = await v({ planOk: false, planRc: 2 }, 'performance', 'battery', 0);
+  check('verify: the read-back failed: not ok, says it could not be read back', r.ok === false && /could not be read back/.test(r.reason || ''), j(r));
+  r = await d({ plan: 'not-a-guid' });
+  check('decide: a bad plan GUID is refused in words', /plan is not a GUID/.test(r.error || ''), j(r));
 }
 
 /** The power PLANS (powermode.plan): the list against `powercfg /list`, then ONLY a same-value
@@ -188,6 +286,7 @@ async function main() {
     check('ping lists the powermode commands', !feats || (feats.commands || []).includes('powermode.get'), JSON.stringify(feats));
     check('no feature failed to register', !feats || !(feats.problems || []).length, JSON.stringify(feats && feats.problems));
     await powerMode(s);
+    await powerDecide(s);
     await powerPlans(s);
     if (typeof module.exports.osdTests === 'function') await module.exports.osdTests(s, check);
     check('ping lists osd.bright', !feats || (feats.commands || []).includes('osd.bright'), JSON.stringify(feats && feats.commands));

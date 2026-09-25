@@ -21,6 +21,29 @@ check('the current one says so in its tooltip', /\(current\)/.test(v.segs[1].tit
 v = P.view(Object.assign({}, bal, { source: 'battery', saver: true, mode: 'efficiency' }), null, null);
 check('on battery with energy saver: both said', v.sub === 'On battery · Energy saver on' && on(v) === 'efficiency', v.sub);
 
+// 2026-09-25, Owen's machine on battery: Best performance chosen for battery, Energy saver on (it
+// turns on at 100%), so Windows runs efficiency and the mode cannot be set.
+const saverOn = Object.assign({}, bal, { source: 'battery', mode: 'performance', inForce: 'efficiency', saver: true, settable: false,
+  configured: { ac: 'balanced', battery: 'performance' },
+  reason: 'Energy saver is on, so Windows runs Best power efficiency and the power mode can\'t be set; Best performance (your choice on battery) comes back when it is off. To turn it off: Settings > System > Power & battery > Energy saver' });
+v = P.view(saverOn, null, null);
+check('Energy saver on: the battery CHOICE stays lit (not the pinned efficiency), muted', on(v) === 'performance' && v.dead, v);
+check('...says On battery · Energy saver on, and the reason (with how to turn it off) is shown', v.sub === 'On battery · Energy saver on' && /Energy saver is on/.test(v.reason) && /Settings > System > Power & battery > Energy saver/.test(v.reason), v);
+check('...every segment disabled, each tooltip carries the reason', v.segs.every((s) => s.disabled && /Energy saver is on/.test(s.title)), v.segs);
+check('...no "did not change" note, no plan picker', !v.note && !v.pickPlan && !v.plansOpen, v);
+check('...aria names the choice and the lock', /^Power mode: Best performance, locked: Energy saver/.test(v.aria), v.aria);
+v = P.view(Object.assign({}, saverOn, { reason: null }), null, null);
+check('locked with no reason from the sidecar: still says something', /gave no reason/.test(v.reason || ''), v.reason);
+v = P.view(Object.assign({}, bal, { inForce: 'efficiency' }), null, null);
+check('in force differs with nothing locking it: live, and the current segment says what Windows runs',
+  !v.dead && /\(current; Windows reports Best power efficiency in effect right now\)/.test(v.segs[1].title), v.segs[1].title);
+v = P.view(Object.assign({}, bal, { inForce: 'balanced', settable: true }), null, null);
+check('in force = choice: plain (current)', v.segs[1].title === 'Balanced (current)', v.segs[1].title);
+const saverP = Object.assign({}, saverOn, { plans: [{ guid: '381b4222-f694-41f0-9685-ff5bb260df2e', name: 'Balanced', active: true, balanced: true },
+  { guid: '44444444-4444-4444-4444-444444444452', name: 'Hone Ultimate Power Plan V5', active: false, balanced: false }] });
+v = P.view(saverP, null, null);
+check('locked by Energy saver on Balanced: the plan toggle still works (switching plan is not blocked)', v.planToggle === 'Plan: Balanced' && !v.pickPlan, v);
+
 v = P.view(bal, 'performance', null);
 check('a click in flight: the new mode shows at once, pending', on(v) === 'performance' && v.segs[2].pending && !v.segs[1].on, v.segs);
 

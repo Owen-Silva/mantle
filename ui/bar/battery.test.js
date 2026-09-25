@@ -89,7 +89,7 @@ for (const [label, extra] of [
 {
   const d = B.describe(reading({ ac: false, charging: false, percent: 41, secondsLeft: 6000, saver: true }));
   check('battery saver adds Windows\' own line to the tooltip',
-    d.saver && d.tip === 'Battery status: 1 hr 40 min (41%) remaining\nBattery saver on\nClick: quick settings', JSON.stringify(d.tip));
+    d.saver && d.tip === 'Battery status: 1 hr 40 min (41%) remaining\nEnergy saver on\nClick: quick settings', JSON.stringify(d.tip));
 }
 {
   const tips = [reading({}), reading({ charging: false, percent: 55 }), reading({ ac: false, charging: false }), { ok: false, reason: 'x' }]

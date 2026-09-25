@@ -10,7 +10,7 @@
  * THE WORDS ARE WINDOWS' OWN. Read out of %windir%\System32\en-US\batmeter.dll.mui on this
  * machine (build 26200) the same day: "Battery status: %1%% available (plugged in)", "fully
  * charged (100%)", "%3 hr %2 min (%1%%) remaining", "%2 min (%1%%) remaining", "%1%% remaining",
- * "unknown remaining", "plugged in", "no battery is detected", and "Battery saver on" on a line
+ * "unknown remaining", "plugged in", "no battery is detected", and "Energy saver on" on a line
  * of its own. Windows has no "not charging" string and shows that state with a plug instead of
  * a bolt; the one addition here is ", charging" / ", not charging" inside the brackets, because
  * a charge limit (Lenovo Vantage conservation mode) holding the battery on AC is exactly the
@@ -143,7 +143,7 @@
         out.footer = p + '% · on battery';
       }
     }
-    out.tip = 'Battery status: ' + out.words + (n.saver ? '\nBattery saver on' : '') +
+    out.tip = 'Battery status: ' + out.words + (n.saver ? '\nEnergy saver on' : '') +
       (out.reason ? '\n' + out.reason : '') + '\n' + CLICK;
     return out;
   }

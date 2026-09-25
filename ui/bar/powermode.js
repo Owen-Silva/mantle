@@ -2,7 +2,10 @@
  * Balanced / Best performance (osd lane, wave 3, 2026-09-24).
  *
  * WHAT IT TALKS TO (lib/features/powermode.js over sidecar/PowerMode.cs):
- *   powermode.get                -> the state: {ok, mode, available, plan:{name, balanced}, source, reason}
+ *   powermode.get                -> the state: {ok, mode, inForce, available, settable, configured:{ac, battery},
+ *                                   plan:{name, balanced}, source, saver, reason}. `mode` is the choice for
+ *                                   the CURRENT power source, as Settings shows it; `inForce` what Windows
+ *                                   runs (Energy saver pins efficiency and makes settable false).
  *   powermode.set {mode}         -> {ok, mode, state (READ BACK), reason}
  *   powermode.plan {plan}        -> {ok, plan, same, state (READ BACK), reason}: switch the power PLAN
  *                                   (the state carries plans:[{guid, name, active, balanced}])
@@ -48,6 +51,10 @@
     var s = state || null;
     var ok = !!s && s.ok !== false;
     var live = ok && s.available !== false;
+    // On Balanced but Windows will not take a mode now (2026-09-25: Energy saver, which pins Best
+    // power efficiency - Settings says "Power mode cannot be set when energy saver is on"). The
+    // choice for this power source stays lit, muted, with the sidecar's reason under it.
+    var locked = live && s.settable === false;
     var shown = pending || (ok ? s.mode : null);
     var sub, reason = null;
     if (!s) { sub = 'Reading…'; }
@@ -58,14 +65,17 @@
     } else {
       sub = (s.source === 'battery' ? 'On battery' : s.source === 'ac' ? 'Plugged in' : 'Power source unknown') +
         (s.saver ? ' · Energy saver on' : '');
+      if (locked) reason = s.reason || 'Windows will not take a power mode right now, and gave no reason';
     }
+    // The mode Windows is actually running, when it differs from the choice and nothing above says why.
+    var inForce = ok && !locked && s.inForce && s.inForce !== s.mode ? '; Windows reports ' + fullName(s.inForce) + ' in effect right now' : '';
     var segs = MODES.map(function (m) {
       return {
         mode: m.mode, label: m.label,
         on: shown === m.mode,
         pending: pending === m.mode,
-        disabled: !live,
-        title: live ? m.full + (shown === m.mode ? ' (current)' : '') : m.full + ' — ' + sentence(reason),
+        disabled: !live || locked,
+        title: live && !locked ? m.full + (shown === m.mode ? ' (current' + inForce + ')' : '') : m.full + ' — ' + sentence(reason),
       };
     });
     var other = ok && live && !pending && MODES.every(function (m) { return m.mode !== s.mode; });
@@ -86,10 +96,11 @@
       };
     });
     var v = {
-      dead: !live, sub: sub, reason: reason, head: 'Power mode',
+      dead: !live || locked, sub: sub, reason: reason, head: 'Power mode',
       note: err ? sentence('Power mode did not change: ' + err) : other ? sentence('Windows reports ' + fullName(s.mode) + '; pick one to replace it') : null,
       segs: segs,
-      aria: live ? 'Power mode: ' + fullName(shown) : 'Power mode unavailable: ' + reason,
+      aria: locked ? 'Power mode: ' + fullName(shown) + ', locked: ' + reason
+        : live ? 'Power mode: ' + fullName(shown) : 'Power mode unavailable: ' + reason,
       pickPlan: pickPlan, plans: planRows,
       plansOpen: pickPlan || (live && !!ui.plansOpen && plans.length > 1),
       planToggle: live && plans.length > 1 ? (ui.plansOpen ? 'Hide power plans' : 'Plan: ' + ((activePlan && activePlan.name) || 'Balanced')) : null,
@@ -268,7 +279,7 @@
     }
 
     function set(mode) {
-      if (!me.state || me.state.ok === false || me.state.available === false) { paint(); return; }
+      if (!me.state || me.state.ok === false || me.state.available === false || me.state.settable === false) { paint(); return; }
       if (me.pending || me.plan) return;
       if (me.state.mode === mode) { me.err = null; paint(); return; }
       var was = me.state;
