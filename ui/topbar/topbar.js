@@ -17,7 +17,7 @@
   const menusEl = document.getElementById('menus');
   const barEl = document.getElementById('bar');
   const S = { focus: null, menu: null, uia: {}, stats: null, paused: null, note: null, open: null, armed: null, titles: [],
-              fit: null, vis: 0, rightKey: null };
+              fit: null, vis: 0, rightKey: null, asked: null, waitT: 0 };
   const ARM_MS = 4000, ARM_MIN_MS = 300, HOVER_SUB_MS = 110;
   const APP_MIN = 96;   // the app's name ellipsizes down to this before any menu moves into »
   const GLYPH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
@@ -116,14 +116,44 @@
       `<span class="kb">${esc(it.key || '')}</span><span class="ar">${it.items ? '▸' : ''}</span></div>`;
   }
 
+  /* HEIGHT. A dropdown is as tall as its content, down to the bottom of the SCREEN's work area
+     (never the window's: the closed bar's window is 38 DIP, see topbar.css .dd), and scrolls
+     inside past that. screen.* and screenY are DIP, equal to CSS px at the zoom main pins. */
+  const DD_TOP = 30, DD_GAP = 8, DD_MIN = 72;
+  function screenBottom() {
+    const s = window.screen || {};
+    const h = s.availHeight || s.height || window.innerHeight;
+    return (s.availHeight ? (s.availTop || 0) : 0) + h - (window.screenY || 0);
+  }
+  // Caps one dropdown at the screen's bottom; a submenu that would run past it moves up instead
+  // (as a Mac submenu does), never above the bar.
+  function fitDown(dd, level) {
+    const limit = screenBottom() - DD_GAP;
+    let top = dd.offsetTop;
+    const natural = dd.offsetHeight;
+    if (level > 0 && top + natural > limit) { top = Math.max(DD_TOP, limit - natural); dd.style.top = top + 'px'; }
+    if (top + natural > limit) dd.style.maxHeight = Math.max(DD_MIN, limit - top) + 'px';
+  }
+  // The selected row stays in view in a dropdown that scrolls (arrow keys past the fold). Done by
+  // hand: scrollIntoView would also scroll #menus, and the page must never scroll.
+  function keepSelVisible(dd, sel) {
+    if (sel == null || sel < 0 || dd.scrollHeight <= dd.clientHeight) return;
+    const row = dd.querySelector(`[data-r="${sel}"]`);
+    if (!row) return;
+    if (row.offsetTop < dd.scrollTop) dd.scrollTop = row.offsetTop - 5;
+    else if (row.offsetTop + row.offsetHeight > dd.scrollTop + dd.clientHeight) dd.scrollTop = row.offsetTop + row.offsetHeight - dd.clientHeight + 5;
+  }
+
   function renderMenus() {
-    menusEl.innerHTML = '';
     const o = S.open;
+    // a re-render (hover, arrow keys, a fresh read) keeps each level's scroll position
+    if (o && o.stack) o.stack.forEach((lv) => { if (lv.el && lv.el.isConnected) lv.scroll = lv.el.scrollTop; });
+    menusEl.innerHTML = '';
     if (!o) return;
     if (o.stat) { renderStatMenu(o); return; }
     o.stack.forEach((lv, level) => {
       const dd = document.createElement('div');
-      dd.className = 'dd';
+      dd.className = 'dd' + (lv.shown ? '' : ' anim');
       dd.setAttribute('role', 'menu');
       let html = lv.items.length ? lv.items.map((it, i) => rowHtml(it, i, lv.sel, level)).join('') : '';
       if (lv.info) html += `<div class="info${lv.bad ? ' bad' : ''}">${esc(lv.info)}</div>`;
@@ -131,10 +161,14 @@
       dd.innerHTML = html;
       dd.style.left = lv.x + 'px';
       if (lv.y != null) dd.style.top = lv.y + 'px';
+      dd._owner = lv;
       menusEl.appendChild(dd);
       // keep a submenu on screen: flip it to the left of its parent when it would run off the right
       const r = dd.getBoundingClientRect(), vis = visibleWidth();
       if (r.right > vis - 4) dd.style.left = Math.max(4, (level > 0 ? lv.flipX : vis - 4 - r.width)) + 'px';
+      fitDown(dd, level);
+      if (lv.scroll) dd.scrollTop = lv.scroll;
+      keepSelVisible(dd, lv.sel);
       lv.el = dd;
     });
     notifyMain();
@@ -234,13 +268,53 @@
     S.armed = null;
     menusEl.innerHTML = '';
     renderBar();
-    call('topbar.menuState', { open: false, refocus: !!refocus });
+    tellClosed(!!refocus);
+  }
+  // The dropdowns are gone before main shrinks the window back to the bar.
+  function tellClosed(refocus) {
+    S.asked = null;
+    clearTimeout(S.waitT); S.waitT = 0;
+    call('topbar.menuState', { open: false, refocus });
   }
 
+  /* THE WINDOW FOLLOWS THE MENU. The dropdowns are laid out at full height whatever the window's
+     size (fitDown caps them by the SCREEN), so their bottom is measured right, and main is asked
+     for a window that tall. A dropdown that reaches past the window's current bottom waits hidden
+     (.wait) until the window has grown (reveal, on resize): the page never paints a clipped slice.
+     If the window never grows, the menu shows anyway and the bar says why (no silent failures). */
+  const WAIT_MS = 1500;
+  // The LAYOUT bottom: the fade-in's translateY(-3px) would make a rect 3 px short (and ratchet the window).
+  const ddBottom = (dd) => dd.offsetTop + dd.offsetHeight;
   function notifyMain() {
     let bottom = 28;
-    for (const dd of menusEl.children) bottom = Math.max(bottom, Math.ceil(dd.getBoundingClientRect().bottom) + 8);
-    call('topbar.menuState', { open: true, height: bottom });
+    for (const dd of menusEl.children) bottom = Math.max(bottom, ddBottom(dd) + DD_GAP);
+    if (reveal() && !S.waitT) S.waitT = setTimeout(waitedTooLong, WAIT_MS);
+    if (bottom === S.asked) return;          // hover and the 1 s sample re-render at the same height
+    S.asked = bottom;
+    call('topbar.menuState', { open: true, height: bottom }).then((r) => {
+      if (r && r.ok === false) { S.asked = null; setNote(`The menu cannot be shown in full: ${r.reason || 'the bar\'s window did not grow'}`); }
+    });
+  }
+  // Shows every dropdown the window can show whole, hides the rest; returns how many still wait.
+  function reveal() {
+    const h = window.innerHeight;
+    let waiting = 0;
+    for (const dd of menusEl.children) {
+      const fits = ddBottom(dd) <= h || !!(S.open && S.open.gaveUp);   // gave up waiting: shown as it is
+      dd.classList.toggle('wait', !fits);
+      if (!fits) waiting++;
+      else if (dd._owner) dd._owner.shown = true;   // later re-renders do not fade in again
+    }
+    if (!waiting) { clearTimeout(S.waitT); S.waitT = 0; }
+    return waiting;
+  }
+  function waitedTooLong() {
+    S.waitT = 0;
+    if (!S.open || !reveal()) return;
+    const need = Math.max(...[...menusEl.children].map((dd) => ddBottom(dd)));
+    S.open.gaveUp = true;
+    reveal();
+    setNote(`The menu is cut off: it needs ${need} px and the bar's window stayed ${window.innerHeight} px tall`);
   }
 
   function setNote(text) {
@@ -317,7 +391,8 @@
     let html = '';
     if (o.stat === 'cpu') {
       html += `<h4>CPU · ${M.pct(d.pct)}</h4>`;
-      if (d.cores && d.cores.length) html += '<div class="cores">' + d.cores.map((c) => `<div class="core" title="${M.pct(c)}"><i style="height:${Math.max(0, Math.min(100, c || 0))}%"></i></div>`).join('') + '</div>';
+      // the fills' heights go in through the CSSOM below: the CSP drops a style="" attribute
+      if (d.cores && d.cores.length) html += '<div class="cores">' + d.cores.map((c) => `<div class="core" title="${M.pct(c)}"><i></i></div>`).join('') + '</div>';
       if (d.top) html += '<h4>Top processes</h4>' + d.top.map((p) => row(p.name, M.pct(p.pct))).join('');
     } else if (o.stat === 'mem') {
       html += `<h4>Memory · ${M.gb(d.used)} of ${M.gb(d.total)} GB</h4>`;
@@ -336,13 +411,25 @@
     if (d.reason) html += `<div class="info${d.pct == null && d.used == null && d.down == null ? ' bad' : ''}">${esc(d.reason)}</div>`;
     if (!d.top && o.stat !== 'net') html += '<div class="info">Top processes arrive with the next sample.</div>';
     html += '<div class="sep"></div><div class="r" data-act="taskmgr"><span class="ck"></span><span class="lb">Open Task Manager</span><span class="kb">Ctrl+Shift+Esc</span><span class="ar"></span></div>';
-    const dd = document.createElement('div');
-    dd.className = 'dd stat';
+    // The 1 s sample refreshes the SAME element: a new one each second replayed the fade-in and
+    // lost the scroll position.
+    let dd = menusEl.querySelector('.dd.stat');
+    if (!dd || dd._owner !== o) {
+      menusEl.innerHTML = '';
+      dd = document.createElement('div');
+      dd.className = 'dd stat' + (o.shown ? '' : ' anim');
+      dd._owner = o;
+      menusEl.appendChild(dd);
+    }
+    const scroll = dd.scrollTop;
+    dd.style.maxHeight = '';
     dd.innerHTML = html;
-    menusEl.appendChild(dd);
+    if (d.cores) dd.querySelectorAll('.core i').forEach((el, k) => { el.style.height = Math.max(0, Math.min(100, d.cores[k] || 0)) + '%'; });
     const b = rightEl.querySelector(`[data-k="${o.stat}"]`);
     const x = b ? b.getBoundingClientRect().right - dd.getBoundingClientRect().width : 8;
     dd.style.left = Math.max(4, Math.round(x)) + 'px';
+    fitDown(dd, 0);
+    dd.scrollTop = scroll;
     notifyMain();
   }
 
@@ -395,6 +482,7 @@
   window.addEventListener('resize', () => {
     const before = S.vis;
     if (sizeBar() !== before && !S.open) layoutLeft();
+    if (S.open) reveal();   // the window grew to the menu: show what now fits whole
   });
   document.addEventListener('keydown', (e) => {
     const o = S.open;
@@ -426,7 +514,7 @@
     const same = S.focus && S.focus.hwnd === f.hwnd;
     S.focus = f;
     S.menu = f.menu || null;
-    if (!same && S.open) { S.open = null; menusEl.innerHTML = ''; call('topbar.menuState', { open: false, refocus: false }); }
+    if (!same && S.open) { S.open = null; S.armed = null; menusEl.innerHTML = ''; tellClosed(false); }
     renderBar();
     if (!S.menu && f.uia === 'try' && !S.uia[f.hwnd]) {
       const h = f.hwnd;
@@ -448,7 +536,7 @@
     if (ev && ev.paused) { S.paused = ev.reason || 'paused'; renderStats(); return; }
     S.paused = null;
     S.stats = ev;
-    if (S.open && S.open.stat) { menusEl.innerHTML = ''; renderStatMenu(S.open); }
+    if (S.open && S.open.stat) renderStatMenu(S.open);   // in place: no re-fade, scroll kept
     renderStats();
   });
   mantle.on('topbar.note', (ev) => setNote(ev && ev.text));

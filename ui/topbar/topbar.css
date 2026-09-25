@@ -64,18 +64,29 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 .warn { color: var(--lg-warn); background: var(--lg-warn-soft); border-radius: var(--lg-r-ctl); padding: 2px 7px; font-size: 11.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: min(360px, 28vw); min-width: 0; }
 
-/* dropdowns: the popover glass the bar's quick settings use, square to the bar like a Mac menu */
+/* dropdowns: the popover glass the bar's quick settings use, square to the bar like a Mac menu.
+ * HEIGHT (2026-09-25, Owen: pressing CPU / RAM / GPU / NET showed "a thin grey strip" and no
+ * menu, "its like that for all of them"). The cap used to be calc(100vh - 40px): 100vh is the
+ * WINDOW, and the closed bar's window is Windows' 38 DIP floor, so every dropdown came out
+ * max-height 0 = a 12 px box of padding and border with a scrollbar's arrow in it, and main was
+ * then asked for a window just that tall - the window can only grow to what the page measures,
+ * and the page measured what the window allowed. Now the cap comes from the SCREEN's work area
+ * (topbar.js fitDown, set through the CSSOM), so the page measures the dropdown's full height
+ * first and main grows the window to it. A dropdown the window cannot show yet waits hidden
+ * (.wait) until the window has grown, so a clipped slice is never painted. */
 .dd {
   position: absolute; top: calc(var(--tb-h) + 2px); z-index: 10;
-  min-width: 220px; max-width: 420px; max-height: calc(100vh - var(--tb-h) - 12px); overflow-y: auto;
+  min-width: 220px; max-width: 420px; overflow-y: auto; overscroll-behavior: contain;
   padding: 5px;
   background-color: var(--lg-fill-strong);
   border: 1px solid var(--lg-edge-in);
   border-radius: 10px;
   box-shadow: inset 0 1px 0 var(--lg-edge-in), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
   color: var(--lg-ink);
-  animation: dd-in 140ms var(--lg-ease) backwards;
 }
+/* fades in once, when it first appears: a re-render (hover, the 1 s stat sample) does not replay it */
+.dd.anim { animation: dd-in 140ms var(--lg-ease) backwards; }
+.dd.wait { visibility: hidden; animation: none; }
 body.mock .dd, body.solid .dd { background-color: #F7F8FB; }
 @keyframes dd-in { from { opacity: 0; transform: translateY(-3px); } }
 .r {
@@ -103,4 +114,6 @@ body.mock .dd, body.solid .dd { background-color: #F7F8FB; }
 .row2 .x { text-align: right; color: var(--lg-ink-2); }
 .cores { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; padding: 4px 8px 6px; }
 .core { height: 26px; border-radius: 3px; background: var(--lg-sunk); position: relative; overflow: hidden; }
-.core i { position: absolute; left: 0; right: 0; bottom: 0; background: var(--lg-acc); opacity: .75; }
+/* the fill's height is set through the CSSOM (topbar.js renderStatMenu): the page's CSP
+ * (style-src file:) drops inline style="" attributes, which left every bar empty */
+.core i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--lg-acc); opacity: .75; }

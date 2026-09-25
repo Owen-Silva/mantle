@@ -178,6 +178,122 @@ async function fitChecks(browser, check) {
   await wide.close();
 }
 
+/* ---- 5. dropdowns open whole ----------------------------------------------------------------- */
+/* Owen, 2026-09-25 00:02 and 08:54: pressing CPU / RAM / GPU / NET showed only "a thin grey strip"
+ * under the bar, "its like that for all of them". The shots above ran in a 420 px viewport, which
+ * hid it: the REAL window starts at Windows' 38 DIP floor and grows only to what the page asks for
+ * (lib/features/topbar.js menuState -> place). So these rows start at 38 px and play main: each
+ * time the page asks for a height, the viewport becomes that height (capped at the screen, as main
+ * caps it), then they check what is on screen. */
+function measureDrop() {
+  const ms = window.__mockCalls.filter((c) => c.name === 'topbar.menuState').pop();
+  const se = document.scrollingElement, menus = document.getElementById('menus');
+  return {
+    asked: ms && ms.args.open ? ms.args.height : null, closedAsked: !!(ms && ms.args.open === false), ih: innerHeight,
+    sb: (screen.availTop || 0) + screen.availHeight - screenY,        // the screen's bottom in page px (headless puts screenY at 10)
+    dds: [...menus.children].map((d) => {
+      // layout box (offset*): the 140 ms fade-in moves the painted rect by up to 3 px
+      return { top: d.offsetTop, bottom: d.offsetTop + d.offsetHeight, h: d.offsetHeight, inner: d.scrollHeight, client: d.clientHeight,
+        hidden: getComputedStyle(d).visibility === 'hidden' };
+    }),
+    scroll: [se.scrollTop, se.scrollHeight - se.clientHeight, menus.scrollTop],
+    cores: [...document.querySelectorAll('.core i')].map((i) => Math.round(i.getBoundingClientRect().height * 10) / 10),
+    note: (document.querySelector('.warn') || {}).textContent || '',
+  };
+}
+// Resizes the WINDOW (viewport) and leaves the emulated SCREEN alone, as main's setBounds does:
+// page.setViewportSize would shrink the emulated screen with it (screen.availHeight 38).
+async function windowSizer(page, screenH) {
+  const cdp = await page.context().newCDPSession(page);
+  const set = (h) => cdp.send('Emulation.setDeviceMetricsOverride', { width: 1536, height: h, deviceScaleFactor: 1.25, mobile: false, screenWidth: 1536, screenHeight: screenH });
+  // page.screenshot re-applies Playwright's own viewport (38 px): capture through the same session
+  set.shot = async (file, h) => fs.writeFileSync(file, Buffer.from((await cdp.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: 1536, height: h, scale: 1 } })).data, 'base64'));
+  return set;
+}
+async function dropChecks(browser, check) {
+  const CASES = [['cpu', 'stat=cpu'], ['mem', 'stat=mem'], ['gpu', 'stat=gpu'], ['net', 'stat=net'], ['nogpu', 'stat=gpu&stats=nogpu'],
+    ['file', 'app=npp&open=2'], ['file-recent', 'app=npp&open=2&sub=2'], ['mantle', 'app=npp&open=0'], ['app', 'app=npp&open=1']];
+  for (const screenH of [864, 240]) {
+    const page = await browser.newPage({ viewport: { width: 1536, height: 38 }, screen: { width: 1536, height: screenH }, deviceScaleFactor: 1.25 });
+    const setWin = await windowSizer(page, screenH);
+    for (const [name, q] of CASES) {
+      const tag = `drop ${name} (screen ${screenH})`;
+      await setWin(38);                                                   // the closed bar's window
+      await page.goto(PAGE + '?' + q);
+      await page.waitForFunction(() => document.documentElement.dataset.ready === '1');
+      if (/sub=/.test(q)) await page.waitForFunction(() => window.__topbar.open && window.__topbar.open.stack.length === 2, null, { timeout: 2000 });
+      const first = await page.evaluate(measureDrop);
+      check(`${tag}: at the 38 px window, a dropdown too tall for it waits hidden (no clipped slice is painted)`,
+        first.dds.length > 0 && first.dds.every((d) => d.bottom <= first.ih || d.hidden), JSON.stringify(first.dds));
+      check(`${tag}: the height asked for covers the dropdown's full height`,
+        first.asked >= Math.max(...first.dds.map((d) => d.bottom)), JSON.stringify([first.asked, first.dds]));
+      // play main: grow to what was asked (a submenu can ask again), capped at the screen
+      let m = first;
+      for (let round = 0; round < 3 && m.asked && m.ih < Math.min(m.asked, screenH); round++) {
+        await setWin(Math.min(m.asked, screenH));
+        await page.waitForTimeout(40);
+        m = await page.evaluate(measureDrop);
+      }
+      check(`${tag}: once the window has grown, every dropdown is shown and wholly inside it`,
+        m.dds.every((d) => !d.hidden && d.top >= 28 && d.bottom <= m.ih) && m.asked <= screenH, JSON.stringify([m.ih, m.asked, m.dds]));
+      if (screenH >= 400) check(`${tag}: on a tall screen nothing scrolls inside (the whole menu is shown)`, m.dds.every((d) => d.inner <= d.client + 1), JSON.stringify(m.dds));
+      else check(`${tag}: on a short screen the dropdown ends above the screen's bottom, and scrolls inside exactly when it was cut there`,
+        m.dds.every((d) => d.bottom <= m.sb - 8 && (d.inner > d.client + 1) === (d.bottom >= m.sb - 9)), JSON.stringify([m.sb, m.dds]));
+      check(`${tag}: the page itself never scrolls`, m.scroll.every((v) => v === 0), JSON.stringify(m.scroll));
+      check(`${tag}: no "cut off" note`, !/cut off|cannot be shown/.test(m.note), m.note);
+      if (name === 'cpu') {
+        const want = [22, 61, 9, 14, 37, 5, 71, 18].map((p) => Math.round(26 * p / 10) / 10);
+        check(`${tag}: the per-core bars are drawn at their percentages (no inline style: the CSP drops those)`,
+          JSON.stringify(m.cores) === JSON.stringify(want), JSON.stringify([m.cores, want]));
+      }
+      if (screenH >= 400 && name !== 'nogpu') await setWin.shot(path.join(OUT, `drop-${name}.png`), m.ih);
+      // the 1 s sample re-renders the stat menu in place: the same element, no fade replayed, height unchanged
+      if (/^stat=/.test(q)) {
+        await page.waitForTimeout(200);                                   // the first fade-in is over
+        const re = await page.evaluate(() => { const a = document.querySelector('.dd'); const n = window.__mockCalls.length;
+          window.mantle.emit('topbar.stats', window.__topbar.stats);
+          const b = document.querySelector('.dd');
+          return { same: a === b, anim: b.getAnimations().length, calls: window.__mockCalls.slice(n).filter((c) => c.name === 'topbar.menuState').length }; });
+        check(`${tag}: a new sample updates the open dropdown in place (no re-fade, no new resize)`, re.same && re.anim === 0 && re.calls === 0, JSON.stringify(re));
+      }
+      // Escape closes; main is told, so the window shrinks back to the bar
+      const shut = await page.evaluate(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        if (window.__topbar.open) document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        return { open: !!window.__topbar.open, dds: document.querySelectorAll('#menus .dd').length }; });
+      const after = await page.evaluate(measureDrop);
+      check(`${tag}: Escape closes it and main is told (the window shrinks back)`, !shut.open && shut.dds === 0 && after.closedAsked, JSON.stringify(shut));
+    }
+    await page.close();
+  }
+  // a long menu on a short screen: arrow keys past the fold keep the selected row in view
+  const p2 = await browser.newPage({ viewport: { width: 1536, height: 38 }, screen: { width: 1536, height: 240 }, deviceScaleFactor: 1.25 });
+  const setWin2 = await windowSizer(p2, 240);
+  await p2.goto(PAGE + '?app=npp&open=2');
+  await p2.waitForFunction(() => document.documentElement.dataset.ready === '1');
+  const ask = await p2.evaluate(measureDrop);
+  await setWin2(Math.min(ask.asked, 240));
+  await p2.waitForTimeout(40);
+  const kv = await p2.evaluate(() => {
+    const key = (k) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+    key('ArrowUp');                                                    // from nothing selected: the LAST row
+    const dd = document.querySelector('.dd'), row = dd.querySelector('.r.sel');
+    const r = row.getBoundingClientRect(), d = dd.getBoundingClientRect();
+    return { inView: r.top >= d.top && r.bottom <= d.bottom + 0.5, scrolled: dd.scrollTop, pageScroll: document.getElementById('menus').scrollTop + document.scrollingElement.scrollTop };
+  });
+  check('drop: in a dropdown that scrolls, the selected row stays in view and only the dropdown scrolls', kv.inView && kv.scrolled > 0 && kv.pageScroll === 0, JSON.stringify(kv));
+  await p2.close();
+  // main never grows the window: after 1.5 s the menu shows as it is, and the bar says why (no silent failure)
+  const p3 = await browser.newPage({ viewport: { width: 1536, height: 38 }, screen: { width: 1536, height: 864 }, deviceScaleFactor: 1.25 });
+  await p3.goto(PAGE + '?app=npp&stat=cpu');
+  await p3.waitForFunction(() => document.documentElement.dataset.ready === '1');
+  const w0 = await p3.evaluate(measureDrop);
+  await p3.waitForTimeout(1700);
+  const gu = await p3.evaluate(measureDrop);
+  check('drop: a window that never grows: hidden at first, then shown after 1.5 s with a "cut off" note on the bar',
+    w0.dds.every((d) => d.hidden) && gu.dds.every((d) => !d.hidden) && /cut off: it needs \d+ px/.test(gu.note), JSON.stringify([w0.dds, gu.dds, gu.note]));
+  await p3.close();
+}
+
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   const browser = await chromium.launch({ executablePath: CHROME, headless: true });
@@ -247,6 +363,7 @@ async function fitChecks(browser, check) {
     await page.screenshot({ path: path.join(OUT, '1536-18-failed-command.png') });
     await page.close();
     await fitChecks(browser, check);
+    await dropChecks(browser, check);
   } finally {
     await browser.close();
   }
