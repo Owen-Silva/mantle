@@ -317,6 +317,23 @@ module.exports = {
     r = await m(W({ x: 1654, y: 1004 }), 1000, [1020], 1100);
     check('match: a flyout-sized window bottom-RIGHT (a toast/tray flyout) is never touched', r.verdict === 'ignore', JSON.stringify(r));
 
+    // ---- the give-up rule (PURE, op 'judge'): no cap on answers; only answers that stop working
+    const judge = async (a) => ((await s.send('osd.bright', Object.assign({ op: 'judge' }, a))).result || {});
+    const steps = [];
+    for (let i = 0; i < 20; i++) steps.push(1000 + i * 100, 1000 + i * 100 + 6);   // live answers took 2.3-6.8 ms
+    r = await judge({ spans: steps, now: 2906, spanMs: 6 });
+    check('judge: 20 put-backs 100 ms apart at 6 ms each keep going (120 ms in all: no per-burst total)', r.giveUp === false && r.inWindowMs <= 18.001, JSON.stringify(r));
+    r = await judge({ spans: [1000, 1031], now: 1031, spanMs: 31 });
+    check('judge: one answer that took 31 ms gives up, with the measurement and the limit', r.giveUp === true && /31 ms/.test(r.reason) && /limit is 30 ms/.test(r.reason), JSON.stringify(r));
+    r = await judge({ spans: [1000, 1029], now: 1029, spanMs: 29 });
+    check('judge: one answer that took 29 ms keeps going', r.giveUp === false, JSON.stringify(r));
+    r = await judge({ openSince: 1000, now: 1035, answers: 9 });
+    check('judge: still on screen after 35 ms and 9 moves = Windows puts it straight back', r.giveUp === true && /straight back/.test(r.reason) && /9 times/.test(r.reason), JSON.stringify(r));
+    r = await judge({ spans: [1000, 1020, 1100, 1120, 1200, 1215], now: 1215, spanMs: 15 });
+    check('judge: 55 ms on screen within 250 ms gives up (faster than Mantle can answer)', r.giveUp === true && /faster than Mantle/.test(r.reason) && /55 ms of the last 250 ms/.test(r.reason), JSON.stringify(r));
+    r = await judge({ spans: [1000, 1020, 1300, 1320, 1600, 1615], now: 1615, spanMs: 15 });
+    check('judge: the same 55 ms spread over 600 ms keeps going', r.giveUp === false && r.inWindowMs === 15, JSON.stringify(r));
+
     // ---- the watch, passive
     const seen = () => s.events.length;
     const waitFor = async (from, pred, ms) => {
@@ -440,20 +457,102 @@ module.exports = {
       await fake.cmd('hide', 'hidden');
     } finally { fake.quit(); }
 
-    // 6. "fight" mode: the window moves itself back every time; re-parked 3x, then SW_HIDE
-    try { fake = await startFake('fight'); } catch (err) { check('the stand-in helper starts (fight)', false, err.message); return; }
+    // 6. a BURST: the stand-in puts itself back on screen 20 times, 100 ms apart (move home + show: what
+    //    explorer did on most steps of a live burst, 2026-09-25). No cap: each is answered, the burst succeeds.
+    try { fake = await startFake('recentre'); } catch (err) { check('the stand-in helper starts (burst)', false, err.message); return; }
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
     try {
+      const home = fake.ready.rect;
       await s.send('osd.bright', { op: 'watch', on: true, targetPid: fake.pid });
-      await new Promise((res) => setTimeout(res, 300));
+      await sleep(300);
       at = seen();
       await s.send('osd.bright', { op: 'inject', level: 20 });
       await fake.cmd('show', 'shown');
-      e = await waitFor(at, (x) => osdEv(x) && (x.flyout === 'hidden' && x.how === 'hidden' || x.flyout === 'failed'), 2500);
-      await new Promise((res) => setTimeout(res, 200));
-      const rc = await fake.cmd('rect', 'rect');
-      check('fight: a window that keeps coming back is hidden instead (SW_HIDE fallback)', e && e.flyout === 'hidden' && e.how === 'hidden' && e.fights >= 3 && rc.visible === false, JSON.stringify({ e, rc }));
-      const st = (await s.send('osd.bright', { op: 'state' })).result || {};
-      check('state counts the sessions', st.hidden >= 10 && st.prepark >= 1 && st.dryRuns === 0, JSON.stringify(st));
+      e = await waitFor(at, (x) => osdEv(x) && x.flyout === 'hidden', 1500);
+      check('burst: its first showing is moved off screen', !!e, JSON.stringify(e));
+      await fake.cmd('burst 20 100', 'burst');
+      const bd = await fake.next('burstdone', 5000);
+      await sleep(150);
+      const done = bd && await fake.cmd('stats', 'stats');
+      let rc = await fake.cmd('rect', 'rect');
+      const failed = await waitFor(at, (x) => osdEv(x) && x.flyout === 'failed', 10);
+      check('burst: 20 put-backs 100 ms apart are ALL moved off again, never given up',
+        done && done.steps === 20 && done.spans === 20 && done.stillOn === false && !failed && rc.x === -24000 + home.x && rc.visible,
+        JSON.stringify({ done, rc, failed }));
+      check('burst: each put-back was off screen within 30 ms (the stand-in\'s own clock)', done && done.maxMs < 30, JSON.stringify(done));
+      if (done) console.log(`  measured: 20 put-backs, on screen per put-back as the stand-in saw it: max ${done.maxMs} ms, ${done.sumMs} ms in all`);
+      let end0 = seen();
+      await fake.cmd('hide', 'hidden');
+      let end = await waitFor(end0, (x) => osdEv(x) && x.phase === 'end', 1500);
+      check('burst: ends hidden; each put-back answered exactly once (20 moves, 21 answers)',
+        end && end.flyout === 'hidden' && end.moves === 20 && end.answers === 21, JSON.stringify(end));
+      check('burst: the log line gives moves, re-shows and the worst on-screen span',
+        end && /moved it back 20x, re-showed 0x, Mantle answered 21x \(worst [\d.]+ ms on screen/.test(end.summary || '') &&
+        typeof end.worstOnScreenMs === 'number' && end.worstOnScreenMs < 30, JSON.stringify(end && end.summary));
+      if (end) console.log(`  measured: as the sidecar saw it: worst ${end.worstOnScreenMs} ms on screen, ${end.onScreenMs} ms in all`);
+
+      // 7. a TIGHT LOOP: the stand-in moves itself straight back from inside the move that parked it
+      await fake.cmd('mode fight', 'mode');
+      at = seen();
+      await s.send('osd.bright', { op: 'inject', level: 30 });
+      const t0 = Date.now();
+      await fake.cmd('show', 'shown');
+      e = await waitFor(at, (x) => osdEv(x) && x.flyout === 'failed', 2000);
+      const tFail = Date.now() - t0;
+      await sleep(200);
+      rc = await fake.cmd('rect', 'rect');
+      const after = s.events.slice(at).filter((x) => osdEv(x) && x.phase === 'change');
+      check('tight loop: gives up, with the measured reason', e && /straight back|faster than Mantle/.test(e.reason || '') && /\d ms/.test(e.reason || ''), JSON.stringify(e));
+      check('tight loop: gives up fast (< 300 ms from the show, IPC included)', e && tFail < 300, `${tFail} ms`);
+      console.log(`  measured: tight loop given up ${tFail} ms after the show: ${e && e.reason}`);
+      check('tight loop: afterwards the stand-in is ON screen where it was (Windows\' own pop-up shows, never none)',
+        rc.x === home.x && rc.y === home.y && rc.visible, JSON.stringify({ rc, home }));
+      check('tight loop: once given up, Mantle never shows its pop-up again in that burst',
+        after.length >= 1 && after[after.length - 1].flyout === 'failed' && !after.slice(after.indexOf(e)).some((x) => x.flyout === 'hidden'),
+        JSON.stringify(after.map((x) => x.flyout)));
+      end0 = seen();
+      await fake.cmd('hide', 'hidden');
+      end = await waitFor(end0, (x) => osdEv(x) && x.phase === 'end', 1500);
+      check('tight loop: the burst ends "failed" and its log line says why', end && end.flyout === 'failed' && /gave up: /.test(end.summary || ''), JSON.stringify(end && end.summary));
+
+      // 8. failed BURSTS in a row: 3 stop the hiding; a burst that ends hidden resets the count
+      const state = async () => ((await s.send('osd.bright', { op: 'state' })).result || {});
+      const oneBurst = async (level, want) => {
+        const a0 = seen();
+        await s.send('osd.bright', { op: 'inject', level });
+        await fake.cmd('show', 'shown');
+        const c = await waitFor(a0, (x) => osdEv(x) && x.phase === 'change' && x.flyout === want, 2000);
+        await sleep(120);
+        await fake.cmd('hide', 'hidden');
+        const en = await waitFor(a0, (x) => osdEv(x) && x.phase === 'end', 1500);
+        return { c, en };
+      };
+      let st = await state();
+      check('streak: one failed burst = 1 in a row, still trying', st.failStreak === 1 && !st.disabled, JSON.stringify(st));
+      await oneBurst(31, 'failed');
+      st = await state();
+      check('streak: two failed bursts = 2 in a row, still trying', st.failStreak === 2 && !st.disabled, JSON.stringify(st));
+      await fake.cmd('mode recentre', 'mode');
+      let b = await oneBurst(32, 'hidden');
+      st = await state();
+      check('streak: a burst that ends hidden resets it to 0', b.en && b.en.flyout === 'hidden' && st.failStreak === 0 && !st.disabled, JSON.stringify({ en: b.en && b.en.summary, st }));
+      await fake.cmd('mode fight', 'mode');
+      await oneBurst(33, 'failed');
+      await oneBurst(34, 'failed');
+      st = await state();
+      check('streak: after the reset, two more failures are 2 in a row, NOT 4 - still trying', st.failStreak === 2 && !st.disabled, JSON.stringify(st));
+      await oneBurst(35, 'failed');
+      st = await state();
+      check('streak: a 3rd failed burst in a row stops the hiding, saying why', st.failStreak === 3 && /3 failed bursts in a row/.test(st.disabled || ''), JSON.stringify(st));
+      await fake.cmd('mode recentre', 'mode');
+      b = await oneBurst(36, 'failed');
+      rc = await fake.cmd('rect', 'rect');
+      check('streak: stopped = the next burst is "failed" at once with that reason, and nothing is moved',
+        b.c && /3 failed bursts in a row/.test(b.c.reason || '') && b.c.answers === 0 && rc.x === home.x, JSON.stringify({ c: b.c, rc }));
+      const w = await s.send('osd.bright', { op: 'watch', on: true, targetPid: fake.pid });
+      check('streak: switching the watch on again tries again', w.ok && !w.result.disabled && w.result.failStreak === 0, JSON.stringify(w.result));
+      st = await state();
+      check('state counts the bursts', st.hidden >= 12 && st.prepark >= 1 && st.failed >= 6 && st.dryRuns === 0, JSON.stringify(st));
     } finally {
       fake.quit();
       await s.send('osd.bright', { op: 'watch', on: false });
@@ -463,7 +562,10 @@ module.exports = {
 
 /** The stand-in: this test's own window of class XamlExplorerHostIslandWindow, invisible (alpha 0),
  *  click-through, never activated, bottom-centre of the primary work area at 213x61 logical px.
- *  modes: keep (placed once), recentre (re-placed before every show), fight (moves itself back). */
+ *  modes: keep (placed once), recentre (re-placed before every show), fight (moves itself straight back
+ *  from inside the move that parked it: a tight loop). `mode <m>` switches mode; `burst <n> <ms>` puts
+ *  itself back on screen (move home + show, what explorer does on a step) n times, every ms, and
+ *  reports its OWN measure of each on-screen span (its move home -> the park reaching its window). */
 const FAKE_CS = String.raw`
 using System; using System.Diagnostics; using System.Globalization; using System.Runtime.InteropServices; using System.Threading;
 static class Fake {
@@ -485,10 +587,13 @@ static class Fake {
   [DllImport("user32.dll")] static extern bool PostThreadMessageW(uint t, uint m, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] static extern bool PeekMessageW(out MSG m, IntPtr h, uint a, uint b, uint r);
   [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] static extern UIntPtr SetTimer(IntPtr h, UIntPtr id, uint ms, IntPtr p);
+  [DllImport("user32.dll")] static extern bool KillTimer(IntPtr h, UIntPtr id);
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr c);
   [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr h);
   [DllImport("user32.dll")] static extern bool SystemParametersInfoW(uint a, uint b, out RECT r, uint c);
   static WndProc keep; static IntPtr win; static string mode; static int hx, hy; static bool armed;
+  static int burstLeft, burstSteps, spanN; static UIntPtr burstTimer; static double onAt, spanMax, spanSum;
   static double Now() { return Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency; }
   static string N(double d) { return d.ToString("F3", CultureInfo.InvariantCulture); }
   static void Out(string s) { Console.Out.WriteLine(s); Console.Out.Flush(); }
@@ -497,6 +602,7 @@ static class Fake {
     if (m == 0x0047 && h == win) {
       var p = (WINDOWPOS)Marshal.PtrToStructure(l, typeof(WINDOWPOS));
       if ((p.flags & 0x0002) == 0 && p.x < -10000) {
+        if (onAt > 0) { double sp = Now() - onAt; onAt = 0; spanN++; spanSum += sp; if (sp > spanMax) spanMax = sp; }
         if (armed) { armed = false; Out("{\"ev\":\"moved\",\"t\":" + N(Now()) + ",\"x\":" + p.x + ",\"y\":" + p.y + "}"); }
         if (mode == "fight") SetWindowPos(win, IntPtr.Zero, hx, hy, 0, 0, 0x0001 | 0x0004 | 0x0010 | 0x4000);
       }
@@ -521,6 +627,10 @@ static class Fake {
       string line;
       while ((line = Console.In.ReadLine()) != null) {
         uint c = line == "show" ? 1u : line == "hide" ? 2u : line == "rect" ? 3u : line == "quit" ? 4u : 0u;
+        string[] w = line.Split(' ');
+        if (line == "stats") { PostThreadMessageW(tid, 0x8007, IntPtr.Zero, IntPtr.Zero); continue; }
+        if (w[0] == "burst" && w.Length == 3) { PostThreadMessageW(tid, 0x8005, new IntPtr(int.Parse(w[1])), new IntPtr(int.Parse(w[2]))); continue; }
+        if (w[0] == "mode" && w.Length == 2) { int k = w[1] == "keep" ? 1 : w[1] == "recentre" ? 2 : w[1] == "fight" ? 3 : 0; if (k > 0) PostThreadMessageW(tid, 0x8006, new IntPtr(k), IntPtr.Zero); continue; }
         if (c != 0) PostThreadMessageW(tid, 0x8000 + c, IntPtr.Zero, IntPtr.Zero);
       }
       PostThreadMessageW(tid, 0x8004, IntPtr.Zero, IntPtr.Zero);
@@ -529,6 +639,32 @@ static class Fake {
     Out("{\"ev\":\"ready\",\"pid\":" + Process.GetCurrentProcess().Id + "}");
     Rect("home");
     while (GetMessageW(out m, IntPtr.Zero, 0, 0) > 0) {
+      if (m.h == IntPtr.Zero && m.m == 0x0113 && burstTimer != UIntPtr.Zero && m.w == (IntPtr)(long)(ulong)burstTimer) {
+        RECT br; GetWindowRect(win, out br);
+        if (onAt == 0 && (br.L < -10000 || !IsWindowVisible(win))) onAt = Now();
+        SetWindowPos(win, IntPtr.Zero, hx, hy, 0, 0, 0x0001 | 0x0004 | 0x0010 | 0x0040);   // back home + SHOWWINDOW
+        burstSteps++;
+        if (--burstLeft <= 0) {
+          KillTimer(IntPtr.Zero, burstTimer); burstTimer = UIntPtr.Zero;
+          Out("{\"ev\":\"burstdone\",\"steps\":" + burstSteps + "}");
+        }
+        continue;
+      }
+      if (m.h == IntPtr.Zero && m.m == 0x8007) {
+        Out("{\"ev\":\"stats\",\"steps\":" + burstSteps + ",\"spans\":" + spanN + ",\"maxMs\":" + N(spanMax) + ",\"sumMs\":" + N(spanSum) + ",\"stillOn\":" + (onAt > 0 ? "true" : "false") + "}");
+        continue;
+      }
+      if (m.h == IntPtr.Zero && m.m == 0x8005) {
+        burstLeft = (int)m.w; burstSteps = 0; spanN = 0; spanMax = 0; spanSum = 0;
+        burstTimer = SetTimer(IntPtr.Zero, UIntPtr.Zero, (uint)(int)m.l, IntPtr.Zero);
+        Out("{\"ev\":\"burst\"}");
+        continue;
+      }
+      if (m.h == IntPtr.Zero && m.m == 0x8006) {
+        int k = (int)m.w; mode = k == 1 ? "keep" : k == 2 ? "recentre" : "fight";
+        Out("{\"ev\":\"mode\",\"mode\":\"" + mode + "\"}");
+        continue;
+      }
       if (m.h == IntPtr.Zero && m.m > 0x8000 && m.m <= 0x8004) {
         uint c = m.m - 0x8000;
         if (c == 1) {

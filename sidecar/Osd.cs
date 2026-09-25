@@ -145,10 +145,22 @@ namespace Mantle {
   ///      it on its own timer and shows it again next time, so with Mantle off it simply works), and
   ///      because a window that stays parked may be shown next time ALREADY off screen ("prepark":
   ///      no flash at all) if explorer does not re-place it - which only a live press can tell.
-  ///   4. Verify: its LOCATIONCHANGE into the parked band, or a read at 40 ms / 250 ms. Explorer moving
-  ///      it back is re-parked up to 3 times, then ShowWindowAsync(SW_HIDE) is the fallback; if that
-  ///      does not stick either the session FAILS: nothing of Mantle's is shown (never two pop-ups),
-  ///      and the reason is pushed. 3 failed sessions in a row = stop trying until the watch restarts.
+  ///   4. Keep it off for the whole burst, with NO fixed cap on answers. Live (2026-09-25, mantle.log):
+  ///      explorer puts the pop-up back on screen on most steps of a burst (7 moves back + 4 re-shows in
+  ///      16 changes) and each answer won within a few ms, yet the old cap (re-park 3x, SW_HIDE, give up
+  ///      at the 4th re-show) threw away bursts that were working: "showed Mantle's, then Windows'".
+  ///      Now every time it is seen ON screen (visible, outside the park band) an on-screen SPAN opens
+  ///      and is answered (SetWindowPos off screen; SW_HIDE only if that is refused); the span closes
+  ///      when it is seen off screen (its LOCATIONCHANGE into the band, our HIDE, or a read at the
+  ///      deadline). Give up the burst only when the answering stops working, measured (Judge, PURE,
+  ///      proved by `op:'judge'`): a span longer than DeadlineMs (30 ms: two 60 Hz frames), or more
+  ///      than BudgetMs (50 ms) on screen within any WindowMs (250 ms) = explorer puts it back faster
+  ///      than Mantle can answer. A SLIDING window, not a per-burst total: at ~5 ms a step a long hold
+  ///      would add up past 50 ms and fail a burst that works. Giving up: nothing of Mantle's is shown
+  ///      (never two pop-ups), a parked window is put back so Windows' own shows, and the measured
+  ///      reason is pushed. 3 failed BURSTS in a row = stop trying until the watch restarts; a burst
+  ///      that ends hidden resets the count. Every burst logs moves, re-shows, answers and the worst
+  ///      on-screen span.
   ///   5. Put back: a parked window that shows WITHOUT a brightness change (the generic host reused for
   ///      something else) is put back at once; `watch off`, `restore`, sidecar exit, and the next
   ///      sidecar start (a crash) put back every parked explorer window of that class.
@@ -231,6 +243,40 @@ namespace Mantle {
       return "ignore";
     }
 
+    /// Answering a burst (see the route, step 4): each answer must get it off screen within DeadlineMs of
+    /// Windows putting it on (checked by a timer that Windows fires 30-47 ms later: 15.6 ms ticks), and it
+    /// may be on screen at most BudgetMs within any WindowMs. Live answers took 2.3-6.8 ms (2026-09-25).
+    public const double DeadlineMs = 30, WindowMs = 250, BudgetMs = 50;
+
+    static string Ms(double v) { return Math.Round(v, 1).ToString(System.Globalization.CultureInfo.InvariantCulture); }
+
+    /// On-screen ms inside (now - window, now]: closed spans [s0, e0, s1, e1, ...] plus an open one
+    /// since `openSince` (0 = none open).
+    public static double OnScreenWithin(IList<double> spans, double openSince, double now, double window) {
+      double from = now - window, sum = 0;
+      for (int i = 0; i + 1 < spans.Count; i += 2) {
+        double a = Math.Max(spans[i], from), b = Math.Min(spans[i + 1], now);
+        if (b > a) sum += b - a;
+      }
+      if (openSince > 0) { double a = Math.Max(openSince, from); if (now > a) sum += now - a; }
+      return sum;
+    }
+
+    /// null = keep answering; otherwise why Mantle gives up this burst, in words with the measurement.
+    /// spanMs: how long the current (or just-closed) on-screen span lasted; answers: Mantle's moves in it;
+    /// inWindowMs: OnScreenWithin(..., WindowMs).
+    public static string Judge(double spanMs, int answers, double inWindowMs) {
+      if (spanMs > DeadlineMs)
+        return answers > 1
+          ? "Windows kept putting its brightness pop-up straight back: Mantle moved it off " + answers + " times and it was on screen " +
+            Ms(spanMs) + " ms (the limit is " + DeadlineMs + " ms)"
+          : "Windows' brightness pop-up was on screen " + Ms(spanMs) + " ms before moving it off took effect (the limit is " + DeadlineMs + " ms)";
+      if (inWindowMs > BudgetMs)
+        return "Windows kept putting its brightness pop-up back faster than Mantle could move it off: on screen " + Ms(inWindowMs) +
+               " ms of the last " + WindowMs + " ms (the limit is " + BudgetMs + " ms)";
+      return null;
+    }
+
     // ================================================================ live state (all under _g)
 
     static readonly object _g = new object();
@@ -244,8 +290,8 @@ namespace Mantle {
     static ManagementEventWatcher _wmi;
     static bool _watching, _exitHooked;
     static string _watchWhy = "not started";
-    static string _disabled;                   // why hiding stopped (3 failed sessions in a row)
-    static int _failStreak;
+    static string _disabled;                   // why hiding stopped (3 failed bursts in a row)
+    static int _failStreak;                    // failed bursts in a row; a burst that ends hidden resets it
     static string _lastError;
 
     static double _lastBright = -1e12;
@@ -254,6 +300,10 @@ namespace Mantle {
     // the session: one showing of Windows' pop-up, from its SHOW to its HIDE
     static IntPtr _s; static string _sState, _sHow, _sWhy; static double _sAt, _sHiddenAt, _sLastChange;
     static uint _sAge; static int _sFights, _sReshows, _sChanges, _sGen, _sEndGen; static bool _sPre, _sExpectHide;
+    // its answers: a SPAN opens when it is seen on screen and closes when it is seen off (NowMs times)
+    static double _sOnSince, _sWorst, _sOnTotal;
+    static int _sAnswers, _sSpanAnswers, _sLocSince, _sSpanGen, _sSpanN;
+    static readonly List<double> _sSpans = new List<double>();   // closed spans [start, end, ...] of the last WindowMs
     static readonly Dictionary<IntPtr, bool> _parked = new Dictionary<IntPtr, bool>();
     static int _nShows, _nHidden, _nDry, _nFailed, _nIgnored, _nPre;
     static string _lastIgnored, _lastSession;
@@ -383,11 +433,14 @@ namespace Mantle {
       bool parked = InBand(r.L, r.T);
       int ox = parked ? r.L - Park : r.L, oy = parked ? r.T - Park : r.T;
       double now = NowMs();
-      if (hwnd == _s && _sState != null && _sState != "failed" && _sState != "dry") {
-        _sReshows++;                                         // shown again inside a session (after our SW_HIDE)
-        if (parked) return;
-        if (_sReshows > 3) { Fail("Windows kept showing its brightness pop-up again after Mantle hid it (" + _sReshows + " times)"); return; }
-        Park1(hwnd, ox, oy);
+      if (hwnd == _s && _sState == "failed") {               // this burst was given up: Windows' own shows
+        if (parked) Unpark(hwnd, "Mantle gave up hiding it for this burst, so Windows' own pop-up shows");
+        return;
+      }
+      if (hwnd == _s && _sState != null && _sState != "dry") {
+        _sReshows++;                                         // shown again inside a burst (after an SW_HIDE)
+        if (parked) { OffScreenNow(true); return; }          // shown where Mantle left it: already off screen
+        OnScreenNow(hwnd, ox, oy, true);
         return;
       }
       string looks = LooksLive(hwnd, ox, oy, w, h);
@@ -417,7 +470,11 @@ namespace Mantle {
     static void OnHide(IntPtr hwnd) {
       if (hwnd == _pend) { _pend = IntPtr.Zero; _pendGen++; }
       if (hwnd != _s) return;
-      if (_sExpectHide) { _sExpectHide = false; return; }   // our own SW_HIDE
+      if (_sExpectHide) {                                    // our own SW_HIDE (only when a move was refused)
+        _sExpectHide = false;
+        if (_sState == "hiding" || _sState == "hidden") OffScreenNow(true);
+        return;
+      }
       EndSession("Windows hid it");
     }
 
@@ -445,8 +502,15 @@ namespace Mantle {
       if (_s != IntPtr.Zero && _s != hwnd) EndSession("another pop-up window took over");
       _s = hwnd; _sAt = showAt; _sAge = age; _sWhy = why; _sHow = null; _sHiddenAt = 0; _sPre = false;
       _sFights = 0; _sReshows = 0; _sChanges = 1; _sLastChange = NowMs(); _sExpectHide = false; _sGen++;
+      _sOnSince = 0; _sWorst = 0; _sOnTotal = 0; _sAnswers = 0; _sSpanAnswers = 0; _sLocSince = 0; _sSpanN = 0;
+      _sSpans.Clear(); _sSpanGen++;
       ArmEnd();
-      if (_disabled != null) { _sState = "failed"; _sWhy = _disabled; _nFailed++; EmitChange(); return; }
+      if (_disabled != null) {
+        _sState = "failed"; _sWhy = _disabled; _nFailed++;
+        if (parked) Unpark(hwnd, "Mantle has stopped hiding it (" + _disabled + ")");   // never NO pop-up
+        EmitChange();
+        return;
+      }
       if (IsDry(hwnd)) {
         _sState = "dry"; _nDry++;
         Program.EmitLog("info", "osd: DRY RUN (--passive): Windows' brightness pop-up would have been moved off screen (" + why + "); nothing was moved");
@@ -458,20 +522,24 @@ namespace Mantle {
         Confirm();
         return;
       }
-      Park1(hwnd, ox, oy);
+      _sState = "hiding";
+      OnScreenNow(hwnd, ox, oy, false);                      // its first span starts now: before, it was not known to be this pop-up
     }
 
-    /// Move it off screen and check it went. Keeps the session "hiding" until verified.
-    static void Park1(IntPtr hwnd, int ox, int oy) {
-      _sState = "hiding"; _sHow = "parked";
-      if (!N.SetWindowPos(hwnd, IntPtr.Zero, Park + ox, Park + oy, 0, 0, SWP_MOVE_ONLY)) {
-        HideFallback("SetWindowPos was refused (Win32 error " + Marshal.GetLastWin32Error() + ")");
+    /// One answer: move it off screen (ASYNC: explorer's thread applies it, ours never waits). If Windows
+    /// refuses the move, hide it instead; explorer shows it again on its next step (a re-show, answered
+    /// the same way). Verified by OffScreenNow, never assumed.
+    static void Answer(IntPtr hwnd, int ox, int oy) {
+      _sState = "hiding"; _sAnswers++; _sSpanAnswers++; _sLocSince = 0;
+      if (N.SetWindowPos(hwnd, IntPtr.Zero, Park + ox, Park + oy, 0, 0, SWP_MOVE_ONLY)) {
+        _sHow = "parked"; _parked[hwnd] = true;
         return;
       }
-      _parked[hwnd] = true;
-      int gen = _sGen;
-      After(40, delegate { Verify(gen, false); });
-      After(250, delegate { Verify(gen, true); });
+      _lastError = "moving Windows' brightness pop-up off screen was refused (SetWindowPos, Win32 error " +
+                   Marshal.GetLastWin32Error() + "), so it was hidden instead";
+      if (_sHow != "hidden") Program.EmitLog("warn", "osd: " + _lastError);   // once per burst, not once per step
+      _sHow = "hidden"; _sExpectHide = true;
+      N.ShowWindowAsync(hwnd, 0);                            // SW_HIDE
     }
 
     static bool OffScreen(IntPtr h) {
@@ -480,50 +548,90 @@ namespace Mantle {
       return N.GetWindowRect(h, out r) && InBand(r.L, r.T);
     }
 
-    static void Verify(int gen, bool last) {
-      lock (_g) {
-        if (gen != _sGen || _sState != "hiding" || _sHow != "parked") return;
-        if (OffScreen(_s)) { Confirm(); return; }
-        if (last) HideFallback("it was still on screen 250 ms after it was moved");
+    /// Seen ON screen inside a burst (its first showing, a move back, a re-show). Opens a span and answers
+    /// it; inside an open span it answers again only once our last move has landed and been undone (2+
+    /// LOCATIONCHANGEs since it: its own plus Windows' - not one per event, which would multiply) or on a
+    /// re-show. Then judges the burst. Returns whether it answered (= Windows put it back).
+    static bool OnScreenNow(IntPtr hwnd, int ox, int oy, bool reshow) {
+      double now = NowMs();
+      bool open = _sOnSince > 0, answer = !open || reshow || _sLocSince >= 2;
+      // judged BEFORE answering, so giving up never leaves a move of ours on its way
+      string why = Judge(open ? now - _sOnSince : 0, _sSpanAnswers, OnScreenWithin(_sSpans, _sOnSince, now, WindowMs));
+      if (why != null) { Fail(why); return answer; }
+      if (!open) {
+        _sOnSince = now; _sSpanAnswers = 0;
+        int sg = ++_sSpanGen;
+        After((int)DeadlineMs, delegate { lock (_g) { Deadline(sg); } });
       }
+      if (answer) Answer(hwnd, ox, oy);
+      return answer;
     }
 
-    static void HideFallback(string why) {
-      _sState = "hiding"; _sHow = "hidden"; _sExpectHide = true;
-      N.ShowWindowAsync(_s, 0);                              // SW_HIDE
-      int gen = _sGen;
-      After(150, delegate {
-        lock (_g) {
-          if (gen != _sGen || _sState != "hiding") return;
-          if (!N.IsWindowVisible(_s)) Confirm();
-          else Fail("Windows' brightness pop-up stayed on screen: moving it off did not stick (" + why + ") and hiding it did not either");
-        }
-      });
+    /// Closes the open span (if any) at `now`; returns its length (0 = none was open).
+    static double CloseSpan(double now) {
+      if (_sOnSince == 0) return 0;
+      double span = now - _sOnSince;
+      _sSpans.Add(_sOnSince); _sSpans.Add(now);
+      while (_sSpans.Count >= 2 && _sSpans[1] <= now - WindowMs) _sSpans.RemoveRange(0, 2);
+      if (span > _sWorst) _sWorst = span;
+      _sOnTotal += span; _sSpanN++;
+      _sOnSince = 0; _sSpanGen++;
+      return span;
+    }
+
+    /// Seen OFF screen (parked or hidden). byEvent: its own event says so, so the span's length is exact;
+    /// false = a read at the deadline (it went off at some unknown moment before), judged by the budget only.
+    static void OffScreenNow(bool byEvent) {
+      if (_sState == "failed" || _sState == "dry") return;
+      double now = NowMs();
+      if (_sOnSince > 0) {
+        double span = CloseSpan(now);
+        string why = Judge(byEvent ? span : 0, _sSpanAnswers, OnScreenWithin(_sSpans, 0, now, WindowMs));
+        if (why != null) { Fail(why); return; }
+      }
+      if (_sState == "hiding") Confirm();
+    }
+
+    /// DeadlineMs after a span opened: if it is still open, it is read once more; still on screen = give up.
+    static void Deadline(int sg) {
+      if (sg != _sSpanGen || _sOnSince == 0 || _s == IntPtr.Zero || (_sState != "hiding" && _sState != "hidden")) return;
+      if (OffScreen(_s)) { OffScreenNow(false); return; }
+      double now = NowMs(), span = now - _sOnSince;
+      string why = Judge(span, _sSpanAnswers, OnScreenWithin(_sSpans, _sOnSince, now, WindowMs));
+      Fail(why ?? ("Windows' brightness pop-up was still on screen " + Ms(span) + " ms after it appeared (the limit is " + DeadlineMs + " ms)"));
     }
 
     static void OnMoved(IntPtr hwnd) {
+      if (_sState == "failed") {                             // a move of ours landed after giving up: put it back
+        N.RECT fr;
+        if (N.GetWindowRect(hwnd, out fr) && InBand(fr.L, fr.T))
+          Unpark(hwnd, "a move Mantle made before giving up landed late; Windows' own pop-up shows this burst");
+        return;
+      }
       if (_sState != "hiding" && _sState != "hidden") return;
+      _sLocSince++;
       N.RECT r;
       if (!N.GetWindowRect(hwnd, out r)) return;
-      if (InBand(r.L, r.T)) { if (_sState == "hiding" && _sHow == "parked") Confirm(); return; }
-      if (!N.IsWindowVisible(hwnd)) return;
-      _sFights++;                                            // Windows put it back on screen
-      if (_sFights > 3) { HideFallback("Windows moved it back on screen " + _sFights + " times"); return; }
-      Park1(hwnd, r.L, r.T);
+      if (InBand(r.L, r.T) || !N.IsWindowVisible(hwnd)) { OffScreenNow(true); return; }
+      if (OnScreenNow(hwnd, r.L, r.T, false)) _sFights++;   // Windows put it back on screen
     }
 
     static void Confirm() {
       _sState = "hidden";
       if (_sHiddenAt == 0) { _sHiddenAt = NowMs(); _nHidden++; }
-      _failStreak = 0;
       EmitChange();
     }
 
+    /// Gives up THIS burst: Mantle's pop-up comes down (osd.js, on the push), and a parked window is put
+    /// back so Windows' own pop-up shows the level instead - never two pop-ups, never none.
     static void Fail(string reason) {
+      if (_sState == "failed") return;
+      CloseSpan(NowMs());
       _sState = "failed"; _sWhy = reason; _nFailed++; _failStreak++;
       if (_failStreak >= 3)
-        _disabled = "Mantle stopped hiding Windows' brightness pop-up after 3 failed tries in a row (last: " + reason +
+        _disabled = "Mantle stopped hiding Windows' brightness pop-up after 3 failed bursts in a row (last: " + reason +
                     "); switching the feature off and on tries again";
+      if (_s != IntPtr.Zero) Unpark(_s, "Mantle gave up hiding it for this burst, so Windows' own pop-up shows");
       EmitChange();
     }
 
@@ -536,7 +644,7 @@ namespace Mantle {
     static void EmitChange() {
       Features.Event("osd", Json.Obj("kind", "brightness", "phase", "change", "level", _level >= 0 ? (object)_level : null,
         "flyout", _sState ?? "none", "how", _sHow, "hiddenAfterMs", HiddenAfter(), "prepark", _sPre, "fights", _sFights,
-        "dry", _sState == "dry", "reason", _sState == "failed" ? _sWhy : null));
+        "reshows", _sReshows, "answers", _sAnswers, "dry", _sState == "dry", "reason", _sState == "failed" ? _sWhy : null));
     }
 
     static void ArmEnd() {
@@ -546,14 +654,21 @@ namespace Mantle {
 
     static void EndSession(string why) {
       if (_s == IntPtr.Zero) return;
+      CloseSpan(NowMs());
+      if (_sState == "hidden") _failStreak = 0;             // a burst that ended hidden: the failures in a row start over
       object after = HiddenAfter();
       _lastSession = (_sState ?? "none") + (_sHow != null ? " (" + _sHow + ")" : "") +
                      (after != null ? ", off screen " + after + " ms after Windows showed it" : "") +
-                     ", " + _sChanges + " change(s), explorer moved it back " + _sFights + "x, re-showed " + _sReshows + "x; ended: " + why;
+                     ", " + _sChanges + " change(s), explorer moved it back " + _sFights + "x, re-showed " + _sReshows + "x" +
+                     (_sAnswers > 0 ? ", Mantle answered " + _sAnswers + "x (worst " + Ms(_sWorst) + " ms on screen, " +
+                                      Ms(_sOnTotal) + " ms in all)" : "") +
+                     (_sState == "failed" && _sWhy != null ? "; gave up: " + _sWhy : "") + "; ended: " + why;
       Features.Event("osd", Json.Obj("kind", "brightness", "phase", "end", "flyout", _sState, "how", _sHow,
-        "hiddenAfterMs", after, "prepark", _sPre, "fights", _sFights, "reshows", _sReshows, "changes", _sChanges,
+        "hiddenAfterMs", after, "prepark", _sPre, "fights", _sFights, "moves", _sFights, "reshows", _sReshows,
+        "answers", _sAnswers, "worstOnScreenMs", Math.Round(_sWorst, 2), "onScreenMs", Math.Round(_sOnTotal, 2),
+        "spans", _sSpanN, "changes", _sChanges, "failStreak", _failStreak,
         "dry", _sState == "dry", "why", why, "reason", _sState == "failed" ? _sWhy : null, "summary", _lastSession));
-      _s = IntPtr.Zero; _sState = null; _sGen++; _sExpectHide = false;
+      _s = IntPtr.Zero; _sState = null; _sGen++; _sSpanGen++; _sExpectHide = false;
     }
 
     /// Put one parked window back where Windows had it (the park encodes it). False when dry or not parked.
@@ -674,7 +789,8 @@ namespace Mantle {
           "level", _level >= 0 ? (object)_level : null, "session", _s == IntPtr.Zero ? null : _sState,
           "parked", _parked.Count, "shows", _nShows, "hidden", _nHidden, "prepark", _nPre, "dryRuns", _nDry,
           "failed", _nFailed, "ignored", _nIgnored, "lastIgnored", _lastIgnored, "lastSession", _lastSession,
-          "lastError", _lastError);
+          "lastError", _lastError, "failStreak", _failStreak,
+          "limits", Json.Obj("deadlineMs", DeadlineMs, "windowMs", WindowMs, "budgetMs", BudgetMs));
       }
     }
 
@@ -702,6 +818,18 @@ namespace Mantle {
         return null;
       }
       if (op == "state") { result = State(); return null; }
+      if (op == "judge") {                                  // PURE: the give-up rule on made-up spans (ms)
+        var spans = new List<double>();
+        object so;
+        var sl = Json.TryGet(req, "spans", out so) ? so as List<object> : null;
+        if (sl != null) foreach (object v in sl) if (v is double) spans.Add((double)v);
+        double jnow = Num(req, "now", 0), open = Num(req, "openSince", 0);
+        double inWin = OnScreenWithin(spans, open, jnow, WindowMs);
+        string jwhy = Judge(open > 0 ? jnow - open : Num(req, "spanMs", 0), Json.GetInt(req, "answers", 1), inWin);
+        result = Json.Obj("ok", true, "giveUp", jwhy != null, "reason", jwhy, "inWindowMs", Math.Round(inWin, 3),
+                          "deadlineMs", DeadlineMs, "windowMs", WindowMs, "budgetMs", BudgetMs);
+        return null;
+      }
       if (op == "restore") {
         int found, n;
         lock (_g) { n = RestoreAll("asked to put it back", out found); }
@@ -748,7 +876,7 @@ namespace Mantle {
         result = Json.Obj("ok", true, "verdict", verdict, "reason", why, "flyout", flyout, "level", lv);
         return null;
       }
-      return "osd.bright needs op 'watch', 'state', 'restore', 'match', 'inject' or 'simulate' (got '" + op + "')";
+      return "osd.bright needs op 'watch', 'state', 'restore', 'match', 'judge', 'inject' or 'simulate' (got '" + op + "')";
     }
   }
 }
