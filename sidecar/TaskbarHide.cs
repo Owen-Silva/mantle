@@ -190,20 +190,37 @@ namespace Mantle {
     /// lookup then sees ONLY windows of that class - a stand-in the test owns - so
     /// the live path (region, guard, kill, stale clear) runs end to end without the
     /// real taskbar ever being a candidate. A Shell_* name is refused outright
-    /// (nothing is found), never "helpfully" widened back to the real classes.
-    static string[] ClassesNow() {
+    /// (nothing is found), never "helpfully" widened back to the real classes, and
+    /// so is "#<n>" (FindWindowEx reads that as a class ATOM, which can name any
+    /// registered class, the real taskbar's included). Every hit is then checked by
+    /// its OWN class name, so only a window of exactly that class is ever returned.
+    /// The holder marker is scoped to the class too (HolderPrefixNow).
+    static string TestClass() {
       string t = Environment.GetEnvironmentVariable("MANTLE_TBHIDE_TEST_CLASS");
-      if (string.IsNullOrEmpty(t)) return Classes;
-      if (t.StartsWith("Shell_", StringComparison.OrdinalIgnoreCase)) return new string[0];
+      return string.IsNullOrEmpty(t) ? null : t;
+    }
+
+    static string[] ClassesNow() {
+      string t = TestClass();
+      if (t == null) return Classes;
+      if (t.StartsWith("Shell_", StringComparison.OrdinalIgnoreCase) || t.StartsWith("#", StringComparison.Ordinal)) return new string[0];
       return new string[] { t };
     }
 
     public static List<IntPtr> TrayWindows() {
       var list = new List<IntPtr>();
+      string test = TestClass();
       foreach (string c in ClassesNow()) {
         IntPtr h = IntPtr.Zero;
         int guard = 0;
-        while ((h = Win32.FindWindowExW(IntPtr.Zero, h, c, null)) != IntPtr.Zero && guard++ < 16) list.Add(h);
+        while ((h = Win32.FindWindowExW(IntPtr.Zero, h, c, null)) != IntPtr.Zero && guard++ < 16) {
+          if (test != null) {
+            string real = Win32.GetClassName(h) ?? "";
+            if (!string.Equals(real, test, StringComparison.OrdinalIgnoreCase) ||
+                real.StartsWith("Shell_", StringComparison.OrdinalIgnoreCase)) continue;
+          }
+          list.Add(h);
+        }
       }
       return list;
     }
@@ -262,7 +279,7 @@ namespace Mantle {
     static Win32.WinEventProc _proc;   // static: the GC must never collect a live hook proc
     static IntPtr _hook = IntPtr.Zero;
     static int _hookPid;
-    static EventWaitHandle _holder;    // "a live Mantle holds the taskbar region": Local\Mantle.TaskbarHide.Holder.<pid>
+    static EventWaitHandle _holder;    // "a live Mantle holds the taskbar region": HolderPrefixNow() + <pid>
     static Process _guard;
     static string _guardState = "not started";
 
@@ -275,6 +292,22 @@ namespace Mantle {
     const string GuardPrefix = "Local\\Mantle.TaskbarGuard.";
     const int BackstopMs = 1000;
     const uint AnswerMs = 500;
+
+    /// The holder marker's name. Live (no test class): Local\Mantle.TaskbarHide.Holder.<pid>,
+    /// exactly as ever. Under MANTLE_TBHIDE_TEST_CLASS it is scoped to that class - the
+    /// only windows such a process can touch - as ...Holder.Test.<class>.<pid>, so a test
+    /// sidecar or guard never takes the live Mantle's hold on the REAL taskbar for a hold
+    /// on its stand-in (and leaves the stand-in alone), and the live Mantle never takes a
+    /// test's hold on a stand-in for a hold on the real taskbar. The live name is digits
+    /// straight after "Holder.", so the two can never collide. The guard marker is NOT
+    /// scoped: "pid N is a guard" is true for everyone (EdgeClip counts on it).
+    static string HolderPrefixNow() {
+      string t = TestClass();
+      if (t == null) return HolderPrefix;
+      t = t.Replace('\\', '_');   // the one character a kernel object name cannot hold
+      if (t.Length > 128) t = t.Substring(0, 128);
+      return HolderPrefix + "Test." + t + ".";
+    }
 
     /// True when process `pid` is a taskbar guard (same exe name as a sidecar, so
     /// every "is another sidecar running?" check must ask this first).
@@ -290,12 +323,13 @@ namespace Mantle {
     /// Another live, non-guard sidecar that is holding the region right now.
     public static int OtherHolder(int exceptPid) {
       int me = Program.OwnPid > 0 ? Program.OwnPid : Process.GetCurrentProcess().Id;
+      string prefix = HolderPrefixNow();
       try {
         foreach (var p in Process.GetProcessesByName("Mantle.Sidecar")) {
           using (p) {
             if (p.Id == me || p.Id == exceptPid) continue;
             EventWaitHandle h;
-            if (EventWaitHandle.TryOpenExisting(HolderPrefix + p.Id.ToString(CultureInfo.InvariantCulture), out h)) {
+            if (EventWaitHandle.TryOpenExisting(prefix + p.Id.ToString(CultureInfo.InvariantCulture), out h)) {
               h.Dispose();
               return p.Id;
             }
@@ -328,7 +362,7 @@ namespace Mantle {
       try {
         if (_holder == null)
           _holder = new EventWaitHandle(false, EventResetMode.ManualReset,
-                                        HolderPrefix + Program.OwnPid.ToString(CultureInfo.InvariantCulture));
+                                        HolderPrefixNow() + Program.OwnPid.ToString(CultureInfo.InvariantCulture));
       } catch (Exception ex) {
         Program.EmitLog("warn", "tbhide: the holder marker could not be created (" + ex.Message +
                                 "), so a second Mantle cannot tell this one is holding the taskbar region");

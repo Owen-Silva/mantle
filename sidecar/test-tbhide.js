@@ -16,6 +16,10 @@
  * stand-in; if it lists anything else the run stops there. These sidecars are non-passive (the
  * live path is the point), which beside a live Mantle is safe: their only other startup action,
  * the stale cursor-clip check, stands down while another sidecar runs.
+ *
+ * The same class also scopes the "a live Mantle holds the region" marker, so these sidecars and
+ * their guards never defer to a live Mantle's hold on the REAL taskbar (the guard/stale checks
+ * below would then prove nothing), and the live Mantle never defers to theirs.
  */
 const { spawn, execFileSync } = require('child_process');
 const path = require('path');
