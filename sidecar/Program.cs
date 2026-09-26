@@ -72,6 +72,7 @@ namespace Mantle {
     protected override void SetVisibleCore(bool value) { base.SetVisibleCore(false); }
 
     protected override void WndProc(ref Message m) {
+      if (Program.ParkWanted) Program.ParkLoopIfAsked();   // exiting: see Program.ParkLoopForExit
       if (m.Msg == WM_HOTKEY_TAP) {
         Program.Emit(Json.Obj("ev", "hotkey", "name", "win"));
         return;
@@ -120,6 +121,7 @@ namespace Mantle {
     const string PassiveRefusal = "refused: sidecar is passive (test mode)";
 
     static MsgForm _loop;
+    static Thread _loopThread;          // the thread that runs Application.Run and owns every loop-side hook
     static StreamWriter _out;
     static readonly object _writeLock = new object();
     static int _shuttingDown;
@@ -171,6 +173,7 @@ namespace Mantle {
       };
       Win32.SetConsoleCtrlHandler(_ctrlHandler, true);
 
+      _loopThread = Thread.CurrentThread;
       _loop = new MsgForm();
       LoopHandle = _loop.Handle;        // forces HWND creation; BeginInvoke needs it
 
@@ -1432,13 +1435,126 @@ namespace Mantle {
       _suppressEvents = true;
       ShellState.Quiet = true;
       ArmHardExit(code, HardExitMs);
+      long shutdownStarted = Stopwatch.GetTimestamp();
 
       bool done;
       string detail = SafetyRestore(out done);
 
+      // THE LOOP THREAD MUST NOT PUMP WHILE THE RUNTIME SHUTS DOWN (0xC000041D,
+      // STATUS_FATAL_USER_CALLBACK_EXCEPTION, on ~4% of stdin-EOF exits and on
+      // most of them under a burst of window events; measured 2026-09-25). Its
+      // WinEvent hooks are delivered as kernel callbacks while it sits in
+      // GetMessage, and they cannot be removed from here: UnhookWinEvent only
+      // works on the thread that installed them. So Environment.Exit ran with
+      // the hooks still live, the loop thread was called back into a runtime
+      // that was being torn down, and the process died 100-300 ms later with
+      // that code instead of 0. Now, AFTER every restore step (their order and
+      // budgets are untouched): the loop thread takes its own hooks off and
+      // parks in a wait that pumps nothing, and only then does the runtime go.
+      // The brightness pop-up watch has its own pumping hook thread with
+      // system-wide hooks - the same hazard - so it is ended first.
+      try {
+        string osd = OsdBright.EndHookThreadForExit(OsdHookEndMs);
+        if (osd != null) detail += "; " + osd;
+      } catch (Exception ex) { detail += "; brightness pop-up watch: could not be ended (" + ex.Message + ")"; }
+      if (_loopThread != null && Thread.CurrentThread == _loopThread) {
+        // `quit` runs on the ui lane, i.e. HERE. SafetyRestore's unhooks ran on
+        // the right thread; hand the exit to a fresh thread and park this one.
+        string ownDetail = detail + "; loop thread: hooks off, parked";
+        Thread exitThread = null;
+        try {
+          exitThread = new Thread(delegate () { FinishExit(code, reason, done, ownDetail); });
+          exitThread.IsBackground = true;
+          exitThread.Name = "mantle-exit";
+          exitThread.Start();
+        } catch (Exception) { exitThread = null; }
+        if (exitThread != null) ParkForever();
+        FinishExit(code, reason, done, detail + "; loop thread: could not hand the exit to another thread, exiting from the loop");
+      }
+      detail += "; " + ParkLoopForExit(LoopParkBudgetMs(shutdownStarted));
+      FinishExit(code, reason, done, detail);
+    }
+
+    /// The last words and the exit itself. Never returns.
+    static void FinishExit(int code, string reason, bool done, string detail) {
       WriteLine(Json.Obj("ev", "log", "level", "warn", "message", "sidecar shutting down: " + reason), 250);
       WriteLine(Json.Obj("ev", "restore", "done", done, "detail", detail), 250);
       Environment.Exit(code);
+    }
+
+    /// How long the exit waits for the loop thread to park. Idle, it parks in
+    /// well under 1 ms; busy (a window-list rebuild or a ui-lane command, e.g.
+    /// the first icon-heavy list right after start) it parks when that call
+    /// returns - tens of ms, more on a loaded box. Exiting before it parks
+    /// brings the crash back, so the wait is as long as the hard exit allows:
+    /// up to 1 s, minus what the restore already spent, keeping 600 ms for the
+    /// two last lines (250 ms lock wait each) and the runtime's own exit. Never
+    /// under 250 ms, and the hard exit bounds the whole thing regardless.
+    static int LoopParkBudgetMs(long shutdownStarted) {
+      long spent = (Stopwatch.GetTimestamp() - shutdownStarted) * 1000 / Stopwatch.Frequency;
+      long left = HardExitMs - spent - 600;
+      return (int)Math.Max(250, Math.Min(1000, left));
+    }
+    const int OsdHookEndMs = 200;       // its GetMessage loop answers WM_QUIT in well under 1 ms
+
+    /// From any thread but the loop: have the loop thread remove its own
+    /// window-watch hooks (only it can) and then block for good in a kernel
+    /// wait that dispatches nothing - no WinEvent callback, no sent message, no
+    /// timer - so nothing can call into managed code on it again. Returns the
+    /// words for the `restore` detail.
+    static string ParkLoopForExit(int ms) {
+      MsgForm loop = _loop;
+      if (loop == null || !loop.IsHandleCreated) return "loop thread: no loop window, nothing to park";
+      Interlocked.Exchange(ref _park, ParkAsked);
+      try {
+        loop.BeginInvoke(new Action(ParkLoopIfAsked));
+      } catch (Exception ex) {
+        Interlocked.Exchange(ref _park, ParkCancelled);
+        return "loop thread: could not be reached (" + ex.Message + "), exiting anyway";
+      }
+      if (!_loopParked.WaitOne(ms)) {
+        // Too late is worse than never: a loop that parked in the MIDDLE of
+        // Environment.Exit could stall it with no watchdog able to run. So the
+        // request is withdrawn - unless the loop claimed it this very instant.
+        if (Interlocked.CompareExchange(ref _park, ParkCancelled, ParkAsked) == ParkAsked)
+          return "loop thread: still busy after " + ms + " ms and not parked, exiting anyway";
+        _loopParked.WaitOne(ms);
+      }
+      return _loopHooksOff ? "loop thread: hooks off, parked"
+                           : "loop thread: parked (a window hook would not come off, but a parked thread is never called back)";
+    }
+
+    const int ParkNone = 0, ParkAsked = 1, ParkClaimed = 2, ParkCancelled = 3;
+    static int _park;
+    static volatile bool _loopHooksOff;
+    static readonly ManualResetEvent _loopParked = new ManualResetEvent(false);
+
+    /// True while an exit is waiting for the loop thread to park. One volatile
+    /// read: hook procs check it on every call.
+    public static bool ParkWanted { get { return Volatile.Read(ref _park) == ParkAsked; } }
+
+    /// On the loop thread, from every way in: the posted request above, the
+    /// window watcher's WinEvent callback and timer, and the loop window's
+    /// WndProc. The callbacks matter: under a burst of window events the loop
+    /// thread spends its time being called back and the posted request can
+    /// wait behind them for longer than the exit will (measured 2026-09-25:
+    /// every crash left after the first version of this fix said "still busy").
+    /// Unhooks (right thread, so it works), says so, and never returns.
+    public static void ParkLoopIfAsked() {
+      if (_loopThread == null || Thread.CurrentThread != _loopThread) return;
+      if (Interlocked.CompareExchange(ref _park, ParkClaimed, ParkAsked) != ParkAsked) return;
+      try { _loopHooksOff = WindowList.Stop(); } catch (Exception) { }
+      _loopParked.Set();
+      ParkForever();
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "Sleep")] static extern void KernelSleep(uint ms);
+
+    /// Blocks this thread until the process ends. kernel32 Sleep on purpose:
+    /// every CLR wait on an STA thread pumps messages, which is exactly what
+    /// must not happen here.
+    static void ParkForever() {
+      for (;;) KernelSleep(0xFFFFFFFF);
     }
 
     /// How long the whole shutdown gets before the process is shot in the head.
@@ -1475,6 +1591,8 @@ namespace Mantle {
       done = true;
 
       // First, so nothing keeps feeding events into a pipe nobody is reading.
+      // Off the loop thread this stops the timer but cannot unhook; the loop
+      // thread does that itself when RequestShutdown parks it.
       try { WindowList.Stop(); }
       catch (Exception) { detail.Add("window watcher: would not stop; it dies with the process"); }
 

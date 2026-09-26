@@ -91,7 +91,11 @@ namespace Mantle {
     public static void Stop() {
       try { if (_hook != IntPtr.Zero) Win32.UnhookWinEvent(_hook); } catch (Exception) { }
       _hook = IntPtr.Zero;
-      _proc = null;
+      // _proc stays ROOTED. On the exit path this runs on the stdin thread, where
+      // UnhookWinEvent fails (only the installing thread - the loop - may unhook),
+      // so the hook is still live until the loop thread is parked; dropping the
+      // delegate here would let a GC free the thunk Windows is about to call.
+      // Start() replaces it, so keeping it costs one delegate.
       try { if (_flush != null) { _flush.Stop(); _flush.Dispose(); } } catch (Exception) { }
       _flush = null;
       try { if (_watchdog != null) { _watchdog.Stop(); _watchdog.Dispose(); } } catch (Exception) { }

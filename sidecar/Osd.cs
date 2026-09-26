@@ -782,6 +782,23 @@ namespace Mantle {
       return n;
     }
 
+    /// The exit path (Program.RequestShutdown, after every restore step): end
+    /// the hook thread so its system-wide WinEvent hooks come off ON THAT THREAD
+    /// (the only one that can remove them) and it is never called back while
+    /// Environment.Exit tears the runtime down - the 0xC000041D exit crash the
+    /// loop thread had (2026-09-25). Parked pop-ups are not touched: the
+    /// ProcessExit handler above still puts them back. Bounded; null when no
+    /// watch was running.
+    public static string EndHookThreadForExit(int ms) {
+      Thread th = _thread;
+      if (th == null) return null;
+      try { N.PostThreadMessageW(_tid, WM_QUIT, IntPtr.Zero, IntPtr.Zero); } catch (Exception) { }
+      bool ended;
+      try { ended = th.Join(ms); } catch (Exception) { ended = false; }
+      return ended ? "brightness pop-up watch: hook thread ended, hooks off"
+                   : "brightness pop-up watch: hook thread did not end within " + ms + " ms";
+    }
+
     static IDictionary State() {
       lock (_g) {
         return Json.Obj("ok", true, "watching", _watching, "reason", _watchWhy, "disabled", _disabled,

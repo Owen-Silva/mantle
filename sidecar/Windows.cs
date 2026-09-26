@@ -64,22 +64,39 @@ namespace Mantle {
       _timer.Start();
     }
 
-    public static void Stop() {
+    /// Idempotent, callable from any thread - but ONLY THE LOOP THREAD CAN UNHOOK.
+    /// UnhookWinEvent fails on any thread other than the one that called
+    /// SetWinEventHook (measured 2026-09-25: false on every stdin-EOF exit, from
+    /// mantle-stdin). This used to zero the handles anyway, so the hooks stayed
+    /// live through Environment.Exit and the loop thread kept being called back
+    /// into a runtime that was shutting down - the 0xC000041D exit crash. A
+    /// handle that did not come off is now KEPT, so the loop thread's own call
+    /// (Program.ParkLoopForExit) finishes the job. True when both are off.
+    public static bool Stop() {
       try { if (_timer != null) _timer.Stop(); } catch (Exception) { }
-      try { if (_hookSystem != IntPtr.Zero) Win32.UnhookWinEvent(_hookSystem); } catch (Exception) { }
-      try { if (_hookObject != IntPtr.Zero) Win32.UnhookWinEvent(_hookObject); } catch (Exception) { }
-      _hookSystem = _hookObject = IntPtr.Zero;
+      _hookSystem = Unhook(_hookSystem);
+      _hookObject = Unhook(_hookObject);
+      return _hookSystem == IntPtr.Zero && _hookObject == IntPtr.Zero;
+    }
+
+    static IntPtr Unhook(IntPtr h) {
+      if (h == IntPtr.Zero) return h;
+      try { return Win32.UnhookWinEvent(h) ? IntPtr.Zero : h; } catch (Exception) { return h; }
     }
 
     /// Hook procs must return in microseconds: no I/O, no allocation, no work.
     /// All we do is raise a flag the 250 ms timer picks up.
     static void OnWinEvent(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time) {
+      // Exiting: a burst of these can keep the loop from ever reaching the
+      // posted park request, so the first one to arrive parks it instead.
+      if (Program.ParkWanted) Program.ParkLoopIfAsked();
       if (idObject != Win32.OBJID_WINDOW) return;   // ignore caret/menu/focus sub-objects
       if (hwnd == IntPtr.Zero) return;
       _dirty = true;
     }
 
     static void OnTick(object sender, EventArgs e) {
+      if (Program.ParkWanted) Program.ParkLoopIfAsked();
       _ticks++;
       bool poll = (_ticks % PollEveryTicks) == 0;
       if (!_dirty && !poll && _firstEmitted) return;
@@ -118,6 +135,10 @@ namespace Mantle {
       int parentPid = Program.ParentPid;
 
       Win32.EnumWindowsProc cb = delegate (IntPtr hwnd, IntPtr lp) {
+        // Exiting: park between two windows instead of finishing the list. The
+        // first list after start resolves every app and icon cold and took up
+        // to 1.3 s (measured 2026-09-25) - time the exit would spend waiting.
+        if (Program.ParkWanted) Program.ParkLoopIfAsked();
         try {
           if (!Win32.IsWindowVisible(hwnd)) return true;
           // An owned window is a dialog/palette of another window; the owner is
