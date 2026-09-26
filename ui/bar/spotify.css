@@ -1,0 +1,168 @@
+/* spotify.css - the "Up next" queue in the now-playing card (ui/bar/spotify.js, spotq lane,
+   2026-09-25). One Theme: glass-light.css --lg-* tokens only, and the rows are the card's own
+   source-list rows (.mc-s in bar.css) so the two lists read as one family. No glow. */
+
+.spq { margin-top: 10px; padding-top: 7px; border-top: 1px solid var(--lg-edge-out); }
+.spq[hidden], .spq-body[hidden], .spq-state[hidden], .spq-list[hidden], .spq-add[hidden], .spq-note[hidden],
+.spq-limit[hidden], .spq-foot[hidden], .spq-clear[hidden], .spq .spq-msg[hidden] { display: none; }
+
+.spq-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  transition: background-color 120ms steps(2), color 120ms steps(2);
+}
+.spq-head:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.spq-head:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.spq-ico { flex: 0 0 16px; display: grid; place-items: center; color: var(--lg-ink-2); }
+.spq-label { flex: 0 0 auto; color: var(--lg-ink); }
+.spq-hint { flex: 1 1 auto; min-width: 0; text-align: right; color: var(--lg-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spq-hint.warn { color: var(--lg-warn); }
+.spq-chev { flex: 0 0 14px; display: grid; place-items: center; color: var(--lg-ink-3); transition: transform 150ms steps(2); }
+.spq.open .spq-chev { transform: rotate(180deg); }
+
+.spq-body { margin-top: 4px; }
+/* the part that scrolls: its max-height is set by spotify.js fit() so the whole card fits main's room */
+.spq-scroll { max-height: 244px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--lg-edge-in) transparent; }
+.spq-list { display: flex; flex-direction: column; gap: 1px; }
+
+.spq-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  transition: background-color 120ms steps(2), color 120ms steps(2);
+}
+.spq-row:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.spq-row:active { background: var(--lg-press); }
+.spq-row.busy { opacity: .55; }
+.spq-art {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: 5px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--lg-tile);
+  color: var(--lg-ink-3);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+}
+.spq-art img { width: 32px; height: 32px; object-fit: cover; display: block; }
+.spq-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.spq-t { color: var(--lg-ink); line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spq-a { color: var(--lg-ink-3); font-size: 12px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spq-tag { flex: 0 0 auto; padding: 2px 7px; border-radius: var(--lg-r-ctl); background: var(--lg-sunk); color: var(--lg-ink-2); font-size: 11.5px; }
+.spq-row.done .spq-tag { background: var(--lg-acc-soft); color: var(--lg-acc); }
+
+.spq-msg { padding: 4px 8px; line-height: 1.45; color: var(--lg-ink-2); }
+.spq-msg.dim { color: var(--lg-ink-3); }
+.spq-msg.bad { color: var(--lg-warn); }
+.spq-lede { padding: 2px 8px 4px; color: var(--lg-ink); line-height: 1.45; }
+.spq-fine[hidden] { display: none; }
+.spq-fine { padding: 4px 8px 0; color: var(--lg-ink-3); line-height: 1.45; font-size: 11.5px; }
+.spq-note { padding: 5px 8px 0; color: var(--lg-ink-2); line-height: 1.45; }
+.spq-note.bad { color: var(--lg-warn); }
+
+.spq-steps { margin: 2px 0 6px; padding: 0 8px 0 26px; color: var(--lg-ink-2); line-height: 1.45; }
+.spq-steps li { margin: 3px 0; }
+.spq-urihead { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.spq-urihead .spq-chip { padding: 2px 9px; }
+.spq-uri {
+  display: block;
+  margin-top: 4px;
+  padding: 3px 6px;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
+  color: var(--lg-ink);
+  font: 11.5px/1.4 Consolas, 'Cascadia Mono', monospace;
+  overflow-wrap: anywhere;      /* never cut: Owen pastes this exact text into Spotify's dashboard */
+  user-select: all;
+}
+
+.spq-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--lg-acc);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--lg-acc-soft);
+  cursor: default;
+}
+.spq-link:hover { text-decoration-color: currentColor; }
+.spq-link.act { display: inline-block; margin: 2px 8px 2px; }
+.spq-chip, .spq-btn {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
+  color: var(--lg-ink);
+  font: inherit;
+  cursor: default;
+  transition: background-color 120ms steps(2);
+}
+.spq-chip:hover, .spq-btn:hover { background: var(--lg-press); }
+.spq-btn { background: var(--lg-acc); color: var(--lg-acc-on); }
+.spq-btn:hover { background: var(--lg-acc); opacity: .9; }
+
+.spq-idrow { display: flex; gap: 6px; padding: 0 8px; }
+.spq-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--lg-edge-out);
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
+  color: var(--lg-ink);
+  font: inherit;
+  outline: none;
+}
+.spq-input::placeholder { color: var(--lg-ink-3); }
+.spq-input:focus { border-color: var(--lg-acc); }
+
+.spq-add { position: relative; display: flex; align-items: center; margin: 6px 0 0; }
+.spq-sico { position: absolute; left: 9px; display: grid; place-items: center; color: var(--lg-ink-3); pointer-events: none; }
+.spq-add .spq-input { padding-left: 28px; padding-right: 28px; }
+.spq-clear {
+  position: absolute;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-3);
+  cursor: default;
+}
+.spq-clear:hover { background: var(--lg-hover); color: var(--lg-ink); }
+
+.spq-foot { display: flex; justify-content: flex-end; padding: 4px 8px 0; }
+.spq-disc { color: var(--lg-ink-3); text-decoration: none; font-size: 11.5px; }
+.spq-disc:hover { color: var(--lg-ink-2); text-decoration: underline; }
+.spq-disc.armed { color: var(--lg-warn); }
+
+/* no room for both: the card's source switcher folds away while Up next is open (spotify.js fit) */
+.pop.spq-squeeze .mc-src { display: none; }

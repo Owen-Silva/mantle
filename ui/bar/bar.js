@@ -1406,7 +1406,10 @@
       if (window.MantleQsMore) MantleQsMore.closed();   // its polls stop and the keyboard goes back
       if (window.MantlePowerMode) MantlePowerMode.closed(); // its 3 s re-read and its push stop
     }
-    if (popKey === 'media') { mediaPaint = null; mediaNote = ''; mediaRoom = 0; }
+    if (popKey === 'media') {
+      mediaPaint = null; mediaNote = ''; mediaRoom = 0;
+      if (window.MantleSpotify) MantleSpotify.closed();   // its 8 s queue refresh stops, the keyboard goes back
+    }
     if (popKey.indexOf('jl:') === 0 && window.MantleJumpList) MantleJumpList.closed();   // gives the keyboard back
     if (isFlyKey(popKey)) flyTeardown();
     popKey = null;
@@ -2409,6 +2412,11 @@
     pop.appendChild(src);
     var foot = mk('div', 'sub mc-foot');
     pop.appendChild(foot);
+    /* Spotify's "Up next" queue (ui/bar/spotify.js, spotq lane 2026-09-25): a collapsed row between
+       the buttons and the source list, drawn only while the card shows Spotify. */
+    if (window.MantleSpotify) {
+      MantleSpotify.attach(pop, src, { call: call, on: on, msg: msg, repaint: function () { if (mediaPaint) mediaPaint(); } });
+    }
 
     function paintProgress(s) {
       var p = mediaPos(s);
@@ -2534,11 +2542,19 @@
         : '';
       foot.hidden = !foot.textContent;
 
-      /* The card can change height after it opened (a refusal note, a second source): ask main
-         for the room again so nothing is cut off by the window's edge. */
+      // the queue sizes its scrolling list here, so the card measured below always fits main's room
+      if (window.MantleSpotify) MantleSpotify.paint(s, el.pop);
+
+      /* The card can change height after it opened (a refusal note, a second source, the queue
+         opening): ask main for the room again so nothing is cut off by the window's edge. */
       var h = el.pop.offsetHeight + 16;
       if (mediaRoom && h !== mediaRoom && popKey === 'media') {
-        callR('bar.popover', { open: true, height: h, key: 'media' }).catch(function (e) {
+        callR('bar.popover', { open: true, height: h, key: 'media' }).then(function (r) {
+          if (r && r.capped && popKey === 'media') {
+            note.textContent = 'this card is taller than the room main gives a popover (' + r.max + ' px), so its top may be cut off';
+            note.hidden = false;
+          }
+        }, function (e) {
           note.textContent = 'this card may be clipped: bar.popover — ' + msg(e);
           note.hidden = false;
         });

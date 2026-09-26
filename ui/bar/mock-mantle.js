@@ -871,8 +871,76 @@
     emit('powermode', Object.assign({ via: 'mode' }, pmState));
   };
 
+  /* ---- Spotify's "Up next" queue (spotq lane, 2026-09-25): lib/features/spotify.js's replies, in its
+       shapes. Needs ?media=playing (the card must be showing Spotify). ?spq=
+         setup (default)  first run: no Client ID yet (the steps, the Client ID box, Connect)
+         connecting       waiting for the browser's answer
+         queue            connected, 6 songs up next (a click plays one: N x next; Add a song searches)
+         long             connected, 20 songs: the list scrolls INSIDE the card, which still fits main's room
+         empty | noplayer | loading (never answers) | premium | expired | offline | off
+       The shots open the dropdown by clicking .spq-head. */
+  var SPQ = q.get('spq') || 'setup';
+  var SPQ_URI = 'http://127.0.0.1:47291/callback';
+  var spqClient = SPQ === 'setup' ? null : '0123456789abcdef0123456789abcdef';
+  function spqStatus() {
+    if (SPQ === 'off') return { ok: true, state: 'off', reason: 'the Spotify queue is off in Mantle’s tray menu' };
+    var st = SPQ === 'setup' ? 'setup' : SPQ === 'connecting' ? 'connecting' : SPQ === 'expired' ? 'expired' : 'connected';
+    return { ok: true, state: st, clientId: spqClient, redirectUri: SPQ_URI, encryption: true,
+      scopes: ['user-read-playback-state', 'user-modify-playback-state'], since: st === 'connecting' ? Date.now() - 4000 : null,
+      reason: st === 'expired' ? 'Spotify refused the saved sign-in (invalid_grant: Refresh token revoked), so it was deleted: connect again' : null };
+  }
+  var SPQ_SONGS = [['Downtown', 'Macklemore & Ryan Lewis, Eric Nally'], ['Thrift Shop', 'Macklemore & Ryan Lewis, Wanz'],
+    ['Midnight City', 'M83'], ['Blinding Lights', 'The Weeknd'], ['Heat Waves', 'Glass Animals'], ['Mr. Brightside', 'The Killers'],
+    ['Levitating', 'Dua Lipa'], ['Take On Me', 'a-ha'], ['Electric Feel', 'MGMT'], ['Do I Wanna Know?', 'Arctic Monkeys'],
+    ['Feel Good Inc.', 'Gorillaz'], ['Pumped Up Kicks', 'Foster the People'], ['Rather Be', 'Clean Bandit, Jess Glynne'],
+    ['Titanium', 'David Guetta, Sia'], ['Sweater Weather', 'The Neighbourhood'], ['Uptown Funk', 'Mark Ronson, Bruno Mars'],
+    ['Stolen Dance', 'Milky Chance'], ['Riptide', 'Vance Joy'], ['Shut Up and Dance', 'WALK THE MOON'], ['Counting Stars', 'OneRepublic']];
+  var SPQ_COLORS = [['#e0a059', '#b23fd0'], ['#3aa0ff', '#1d3f8f'], ['#f25f5c', '#70163c'], ['#48c78e', '#1f5f4a'], ['#ffd166', '#c05621'], ['#9aa5b1', '#3e4c59']];
+  function spqItem(i) {
+    return { uri: 'spotify:track:' + ('MOCK' + i + 'xxxxxxxxxxxxxxxxxxxxxx').slice(0, 22), kind: 'track', name: SPQ_SONGS[i % SPQ_SONGS.length][0],
+      artists: SPQ_SONGS[i % SPQ_SONGS.length][1], album: null, durationMs: 200000,
+      image: i === 3 ? null : tile(64, SPQ_COLORS[i % SPQ_COLORS.length], null), imageReason: i === 3 ? 'the artwork did not load (HTTP 404)' : undefined };
+  }
+  var spqQueue = null;
+  function spqQueueReply() {
+    if (SPQ === 'off') return { ok: false, state: 'off', reason: 'the Spotify queue is off in Mantle’s tray menu' };
+    if (SPQ === 'loading') return new Promise(function () {});
+    if (SPQ === 'premium') return { ok: false, state: 'premium', reason: 'Spotify Premium is required for this (Spotify: Premium required)' };
+    if (SPQ === 'offline') return { ok: false, state: 'offline', reason: 'could not reach Spotify (ENOTFOUND api.spotify.com)' };
+    if (SPQ === 'noplayer') return { ok: true, state: 'connected', currently: null, items: [], noPlayer: true, reason: 'Spotify has no active player right now', at: Date.now() };
+    if (!spqQueue) { spqQueue = []; var n = SPQ === 'long' ? 20 : SPQ === 'empty' ? 0 : 6; for (var i = 0; i < n; i++) spqQueue.push(spqItem(i)); }
+    return new Promise(function (res) {
+      setTimeout(function () { res({ ok: true, state: 'connected', currently: { uri: 'spotify:track:MOCKnowxxxxxxxxxxxxxxxx', name: SPOTIFY.title, artists: SPOTIFY.artist }, items: spqQueue.slice(), at: Date.now() }); }, 40);
+    });
+  }
+
   function reply(channel, payload) {
     switch (channel) {
+      case 'spotify.status': return spqStatus();
+      case 'spotify.queue': return spqQueueReply();
+      case 'spotify.setClient':
+        if (!/^[0-9a-f]{32}$/i.test(String((payload && payload.clientId) || '').trim())) return { ok: false, state: 'setup', reason: 'a Spotify Client ID is 32 letters and digits (0-9, a-f); that was ' + String((payload && payload.clientId) || '').trim().length + ' characters' };
+        spqClient = String(payload.clientId).trim().toLowerCase();
+        return spqStatus();
+      case 'spotify.connect':
+        return { ok: true, state: 'connecting', dryRun: true, redirectUri: SPQ_URI, url: 'https://accounts.spotify.com/authorize?(mock)' };
+      case 'spotify.cancel': case 'spotify.disconnect': SPQ = 'setup'; return spqStatus();
+      case 'spotify.copyRedirect': return { ok: true, dryRun: true, text: SPQ_URI, reason: 'mock: the clipboard was not touched' };
+      case 'spotify.openDashboard': return { ok: true, dryRun: true, url: 'https://developer.spotify.com/dashboard' };
+      case 'spotify.search':
+        if (SPQ === 'premium') return { ok: true, items: [spqItem(7), spqItem(8)], q: payload && payload.q };
+        return { ok: true, items: [spqItem(12), spqItem(13), spqItem(14), spqItem(15)], q: payload && payload.q };
+      case 'spotify.add':
+        if (SPQ === 'premium') return { ok: false, state: 'premium', reason: 'Spotify Premium is required for this (Spotify: Premium required)' };
+        if (spqQueue) spqQueue.push(spqItem(12));
+        return { ok: true, uri: payload && payload.uri };
+      case 'spotify.play': {
+        if (SPQ === 'premium') return { ok: false, state: 'premium', reason: 'Spotify Premium is required for this (Spotify: Premium required)' };
+        var at = spqQueue ? spqQueue.map(function (x) { return x.uri; }).indexOf(payload && payload.uri) : -1;
+        if (at < 0) return { ok: false, state: 'moved', reason: 'that song is not in the queue any more (it changed since the list was drawn)' };
+        spqQueue.splice(0, at + 1);
+        return { ok: true, uri: payload.uri, skipped: at + 1, verified: true, reason: null };
+      }
       case 'state.get':   return state();
       case 'sys.stats':   return { battery: { percent: 72, charging: false }, volume: volumeReading() };
       case 'battery.get': return batteryNow;
@@ -1074,7 +1142,8 @@
       case 'shell.restore':
       case 'shell.quit':
       case 'bar.popover':
-        return { ok: true, reason: '', mock: true };
+        // main's shape too (main.js bar.popover): the room it gave, and whether the ask was over its cap
+        return { ok: true, reason: '', mock: true, max: 480, height: Math.min(480, Number(payload && payload.height) || 0), capped: !!(payload && payload.open && Number(payload.height) > 480) };
       // The flyout's live previews are drawn by DWM from Electron main; a browser page has no
       // compositor to ask. Every card says so, which is also how the reason text gets eyeballed.
       case 'bar.thumbs':
@@ -1108,6 +1177,7 @@
         else if (channel === 'net') cb(netNow);
         else if (channel === 'qs') cb(qsSnapshot());     // main replays its last whole picture
         else if (channel === 'state') cb(state());
+        else if (channel === 'spotify.status') cb(spqStatus());   // lib/features/spotify.js replays it
       }, 30);
       return function off() {
         listeners[channel] = (listeners[channel] || []).filter(function (f) { return f !== cb; });
@@ -1141,6 +1211,12 @@
      pill's first frame, and a click-driven replay (the M button) is too loosely timed for that.
      Mock only: inside Electron this file returned at the top and there is no such object. */
   window.__mockMain = {
+    /* A new Spotify song: main pushes 'media' with the new title (the card's Up next re-reads the
+       queue on it; spq cadence check). */
+    track: function (title, artist) {
+      SPOTIFY.title = title || 'Downtown'; SPOTIFY.artist = artist || 'Macklemore & Ryan Lewis';
+      emit('media', mediaPayload());
+    },
     reveal: function (why) { revealed = true; emit('bar.reveal', { why: why || 'mock: harness reveal', mode: MODE, ms: DUR_IN }); },
     hide: function (why) { revealed = false; emit('bar.hide', { why: why || 'mock: harness hide', ms: DUR_OUT }); },
     /* A plug, an unplug, a charge limit reached: main pushes the new reading, and the panel's

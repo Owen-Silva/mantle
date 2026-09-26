@@ -70,6 +70,25 @@ const BT_CONNECT = BTV.concat([btRow('JBL Flip 6'), '.qsx-net.open .qsx-btn.acc'
 const BATT = ['charging', 'plugged', 'full', 'battery', 'unplugged', 'saver', 'unknown', 'error', 'none'];
 
 /* Each shot is one state worth looking at, not one size for its own sake. */
+/* The Spotify queue's fit probe (spq-* shots): the room the open media card needs (bar.js asks
+   main for pop.offsetHeight + 16), whether it is within main's 480 px cap, and how many queue rows
+   are FULLY visible inside the list's own scroll box. A miss is logged as a console error. */
+const SPQ_FIT = `(() => {
+  const p = document.querySelector('.pop.mcard');
+  if (!p || p.hidden) return { error: 'no media card open' };
+  const need = p.offsetHeight + 16, r = p.getBoundingClientRect();
+  const q = document.querySelector('.spq'), sc = document.querySelector('.spq-scroll');
+  const out = { need, room: 480, fits: need <= 480, cardTop: Math.round(r.top), queue: !!(q && !q.hidden), open: !!(q && q.classList.contains('open')) };
+  if (out.open && sc) {
+    const sr = sc.getBoundingClientRect(), rows = Array.from(sc.querySelectorAll('.spq-row'));
+    out.rows = rows.length;
+    out.rowsFullyVisible = rows.filter((x) => { const b = x.getBoundingClientRect(); return b.top >= sr.top - 0.5 && b.bottom <= sr.bottom + 0.5; }).length;
+    out.listPx = Math.round(sr.height); out.scrolls = sc.scrollHeight > sc.clientHeight + 1;
+  }
+  if (!out.fits || out.cardTop < 0) console.error('SPQ CLIPPED: ' + JSON.stringify(out));
+  return out;
+})()`;
+
 const SHOTS = [
   { name: 'bar-1920', w: 1920, h: 44, q: '' },
   { name: 'bar-1920-bg', w: 1920, h: 44, q: '?bg=1' },   // loud wallpaper: is the glass actually letting it through?
@@ -84,10 +103,25 @@ const SHOTS = [
   { name: 'media-noctl', w: 1280, h: 330, q: '?mode=pill&media=noctl', click: '#mchip' },
   /* LessonPlayer alone: NO chip (Owen's call, 2026-09-22), so nothing is clicked: the shot proves absence */
   { name: 'media-lessonplayer', w: 1280, h: 60, q: '?mode=pill&media=lessonplayer' },
-  { name: 'media-both', w: 1280, h: 400, q: '?mode=pill&media=both', click: '#mchip' },
+  { name: 'media-both', w: 1280, h: 480, q: '?mode=pill&media=both', click: '#mchip' },   // 480: + the collapsed Up next row (spotq), 400 cut the card's top off in the SHOT
   /* LessonPlayer picked in the switcher while a player also plays: the controls-off card */
   { name: 'media-lessonplayer-picked', w: 1280, h: 480, q: '?mode=pill&media=both&pick=lessonplayer', click: '#mchip' },
   { name: 'media-off', w: 1280, h: 330, q: '?mode=pill&media=off', click: '#more' },   // the chip's reason, in words
+  /* Spotify's "Up next" queue (spotq lane, 2026-09-25; ui/bar/spotify.js, ?spq= in the mock). Each
+     opens the card, opens the dropdown and PROBES the fit: main gives a popover at most 480 px
+     (POPOVER_MAX), so `need` must be <= 480 or the window would cut the card off (the top bar's
+     dropdown shipped clipped that way on 2026-09-24). A miss is a console error = a PAGE PROBLEM. */
+  ...['queue', 'long', 'setup', 'connecting', 'loading', 'empty', 'noplayer', 'premium', 'expired', 'offline', 'off'].map((st) => (
+    { name: 'spq-' + st, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=' + st, steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] })),
+  { name: 'spq-queue-1x', dsf: 1, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },
+  { name: 'spq-long-1x', dsf: 1, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=long', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },
+  { name: 'spq-long-both', w: 1280, h: 560, q: '?mode=pill&media=both&spq=long', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },   // + the source list: the tallest card
+  { name: 'spq-setup-both', w: 1280, h: 560, q: '?mode=pill&media=both&spq=setup', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },   // the steps + the source list
+  { name: 'spq-lessonplayer', w: 1280, h: 560, q: '?mode=pill&media=both&pick=lessonplayer&spq=queue', steps: ['#mchip', { probe: SPQ_FIT }] },   // LessonPlayer shown: NO Up next row (probe queue:false)
+  { name: 'spq-collapsed', w: 1280, h: 420, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', { probe: SPQ_FIT }] },
+  { name: 'spq-search', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'macklemore' }, { wait: 700 }, { probe: SPQ_FIT }] },
+  { name: 'spq-played', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-row:nth-child(3)', { wait: 300 }, { probe: SPQ_FIT }] },
+  { name: 'spq-premium-add', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=premium', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'levitating' }, { wait: 700 }, '.spq-row', { wait: 300 }, { probe: SPQ_FIT }] },
   /* the tray: the white-icon plate on the strip, and the hidden icons in the overflow */
   { name: 'tray', w: 1280, h: 60, q: '?mode=pill&tray=1&media=playing' },
   { name: 'tray-more', w: 1280, h: 330, q: '?mode=pill&tray=1', click: '#more' },
@@ -231,6 +265,7 @@ if (process.env.BAR_TRAY_JSON) {
         else if (st.fill) await page.fill(st.fill, st.text);
         else if (st.scroll) { await page.$eval(st.scroll, el => { el.scrollTop = el.scrollHeight; }); await page.waitForTimeout(100); }
         else if (st.js) await page.evaluate(st.js);   // a mock-main push (window.__mockMain), mid-shot
+        else if (st.probe) console.log('  ' + s.name + ' probe: ' + JSON.stringify(await page.evaluate(st.probe)));   // a measurement, printed
       }
       await page.mouse.move(0, 0);              // no hover state left on whatever was clicked
       /* ...and let its fade finish: hovers fade out over 150 ms steps(2), so a shot taken at once
