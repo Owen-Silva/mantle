@@ -924,23 +924,32 @@
     return Object.assign({ ok: true }, gmState);
   }
 
-  /* ---- Spotify's "Up next" queue (spotq lane, 2026-09-25): lib/features/spotify.js's replies, in its
-       shapes. Needs ?media=playing (the card must be showing Spotify). ?spq=
-         setup (default)  first run: no Client ID yet (the steps, the Client ID box, Connect)
-         connecting       waiting for the browser's answer
-         queue            connected, 6 songs up next (a click plays one: N x next; Add a song searches)
-         long             connected, 20 songs: the list scrolls INSIDE the card, which still fits main's room
-         empty | noplayer | loading (never answers) | premium | expired | offline | off
+  /* ---- Spotify's "Up next" queue (spotq lane; desktop-app rebuild by the spotapp lane, 2026-09-25):
+       lib/features/spotify.js's replies, in its shapes. Needs ?media=playing (the card must be
+       showing Spotify). ?spq=
+         noport (default)  Spotify running but not started by Mantle: the Restart button
+         notrunning        Spotify not running: the Start button
+         checking          the first status never answers | starting: Mantle is (re)starting Spotify
+         queue             connected: 2 queued + 4 next up (click plays; hover: move up/down, remove)
+         long              connected: 12 queued + 20 next up, the list scrolls INSIDE the card
+         empty | noplayer | loading (queue never answers) | error (queue read failed)
+         internals (a Spotify update moved them) | portbusy | noinstall | off | searchbroken
        The shots open the dropdown by clicking .spq-head. */
-  var SPQ = q.get('spq') || 'setup';
-  var SPQ_URI = 'http://127.0.0.1:47291/callback';
-  var spqClient = SPQ === 'setup' ? null : '0123456789abcdef0123456789abcdef';
+  var SPQ = q.get('spq') || 'noport';
+  var SPQ_REASON = {
+    notrunning: 'Spotify is not running',
+    noport: 'Spotify is running, but it was not started by Mantle, so Up next cannot reach it',
+    starting: 'Closing Spotify…',
+    internals: 'Spotify is reachable, but its queue functions were not found: no Platform object in 4180 React nodes (Spotify/1.3.1.12). A Spotify update probably moved them',
+    portbusy: 'port 47292 is a debugging port, but none of its 2 page(s) is Spotify’s',
+    noinstall: 'Mantle starts Spotify from C:\\Users\\user\\AppData\\Roaming\\Spotify\\Spotify.exe, and it is not there (the Microsoft Store Spotify cannot be started with a debugging port)',
+    off: 'the Spotify queue is off in Mantle’s tray menu'
+  };
   function spqStatus() {
-    if (SPQ === 'off') return { ok: true, state: 'off', reason: 'the Spotify queue is off in Mantle’s tray menu' };
-    var st = SPQ === 'setup' ? 'setup' : SPQ === 'connecting' ? 'connecting' : SPQ === 'expired' ? 'expired' : 'connected';
-    return { ok: true, state: st, clientId: spqClient, redirectUri: SPQ_URI, encryption: true,
-      scopes: ['user-read-playback-state', 'user-modify-playback-state'], since: st === 'connecting' ? Date.now() - 4000 : null,
-      reason: st === 'expired' ? 'Spotify refused the saved sign-in (invalid_grant: Refresh token revoked), so it was deleted: connect again' : null };
+    if (SPQ === 'checking') return new Promise(function () {});
+    if (SPQ_REASON[SPQ]) return { ok: SPQ === 'off', state: SPQ, reason: SPQ_REASON[SPQ], port: 47292 };
+    return { ok: true, state: 'connected', reason: null, port: 47292, via: 'React context -> Registry(PlayerAPI)', version: '1.3.0.277',
+      caps: { skipTo: true, next: true, remove: true, move: true, search: true } };
   }
   var SPQ_SONGS = [['Downtown', 'Macklemore & Ryan Lewis, Eric Nally'], ['Thrift Shop', 'Macklemore & Ryan Lewis, Wanz'],
     ['Midnight City', 'M83'], ['Blinding Lights', 'The Weeknd'], ['Heat Waves', 'Glass Animals'], ['Mr. Brightside', 'The Killers'],
@@ -949,51 +958,72 @@
     ['Titanium', 'David Guetta, Sia'], ['Sweater Weather', 'The Neighbourhood'], ['Uptown Funk', 'Mark Ronson, Bruno Mars'],
     ['Stolen Dance', 'Milky Chance'], ['Riptide', 'Vance Joy'], ['Shut Up and Dance', 'WALK THE MOON'], ['Counting Stars', 'OneRepublic']];
   var SPQ_COLORS = [['#e0a059', '#b23fd0'], ['#3aa0ff', '#1d3f8f'], ['#f25f5c', '#70163c'], ['#48c78e', '#1f5f4a'], ['#ffd166', '#c05621'], ['#9aa5b1', '#3e4c59']];
-  function spqItem(i) {
-    return { uri: 'spotify:track:' + ('MOCK' + i + 'xxxxxxxxxxxxxxxxxxxxxx').slice(0, 22), kind: 'track', name: SPQ_SONGS[i % SPQ_SONGS.length][0],
-      artists: SPQ_SONGS[i % SPQ_SONGS.length][1], album: null, durationMs: 200000,
+  function spqItem(i, where) {
+    return { uri: 'spotify:track:' + ('MOCK' + i + 'xxxxxxxxxxxxxxxxxxxxxx').slice(0, 22), uid: (where === 'queued' ? 'q' : 'c') + i, kind: 'track', where: where || 'search',
+      name: SPQ_SONGS[i % SPQ_SONGS.length][0], artists: SPQ_SONGS[i % SPQ_SONGS.length][1],
       image: i === 3 ? null : tile(64, SPQ_COLORS[i % SPQ_COLORS.length], null), imageReason: i === 3 ? 'the artwork did not load (HTTP 404)' : undefined };
   }
-  var spqQueue = null;
+  var spqQ = null;
   function spqQueueReply() {
-    if (SPQ === 'off') return { ok: false, state: 'off', reason: 'the Spotify queue is off in Mantle’s tray menu' };
+    if (SPQ_REASON[SPQ]) return { ok: false, state: SPQ, reason: SPQ_REASON[SPQ] };
     if (SPQ === 'loading') return new Promise(function () {});
-    if (SPQ === 'premium') return { ok: false, state: 'premium', reason: 'Spotify Premium is required for this (Spotify: Premium required)' };
-    if (SPQ === 'offline') return { ok: false, state: 'offline', reason: 'could not reach Spotify (ENOTFOUND api.spotify.com)' };
-    if (SPQ === 'noplayer') return { ok: true, state: 'connected', currently: null, items: [], noPlayer: true, reason: 'Spotify has no active player right now', at: Date.now() };
-    if (!spqQueue) { spqQueue = []; var n = SPQ === 'long' ? 20 : SPQ === 'empty' ? 0 : 6; for (var i = 0; i < n; i++) spqQueue.push(spqItem(i)); }
+    if (SPQ === 'error') return { ok: false, state: 'error', reason: 'Spotify did not answer within 6 s' };
+    if (!spqQ) {
+      var nq = SPQ === 'long' ? 12 : SPQ === 'queue' || SPQ === 'searchbroken' ? 2 : 0, nn = SPQ === 'long' ? 20 : SPQ === 'queue' || SPQ === 'searchbroken' ? 4 : 0, i;
+      spqQ = { queued: [], nextUp: [] };
+      for (i = 0; i < nq; i++) spqQ.queued.push(spqItem(i, 'queued'));
+      for (i = 0; i < nn; i++) spqQ.nextUp.push(spqItem(nq + i, 'next'));
+    }
     return new Promise(function (res) {
-      setTimeout(function () { res({ ok: true, state: 'connected', currently: { uri: 'spotify:track:MOCKnowxxxxxxxxxxxxxxxx', name: SPOTIFY.title, artists: SPOTIFY.artist }, items: spqQueue.slice(), at: Date.now() }); }, 40);
+      setTimeout(function () {
+        res({ ok: true, state: 'connected', caps: { skipTo: true, next: true, remove: true, move: true, search: true },
+          current: SPQ === 'noplayer' ? null : { uri: 'spotify:track:MOCKnowxxxxxxxxxxxxxxxx', uid: 'now', name: SPOTIFY.title, artists: SPOTIFY.artist, where: 'current' },
+          queued: spqQ.queued.slice(), nextUp: spqQ.nextUp.slice(), totalQueued: spqQ.queued.length, totalNextUp: spqQ.nextUp.length, at: Date.now() });
+      }, 40);
     });
+  }
+  function spqFind(p) {
+    var all = spqQ ? spqQ.queued.concat(spqQ.nextUp) : [];
+    for (var i = 0; i < all.length; i++) if (p && all[i].uid === p.uid) return { item: all[i], list: i < spqQ.queued.length ? spqQ.queued : spqQ.nextUp, at: i < spqQ.queued.length ? i : i - spqQ.queued.length, pos: i };
+    return null;
   }
 
   function reply(channel, payload) {
     switch (channel) {
       case 'spotify.status': return spqStatus();
       case 'spotify.queue': return spqQueueReply();
-      case 'spotify.setClient':
-        if (!/^[0-9a-f]{32}$/i.test(String((payload && payload.clientId) || '').trim())) return { ok: false, state: 'setup', reason: 'a Spotify Client ID is 32 letters and digits (0-9, a-f); that was ' + String((payload && payload.clientId) || '').trim().length + ' characters' };
-        spqClient = String(payload.clientId).trim().toLowerCase();
-        return spqStatus();
-      case 'spotify.connect':
-        return { ok: true, state: 'connecting', dryRun: true, redirectUri: SPQ_URI, url: 'https://accounts.spotify.com/authorize?(mock)' };
-      case 'spotify.cancel': case 'spotify.disconnect': SPQ = 'setup'; return spqStatus();
-      case 'spotify.copyRedirect': return { ok: true, dryRun: true, text: SPQ_URI, reason: 'mock: the clipboard was not touched' };
-      case 'spotify.openDashboard': return { ok: true, dryRun: true, url: 'https://developer.spotify.com/dashboard' };
       case 'spotify.search':
-        if (SPQ === 'premium') return { ok: true, items: [spqItem(7), spqItem(8)], q: payload && payload.q };
-        return { ok: true, items: [spqItem(12), spqItem(13), spqItem(14), spqItem(15)], q: payload && payload.q };
-      case 'spotify.add':
-        if (SPQ === 'premium') return { ok: false, state: 'premium', reason: 'Spotify Premium is required for this (Spotify: Premium required)' };
-        if (spqQueue) spqQueue.push(spqItem(12));
-        return { ok: true, uri: payload && payload.uri };
-      case 'spotify.play': {
-        if (SPQ === 'premium') return { ok: false, state: 'premium', reason: 'Spotify Premium is required for this (Spotify: Premium required)' };
-        var at = spqQueue ? spqQueue.map(function (x) { return x.uri; }).indexOf(payload && payload.uri) : -1;
-        if (at < 0) return { ok: false, state: 'moved', reason: 'that song is not in the queue any more (it changed since the list was drawn)' };
-        spqQueue.splice(0, at + 1);
-        return { ok: true, uri: payload.uri, skipped: at + 1, verified: true, reason: null };
+        if (SPQ === 'searchbroken') return { ok: false, state: 'error', q: payload && payload.q, reason: 'Search is unavailable: Spotify’s search answered without songs (PersistedQueryNotFound)' };
+        return { ok: true, items: [spqItem(12), spqItem(13), spqItem(14), spqItem(15)], q: payload && payload.q, via: 'Spotify’s bundle' };
+      case 'spotify.add': {
+        var it = spqItem(12, 'queued'); it.uid = 'q' + Date.now();
+        if (spqQ) spqQ.queued.push(it);
+        return { ok: true, uri: payload && payload.uri, verified: true, reason: null };
       }
+      case 'spotify.play': {
+        var f = spqFind(payload);
+        if (!f) return { ok: false, state: 'moved', reason: 'that song is not in the queue any more (it changed since the list was drawn)' };
+        var nq = spqQ.queued.length;
+        if (f.pos < nq) spqQ.queued.splice(0, f.pos + 1); else { spqQ.queued = []; spqQ.nextUp.splice(0, f.pos - nq + 1); }
+        return { ok: true, uri: payload.uri, via: 'skipTo', note: null, verified: true, reason: null };
+      }
+      case 'spotify.remove': {
+        var r = spqFind(payload);
+        if (!r) return { ok: false, state: 'moved', reason: 'that song is not in the queue any more' };
+        r.list.splice(r.at, 1);
+        return { ok: true, uri: payload.uri, verified: true, reason: null };
+      }
+      case 'spotify.move': {
+        var m = spqFind(payload);
+        if (!m || m.list !== spqQ.queued) return { ok: false, state: 'moved', reason: 'only songs you queued can be moved, and that one is not in your queue any more' };
+        var to = payload.dir === 'up' ? m.at - 1 : m.at + 1;
+        if (to < 0 || to >= m.list.length) return { ok: false, state: 'error', reason: 'it is already ' + (payload.dir === 'up' ? 'first' : 'last') + ' in your queue' };
+        m.list.splice(to, 0, m.list.splice(m.at, 1)[0]);
+        return { ok: true, uri: payload.uri, verified: true, reason: null };
+      }
+      case 'spotify.start': case 'spotify.restart':
+        SPQ = 'queue';
+        return { ok: true, dryRun: true, reason: 'mock: would ' + (channel === 'spotify.start' ? 'start' : 'close and restart') + ' Spotify with --remote-debugging-port=47292' };
       case 'state.get':   return state();
       case 'sys.stats':   return { battery: { percent: 72, charging: false }, volume: volumeReading() };
       case 'battery.get': return batteryNow;
@@ -1234,7 +1264,7 @@
         else if (channel === 'net') cb(netNow);
         else if (channel === 'qs') cb(qsSnapshot());     // main replays its last whole picture
         else if (channel === 'state') cb(state());
-        else if (channel === 'spotify.status') cb(spqStatus());   // lib/features/spotify.js replays it
+        else if (channel === 'spotify.status') cb(SPQ === 'checking' ? { ok: true, state: 'checking', reason: 'checking Spotify…', port: 47292 } : spqStatus());   // lib/features/spotify.js replays its last state (sync)
       }, 30);
       return function off() {
         listeners[channel] = (listeners[channel] || []).filter(function (f) { return f !== cb; });

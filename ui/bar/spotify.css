@@ -1,10 +1,10 @@
-/* spotify.css - the "Up next" queue in the now-playing card (ui/bar/spotify.js, spotq lane,
-   2026-09-25). One Theme: glass-light.css --lg-* tokens only, and the rows are the card's own
+/* spotify.css - the "Up next" queue in the now-playing card (ui/bar/spotify.js, spotq lane, then
+   the spotapp lane's desktop-app rebuild, 2026-09-25). One Theme: glass-light.css --lg-* tokens only, and the rows are the card's own
    source-list rows (.mc-s in bar.css) so the two lists read as one family. No glow. */
 
 .spq { margin-top: 10px; padding-top: 7px; border-top: 1px solid var(--lg-edge-out); }
 .spq[hidden], .spq-body[hidden], .spq-state[hidden], .spq-list[hidden], .spq-add[hidden], .spq-note[hidden],
-.spq-limit[hidden], .spq-foot[hidden], .spq-clear[hidden], .spq .spq-msg[hidden] { display: none; }
+.spq-clear[hidden], .spq .spq-msg[hidden] { display: none; }
 
 .spq-head {
   display: flex;
@@ -53,7 +53,34 @@
 }
 .spq-row:hover { background: var(--lg-hover); color: var(--lg-ink); }
 .spq-row:active { background: var(--lg-press); }
-.spq-row.busy { opacity: .55; }
+/* a queue row = the play button + its tools (move up / down, remove), which show on hover or
+   keyboard focus but always keep their room, so the title never re-flows under the pointer */
+.spq-item { position: relative; display: flex; align-items: center; min-width: 0; border-radius: var(--lg-r-ctl); }
+.spq-item .spq-row { flex: 1 1 auto; }
+.spq-item.busy { opacity: .55; }
+.spq-item:hover { background: var(--lg-hover); }
+.spq-item .spq-row, .spq-item .spq-row:hover { background: transparent; }
+.spq-item:hover .spq-row { color: var(--lg-ink); }
+.spq-item .spq-row:active { background: var(--lg-press); }
+.spq-tools { flex: 0 0 auto; display: flex; gap: 1px; padding-right: 4px; opacity: 0; transition: opacity 120ms steps(2); }
+.spq-item:hover .spq-tools, .spq-item:focus-within .spq-tools { opacity: 1; }
+.spq-tool {
+  width: 20px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-3);
+  cursor: default;
+}
+.spq-tool:hover { background: var(--lg-press); color: var(--lg-ink); }
+.spq-tool:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.spq-tool:disabled { opacity: .35; background: transparent; color: var(--lg-ink-3); }
+.spq-sec { padding: 6px 8px 2px; color: var(--lg-ink-3); font-size: 11px; letter-spacing: .02em; }
+.spq-sec:first-child { padding-top: 2px; }
 .spq-art {
   flex: 0 0 32px;
   width: 32px;
@@ -82,22 +109,6 @@
 .spq-note { padding: 5px 8px 0; color: var(--lg-ink-2); line-height: 1.45; }
 .spq-note.bad { color: var(--lg-warn); }
 
-.spq-steps { margin: 2px 0 6px; padding: 0 8px 0 26px; color: var(--lg-ink-2); line-height: 1.45; }
-.spq-steps li { margin: 3px 0; }
-.spq-urihead { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.spq-urihead .spq-chip { padding: 2px 9px; }
-.spq-uri {
-  display: block;
-  margin-top: 4px;
-  padding: 3px 6px;
-  border-radius: var(--lg-r-ctl);
-  background: var(--lg-sunk);
-  color: var(--lg-ink);
-  font: 11.5px/1.4 Consolas, 'Cascadia Mono', monospace;
-  overflow-wrap: anywhere;      /* never cut: Owen pastes this exact text into Spotify's dashboard */
-  user-select: all;
-}
-
 .spq-link {
   padding: 0;
   border: 0;
@@ -125,8 +136,10 @@
 .spq-chip:hover, .spq-btn:hover { background: var(--lg-press); }
 .spq-btn { background: var(--lg-acc); color: var(--lg-acc-on); }
 .spq-btn:hover { background: var(--lg-acc); opacity: .9; }
+.spq-state .spq-btn { display: block; margin: 4px 8px 2px; }
+.spq-btn.armed, .spq-btn.armed:hover { background: var(--lg-warn-soft); color: var(--lg-warn); opacity: 1; }
+.spq-why { padding-top: 0; }
 
-.spq-idrow { display: flex; gap: 6px; padding: 0 8px; }
 .spq-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -158,11 +171,6 @@
   cursor: default;
 }
 .spq-clear:hover { background: var(--lg-hover); color: var(--lg-ink); }
-
-.spq-foot { display: flex; justify-content: flex-end; padding: 4px 8px 0; }
-.spq-disc { color: var(--lg-ink-3); text-decoration: none; font-size: 11.5px; }
-.spq-disc:hover { color: var(--lg-ink-2); text-decoration: underline; }
-.spq-disc.armed { color: var(--lg-warn); }
 
 /* no room for both: the card's source switcher folds away while Up next is open (spotify.js fit) */
 .pop.spq-squeeze .mc-src { display: none; }

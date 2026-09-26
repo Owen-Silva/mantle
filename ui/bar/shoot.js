@@ -111,17 +111,23 @@ const SHOTS = [
      opens the card, opens the dropdown and PROBES the fit: main gives a popover at most 480 px
      (POPOVER_MAX), so `need` must be <= 480 or the window would cut the card off (the top bar's
      dropdown shipped clipped that way on 2026-09-24). A miss is a console error = a PAGE PROBLEM. */
-  ...['queue', 'long', 'setup', 'connecting', 'loading', 'empty', 'noplayer', 'premium', 'expired', 'offline', 'off'].map((st) => (
+  ...['queue', 'long', 'noport', 'notrunning', 'checking', 'starting', 'loading', 'empty', 'noplayer', 'error', 'internals', 'portbusy', 'noinstall', 'off'].map((st) => (
     { name: 'spq-' + st, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=' + st, steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] })),
   { name: 'spq-queue-1x', dsf: 1, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },
   { name: 'spq-long-1x', dsf: 1, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=long', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },
   { name: 'spq-long-both', w: 1280, h: 560, q: '?mode=pill&media=both&spq=long', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },   // + the source list: the tallest card
-  { name: 'spq-setup-both', w: 1280, h: 560, q: '?mode=pill&media=both&spq=setup', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },   // the steps + the source list
+  { name: 'spq-noport-both', w: 1280, h: 560, q: '?mode=pill&media=both&spq=noport', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },   // the Restart state + the source list
   { name: 'spq-lessonplayer', w: 1280, h: 560, q: '?mode=pill&media=both&pick=lessonplayer&spq=queue', steps: ['#mchip', { probe: SPQ_FIT }] },   // LessonPlayer shown: NO Up next row (probe queue:false)
   { name: 'spq-collapsed', w: 1280, h: 420, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', { probe: SPQ_FIT }] },
   { name: 'spq-search', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'macklemore' }, { wait: 700 }, { probe: SPQ_FIT }] },
-  { name: 'spq-played', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-row:nth-child(3)', { wait: 300 }, { probe: SPQ_FIT }] },
-  { name: 'spq-premium-add', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=premium', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'levitating' }, { wait: 700 }, '.spq-row', { wait: 300 }, { probe: SPQ_FIT }] },
+  { name: 'spq-played', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-list > :nth-child(5) .spq-row', { wait: 300 }, { probe: SPQ_FIT }] },   // a Next-up row: the queued ones before it are used up
+  /* spotapp lane: the per-row tools (hover), a move up, a remove, an add, the armed Restart, and search unavailable */
+  { name: 'spq-tools', keepHover: true, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { hover: '.spq-list > :nth-child(3)' }, { probe: SPQ_FIT }] },
+  { name: 'spq-moved', keepHover: true, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { hover: '.spq-list > :nth-child(3)' }, '.spq-list > :nth-child(3) .spq-tool[aria-label="Move up"]', { wait: 300 }, { hover: '.spq-list > :nth-child(2)' }, { probe: SPQ_FIT }] },
+  { name: 'spq-removed', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { hover: '.spq-list > :nth-child(5)' }, '.spq-list > :nth-child(5) .spq-tool[aria-label="Remove from the queue"]', { wait: 300 }, { probe: SPQ_FIT }] },
+  { name: 'spq-add', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'levitating' }, { wait: 700 }, '.spq-row', { wait: 300 }, { probe: SPQ_FIT }] },
+  { name: 'spq-restart-armed', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=noport', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-state .spq-btn', { wait: 200 }, { probe: SPQ_FIT }] },
+  { name: 'spq-searchbroken', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=searchbroken', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'levitating' }, { wait: 700 }, { probe: SPQ_FIT }] },
   /* the tray: the white-icon plate on the strip, and the hidden icons in the overflow */
   { name: 'tray', w: 1280, h: 60, q: '?mode=pill&tray=1&media=playing' },
   { name: 'tray-more', w: 1280, h: 330, q: '?mode=pill&tray=1', click: '#more' },
@@ -276,11 +282,12 @@ if (process.env.BAR_TRAY_JSON) {
         else if (st.wait) await page.waitForTimeout(st.wait);
         else if (st.rclick) { await page.click(st.rclick, { button: 'right' }); await page.waitForTimeout(150); }
         else if (st.fill) await page.fill(st.fill, st.text);
+        else if (st.hover) { await page.hover(st.hover); await page.waitForTimeout(200); }   // spq-tools: the row tools show on hover
         else if (st.scroll) { await page.$eval(st.scroll, el => { el.scrollTop = el.scrollHeight; }); await page.waitForTimeout(100); }
         else if (st.js) await page.evaluate(st.js);   // a mock-main push (window.__mockMain), mid-shot
         else if (st.probe) console.log('  ' + s.name + ' probe: ' + JSON.stringify(await page.evaluate(st.probe)));   // a measurement, printed
       }
-      await page.mouse.move(0, 0);              // no hover state left on whatever was clicked
+      if (!s.keepHover) await page.mouse.move(0, 0);   // no hover state left on whatever was clicked (keepHover: a shot OF a hover, spq-tools)
       /* ...and let its fade finish: hovers fade out over 150 ms steps(2), so a shot taken at once
          kept the full hover fill on whatever row the last click left the pointer over (seen on
          qsx-wifi, 2026-09-23, where it read as a selected network). */
