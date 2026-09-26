@@ -13,6 +13,7 @@ const { stats } = require('./lib/sys-stats');
 const MediaPick = require('./lib/media-pick');
 const { trayImage } = require('./lib/tray-icon');
 const { openTarget } = require('./lib/open-target');
+const spotifyLaunch = require('./lib/spotify-launch');
 const { probe } = require('./lib/net-probe');
 const { createCallLog, createSetLog } = require('./lib/call-log');
 const { placeholderUrl } = require('./lib/placeholder');
@@ -2201,11 +2202,37 @@ function schedulePinnedPush(why) {
  * what the sidecar's `launch` does. A running-only entry can be started the same
  * way if Windows gave its windows an aumid.
  */
+/** Up next's port is only worth opening while the Spotify queue feature is on (its tray toggle). */
+function spotifyQueueOn() {
+  try {
+    const f = features && features.list().find((x) => x && x.name === 'spotify');
+    return !!(f && f.enabled && !f.stopped);
+  } catch (_) {
+    return false;
+  }
+}
+
 async function launchItem(item, fresh) {
   const pin = pinById.get(item.id);
   const lnk = pin && (pin.lnkPath || pin.target || pin.exe);
   const aumid = (pin && pin.aumid) || item.aumid || null;
   const again = fresh ? ' another copy of' : '';
+
+  /* The Win32 Spotify, NOT running: start it with Up next's port, the way the now-playing card does
+     (lib/spotify-launch.js, 2026-09-25). Anything else, or a Spotify already running (bring it forward,
+     never restart it), falls through to the launch below unchanged. --test only says what it would do. */
+  if (lnk || aumid) {
+    const sp = await spotifyLaunch.launchSpotifyWithPort(
+      pin ? { exe: pin.exe, target: pin.target, args: pin.args, lnkPath: pin.lnkPath, aumid } : { aumid },
+      { dryRun: !!flags.test, enabled: spotifyQueueOn() });
+    if (sp.handled) {
+      process.stdout.write(`mantle: launch ${item.name}: ${sp.dryRun ? `${sp.reason} (--test)` : `started ${sp.path} ${sp.args.join(' ')}, pid ${sp.pid}`}\n`);
+      return sp.dryRun
+        ? { ok: true, reason: sp.reason, action: 'dry-run', dryRun: true }
+        : { ok: true, reason: null, action: 'launched', path: sp.path };
+    }
+    if (sp.why) process.stdout.write(`mantle: launch ${item.name}: ${sp.why}\n`);
+  }
 
   // --test: a pinned icon clicked in a test bar starts nothing (osd2 lane, 2026-09-24).
   if (flags.test && (lnk || aumid)) {
@@ -3437,7 +3464,7 @@ const COMMANDS = {
   // an app row in a test instance really started the app). The row is still resolved, so a dry run
   // proves the id; lib/launcher-index.js says what it WOULD have run. Live behaviour is unchanged.
   'apps.launch': async (a) => {
-    const res = await apps.launch(a && a.id, { dryRun: !!flags.test });
+    const res = await apps.launch(a && a.id, { dryRun: !!flags.test, spotifyPort: spotifyQueueOn() });
     if (res && res.dryRun) process.stdout.write(`mantle: apps.launch dry run (--test): ${res.reason || 'nothing started'}\n`);
     if (res && res.ok && !res.dryRun) hideLauncher();
     return res;
