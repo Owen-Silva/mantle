@@ -36,6 +36,8 @@ const switcher = require('./lib/switcher');
 // The feature seam (wave 3, 2026-09-24): every lib/features/<name>.js is found and started here,
 // isolated, with its chords taken from Windows only while it is on AND healthy (lib/features.js).
 const { createFeatures } = require('./lib/features');
+// the known-game list (pure): a known game in front keeps the bar hidden even in a window (valofix)
+const GamePlan = require('./lib/features/_gamemode-plan');
 
 /*
  * The pinned-taskbar reader (lane C's file). It is REQUIRED IN A TRY on purpose:
@@ -1054,6 +1056,11 @@ async function foregroundBlocksReveal() {
     } else if (fg.fullscreen) {
       const who = fg.exe ? path.basename(String(fg.exe)) : (fg.title || 'an unnamed window');
       fgVerdict = { blocked: true, reason: `${who} is fullscreen in front, so the bar stays hidden (it must not paint over a game)`, at: now };
+    } else if (GamePlan.detectGame(fg).how === 'known') {
+      // valofix, 2026-09-26: Valorant came up as a maximised WINDOW, which the full-screen test
+      // above lets through; a topmost bar raised over a game on its way to full screen is exactly
+      // what must not happen. A known game in front keeps the bar down, windowed or not.
+      fgVerdict = { blocked: true, reason: `${path.basename(String(fg.exe))} (a known game) is in front, so the bar stays hidden even though it is not full screen`, at: now };
     } else {
       fgVerdict = { blocked: false, reason: null, at: now };
     }
