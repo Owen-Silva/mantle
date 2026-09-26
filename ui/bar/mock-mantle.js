@@ -612,6 +612,11 @@
   /* ?pick=lessonplayer starts as if Owen had picked LessonPlayer in the card's source switcher (the only
      way to reach the controls-off card now that LessonPlayer alone shows no chip at all). */
   var mediaPick = q.get('pick') === 'lessonplayer' ? 'Contoso.LessonPlayer_8wekyb3d8bbwe!App' : null;
+  /* ?pick=spotify: Spotify picked. With ?media=wait (LessonPlayer + Media Player, no Spotify) that is
+     the HELD pick main keeps for 60 s while the picked session is away (lib/media-pick.js,
+     mediapick lane 2026-09-25); __mockMain.media(name) swaps the sessions mid-shot. */
+  if (q.get('pick') === 'spotify') mediaPick = 'Spotify.exe';
+  var mediaGoneAt = 0;
   var mediaAt = Date.now();
 
   function tile(size, colors, glyph) {
@@ -662,6 +667,8 @@
     if (MEDIA === 'noctl') return [RADIO];
     if (MEDIA === 'lessonplayer') return [LESSONPLAYER];
     if (MEDIA === 'both') return [LESSONPLAYER, SPOTIFY];
+    if (MEDIA === 'three') return [LESSONPLAYER, SPOTIFY, RADIO];
+    if (MEDIA === 'wait') return [LESSONPLAYER, RADIO];   // Spotify's session blinked out
     return [];
   }
 
@@ -675,7 +682,7 @@
     /* Owen's call (2026-09-22), as main.js makes it: when the only session is LessonPlayer there is no
        chip at all, and a pick of LessonPlayer does not outlive the other player. */
     if (all.length && all.every(function (s) { return s.lessonplayer; })) {
-      mediaPick = null;
+      if (mediaPick === LESSONPLAYER.aumid) mediaPick = null;   // a player pick is held (main.js, 2026-09-25)
       return { ok: true, present: true, reason: 'only an LessonPlayer lesson has a media session, so the now-playing chip stays hidden (the LessonPlayer rule)',
         rev: 1, guard: guard,
         sessions: all.map(function (s) { return { aumid: s.aumid, app: s.app, title: s.title, artist: s.artist, status: s.status, playing: s.playing, current: true, lessonplayer: s.lessonplayer }; }),
@@ -688,6 +695,15 @@
     else if (cur && !cur.lessonplayer) { shown = cur; by = 'current'; }
     else if (all.some(function (s) { return !s.lessonplayer; })) { shown = all.filter(function (s) { return !s.lessonplayer; })[0]; by = 'lessonplayer-rule'; }
     else if (cur) { shown = cur; by = 'current'; }
+    // a picked session that is away: held, automatic shown meanwhile (main's by 'waiting')
+    var waiting = null;
+    if (picked || !mediaPick) mediaGoneAt = 0;
+    else {
+      if (!mediaGoneAt) mediaGoneAt = Date.now();
+      var gone = Date.now() - mediaGoneAt;
+      waiting = { aumid: mediaPick, name: mediaPick === SPOTIFY.aumid ? 'Spotify' : null, goneMs: gone, graceMs: 60000, leftMs: Math.max(0, 60000 - gone),
+        reason: (mediaPick === SPOTIFY.aumid ? 'Spotify' : mediaPick) + "'s media session is missing, so the card shows the automatic choice until it's back (your pick is kept for up to 60 s)" };
+    }
     var full = null;
     if (shown) {
       full = JSON.parse(JSON.stringify(shown));
@@ -700,7 +716,8 @@
       ok: true, present: all.length > 0, reason: all.length ? null : 'nothing is playing: no app has a media session open',
       rev: 1, guard: guard,
       sessions: all.map(function (s) { return { aumid: s.aumid, app: s.app, title: s.title, artist: s.artist, status: s.status, playing: s.playing, current: s === cur, lessonplayer: s.lessonplayer }; }),
-      shown: full, pick: full ? { aumid: full.aumid, by: by } : null, events: true, eventsReason: null
+      shown: full, pick: full ? (waiting ? { aumid: full.aumid, by: 'waiting', auto: by, waiting: waiting, reason: waiting.reason } : { aumid: full.aumid, by: by }) : null,
+      events: true, eventsReason: null
     };
   }
 
@@ -1222,6 +1239,7 @@
       }
       case 'media.select':
         mediaPick = (payload && payload.aumid) || null;
+        mediaGoneAt = 0;   // a pick starts a fresh grace, as in main
         return mediaPayload();
       case 'media.control': return mediaControl(payload || {});
       case 'tray.click':
@@ -1304,6 +1322,9 @@
       SPOTIFY.title = title || 'Downtown'; SPOTIFY.artist = artist || 'Macklemore & Ryan Lewis';
       emit('media', mediaPayload());
     },
+    /* The sessions change (?media= names): main pushes 'media'. mediapick shots: Spotify blinking
+       out of the list and back while it is the pick. */
+    media: function (name) { MEDIA = name; emit('media', mediaPayload()); },
     reveal: function (why) { revealed = true; emit('bar.reveal', { why: why || 'mock: harness reveal', mode: MODE, ms: DUR_IN }); },
     hide: function (why) { revealed = false; emit('bar.hide', { why: why || 'mock: harness hide', ms: DUR_OUT }); },
     /* A plug, an unplug, a charge limit reached: main pushes the new reading, and the panel's

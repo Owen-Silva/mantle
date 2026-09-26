@@ -2447,7 +2447,38 @@
       }, 1000);
     }
 
-    var srcSig = '';
+    /* THE SOURCE LIST HOLDS STILL (lane mediapick, 2026-09-25). Owen: "i press spotify but it
+       keeps switching to accelus or automatic". The rows followed main's session order (which
+       moves when Windows' current session does) and an "Automatic" row was APPENDED the moment a
+       pick was made; the card grows upward from the bar, so every row jumped up by one and the
+       next click, or a double-click's second half, landed on LessonPlayer or Automatic. Now: one row
+       per app in NAME order, "Automatic" always last (lit when it is in charge), exactly one row
+       lit (the choice, not merely what shows), rows reused in place and rebuilt only when the set
+       of apps changes, a picked app whose session blinked out keeps its row while main holds the
+       pick, and a click within SRC_SETTLE_MS of the rows moving on screen is not taken (and says
+       so). */
+    var SRC_SETTLE_MS = 400;
+    var srcKeys = null, srcBtns = Object.create(null), srcAuto = null, srcMovedAt = 0, srcAt = null;
+    var srcIcons = Object.create(null);   // an app's icon, kept so a row waiting for its session still has one
+    function srcKey(aumid) { return String(aumid || '').toLowerCase(); }
+    /* Where the rows are ON SCREEN (the window itself grows and shrinks from its top edge, so a
+       page-relative position would call a resize a move). A change stamps srcMovedAt. */
+    function srcMoved() {
+      var r = srcList.getBoundingClientRect();
+      var at = Math.round((window.screenY || 0) + r.top) + ':' + Math.round((window.screenY || 0) + r.bottom);
+      if (srcAt !== null && at !== srcAt) srcMovedAt = Date.now();
+      srcAt = at;
+    }
+    function srcPick(aumid, label) {
+      srcMoved();   // a move since the last paint counts too: it is under the pointer NOW
+      if (Date.now() - srcMovedAt < SRC_SETTLE_MS) {
+        mediaSay('That click on ' + label + ' was not taken: the source list had just moved under the pointer. Click again if you meant it.', 'card');
+        return;
+      }
+      callR('media.select', { aumid: aumid }).then(function (r) { mediaNote = ''; renderMedia(r); }, function (e) {
+        mediaSay(aumid ? 'could not switch to ' + label + ': ' + msg(e) : 'could not go back to automatic: ' + msg(e), 'card');
+      });
+    }
     mediaPaint = function () {
       var s = mediaShown();
       if (!s) return;
@@ -2499,46 +2530,80 @@
          one app (two browser tabs) share it, so they are one row, said out loud. */
       var seen = Object.create(null), rows = [], dup = 0;
       (media.sessions || []).forEach(function (x) {
-        var k = String(x.aumid || '').toLowerCase();
+        var k = srcKey(x.aumid);
         if (seen[k]) { dup++; return; }
         seen[k] = true;
+        if (x.app && x.app.icon) srcIcons[k] = x.app.icon;
         rows.push(x);
       });
-      var by = media.pick && media.pick.by;
-      var sig = rows.map(function (x) { return [x.aumid, x.title, x.playing, x.lessonplayer].join('|'); }).join('\u0001') + '|' + s.aumid + '|' + by + '|' + dup;
+      var pk = media.pick || {}, by = pk.by, wait = by === 'waiting' && pk.waiting ? pk.waiting : null;
+      // the pick main is HOLDING: the one row lit. None = Automatic is lit.
+      var held = by === 'you' ? srcKey(s.aumid) : (wait ? srcKey(wait.aumid) : '');
+      if (wait && !seen[held]) rows.push({ aumid: wait.aumid, app: { name: wait.name || wait.aumid, icon: srcIcons[held] || null }, gone: true });
+      rows.sort(function (a, b) {
+        var na = String((a.app && a.app.name) || a.aumid || '').toLowerCase(), nb = String((b.app && b.app.name) || b.aumid || '').toLowerCase();
+        return na < nb ? -1 : na > nb ? 1 : (srcKey(a.aumid) < srcKey(b.aumid) ? -1 : 1);
+      });
       src.hidden = rows.length < 2;
-      if (rows.length >= 2 && sig !== srcSig) {
-        srcSig = sig;
-        srcList.textContent = '';
-        rows.forEach(function (x) {
-          var on = String(x.aumid || '').toLowerCase() === String(s.aumid || '').toLowerCase();
-          var b = mk('button', 'mc-s' + (on ? ' on' : ''));
-          b.type = 'button';
-          var ic = mk('span', 'mc-sico');
-          if (x.app && x.app.icon) { var im = document.createElement('img'); im.alt = ''; im.src = x.app.icon; ic.appendChild(im); }
-          else ic.textContent = letterOf((x.app && x.app.name) || x.aumid);
-          b.appendChild(ic);
-          b.appendChild(mk('span', 'mc-stxt', ((x.app && x.app.name) || x.aumid || 'an app') + (x.lessonplayer ? ' · lesson' : (x.title ? ' · ' + x.title : ''))));
-          b.title = ((x.app && x.app.name) || x.aumid) + (x.title ? ': ' + x.title : '') + ' (' + mediaStatus(x) + ')';
-          b.addEventListener('click', function () {
-            if (on) return;
-            callR('media.select', { aumid: x.aumid }).then(renderMedia, function (e) { mediaSay('could not switch to ' + ((x.app && x.app.name) || x.aumid) + ': ' + msg(e), 'card'); });
+      if (!src.hidden) {
+        var keys = rows.map(function (x) { return srcKey(x.aumid); }).join('\u0001');
+        if (keys !== srcKeys) {
+          // the set of apps changed: rebuild (rows only ever move here, and srcMovedAt says so;
+          // not on the card's first paint, when the pointer is still on the chip below it)
+          if (srcKeys !== null) srcMovedAt = Date.now();
+          srcKeys = keys;
+          srcList.textContent = '';
+          srcBtns = Object.create(null);
+          rows.forEach(function (x) {
+            var b = mk('button', 'mc-s');
+            b.type = 'button';
+            b.dataset.aumid = x.aumid || '';
+            b.appendChild(mk('span', 'mc-sico'));
+            b.appendChild(mk('span', 'mc-stxt'));
+            b.addEventListener('click', function () {
+              if (b.classList.contains('on') && !b._gone) return;   // already the choice (a gone row: a new pick restarts its grace)
+              srcPick(b.dataset.aumid, b._name);
+            });
+            srcBtns[srcKey(x.aumid)] = b;
+            srcList.appendChild(b);
           });
-          srcList.appendChild(b);
-        });
-        if (by === 'you') {
-          var auto = mk('button', 'mc-s mc-auto', 'Automatic');
-          auto.type = 'button';
-          auto.title = 'Go back to the session Windows calls current (under the LessonPlayer rule, anything but LessonPlayer first)';
-          auto.addEventListener('click', function () {
-            callR('media.select', { aumid: null }).then(renderMedia, function (e) { mediaSay('could not go back to automatic: ' + msg(e), 'card'); });
+          srcAuto = mk('button', 'mc-s mc-auto', 'Automatic');
+          srcAuto.type = 'button';
+          srcAuto.dataset.aumid = '';
+          srcAuto.title = 'Go back to the session Windows calls current (under the LessonPlayer rule, anything but LessonPlayer first)';
+          srcAuto.addEventListener('click', function () {
+            if (srcAuto.classList.contains('on')) return;
+            srcPick(null, 'Automatic');
           });
-          srcList.appendChild(auto);
+          srcList.appendChild(srcAuto);
         }
+        // in place: the text, the icon and which row is lit, never the order
+        rows.forEach(function (x) {
+          var k = srcKey(x.aumid), b = srcBtns[k];
+          if (!b) return;
+          var name = (x.app && x.app.name) || x.aumid || 'an app';
+          b._name = name; b._gone = !!x.gone;
+          b.classList.toggle('on', k === held);
+          var ic = b.firstChild, icon = (x.app && x.app.icon) || srcIcons[k] || '';
+          if (ic._src !== icon || !ic.firstChild) {
+            ic._src = icon; ic.textContent = '';
+            if (icon) { var im = document.createElement('img'); im.alt = ''; im.src = icon; ic.appendChild(im); }
+            else ic.textContent = letterOf(name);
+          }
+          b.lastChild.textContent = name + (x.gone ? ' · session gone, waiting for it' : x.lessonplayer ? ' · lesson' : (x.title ? ' · ' + x.title : ''));
+          b.title = x.gone
+            ? name + "'s media session is missing right now. Your pick is kept for up to " + Math.round((wait.graceMs || 60000) / 1000) + ' s and applies again the moment it is back'
+            : name + (x.title ? ': ' + x.title : '') + ' (' + mediaStatus(x) + ')';
+        });
+        srcAuto.classList.toggle('on', !held);
       }
+      srcMoved();
+      var autoWhy = by === 'waiting' ? pk.auto : by;
       srcWhy.textContent = by === 'you' ? 'Showing the source you picked'
-        : by === 'lessonplayer-rule' ? 'Showing ' + mediaApp(s) + ' rather than your LessonPlayer lesson (the LessonPlayer rule)'
-        : 'Showing the session Windows calls current';
+        : wait ? (pk.reason || wait.reason || (wait.name || 'The picked app') + "'s session is missing; showing automatic until it's back")
+        : autoWhy === 'lessonplayer-rule' ? 'Automatic: showing ' + mediaApp(s) + ' rather than your LessonPlayer lesson (the LessonPlayer rule)'
+        : 'Automatic: showing the session Windows calls current';
+      if (!held && pk.dropped && pk.dropped.reason) srcWhy.textContent += ' · ' + pk.dropped.reason;
       if (dup) srcWhy.textContent += ' · ' + dup + ' more from the same app' + (dup > 1 ? 's' : '') + ' (Windows gives them one address, so they share a row)';
 
       foot.textContent = media.events === false

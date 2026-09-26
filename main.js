@@ -10,6 +10,7 @@ const { ShellState } = require('./lib/state');
 const { Sidecar } = require('./lib/sidecar');
 const { Apps, modulePathFor } = require('./lib/apps');
 const { stats } = require('./lib/sys-stats');
+const MediaPick = require('./lib/media-pick');
 const { trayImage } = require('./lib/tray-icon');
 const { openTarget } = require('./lib/open-target');
 const { probe } = require('./lib/net-probe');
@@ -2815,7 +2816,9 @@ const LESSONPLAYER_RE = /lessonplayer/i;
 const LESSONPLAYER_GUARD_REASON = "LessonPlayer lesson · controls off so a stray click can't pause it";
 const LESSONPLAYER_GUARD_HOW = 'Mantle was started with --lessonplayer-guard for a recording session; start it without that flag to allow them';
 let lastMedia = null;       // the last payload pushed to the bar, for replay and the guard
-let mediaPick = null;       // the AUMID Owen picked in the card's switcher, or null for automatic
+let mediaPick = null;       // the pick Owen made in the card's switcher (lib/media-pick.js's shape), or null for automatic
+let mediaPickDropped = null; // the last pick that timed out: said in the card until the next pick
+let mediaPickTimer = null;  // a re-read when a held pick's grace runs out, so it drops on time
 let mediaReading = null;    // the in-flight read, so a burst of triggers makes one read
 let mediaAgain = false;     // a trigger arrived during that read: read once more after it
 let mediaPollTimer = null;
@@ -2867,15 +2870,34 @@ async function mediaRead() {
     lessonplayer: isLessonPlayer(s),
   }));
 
+  /* THE PICK IS STICKY (lane mediapick, 2026-09-25; lib/media-pick.js says how). Owen: "i press
+     spotify but it keeps switching to accelus or automatic". The pick used to drop the instant
+     its session was missing from ONE read, so a session blinking out put the card back on
+     automatic for good. Now an absent pick is held for 60 s of continuous absence (by 'waiting',
+     automatic shown meanwhile, said in the card) and applies again the moment it is back.
+     Read and written in the same tick, with no await between: a media.select that lands during
+     the sidecar read above is seen here, never overwritten by a stale pick. */
+  const cur0 = snap.current ? Object.assign({}, snap.current, { lessonplayer: isLessonPlayer(snap.current) }) : null;
+  const choice = MediaPick.choose({ pick: mediaPick, sessions, current: cur0, guardOn: mediaGuardOn(), now: Date.now() });
+  mediaPick = choice.pick;
+  if (choice.dropped) {
+    mediaPickDropped = choice.dropped;
+    process.stdout.write(`mantle: media pick dropped: ${choice.dropped.reason}\n`);
+  }
+  mediaPickArm(choice.waiting);
+  const pickNote = (p) => Object.assign(p, choice.waiting ? { waiting: choice.waiting, reason: choice.waiting.reason } : {},
+    choice.auto ? { auto: choice.auto } : {}, !mediaPick && mediaPickDropped ? { dropped: mediaPickDropped } : {});
+
   /* LESSONPLAYER ALONE = NO CHIP (Owen's call, 2026-09-22). With the rule on and nothing but an
      LessonPlayer lesson publishing a session, the bar shows no now-playing chip at all: a chip that
      can only ever say "LessonPlayer · Student" and offer nothing is noise over every lesson. With a
      player alongside it, the chip shows the player (below), and the card's source switcher still
      lets Owen pick the lesson, which then shows with its controls off. A pick of the lesson does
-     not outlive the player: once LessonPlayer is alone again, this wins. Not a failure: ok stays true,
-     and the reason says what happened for anyone reading the payload. */
-  if (mediaGuardOn() && sessions.length && sessions.every((s) => s.lessonplayer)) {
-    mediaPick = null;
+     not outlive the player: once LessonPlayer is alone again, this wins (lib/media-pick.js drops it).
+     A pick of a PLAYER survives this (2026-09-25): the player blinking out for a moment is not
+     Owen changing his mind. Not a failure: ok stays true, and the reason says what happened for
+     anyone reading the payload. */
+  if (choice.lessonplayerOnly) {
     return {
       ok: true,
       present: true,
@@ -2884,31 +2906,17 @@ async function mediaRead() {
       guard,
       sessions,
       shown: null,
-      pick: { aumid: null, by: 'lessonplayer-only' },
+      pick: pickNote({ aumid: null, by: 'lessonplayer-only' }),
       events: snap.events !== false,
       eventsReason: snap.eventsReason || null,
     };
   }
 
-  // Which session to show, and why (the card says "picked by you" / "LessonPlayer rule" out loud).
-  let want = null;
-  let by = null;
-  if (mediaPick && sessions.some((s) => sameAumid(s.aumid, mediaPick))) {
-    want = mediaPick; by = 'you';
-  } else {
-    mediaPick = null;   // the session Owen picked has gone: back to automatic
-    const cur = snap.current || null;
-    const others = sessions.filter((s) => !s.lessonplayer);
-    if (cur && !(mediaGuardOn() && isLessonPlayer(cur))) {
-      by = 'current';
-    } else if (mediaGuardOn() && others.length) {
-      want = (others.find((s) => s.playing) || others[0]).aumid; by = 'lessonplayer-rule';
-    } else if (cur) {
-      by = 'current';
-    } else if (sessions.length) {
-      want = sessions[0].aumid; by = 'first';   // Windows has not picked one; show the first rather than nothing
-    }
-  }
+  /* Which session to show, and why: 'you' (the pick), 'waiting' (the pick's session is away,
+     `auto` says which rule chose what shows meanwhile), 'current', 'lessonplayer-rule' or 'first'.
+     The card says each out loud. */
+  const want = choice.want;
+  const by = choice.by;
 
   let shown = snap.current || null;
   let shownReason = null;
@@ -2931,10 +2939,22 @@ async function mediaRead() {
     guard,
     sessions,
     shown,
-    pick: shown ? { aumid: shown.aumid, by } : null,
+    pick: shown ? pickNote({ aumid: shown.aumid, by }) : null,
     events: snap.events !== false,
     eventsReason: snap.eventsReason || null,
   };
+}
+
+/* A held pick drops after its grace even when nothing else changes: a gone session sends no
+   more events, so without this re-read the card would say "waiting" for ever. */
+function mediaPickArm(waiting) {
+  if (mediaPickTimer) { clearTimeout(mediaPickTimer); mediaPickTimer = null; }
+  if (!waiting || shuttingDown) return;
+  mediaPickTimer = setTimeout(() => {
+    mediaPickTimer = null;
+    mediaPush(`the picked source (${waiting.name || waiting.aumid}) may have used up its ${Math.round(waiting.graceMs / 1000)} s grace`);
+  }, waiting.leftMs + 250);
+  if (mediaPickTimer.unref) mediaPickTimer.unref();
 }
 
 /** Read and push to the bar. Coalesces: triggers during a read cause exactly one more read. */
@@ -3713,9 +3733,13 @@ const COMMANDS = {
   // rejects, like the quick-settings calls: the bar draws the reason.
   'media.get': async () => mediaPush('the bar asked'),
   'media.select': async (a) => {
-    // null / missing = back to automatic (Windows' current session, under the LessonPlayer rule)
-    mediaPick = a && a.aumid ? String(a.aumid) : null;
-    return mediaPush(mediaPick ? `a source was picked in the media card (${mediaPick})` : 'the media card went back to automatic');
+    // null / missing = back to automatic (Windows' current session, under the LessonPlayer rule).
+    // A pick (even of the same source again) starts a fresh grace (lib/media-pick.js).
+    const aumid = a && a.aumid ? String(a.aumid) : null;
+    const known = aumid ? ((lastMedia && lastMedia.sessions) || []).find((s) => sameAumid(s.aumid, aumid)) : null;
+    mediaPick = MediaPick.makePick(aumid, known || { aumid, lessonplayer: isLessonPlayer({ aumid }) }, Date.now());
+    mediaPickDropped = null;
+    return mediaPush(mediaPick ? `a source was picked in the media card (${mediaPick.aumid})` : 'the media card went back to automatic');
   },
   'media.control': async (a) => {
     const action = String((a && a.action) || '');

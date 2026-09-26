@@ -69,6 +69,17 @@ const BT_CONNECT = BTV.concat([btRow('JBL Flip 6'), '.qsx-net.open .qsx-btn.acc'
    from the Wi-Fi glyph. The 900 ms lets the pill's entrance finish before anything is clicked. */
 const BATT = ['charging', 'plugged', 'full', 'battery', 'unplugged', 'saver', 'unknown', 'error', 'none'];
 
+/* The media card's source list (msrc-* shots, mediapick lane 2026-09-25): each row's text, its
+   top on screen and whether it is lit, what the card shows and why, and any note. The rows must
+   hold still across a pick, a flicker and back. */
+const SRC_ROWS = `(() => {
+  const p = document.querySelector('.pop.mcard');
+  if (!p || p.hidden) return { error: 'no media card open' };
+  const rows = Array.from(p.querySelectorAll('.mc-srclist .mc-s')).map((b) => (b.classList.contains('on') ? '*' : '') + b.textContent + '@' + Math.round(b.getBoundingClientRect().top));
+  const n = p.querySelector('.mc-note');
+  return { shows: (p.querySelector('.mc-apptxt') || {}).textContent, why: (p.querySelector('.mc-srcwhy') || {}).textContent, rows, note: n && !n.hidden ? n.textContent : '' };
+})()`;
+
 /* Each shot is one state worth looking at, not one size for its own sake. */
 /* The Spotify queue's fit probe (spq-* shots): the room the open media card needs (bar.js asks
    main for pop.offsetHeight + 16), whether it is within main's 480 px cap, and how many queue rows
@@ -107,6 +118,14 @@ const SHOTS = [
   /* LessonPlayer picked in the switcher while a player also plays: the controls-off card */
   { name: 'media-lessonplayer-picked', w: 1280, h: 480, q: '?mode=pill&media=both&pick=lessonplayer', click: '#mchip' },
   { name: 'media-off', w: 1280, h: 330, q: '?mode=pill&media=off', click: '#more' },   // the chip's reason, in words
+  /* The source list holds still (mediapick lane, 2026-09-25): before a pick (Automatic lit), after
+     picking Spotify (same rows, same tops, Spotify lit), Spotify's session blinking out (its row
+     stays, "waiting"), back again, and a click in the 400 ms after the rows moved (not taken, said). */
+  { name: 'msrc-before', w: 1280, h: 560, q: '?mode=pill&media=both', steps: ['#mchip', { probe: SRC_ROWS }] },
+  { name: 'msrc-picked', w: 1280, h: 560, q: '?mode=pill&media=both', steps: ['#mchip', { probe: SRC_ROWS }, '.mc-s[data-aumid="Spotify.exe"]', { probe: SRC_ROWS }] },
+  { name: 'msrc-wait', w: 1280, h: 560, q: '?mode=pill&media=three&pick=spotify', steps: ['#mchip', { probe: SRC_ROWS }, { js: "__mockMain.media('wait')" }, { wait: 300 }, { probe: SRC_ROWS }] },
+  { name: 'msrc-back', w: 1280, h: 560, q: '?mode=pill&media=three&pick=spotify', steps: ['#mchip', { js: "__mockMain.media('wait')" }, { wait: 300 }, { js: "__mockMain.media('three')" }, { wait: 300 }, { probe: SRC_ROWS }] },
+  { name: 'msrc-settle', w: 1280, h: 560, q: '?mode=pill&media=both', steps: ['#mchip', { wait: 300 }, { js: "__mockMain.media('three'); setTimeout(() => document.querySelector('.mc-s[data-aumid^=\"Microsoft.ZuneMusic\"]').click(), 120)" }, { wait: 400 }, { probe: SRC_ROWS }] },
   /* Spotify's "Up next" queue (spotq lane, 2026-09-25; ui/bar/spotify.js, ?spq= in the mock). Each
      opens the card, opens the dropdown and PROBES the fit: main gives a popover at most 480 px
      (POPOVER_MAX), so `need` must be <= 480 or the window would cut the card off (the top bar's
