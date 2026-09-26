@@ -96,7 +96,7 @@ namespace Mantle {
     /// a feature.
     public static readonly string[] Commands = new string[] {
       "ping", "windows", "foreground", "focus", "minimize", "close", "toggle",
-      "taskbar", "appbar", "traywatch", "edgeclip", "hittest", "raise",
+      "taskbar", "appbar", "traywatch", "edgeclip", "tbhide", "hittest", "raise",
       "glass", "corners", "place", "morph", "region",
       "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop",
       "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power", "battery",
@@ -132,6 +132,12 @@ namespace Mantle {
       // only be set before any window exists and before anything has cached a
       // coordinate. See InitDpi for why it matters.
       InitDpi();
+
+      // --taskbar-guard=<pid>: this exe as TaskbarHide's guard - a tiny process
+      // with no protocol and no window that waits for that sidecar to die and
+      // clears the taskbar region it may have left. Nothing below runs for it.
+      foreach (string a in args)
+        if (a.StartsWith("--taskbar-guard=", StringComparison.Ordinal)) return TaskbarHide.RunGuard(args);
 
       foreach (string a in args) {
         if (a == "--passive") Passive = true;
@@ -200,6 +206,20 @@ namespace Mantle {
           }
         } catch (Exception ex) {
           EmitLog("warn", "edgeclip: the startup check for a stale cursor clip failed (" + ex.Message + ")");
+        }
+        // The same for the taskbar's empty window region (TaskbarHide.cs): what
+        // the previous sidecar's guard did is said once, and a region a dead
+        // Mantle left with no guard to clear it is cleared at the door.
+        try {
+          string note = TaskbarHide.TakeGuardNote(GuardNotePath());
+          if (note != null) EmitLog("warn", "tbhide: " + note);
+          string staleRgn = TaskbarHide.ClearStaleAtStartup();
+          if (staleRgn != null) {
+            try { Console.Error.WriteLine("mantle-sidecar: " + staleRgn); Console.Error.Flush(); } catch (Exception) { }
+            EmitLog("warn", "tbhide: " + staleRgn);
+          }
+        } catch (Exception ex) {
+          EmitLog("warn", "tbhide: the startup check for a stale taskbar region failed (" + ex.Message + ")");
         }
       }
 
@@ -281,6 +301,21 @@ namespace Mantle {
     }
 
     // ------------------------------------------------------------------ output
+
+    /// Run `a` on the message-loop thread (hooks must be installed there).
+    public static void Post(Action a) {
+      try { if (_loop != null && _loop.IsHandleCreated) _loop.BeginInvoke(a); } catch (Exception) { }
+    }
+
+    /// Where TaskbarHide's guard leaves its note for the next sidecar: beside the
+    /// state file when there is one, else in %TEMP%.
+    public static string GuardNotePath() {
+      try {
+        string dir = string.IsNullOrEmpty(StateFilePath) ? null : System.IO.Path.GetDirectoryName(StateFilePath);
+        if (string.IsNullOrEmpty(dir)) dir = System.IO.Path.GetTempPath();
+        return System.IO.Path.Combine(dir, "taskbar-guard.log");
+      } catch (Exception) { return null; }
+    }
 
     public static void Emit(object payload) {
       // Once the shutdown has started, NOTHING routine may touch stdout - see
@@ -842,6 +877,59 @@ namespace Mantle {
           return null;
         }
 
+        case "tbhide": {
+          // TaskbarHide.cs: an EMPTY WINDOW REGION on the Windows taskbar, so its
+          // reveals (which a foreground change triggers, cursor or not) are never
+          // seen. Never ShowWindow/SetWindowPos - the 2026-09-21 rule stands.
+          //
+          // decide:[{kind,want,mayRelease}] is PURE (made-up window states in,
+          // actions out) and status is a read, so both answer in passive: that is
+          // how the suite proves the logic without touching the live taskbar.
+          if (Json.HasKey(req, "decide")) {
+            object rawDecide;
+            Json.TryGet(req, "decide", out rawDecide);
+            var list = rawDecide as List<object>;
+            if (list == null) return "tbhide decide needs an array of {kind, want, mayRelease}";
+            var outList = new List<object>();
+            var cls = new List<string>(); var acts = new List<string>(); var oks = new List<bool>(); var whys = new List<string>();
+            foreach (object o in list) {
+              var d = o as Dictionary<string, object>;
+              if (d == null) return "tbhide decide: every entry must be an object";
+              string k = Json.GetString(d, "kind");
+              int kind = k == "none" ? TaskbarHide.KindNone : k == "empty" ? TaskbarHide.KindEmpty :
+                         k == "shaped" ? TaskbarHide.KindShaped : k == "gone" ? TaskbarHide.KindGone : -99;
+              if (kind == -99) return "tbhide decide: kind must be none, empty, shaped or gone (got \"" + k + "\")";
+              string why;
+              string act = TaskbarHide.Decide(Json.GetBool(d, "want", true), kind, Json.GetBool(d, "mayRelease", false), out why);
+              outList.Add(Json.Obj("action", act, "reason", why));
+              cls.Add(Json.GetString(d, "class") ?? "Shell_TrayWnd");
+              acts.Add(act);
+              oks.Add(Json.GetBool(d, "okAfter", true));
+              whys.Add(why);
+            }
+            string sumWhy;
+            bool sumApplied = TaskbarHide.Summarize(cls, acts, oks, whys, out sumWhy);
+            result = Json.Obj("decisions", outList.ToArray(), "applied", sumApplied, "reason", sumWhy);
+            return null;
+          }
+          if (Json.GetBool(req, "status", false)) { result = TaskbarHide.Status(); return null; }
+          if (!Json.HasKey(req, "on"))
+            return "tbhide needs on:true or on:false (or status:true, or decide:[...] to see what it would do)";
+          if (Passive) return PassiveRefusal + ": tbhide would change the live Windows taskbar";
+          if (!Json.GetBool(req, "on", false)) {
+            string offWhy;
+            bool released = TaskbarHide.TurnOff(out offWhy);
+            result = Json.Obj("ok", true, "applied", false, "released", released, "reason", offWhy);
+            return null;
+          }
+          bool tbApplied;
+          string tbWhy, tbGuard;
+          string tberr = TaskbarHide.TurnOn(GuardNotePath(), out tbApplied, out tbWhy, out tbGuard);
+          if (tberr != null) return tberr;
+          result = Json.Obj("ok", true, "applied", tbApplied, "reason", tbWhy, "guard", tbGuard);
+          return null;
+        }
+
         case "morph": {
           // Same footing as `place`: it moves a window Mantle owns, holds no
           // shell state and dies with the window, so passive has nothing to
@@ -1392,6 +1480,12 @@ namespace Mantle {
 
       try { detail.Add(AppBars.RemoveAllForExit()); }
       catch (Exception ex) { done = false; detail.Add("app bars: cleanup failed (" + ex.Message + ")"); }
+
+      // The taskbar's empty window region (TaskbarHide.cs) before its auto-hide
+      // flag: invisible is the more visible way to leave Windows broken. Bounded
+      // by its own 0.6 s deadline; the guard process finishes it if Explorer is hung.
+      try { detail.Add(TaskbarHide.ReleaseForExit()); }
+      catch (Exception ex) { done = false; detail.Add("taskbar region: release failed (" + ex.Message + "); the taskbar guard clears it when this process is gone"); }
 
       try { detail.Add(Taskbar.RestoreForExit()); }
       catch (Exception ex) { done = false; detail.Add("taskbar: restore failed (" + ex.Message + ")"); }

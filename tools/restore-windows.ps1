@@ -88,6 +88,42 @@ public static class MantleRestore {
   [DllImport("user32.dll")]
   static extern bool IsWindowVisible(IntPtr hWnd);
 
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  static extern IntPtr FindWindowExW(IntPtr parent, IntPtr after, string cls, string title);
+  [DllImport("user32.dll")]
+  static extern int GetWindowRgn(IntPtr hWnd, IntPtr hRgn);
+  [DllImport("user32.dll")]
+  static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool redraw);
+  [DllImport("gdi32.dll")]
+  static extern IntPtr CreateRectRgn(int l, int t, int r, int b);
+  [DllImport("gdi32.dll")]
+  static extern bool DeleteObject(IntPtr obj);
+
+  /// <summary>TaskbarHide.cs (2026-09-25) makes the taskbar invisible with an
+  /// EMPTY window region. Clear every such region on Shell_TrayWnd and
+  /// Shell_SecondaryTrayWnd; any other region is not Mantle's and is left alone.
+  /// Returns {found, cleared}.</summary>
+  public static int[] ClearEmptyTaskbarRegions() {
+    int found = 0, cleared = 0;
+    foreach (string cls in new string[] { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" }) {
+      IntPtr h = IntPtr.Zero;
+      int n = 0;
+      while ((h = FindWindowExW(IntPtr.Zero, h, cls, null)) != IntPtr.Zero && n++ < 16) {
+        IntPtr probe = CreateRectRgn(0, 0, 0, 0);
+        int kind = GetWindowRgn(h, probe);
+        DeleteObject(probe);
+        if (kind != 1) continue;          // 1 = NULLREGION: empty, Mantle's shape
+        found++;
+        SetWindowRgn(h, IntPtr.Zero, true);
+        IntPtr again = CreateRectRgn(0, 0, 0, 0);
+        int after = GetWindowRgn(h, again);
+        DeleteObject(again);
+        if (after == 0) cleared++;        // 0 = ERROR: no region at all, Explorer's normal state
+      }
+    }
+    return new int[] { found, cleared };
+  }
+
   [DllImport("user32.dll")]
   static extern int GetSystemMetrics(int nIndex);
 
@@ -382,6 +418,23 @@ if ($skipWorkArea -ne $null) {
       Say "  work area asked for [$($target -join ', ')], Windows reports [$shown] (Explorer recomputes this for real app bars, which is normal)"
     }
   }
+}
+
+# -----------------------------------------------------------------------------
+# (d2) Is the taskbar INVISIBLE? Since 2026-09-25 Mantle hides the Windows
+# taskbar with an EMPTY window region (sidecar/TaskbarHide.cs) - not ShowWindow,
+# so Explorer's auto-hide machine is never involved. A region outlives the
+# process that set it; the sidecar's guard process normally clears it, and this
+# is the no-Mantle-at-all fallback. Only an EMPTY region is cleared (that shape
+# is only ever Mantle's); a no-op on a healthy desktop.
+# -----------------------------------------------------------------------------
+$rgn = [MantleRestore]::ClearEmptyTaskbarRegions()
+if ($rgn[0] -eq 0) {
+  Say "  taskbar region: none (the taskbar is not being kept invisible)"
+} elseif ($rgn[1] -eq $rgn[0]) {
+  Say "  taskbar region: cleared $($rgn[1]) empty window region(s) Mantle left on the taskbar, so it draws again"
+} else {
+  Problem "taskbar region: $($rgn[0] - $rgn[1]) of $($rgn[0]) empty window region(s) would not clear -- run again with -RestartExplorer"
 }
 
 # -----------------------------------------------------------------------------

@@ -208,6 +208,21 @@ const BAR_SHAPE = flags.flush && !flags.pill ? 'edge' : 'pill';
 flags.edgeclip = !ARGV.some((a) => a === '--no-edgeclip');
 
 /*
+ * --no-tbhide: do not make the Windows taskbar invisible (sidecar/TaskbarHide.cs).
+ *
+ * WHY IT EXISTS (probe, 2026-09-25): the auto-hidden taskbar slid up ~7 times in
+ * 10 minutes, each time 35-50 ms after a FOREGROUND CHANGE -- mostly Mantle's own
+ * bar opening an app -- with the cursor nowhere near the bottom edge and the edge
+ * clip already dropped by that same foreground change. No cursor clip can stop
+ * that. So the sidecar gives the taskbar an EMPTY WINDOW REGION: Explorer still
+ * runs it (tray, Win+number, its auto-hide state machine all untouched), but a
+ * reveal draws nothing and clicks fall through. Never ShowWindow/SetWindowPos.
+ * A guard process clears the region if the sidecar dies; tools/restore-windows.ps1
+ * and an Explorer restart clear it with no Mantle at all.
+ */
+flags.tbhide = !ARGV.some((a) => a === '--no-tbhide');
+
+/*
  * --os-morph: animate the WINDOW with the sidecar's per-frame SetWindowPos, the
  * way this did until Owen said "when the taskbar expands out it isn't that
  * smooth". Kept so the two can be compared side by side rather than argued about.
@@ -3830,6 +3845,11 @@ function sidecarUnavailable(reason) {
   if (state.get().edgeclip.on) {
     state.set('edgeclip', { applied: false, reason: `the cursor is not confined, so the Windows taskbar can slide up through the island's gaps: ${reason}` });
   }
+  if (state.get().tbhide.on) {
+    // The sidecar's guard process clears the taskbar's empty region the moment
+    // the sidecar dies, so "not hidden" is the truth here, not a guess.
+    state.set('tbhide', { applied: false, reason: `the Windows taskbar is visible again (the sidecar's guard clears its region when the sidecar stops): ${reason}` });
+  }
 }
 
 /**
@@ -3855,6 +3875,7 @@ function testShellBaseline() {
       : '--no-desktop: the desktop layer was not created',
   });
   state.set('hotkey', { winTap: false, reason: 'test mode: the Win key hook was not installed' });
+  state.set('tbhide', { on: false, applied: false, reason: 'test mode: the Windows taskbar was not made invisible (the passive sidecar refuses tbhide)' });
   state.set('edgeclip', {
     on: false,
     applied: false,
@@ -3926,6 +3947,20 @@ sidecar.on('edgeclip', (msg) => {
       : `the 2 px edge clip is not in force, so the Windows taskbar can slide up through the island's gaps: ${said}`,
   });
   process.stdout.write(`mantle: edge clip ${applied ? 'back on' : 'yielded'}: ${said}\n`);
+});
+
+/*
+ * 'tbhide': the sidecar saying the Windows taskbar's invisibility changed -- a
+ * new taskbar window (Explorer restart, a new monitor) got its empty region, one
+ * would not take it, another program shaped it, or the guard had to be replaced.
+ * Once per change, with the sidecar's own reason.
+ */
+sidecar.on('tbhide', (msg) => {
+  const applied = !!(msg && msg.applied);
+  const said = (msg && msg.reason) || (applied ? 'the sidecar re-applied it' : 'the sidecar did not say why');
+  const guard = msg && msg.guard ? `; guard ${msg.guard}` : '';
+  state.set('tbhide', { applied, reason: `${said}${guard}` });
+  process.stdout.write(`mantle: taskbar hiding ${applied ? 'in force' : 'NOT in force'}: ${said}${guard}\n`);
 });
 
 sidecar.on('hotkey', (msg) => {
@@ -4507,6 +4542,52 @@ function releaseEdgeClip(why) {
   });
 }
 
+/**
+ * Make the Windows taskbar invisible while Mantle runs (sidecar/TaskbarHide.cs):
+ * an EMPTY WINDOW REGION on Shell_TrayWnd / Shell_SecondaryTrayWnd. Explorer
+ * keeps running it -- the tray, Win+number and its auto-hide machine are
+ * untouched -- but the reveals a foreground change triggers draw nothing.
+ *
+ * The sidecar refuses to set a region until its guard process is armed, so a
+ * sidecar killed any way at all cannot leave the taskbar invisible. Called on
+ * every sidecar 'ready', so a restarted sidecar picks it straight back up.
+ */
+async function applyTaskbarHide() {
+  if (!flags.tbhide) {
+    state.set('tbhide', { on: false, applied: false, reason: '--no-tbhide: the Windows taskbar can show when Explorer reveals it (a foreground change, a flashing app, the Win key)' });
+    return;
+  }
+  try {
+    const r = await sidecar.call('tbhide', { on: true }, 6000);
+    const applied = !!(r && r.applied);
+    const said = (r && r.reason) || 'the sidecar did not say why';
+    const guard = r && r.guard ? `; guard ${r.guard}` : '';
+    state.set('tbhide', { on: true, applied, reason: `${said}${guard}` });
+    process.stdout.write(`mantle: taskbar hiding ${applied ? 'in force' : 'NOT in force'}: ${said}${guard}\n`);
+  } catch (err) {
+    const why = Sidecar.isOldExeError(err)
+      ? 'the sidecar exe has no "tbhide" command yet: run npm run build:sidecar'
+      : err.message;
+    state.set('tbhide', { on: true, applied: false, reason: `the Windows taskbar can show when Explorer reveals it: ${why}` });
+    process.stdout.write(`mantle: taskbar hiding NOT in force: ${why}\n`);
+  }
+}
+
+/** Let the Windows taskbar draw again. Called on the way out, before the sidecar goes. */
+function releaseTaskbarHide(why) {
+  if (!flags.tbhide || flags.test) return Promise.resolve();
+  if (sidecar.blockedReason()) return Promise.resolve();
+  return sidecar.call('tbhide', { on: false }, 3000).then((r) => {
+    const said = (r && r.reason) || 'released';
+    state.set('tbhide', { on: false, applied: false, reason: `the Windows taskbar draws again: ${why} (${said})` });
+    process.stdout.write(`mantle: taskbar hiding off: ${said} (${why})\n`);
+  }).catch((err) => {
+    // Not an emergency: the sidecar clears it on every exit road, and its guard
+    // clears it if the sidecar dies. Said out loud anyway.
+    process.stdout.write(`mantle: the taskbar region was not cleared by hand (${err.message}); the sidecar and its guard clear it as it exits\n`);
+  });
+}
+
 // A "traywatch" that times out is retried: the sidecar's one command thread is
 // often backed up for several seconds right after start (every piece asks for
 // something at once), and a single 4 s attempt lost the watch for the whole run
@@ -4626,6 +4707,9 @@ async function applyLive() {
     // traywatch STAYS armed alongside the clip: an app flashing its taskbar
     // button can still force the Windows taskbar up whatever the cursor does.
     await applyEdgeClip();
+    // ...and the reveals no clip can stop (a foreground change, a flash, the Win
+    // key) are made invisible: an empty window region, guarded (TaskbarHide.cs).
+    await applyTaskbarHide();
   } else {
     try {
       const hwnd = hwndOf(barWin);
@@ -4681,6 +4765,7 @@ async function applyLive() {
       // calls whatever rePlaceBar currently is.
       rePlaceBar = (why) => recheck(why);
       await armTrayWatch();
+      await applyTaskbarHide();
     } catch (err) {
       if (Sidecar.isOldExeError(err)) { oldExeBaseline(`the sidecar refused "appbar": ${err.message}`); return; }
       state.set('workarea', {
@@ -4911,6 +4996,9 @@ function restoreShell(why) {
     //    does that a person can feel in their hand, so it is the first thing
     //    undone -- and the sidecar is still alive to be asked at this point.
     await releaseEdgeClip(why);
+    // ...and let the Windows taskbar draw again, while the sidecar can still be
+    // asked. Its own exit path and its guard do this too; this is the clean road.
+    await releaseTaskbarHide(why);
 
     // 1. Give the strip of screen back.
     if (appbarHwnd) {

@@ -237,7 +237,8 @@ namespace Mantle {
       try {
         int me = System.Diagnostics.Process.GetCurrentProcess().Id;
         foreach (var p in System.Diagnostics.Process.GetProcessesByName("Mantle.Sidecar")) {
-          using (p) { if (p.Id != me) return true; }
+          // A taskbar guard (TaskbarHide.cs) runs this same exe but holds no clip.
+          using (p) { if (p.Id != me && !TaskbarHide.IsGuard(p.Id)) return true; }
         }
       } catch (Exception) { }
       return false;

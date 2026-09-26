@@ -24,7 +24,9 @@
 // Shape (lane B's recovery script reads exactly this):
 //   { "writtenAt": "<ISO>", "pid": <n>, "units": "physical",
 //     "original": { "abmState": <n>, "workarea": [l,t,r,b] },
-//     "changed":  { "autohide": <bool>, "appbars": ["<hwnd>", ...] },
+//     "changed":  { "autohide": <bool>, "appbars": ["<hwnd>", ...],
+//                   "taskbarRegion": <bool> },   // TaskbarHide.cs: an empty window region is held
+//                                                // on the taskbar (restore-windows.ps1 clears it)
 //     "restored": <bool> }
 using System;
 using System.Collections.Generic;
@@ -41,6 +43,7 @@ namespace Mantle {
     static Win32.RECT _origWorkArea;
 
     static bool _autohideChanged;
+    static bool _taskbarRegion;
     static readonly List<long> _appbars = new List<long>();
     static bool _restored;
 
@@ -73,6 +76,11 @@ namespace Mantle {
 
     public static void SetAutohideChanged(bool changed) {
       lock (_lock) { _autohideChanged = changed; }
+      Write();
+    }
+
+    public static void SetTaskbarRegion(bool held) {
+      lock (_lock) { _taskbarRegion = held; }
       Write();
     }
 
@@ -115,7 +123,8 @@ namespace Mantle {
             "workarea", new object[] { _origWorkArea.left, _origWorkArea.top, _origWorkArea.right, _origWorkArea.bottom }),
           "changed", Json.Obj(
             "autohide", _autohideChanged,
-            "appbars", appbars.ToArray()),
+            "appbars", appbars.ToArray(),
+            "taskbarRegion", _taskbarRegion),
           "restored", _restored));
       }
 

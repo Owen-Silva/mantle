@@ -322,6 +322,7 @@ namespace Mantle {
       switch (cmd) {
         case "quit": return true;
         case "edgeclip": return Json.HasKey(req, "on") && !Json.GetBool(req, "on", true);
+        case "tbhide": return Json.HasKey(req, "on") && !Json.GetBool(req, "on", true);
         case "taskbar": return Json.GetBool(req, "restore", false);
         case "appbar": return Json.GetBool(req, "remove", false);
         // Turning ANY of the hook's three features off is an undo (Hotkey.cs).

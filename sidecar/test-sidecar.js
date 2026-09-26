@@ -1104,6 +1104,127 @@ async function featureSeamChecks(s) {
   check(`chords: every Win/Alt/Shift/Ctrl keyup passed through (${modUps} of them)`, modUps >= 40, `only ${modUps} were exercised`);
 }
 
+/*
+ * TBHIDE (TaskbarHide.cs, 2026-09-25): while Mantle runs, the Windows taskbar gets an EMPTY WINDOW
+ * REGION, so the reveals Explorer does on a foreground change are never seen. Against Owen's machine
+ * this is READ ONLY: on/off are refused in passive, the decision logic is proved with made-up window
+ * states (`decide`), and the one live read is `status`. The guard process is run with
+ * --guard-dry-run against a throwaway node child, so it decides and writes its note but never calls
+ * SetWindowRgn - and the live Shell_TrayWnd is never touched by this file.
+ */
+async function tbhideChecks(s) {
+  let note = null;
+  for (const extra of [{ on: true }, { on: false }]) {
+    try {
+      const r = await s.send('tbhide', extra);
+      check(`tbhide ${JSON.stringify(extra)} is refused in passive, with a reason`,
+        r.ok === false && typeof r.error === 'string' && r.error.includes('passive') && r.error.includes('taskbar'),
+        JSON.stringify(r));
+    } catch (e) { check(`tbhide ${JSON.stringify(extra)} refused in passive`, false, e.message); }
+  }
+  try {
+    const r = await s.send('tbhide', {});
+    check('tbhide without on: says what it needs', r.ok === false && /on:true/.test(r.error || ''), JSON.stringify(r));
+  } catch (e) { check('tbhide without on: says what it needs', false, e.message); }
+
+  // THE DECISION TABLE, one made-up taskbar window at a time.
+  const table = [
+    [{ want: true, kind: 'none' }, 'apply', 'no region yet: set the empty one'],
+    [{ want: true, kind: 'empty' }, 'keep', 'ours, or a dead Mantle\'s: taken over, never stacked'],
+    [{ want: true, kind: 'shaped' }, 'yield', 'another program shaped the taskbar: never fought'],
+    [{ want: true, kind: 'gone' }, 'leave', 'Explorer restarting: the replacement is caught next pass'],
+    [{ want: false, kind: 'empty', mayRelease: true }, 'release', 'our own region on the way out'],
+    [{ want: false, kind: 'empty', mayRelease: false }, 'leave', 'another live Mantle holds it: a test sidecar exiting never un-hides the live one'],
+    [{ want: false, kind: 'none', mayRelease: true }, 'leave', 'nothing to undo'],
+    [{ want: false, kind: 'shaped', mayRelease: true }, 'leave', 'not Mantle\'s shape: never cleared'],
+    [{ want: false, kind: 'gone', mayRelease: true }, 'leave', 'window gone'],
+  ];
+  for (const [input, want, why] of table) {
+    try {
+      const r = await s.send('tbhide', { decide: [input] });
+      const d = r.ok && r.result && Array.isArray(r.result.decisions) ? r.result.decisions[0] : null;
+      check(`tbhide decides "${want}" for ${JSON.stringify(input)} (${why})`,
+        d && d.action === want && typeof d.reason === 'string' && d.reason.length > 10, JSON.stringify(r).slice(0, 240));
+    } catch (e) { check(`tbhide decide ${JSON.stringify(input)}`, false, e.message); }
+  }
+
+  // THE SUMMARY: invisible only when EVERY taskbar window is, and the reason names the one that is not.
+  const sums = [
+    ['both monitors hidden', [{ kind: 'none' }, { kind: 'empty', class: 'Shell_SecondaryTrayWnd' }],
+      (d) => d.applied === true && /invisible/.test(d.reason) && /2 taskbar windows/.test(d.reason)],
+    ['a secondary taskbar someone else shaped keeps it from claiming success',
+      [{ kind: 'none' }, { kind: 'shaped', class: 'Shell_SecondaryTrayWnd' }],
+      (d) => d.applied === false && d.reason.includes('Shell_SecondaryTrayWnd') && /another program/.test(d.reason)],
+    ['a region Windows did not take is reported, not claimed', [{ kind: 'none', okAfter: false }],
+      (d) => d.applied === false && /did not take/.test(d.reason)],
+    ['no taskbar window at all says so', [],
+      (d) => d.applied === false && /no taskbar window/.test(d.reason)],
+  ];
+  for (const [name, list, ok] of sums) {
+    try {
+      const r = await s.send('tbhide', { decide: list });
+      check(`tbhide summary: ${name}`, r.ok === true && r.result && ok(r.result), JSON.stringify(r).slice(0, 300));
+    } catch (e) { check(`tbhide summary: ${name}`, false, e.message); }
+  }
+  try {
+    const r = await s.send('tbhide', { decide: [{ kind: 'hidden' }] });
+    check('tbhide decide refuses an unknown kind with the allowed ones',
+      r.ok === false && /none, empty, shaped or gone/.test(r.error || ''), JSON.stringify(r));
+  } catch (e) { check('tbhide decide refuses an unknown kind', false, e.message); }
+
+  // STATUS: a read of the live taskbar windows' region kinds, nothing more.
+  try {
+    const r = await s.send('tbhide', { status: true });
+    const d = r.ok ? r.result : null;
+    check('tbhide status reads the taskbar windows in passive and changes nothing',
+      d && d.on === false && d.applied === false && Array.isArray(d.windows) &&
+      d.windows.every((w) => ['none', 'empty', 'shaped', 'gone'].includes(w.region) && /Shell_(Secondary)?TrayWnd/.test(w.class)),
+      JSON.stringify(r).slice(0, 300));
+    if (d) note = `tbhide: ${d.windows.length} taskbar window(s), regions ${d.windows.map((w) => w.region).join('/')}; ` +
+      `another sidecar holding one: ${d.otherHolder || 'none'}; ${table.length} decisions + ${sums.length} summaries checked`;
+  } catch (e) { check('tbhide status', false, e.message); }
+
+  await tbhideGuardChecks();
+  return note;
+}
+
+/** The guard, dry-run: it must stay up while its sidecar lives, and act (on paper) the moment it dies. */
+async function tbhideGuardChecks() {
+  const note = path.join(os.tmpdir(), `mantle-tbguard-test-${process.pid}.log`);
+  try { fs.unlinkSync(note); } catch (_) { /* none */ }
+  const target = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+  const guard = spawn(EXE, [`--taskbar-guard=${target.pid}`, '--guard-dry-run', `--guard-note=${note}`], { stdio: 'ignore' });
+  const exited = new Promise((resolve) => guard.on('exit', (code) => resolve(code)));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    await sleep(900);
+    check('tbhide guard stays up while the process it guards is alive', guard.exitCode === null,
+      `exit code ${guard.exitCode}`);
+    target.kill();
+    const code = await Promise.race([exited, sleep(4000).then(() => 'timeout')]);
+    check('tbhide guard exits by itself once the guarded process dies', code === 0, `exit ${code}`);
+    let text = '';
+    try { text = fs.readFileSync(note, 'utf8'); } catch (_) { /* missing */ }
+    check('tbhide guard (dry run) leaves a note saying what it found, and touched nothing',
+      new RegExp(`sidecar ${target.pid} exited`).test(text) && /dry run|belongs to live sidecar/.test(text), text.trim());
+  } catch (e) {
+    check('tbhide guard dry run', false, e.message);
+  } finally {
+    try { target.kill(); } catch (_) { /* gone */ }
+    try { guard.kill(); } catch (_) { /* gone */ }
+  }
+  // Nothing to guard: says so and exits 2 instead of waiting forever.
+  try {
+    const g = spawn(EXE, [`--taskbar-guard=${target.pid}`, '--guard-dry-run', `--guard-note=${note}`], { stdio: 'ignore' });
+    const code = await Promise.race([new Promise((r) => g.on('exit', r)), sleep(4000).then(() => 'timeout')]);
+    if (code === 'timeout') { try { g.kill(); } catch (_) { /* gone */ } }
+    const text = fs.readFileSync(note, 'utf8');
+    check('tbhide guard with nothing to watch exits 2 and says why',
+      code === 2 && /was not running/.test(text), `exit ${code}: ${text.trim().split('\n').pop()}`);
+  } catch (e) { check('tbhide guard with nothing to watch', false, e.message); }
+  try { fs.unlinkSync(note); } catch (_) { /* gone */ }
+}
+
 async function main() {
   if (EXE_ARG && !fs.existsSync(EXE)) {
     console.log('SIDECAR TEST: 0 passed, 1 failed');
@@ -1952,6 +2073,8 @@ async function main() {
       r.ok === false && typeof r.error === 'string' && r.error.includes('on:true'), JSON.stringify(r));
   } catch (e) { check('edgeclip without on: says what it needs', false, e.message); }
 
+  const tbhideNote = await tbhideChecks(s);
+
   // ---- morph + region ---------------------------------------------------
   // Driven against the sidecar's own hidden window, which is never visible and
   // never in the window list: the animation is real, the desktop sees nothing.
@@ -2499,6 +2622,7 @@ async function main() {
   if (shellLnkNote) console.log('  note: ' + shellLnkNote);
   if (explorerPinNote) console.log('  note: ' + explorerPinNote);
   for (const n of qsxNotes) console.log('  note: ' + n);
+  if (tbhideNote) console.log("  note: " + tbhideNote);
   console.log(`SIDECAR TEST: ${passed} passed, ${failures.length} failed`);
   process.exit(failures.length === 0 ? 0 : 1);
 }
