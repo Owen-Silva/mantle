@@ -1022,7 +1022,7 @@ namespace Mantle {
 
     /// The whole verdict from its inputs (topbar.classify runs exactly this with made-up inputs,
     /// so the rules are testable without a game).
-    static IDictionary Verdict(string exe, string title, bool covers, int quns) {
+    internal static IDictionary Verdict(string exe, string title, bool covers, int quns) {   // internal: GameMode.cs asks the same question (2026-09-25)
       string file = string.IsNullOrEmpty(exe) ? "" : Path.GetFileName(exe);
       string known = KnownGame(file, title);
       bool stored = !string.IsNullOrEmpty(exe) && GameStore().Contains(exe);

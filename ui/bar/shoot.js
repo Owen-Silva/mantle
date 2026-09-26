@@ -203,6 +203,19 @@ const SHOTS = [
   { name: 'pm-plans-chose-balanced', w: 1280, h: 520, q: '?mode=pill&pm=hone', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmplan[data-plan="381b4222-f694-41f0-9685-ff5bb260df2e"]', { wait: 300 }] },
   { name: 'pm-plans-open', w: 1280, h: 520, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmplantoggle', { wait: 200 }] },
   { name: 'pm-plans-refused', w: 1280, h: 520, q: '?mode=pill&pm=refuse', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.pmplantoggle', { wait: 150 }, '.pmplan[data-plan="44444444-4444-4444-4444-444444444452"]', { wait: 300 }] },
+  /* GAME MODE (lane gamemode, 2026-09-25, ui/bar/gamemode.js): off and watching, each on state with its
+     action rows open (battery + Energy saver, plugged in, by hand, a --test dry run), put back after a
+     restart, not watching, switched off in the tray, and a click turning it on. */
+  { name: 'gm-off', w: 1280, h: 560, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'gm-off-details', w: 1280, h: 820, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.gmmore', { wait: 200 }] },
+  { name: 'gm-on-battery', w: 1280, h: 900, q: '?mode=pill&gm=on&pm=saver', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.gmmore', { wait: 200 }] },
+  { name: 'gm-on-ac', w: 1280, h: 900, q: '?mode=pill&gm=onac', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.gmmore', { wait: 200 }] },
+  { name: 'gm-manual', w: 1280, h: 560, q: '?mode=pill&gm=manual', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'gm-dry', w: 1280, h: 900, q: '?mode=pill&gm=dry', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.gmmore', { wait: 200 }] },
+  { name: 'gm-crash', w: 1280, h: 600, q: '?mode=pill&gm=crash', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'gm-nowatch', w: 1280, h: 600, q: '?mode=pill&gm=nowatch', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'gm-tray', w: 1280, h: 560, q: '?mode=pill&gm=tray', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'gm-click-on', w: 1280, h: 560, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.gmswitch', { wait: 300 }] },
   // The right-click menu (lane jumplist, 2026-09-24): Windows 11's jump list + app, pin, close. rclick = a
   // right-click; dsf = the device scale (1 or 1.25); desk = the desktop behind the transparent page.
   { name: 'jl-edge', w: 1280, h: 600, q: '?mode=pill', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },

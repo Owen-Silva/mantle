@@ -1405,6 +1405,7 @@
       qsPaint = null; qsWatch(false);
       if (window.MantleQsMore) MantleQsMore.closed();   // its polls stop and the keyboard goes back
       if (window.MantlePowerMode) MantlePowerMode.closed(); // its 3 s re-read and its push stop
+      if (window.MantleGameMode) MantleGameMode.closed();   // its push subscription stops
     }
     if (popKey === 'media') {
       mediaPaint = null; mediaNote = ''; mediaRoom = 0;
@@ -1813,6 +1814,9 @@
        reason when Windows would not apply it (any plan but Balanced). */
     if (window.MantlePowerMode) MantlePowerMode.attach(pop, { call: call, on: on }, notes);
     else fail('powermode', 'power mode missing', 'ui/bar/powermode.js did not load, so quick settings has no power-mode switch', 'warn');
+    /* GAME MODE (lane gamemode, 2026-09-25): on/off, what it did and did not do, and why (ui/bar/gamemode.js). */
+    if (window.MantleGameMode) MantleGameMode.attach(pop, { call: call, on: on }, notes);
+    else fail('gamemode', 'game mode missing', 'ui/bar/gamemode.js did not load, so quick settings has no Game mode tile', 'warn');
 
     var foot = document.createElement('div'); foot.className = 'qsfoot';
     var power = document.createElement('div'); power.className = 'qspower';

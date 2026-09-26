@@ -1,0 +1,56 @@
+/* gamemode.css - the Game mode tile in quick settings (ui/bar/gamemode.js). One Theme: the panel's
+ * --lg-* vocabulary only, like powermode.css - the switch is an ON tile (accent block) when on, the
+ * detail rows sit in the --lg-tile recess, warnings in --lg-warn. No glow, no new colours. */
+.gmrow { margin: 2px 0 9px; }
+.gmrow .gmsub { max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gmline { display: grid; grid-template-columns: 1fr auto; gap: 4px; }
+.gmswitch, .gmmore {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-tile);
+  color: var(--lg-ink);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.gmswitch { text-align: left; }
+.gmswitch:hover, .gmmore:hover { background: var(--lg-hover); }
+.gmswitch:active, .gmmore:active { background: var(--lg-press); }
+.gmswitch:focus-visible, .gmmore:focus-visible, .gmopt input:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.gmswitch.on, .gmswitch.on:hover { background: var(--lg-acc); color: var(--lg-acc-on); }
+.gmswitch.pending { opacity: .6; }
+.gmmore { color: var(--lg-ink-2); }
+.gmrow.dead .gmswitch { background: var(--lg-sunk); color: var(--lg-ink-3); }
+.gmwhy { margin-top: 5px; color: var(--lg-ink-2); line-height: 1.4; }
+.gmwhy.warn { color: var(--lg-warn); }
+.gmwhy[hidden], .gmlist[hidden], .gmopts[hidden] { display: none; }
+.gmopts { margin-top: 2px; }
+.gmlist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-tile);
+}
+.gmact { padding: 5px 8px; border-radius: 5px; line-height: 1.35; }
+.gmacthead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.gmactname { color: var(--lg-ink); font-size: 12px; }
+.gmbadge { flex: none; color: var(--lg-ink-3); font-size: 11px; }
+.gmacttext { color: var(--lg-ink-2); font-size: 11.5px; overflow-wrap: anywhere; }
+.gmact.st-done .gmbadge { color: var(--lg-ink); }
+.gmact.st-blocked .gmbadge, .gmact.st-failed .gmbadge, .gmact.st-failed .gmacttext { color: var(--lg-warn); }
+.gmact.st-blocked { background: var(--lg-warn-soft); }
+.gmact.st-plan .gmacttext, .gmact.st-info .gmacttext { color: var(--lg-ink-3); }
+.gmlast { padding: 5px 8px; color: var(--lg-ink-2); font-size: 11.5px; line-height: 1.35; border-top: 1px solid var(--lg-edge-in); }
+.gmopt { display: flex; align-items: center; gap: 7px; padding: 5px 8px; color: var(--lg-ink); font-size: 12px; }
+.gmopt input { margin: 0; accent-color: var(--lg-acc); }

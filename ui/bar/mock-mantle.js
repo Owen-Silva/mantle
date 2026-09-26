@@ -871,6 +871,59 @@
     emit('powermode', Object.assign({ via: 'mode' }, pmState));
   };
 
+  /* ---- Game mode (lane gamemode, 2026-09-25): lib/features/gamemode.js's state, in its shape. ?gm=
+       off (default)  watching, the last game's restore summary     on       Valorant on battery, Energy saver on
+       onac           Valorant plugged in, everything done            manual   on by hand, no game
+       dry            a --test Mantle: planned, nothing changed      crash    put back after a restart
+       nowatch        the sidecar is down                             tray     switched off in the tray
+       Clicks answer like the feature: set turns it on/off, the options are remembered. */
+  var GM = q.get('gm') || 'off';
+  var GM_NOTE = { key: 'notify', label: 'Notifications', status: 'info', text: "Windows' own rule does this: Settings > System > Notifications > Turn on do not disturb automatically > When playing a game. Windows gives apps no supported way to switch Do not disturb, so game mode does not" };
+  var GM_GAME = { key: 'game', label: 'The game itself', status: 'info', text: 'left alone on purpose: never opened for anything but its name, priority untouched (anti-cheat)' };
+  var GM_BG = { key: 'background', label: 'Background apps', status: 'done', text: 'Efficiency mode on 63 app processes: bash ×15, msedgewebview2 ×13, electron ×7, node ×5, claude ×3, git ×3 and 15 more. Left alone: vgtray (a game or its anti-cheat); Spotify ×7 (music and video); Discord ×4 (voice and calls); Mantle.Sidecar (Mantle\'s sidecar: it runs the keyboard hook)' };
+  var GM_MT = { key: 'mantle', label: 'Mantle itself', status: 'done', text: '13 Mantle processes in Efficiency mode at below-normal priority (the sidecar stays normal: it runs the key hook)' };
+  var GM_WP = { key: 'wallpaper', label: 'Wallpaper', status: 'done', text: 'held paused until game mode ends' };
+  var GM_LV = { key: 'lively', label: 'Lively Wallpaper', status: 'same', text: 'not running (Mantle plays the wallpaper itself)' };
+  var GM_VAL = { file: 'VALORANT-Win64-Shipping.exe', title: 'VALORANT  ', why: 'VALORANT-Win64-Shipping.exe is a known game' };
+  function gmActions(kind) {
+    if (kind === 'on') return [
+      { key: 'saver', label: 'Energy saver', status: 'blocked', text: 'Energy saver is on (on battery), so Windows runs Best power efficiency and no power mode can be set (the Power mode row above says how to change that). Game mode leaves it on: switch on "Lift Energy saver while gaming" below to change that' },
+      { key: 'power', label: 'Power mode', status: 'blocked', text: 'not set: Energy saver is on (see Energy saver)' },
+      GM_BG, GM_MT, GM_WP, GM_LV, GM_NOTE, GM_GAME];
+    if (kind === 'dry') return [
+      { key: 'saver', label: 'Energy saver', status: 'same', text: 'off plugged in' },
+      { key: 'power', label: 'Power mode', status: 'same', text: 'Best performance is already your choice plugged in' },
+      { key: 'background', label: 'Background apps', status: 'dry', text: 'dry run: would put Efficiency mode 63 app processes: bash ×15, msedgewebview2 ×13, electron ×7' },
+      { key: 'mantle', label: 'Mantle itself', status: 'dry', text: 'dry run: would put 13 Mantle processes in Efficiency mode at below-normal priority (the sidecar stays normal: it runs the key hook)' },
+      { key: 'wallpaper', label: 'Wallpaper', status: 'dry', text: 'dry run: would hold the wallpaper paused' }, GM_LV, GM_NOTE, GM_GAME];
+    return [
+      { key: 'saver', label: 'Energy saver', status: 'same', text: 'off plugged in' },
+      { key: 'power', label: 'Power mode', status: 'done', text: 'Best performance plugged in (was balanced; put back after)' },
+      GM_BG, GM_MT, GM_WP, GM_LV, GM_NOTE, GM_GAME];
+  }
+  var gmState = (function () {
+    var base = { on: false, how: null, game: null, busy: null, auto: true, liftSaver: false, dry: false, enabled: true, watching: true,
+                 reason: 'explorer.exe is not a game', actions: [], fromCrash: false,
+                 last: { at: Date.now() - 600000, why: 'VALORANT-Win64-Shipping.exe exited', game: 'VALORANT-Win64-Shipping.exe', minutes: 42, ok: true,
+                         text: '63 apps back to normal, 4 had exited; plugged in back to balanced; wallpaper let go' } };
+    if (GM === 'on') return Object.assign(base, { on: true, how: 'auto', game: GM_VAL, actions: gmActions('on') });
+    if (GM === 'onac') return Object.assign(base, { on: true, how: 'auto', game: GM_VAL, actions: gmActions('onac') });
+    if (GM === 'manual') return Object.assign(base, { on: true, how: 'manual', game: { file: 'explorer.exe', why: 'turned on by hand' }, actions: gmActions('onac') });
+    if (GM === 'dry') return Object.assign(base, { on: true, how: 'auto', dry: true, game: GM_VAL, actions: gmActions('dry'), last: null });
+    if (GM === 'crash') return Object.assign(base, { last: null, fromCrash: { at: Date.now() - 5000, game: 'javaw.exe', ok: true, text: '41 apps back to normal, 2 had exited; on battery back to balanced; wallpaper let go' } });
+    if (GM === 'nowatch') return Object.assign(base, { watching: false, last: null, reason: 'games are not being watched: gamemode.scan: the sidecar is not running' });
+    if (GM === 'tray') return Object.assign(base, { enabled: false });
+    return base;
+  })();
+  function gmSet(p) {
+    var on = !!(p && p.on);
+    if (on) gmState = Object.assign({}, gmState, { on: true, how: 'manual', game: { file: 'explorer.exe', why: 'turned on by hand' }, actions: gmActions('onac') });
+    else gmState = Object.assign({}, gmState, { on: false, how: null, game: null, actions: [],
+      last: { at: Date.now(), why: 'turned off by hand', game: null, minutes: 0, ok: true, text: '63 apps back to normal; plugged in back to balanced; wallpaper let go' } });
+    setTimeout(function () { emit('gamemode.state', gmState); }, 5);
+    return Object.assign({ ok: true }, gmState);
+  }
+
   /* ---- Spotify's "Up next" queue (spotq lane, 2026-09-25): lib/features/spotify.js's replies, in its
        shapes. Needs ?media=playing (the card must be showing Spotify). ?spq=
          setup (default)  first run: no Client ID yet (the steps, the Client ID box, Connect)
@@ -991,6 +1044,10 @@
 
       case 'osd.mixer': case 'osd.show': return { ok: true, shown: false, test: true, reason: null };   // ui/osd is its own page
       case 'powermode.get': return Object.assign({}, pmState);
+      case 'gamemode.state': return Object.assign({}, gmState);
+      case 'gamemode.set': return gmSet(payload);
+      case 'gamemode.auto': gmState = Object.assign({}, gmState, { auto: !!(payload && payload.on) }); return Object.assign({}, gmState);
+      case 'gamemode.liftSaver': gmState = Object.assign({}, gmState, { liftSaver: !!(payload && payload.on) }); return Object.assign({}, gmState);
       case 'powermode.plan': {
         var pp = powerPlan(payload);
         if (PM === 'slow') return new Promise(function (res) { setTimeout(function () { res(pp); }, 1500); });
