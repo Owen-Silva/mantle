@@ -577,7 +577,7 @@ namespace Mantle {
       if (p == null) return "the taskbar guard exited as soon as it started";
       // Armed = its marker exists. ~100-300 ms for a .NET start on this machine.
       var sw = Stopwatch.StartNew();
-      while (sw.ElapsedMilliseconds < 3000) {
+      while (sw.ElapsedMilliseconds < 5000) {   // 3 s was missed under 80% CPU at a go-live (2026-09-25); main retries after this too
         if (IsGuard(p.Id)) {
           _guard = p;
           lock (_lock) {
@@ -599,7 +599,7 @@ namespace Mantle {
       }
       try { p.Kill(); } catch (Exception) { }
       p.Dispose();
-      return "the taskbar guard did not arm within 3 s, so it was stopped";
+      return "the taskbar guard did not arm within 5 s, so it was stopped";
     }
     static string _lastNote;
 

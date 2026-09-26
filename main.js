@@ -4558,23 +4558,46 @@ async function applyTaskbarHide() {
     return;
   }
   try {
-    const r = await sidecar.call('tbhide', { on: true }, 6000);
+    const r = await sidecar.call('tbhide', { on: true }, 9000);
     const applied = !!(r && r.applied);
     const said = (r && r.reason) || 'the sidecar did not say why';
     const guard = r && r.guard ? `; guard ${r.guard}` : '';
-    state.set('tbhide', { on: true, applied, reason: `${said}${guard}` });
-    process.stdout.write(`mantle: taskbar hiding ${applied ? 'in force' : 'NOT in force'}: ${said}${guard}\n`);
+    const again = applied ? (tbhideTries = 0, '') : retryTaskbarHide();
+    state.set('tbhide', { on: true, applied, reason: `${said}${guard}${again}` });
+    process.stdout.write(`mantle: taskbar hiding ${applied ? 'in force' : 'NOT in force'}: ${said}${guard}${again}\n`);
   } catch (err) {
-    const why = Sidecar.isOldExeError(err)
+    const old = Sidecar.isOldExeError(err);
+    const why = old
       ? 'the sidecar exe has no "tbhide" command yet: run npm run build:sidecar'
       : err.message;
-    state.set('tbhide', { on: true, applied: false, reason: `the Windows taskbar can show when Explorer reveals it: ${why}` });
-    process.stdout.write(`mantle: taskbar hiding NOT in force: ${why}\n`);
+    const again = old ? '' : retryTaskbarHide();
+    state.set('tbhide', { on: true, applied: false, reason: `the Windows taskbar can show when Explorer reveals it: ${why}${again}` });
+    process.stdout.write(`mantle: taskbar hiding NOT in force: ${why}${again}\n`);
   }
+}
+
+/*
+ * A refused tbhide is retried instead of left off for the whole run (2026-09-25:
+ * a go-live under 80% CPU let the guard miss its arming window, and the taskbar
+ * stayed revealable until the next restart). 15 s, 45 s, 2 min, then every 5 min;
+ * never in test mode, never once quitting. Returns the note for the reason line.
+ */
+const TBHIDE_RETRY_MS = [15000, 45000, 120000];
+let tbhideRetry = null, tbhideTries = 0, tbhideQuitting = false;
+function retryTaskbarHide() {
+  if (!flags.tbhide || flags.test || tbhideQuitting) return '';
+  if (tbhideRetry) return '; trying again soon';
+  const ms = TBHIDE_RETRY_MS[tbhideTries] || 300000;
+  tbhideTries++;
+  tbhideRetry = setTimeout(() => { tbhideRetry = null; if (!tbhideQuitting) applyTaskbarHide(); }, ms);
+  if (tbhideRetry.unref) tbhideRetry.unref();
+  return `; trying again in ${Math.round(ms / 1000)} s (attempt ${tbhideTries + 1})`;
 }
 
 /** Let the Windows taskbar draw again. Called on the way out, before the sidecar goes. */
 function releaseTaskbarHide(why) {
+  tbhideQuitting = true;
+  if (tbhideRetry) { clearTimeout(tbhideRetry); tbhideRetry = null; }
   if (!flags.tbhide || flags.test) return Promise.resolve();
   if (sidecar.blockedReason()) return Promise.resolve();
   return sidecar.call('tbhide', { on: false }, 3000).then((r) => {
