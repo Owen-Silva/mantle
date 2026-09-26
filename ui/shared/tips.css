@@ -10,6 +10,13 @@
  * behind the bar (the transparent Electron window cannot blur it), exactly like a popover, and the
  * popover's rule applies -- text over anything gets a real surface. The hairline is --lg-edge-out
  * (dark 10 %) so a tip over an open popover's own white still has an edge.
+ *
+ * OPAQUE SINCE 2026-09-25. The frost alone is 72 % white, so 28 % of what is behind came through:
+ * Owen's screenshot had a tip over the power tile's red "Power mode did not change" line with both
+ * texts mixed and neither readable. Nothing may show through a tip, so the same frost is now laid
+ * over --lg-ground (the one opaque colour the theme has: the ground a preview paints behind the
+ * glass). It looks like the frost on a light ground, and no text behind it survives. Tips over the
+ * desktop get the same surface: a text-heavy window behind the bar would mix the same way.
  */
 .mtip {
   position: fixed;
@@ -19,7 +26,8 @@
   box-sizing: border-box;
   max-width: 320px;              /* tips.js lowers it to fit a narrow window */
   padding: 6px 9px 7px;
-  background-color: var(--lg-fill-strong);
+  background-color: var(--lg-ground);                                              /* opaque */
+  background-image: linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)); /* the frost on it */
   border: 1px solid var(--lg-edge-out);
   border-radius: var(--lg-r);
   box-shadow: inset 0 1px 0 var(--lg-edge-in), var(--lg-shadow);

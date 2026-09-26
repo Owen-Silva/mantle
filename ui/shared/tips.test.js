@@ -6,7 +6,7 @@
  * room it asks for, never over or under the pill, never off the window, and must never ask for
  * room while a popover holds it. Ends with "tips: N passed, M failed".
  */
-const { place, GAP, MARGIN, SLACK, ROOM_MAX } = require('./tips.js');
+const { place, GAP, MARGIN, SLACK, ROOM_MAX, SIDE_MIN } = require('./tips.js');
 const { shapeRect, shapeToPhys } = require('../../lib/bar-shape.js');
 
 let passed = 0, failed = 0;
@@ -126,6 +126,132 @@ for (const edge of ['bottom', 'top']) {
   ok(p.x + 150 <= vw - MARGIN && p.x >= MARGIN, 'plain page, element at the right edge: clamped in');
   p = place({ a: { left: 10, right: 30, top: 300, bottom: 330 }, w: 900, h: 60, vw, vh, edge: 'bottom', pill: null, inPill: false, vis: { top: 0, bottom: vh }, canAsk: false });
   ok(p.x === MARGIN, 'a tip wider than the window starts at the margin');
+}
+
+/* ---------------------------------------------------------------- inside an open panel (2026-09-25)
+   Owen's screenshot: the quick-settings footer link's tip sat on the power tile's warning. The
+   scene below is the headless one (ui/shared/tips-shoot.js, 1120 x 660, 2026-09-25): the panel,
+   the footer link, the warning's line boxes, the battery line left of the link, the pill below. */
+{
+  const vw = 1120, vh = 660;
+  const pill = { left: 0, right: vw, top: 598, bottom: 646 };
+  const panel = { left: 675, right: 1035, top: 213, bottom: 591 };
+  const vis = { top: panel.top, bottom: vh };
+  const link = { left: 847, right: 985, top: 556, bottom: 578 };
+  const warn = [{ left: 687, right: 1010, top: 499, bottom: 516, warn: true }, { left: 687, right: 860, top: 516, bottom: 533, warn: true }];
+  const battery = { left: 687, right: 830, top: 560, bottom: 577 };
+  // A tip whose text is 250 px long: 2 lines at its natural 170 px, more when narrowed.
+  const TEXT = 250, PADX = 18, LINE = 17, PADY = 15;
+  const measure = (width) => Math.ceil(TEXT / (width - PADX)) * LINE + PADY;
+  const W = 170, H = measure(170);
+  const base = { a: link, w: W, h: H, vw, vh, edge: 'bottom', pill, inPill: false, vis, canAsk: false, panel, measure };
+  const hit = (p, r) => Math.min(p.x + (p.w || W), r.right) - Math.max(p.x, r.left) > 0.5 && Math.min(p.y + (p.h || H), r.bottom) - Math.max(p.y, r.top) > 0.5;
+  const inside = (p) => p.x >= panel.left - 0.01 && p.x + p.w <= panel.right + 0.01 && p.y >= panel.top - 0.01 && p.y + p.h <= panel.bottom + 0.01;
+  const gapTo = (p, r) => Math.max(r.top - (p.y + p.h), p.y - r.bottom, r.left - (p.x + p.w), p.x - r.right);
+
+  // Nothing in the way: above, centred on the link, inside the panel, no room asked.
+  let p = place(Object.assign({}, base, { avoid: [battery] }));
+  ok(p.side === 'above' && p.need === 0 && Math.abs(p.y - (link.top - GAP - H)) < 0.01 && inside(p) && p.covers.text === 0,
+    `panel, nothing above: the tip goes above the link (${p.side} y ${p.y})`);
+  ok(Math.abs(p.x + W / 2 - (link.left + link.right) / 2) < 0.01, 'panel, nothing above: centred on the link');
+
+  // Owen's scene: the warning above, the pill below, the battery line to the left. Never the warning:
+  // the only spot that avoids it is left of the link, over the battery line, narrowed into the panel.
+  p = place(Object.assign({}, base, { avoid: warn.concat([battery]) }));
+  ok(p.covers.warn === 0 && !warn.some(r => hit(p, r)), `panel, warning above: the tip is not over the warning (${p.side} ${p.x},${p.y} ${p.w}x${p.h})`);
+  ok(p.side === 'left' && inside(p) && gapTo(p, link) >= GAP - 0.01 && gapTo(p, link) <= GAP + 0.01, `panel, warning above: beside the link, inside the panel (${p.side}, gap ${gapTo(p, link)})`);
+  ok(p.y + p.h <= pill.top - 1 && p.y + p.h <= panel.bottom, 'panel, warning above: never over the pill');
+
+  // The same, but a free spot on the right (the gear is an icon, not text, and there is room): no text wins.
+  const mid = { left: 760, right: 860, top: 556, bottom: 578 };
+  p = place(Object.assign({}, base, { a: mid, avoid: warn.concat([{ left: 687, right: 750, top: 560, bottom: 577, warn: false }]) }));
+  ok(p.side === 'right' && p.covers.warn === 0 && p.covers.text === 0, `panel with room on the right: the text-free side wins (${p.side}, covers ${JSON.stringify(p.covers)})`);
+
+  // Room below inside the panel (the link higher up): below beats a warning above.
+  const hi = { left: 847, right: 985, top: 450, bottom: 472 };
+  const warnHi = [{ left: 687, right: 1010, top: 410, bottom: 444, warn: true }];
+  p = place(Object.assign({}, base, { a: hi, avoid: warnHi }));
+  ok(p.side === 'below' && Math.abs(p.y - (hi.bottom + GAP)) < 0.01 && p.covers.warn === 0 && p.covers.text === 0, `panel, warning above, room below: below (${p.side} y ${p.y})`);
+
+  // Ordinary text above and free text-less room below: below wins (covers no text).
+  p = place(Object.assign({}, base, { a: hi, avoid: [{ left: 687, right: 1010, top: 410, bottom: 444, warn: false }] }));
+  ok(p.side === 'below' && p.covers.text === 0, `panel, text above, room below: below (${p.side})`);
+
+  // Every spot next to the link covers text, none a warning: the least text, still inside the panel.
+  p = place(Object.assign({}, base, { avoid: [{ left: 687, right: 1030, top: 480, bottom: 548, warn: false }, battery] }));
+  ok(p.covers.warn === 0 && inside(p), `panel, text everywhere: inside the panel (${p.side}, covers ${JSON.stringify(p.covers)})`);
+
+  // Boxed in: every spot inside the panel covers a warning. The tip may use the room beside the
+  // panel (the window's band above the pill) rather than cover it.
+  // (The link at the panel's left edge, warnings everywhere else in it, text starting 12 px in.)
+  const edgeLink = { left: 690, right: 760, top: 556, bottom: 578 };
+  const boxed = [{ left: 687, right: 1031, top: 400, bottom: 550, warn: true }, { left: 766, right: 1031, top: 550, bottom: 587, warn: true }];
+  p = place(Object.assign({}, base, { a: edgeLink, avoid: boxed }));
+  ok(p.covers.warn === 0 && !inside(p) && p.x >= MARGIN - 0.01 && p.x + p.w <= vw - MARGIN + 0.01 && p.y + p.h <= pill.top - 1 + 0.01 && p.y >= vis.top,
+    `boxed in by a warning: out beside the panel, never over it or the pill (${p.side} ${p.x},${p.y} ${p.w}x${p.h})`);
+
+  // A side narrower than SIDE_MIN is never used: a column of single words is not a tip. Here both
+  // sides have 130 px, the warning covers everything above and the pill is below: above it is.
+  {
+    const nl = { left: 140, right: 278, top: 556, bottom: 578 };
+    const nvw = 278 + GAP + 130 + MARGIN;
+    const asked = [];
+    const q = place(Object.assign({}, base, { a: nl, vw: nvw, panel: { left: 0, right: nvw, top: 213, bottom: 591 },
+      avoid: [{ left: 0, right: nvw, top: 480, bottom: 548, warn: true }], measure: (wd) => { asked.push(wd); return measure(wd); } }));
+    ok(q.side !== 'left' && q.side !== 'right' && asked.every(wd => wd >= SIDE_MIN), `SIDE_MIN: no side under ${SIDE_MIN} px (${q.side}; measured ${asked.join(',') || 'none'})`);
+  }
+
+  // A top bar: the panel hangs below the pill, so the first choice is below the element.
+  const tPill = { left: 0, right: vw, top: 14, bottom: 62 };
+  const tPanel = { left: 675, right: 1035, top: 69, bottom: 447 };
+  const tLink = { left: 847, right: 985, top: 250, bottom: 272 };
+  p = place({ a: tLink, w: W, h: H, vw, vh, edge: 'top', pill: tPill, inPill: false, vis: { top: 0, bottom: tPanel.bottom }, canAsk: false, panel: tPanel, avoid: [], measure });
+  ok(p.side === 'below' && Math.abs(p.y - (tLink.bottom + GAP)) < 0.01, `top bar panel: below the element first (${p.side} y ${p.y})`);
+
+  // Too big to fit anywhere: the old clamp takes over (inside what is visible, never an ask).
+  p = place(Object.assign({}, base, { w: 1100, h: 500, avoid: warn, measure: () => 500 }));
+  ok(p.need === 0 && (p.side === 'over' || p.side === 'out' || p.side === 'in'), `panel, a tip bigger than the room: clamped as before (${p.side})`);
+
+  // Sweep: anchors all over the panel, random text and warnings. Whatever is chosen stays in the
+  // window, off the pill, off the element, never asks, and covers a warning only when every spot
+  // tried does (checked by trying the same scene with the warnings demoted to plain text).
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  for (let i = 0; i < 400; i++) {
+    const ax = panel.left + 12 + rnd() * (panel.right - panel.left - 160), ay = panel.top + 12 + rnd() * (panel.bottom - panel.top - 40);
+    const a = { left: ax, right: ax + 30 + rnd() * 110, top: ay, bottom: ay + 22 };
+    const avoid = [];
+    for (let k = 0; k < 8; k++) {
+      const x = panel.left + 12 + rnd() * 300, y = panel.top + 12 + rnd() * 340;
+      const r = { left: x, right: x + 40 + rnd() * 200, top: y, bottom: y + 17, warn: rnd() < 0.3 };
+      if (!(Math.min(r.right, a.right) > Math.max(r.left, a.left) && Math.min(r.bottom, a.bottom) > Math.max(r.top, a.top))) avoid.push(r);
+    }
+    const w = 100 + Math.round(rnd() * 220), h = measure(w);
+    const q = place({ a, w, h, vw, vh, edge: 'bottom', pill, inPill: false, vis, canAsk: false, panel, avoid, measure });
+    const qw = q.w || w, qh = q.h || h;
+    const box = { left: q.x, right: q.x + qw, top: q.y, bottom: q.y + qh };
+    const offA = !(Math.min(box.right, a.right) - Math.max(box.left, a.left) > 0.5 && Math.min(box.bottom, a.bottom) - Math.max(box.top, a.top) > 0.5);
+    ok(q.need === 0 && box.left >= MARGIN - 0.01 && box.right <= vw - MARGIN + 0.01 && box.bottom <= pill.top - 0.99 && box.top >= vis.top && (offA || q.side === 'over'),
+      `sweep ${i}: in the window, off the pill and the element (${q.side} ${Math.round(box.left)},${Math.round(box.top)} ${qw}x${qh})`);
+    // The candidates do not depend on the words, only the choice does: so if the choice made with the
+    // warnings left out lands clear of every warning, a warning-free spot existed and must have won.
+    const plain = place({ a, w, h, vw, vh, edge: 'bottom', pill, inPill: false, vis, canAsk: false, panel, avoid: avoid.filter(r => !r.warn), measure });
+    const pb = { left: plain.x, right: plain.x + (plain.w || w), top: plain.y, bottom: plain.y + (plain.h || h) };
+    const clear = !avoid.some(r => r.warn && Math.min(pb.right, r.right) - Math.max(pb.left, r.left) > 0.5 && Math.min(pb.bottom, r.bottom) - Math.max(pb.top, r.top) > 0.5);
+    if (clear && plain.covers) ok(q.covers && q.covers.warn === 0, `sweep ${i}: a warning is covered only when every spot next to the element covers one (${q.side}, ${JSON.stringify(q.covers)})`);
+  }
+}
+
+/* The surface and the wrap are CSS (tips.css): opaque, one theme, never an ellipsis. */
+{
+  const css = require('fs').readFileSync(require('path').join(__dirname, 'tips.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = (css.match(/\.mtip\s*\{([^}]*)\}/) || [])[1] || '';
+  ok(/background-color:\s*var\(--lg-ground\)/.test(rule) && /background-image:\s*linear-gradient\(var\(--lg-fill-strong\),\s*var\(--lg-fill-strong\)\)/.test(rule),
+    'tips.css: the frost is laid on an opaque ground (--lg-ground), so nothing behind shows through');
+  const colours = (rule.match(/(#[0-9a-f]{3,8}\b|rgba?\(|hsla?\()/gi) || []);
+  ok(colours.length === 0, `tips.css: every colour is a --lg-* token (${colours.join(' ') || 'none raw'})`);
+  ok(!/text-overflow\s*:\s*ellipsis/.test(css) && !/white-space\s*:\s*nowrap/.test(css) && /white-space:\s*pre-line/.test(rule) && /overflow-wrap:\s*anywhere/.test(rule),
+    'tips.css: wraps in whole lines (pre-line, overflow-wrap), never an ellipsis');
 }
 
 console.log(`tips: ${passed} passed, ${failed} failed`);

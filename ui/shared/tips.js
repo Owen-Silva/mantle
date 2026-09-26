@@ -28,7 +28,8 @@
  * way: bar.popover {open:true, key:'tip', height} and {open:false} to give it back. In hover mode
  * that is a region change only (no resize, so no dip). main keeps ONE room owner (barPopover): the
  * latest open wins and any close shuts whatever is open. So the rules here are:
- *   - never ask while a popover (#pop) is open: a tip then fits inside the room the popover holds;
+ *   - never ask while a popover (#pop) is open: a tip then fits inside the room the popover holds
+ *     (for an element IN the popover: next to it, off the panel's words, see placeIn below);
  *   - never give back while a popover is open: bar.js's own open already replaced the tip's room
  *     in main, and a close from here would shut THE POPOVER's room under it;
  *   - give back only from a timer (a later task), never synchronously from a title setter or a
@@ -79,6 +80,7 @@
    * (0 = none). Worked for a bottom bar; a top bar is the same sum mirrored.
    */
   function place(o) {
+    if (o.panel) { var q = placeIn(o); if (q) return q; }
     var flip = o.edge === 'top';
     var vh = o.vh;
     var a = flip ? mirror(o.a, vh) : o.a;
@@ -112,7 +114,97 @@
     return { x: x, y: flip ? vh - (y + h) : y, side: side, need: need };
   }
 
-  var api = { place: place, T: T, GAP: GAP, MARGIN: MARGIN, SLACK: SLACK, ROOM_MAX: ROOM_MAX, ATTR: ATTR };
+  /* INSIDE AN OPEN PANEL (2026-09-25). Owen's screenshot: the quick-settings footer link's tip went
+   * straight up over the power tile's warning ("Power mode did not change: ..."), the two texts
+   * mixed through the frost, and its right end ran off the panel. A panel is dense with words that
+   * matter (a failure reason most of all), so here a tip looks for a spot next to the element that
+   * covers none of them:
+   *   o.panel  the open popover's rect;   o.avoid  [{left,right,top,bottom, warn}] its text lines
+   *   o.measure(width) -> height of the tip wrapped to that width (optional: lets a side spot
+   *                       narrow the tip into the room beside the element instead of skipping it)
+   * Candidates, in order: away from the screen edge (above, on a bottom bar), toward it, then the
+   * side with more room, then the other; above/below try centred, flush with the element's right
+   * edge and flush with its left; a side tries centred, top-aligned and bottom-aligned. First every
+   * spot inside the panel, then every spot in the rest of the room the window shows (the band
+   * beside the panel, never over the pill). Best = covers no warning text, then stays inside the
+   * panel, then covers no text at all, then the least warning, then the least text, then order.
+   * Inside-the-panel ranks above no-text because a tip hanging off the panel's edge reads as cut
+   * off (the first try, measured 2026-09-25: the footer link's tip went 155 px out past the
+   * panel's left edge to dodge a battery line); a failure reason ranks above both.
+   * Returns null when nothing fits (place() then clamps as before).
+   */
+  // A side spot narrower than this is a column, not a tip: at 120 px the footer link's 58-character
+  // title ran to five lines, 81 px tall, hanging off the panel's edge (headless, 2026-09-25).
+  var SIDE_MIN = 150;
+
+  function overlap(r, s) {
+    var w = Math.min(r.right, s.right) - Math.max(r.left, s.left);
+    var h = Math.min(r.bottom, s.bottom) - Math.max(r.top, s.top);
+    return w > 0.5 && h > 0.5 ? w * h : 0;
+  }
+
+  function placeIn(o) {
+    var a = o.a, P = o.panel, vh = o.vh, top = o.edge === 'top';
+    // The band a tip may use: what is visible, minus the pill (never over or under it).
+    var band = top
+      ? { left: MARGIN, right: o.vw - MARGIN, top: (o.pill ? o.pill.bottom : 0) + 1, bottom: Math.min(vh, o.vis.bottom) - 1 }
+      : { left: MARGIN, right: o.vw - MARGIN, top: Math.max(0, o.vis.top) + 1, bottom: (o.pill ? o.pill.top : vh) - 1 };
+    var inner = {
+      left: Math.max(band.left, P.left + MARGIN), right: Math.min(band.right, P.right - MARGIN),
+      top: Math.max(band.top, P.top + MARGIN), bottom: Math.min(band.bottom, P.bottom - MARGIN)
+    };
+    var avoid = o.avoid || [];
+    var vert = top ? ['below', 'above'] : ['above', 'below'];
+    var best = null, idx = 0;
+
+    function consider(side, x, y, w, h, B) {
+      var r = { left: x, right: x + w, top: y, bottom: y + h };
+      idx++;
+      if (r.left < B.left - 0.01 || r.right > B.right + 0.01 || r.top < B.top - 0.01 || r.bottom > B.bottom + 0.01) return;
+      if (overlap(r, a)) return;
+      var warn = 0, text = 0;
+      for (var i = 0; i < avoid.length; i++) {
+        var v = overlap(r, avoid[i]);
+        if (avoid[i].warn) warn += v; else text += v;
+      }
+      var out = r.left < P.left - 0.5 || r.right > P.right + 0.5 || r.top < P.top - 0.5 || r.bottom > P.bottom + 0.5 ? 1 : 0;
+      var key = [warn > 0 ? 1 : 0, out, text > 0 ? 1 : 0, warn, text, idx];
+      if (best) {
+        for (var k = 0; k < key.length && key[k] === best.key[k]; k++) { /* equal so far */ }
+        if (k === key.length || key[k] > best.key[k]) return;
+      }
+      best = { key: key, x: x, y: y, w: w, h: h, side: side };
+    }
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(v, hi)); }
+
+    [inner, band].forEach(function (B) {
+      if (B.right - B.left < 1 || B.bottom - B.top < 1) return;
+      var w = o.w, h = o.h;
+      vert.forEach(function (side) {
+        var y = side === 'above' ? a.top - GAP - h : a.bottom + GAP;
+        [(a.left + a.right) / 2 - w / 2, a.right - w, a.left].forEach(function (x) {
+          consider(side, clamp(x, B.left, B.right - w), y, w, h, B);
+        });
+      });
+      var roomL = a.left - GAP - B.left, roomR = B.right - (a.right + GAP);
+      (roomR > roomL ? ['right', 'left'] : ['left', 'right']).forEach(function (side) {
+        var room = Math.floor(side === 'left' ? roomL : roomR);
+        var ww = w, hh = h;
+        if (room < w) {
+          if (!o.measure || room < SIDE_MIN) return;
+          ww = room; hh = o.measure(ww);
+          if (!(hh > 0)) return;
+        }
+        var x = side === 'left' ? a.left - GAP - ww : a.right + GAP;
+        [(a.top + a.bottom) / 2 - hh / 2, a.top, a.bottom - hh].forEach(function (y) {
+          consider(side, x, clamp(y, B.top, B.bottom - hh), ww, hh, B);
+        });
+      });
+    });
+    return best ? { x: best.x, y: best.y, side: best.side, need: 0, w: best.w, h: best.h, covers: { warn: best.key[3], text: best.key[4] } } : null;
+  }
+
+  var api = { place: place, SIDE_MIN: SIDE_MIN, T: T, GAP: GAP, MARGIN: MARGIN, SLACK: SLACK, ROOM_MAX: ROOM_MAX, ATTR: ATTR };
   if (typeof module === 'object' && module && module.exports) module.exports = api;
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
@@ -256,7 +348,7 @@
         var vis = edge === 'top'
           ? { top: 0, bottom: pill ? Math.max(pill.bottom, pr ? pr.bottom : -Infinity) : vh }
           : { top: pill ? Math.min(pill.top, pr ? pr.top : Infinity) : 0, bottom: vh };
-        return { edge: edge, pill: pill, inPill: inPill, vis: vis, canAsk: !p };
+        return { edge: edge, pill: pill, inPill: inPill, vis: vis, canAsk: !p, panel: p && p.contains(el) ? pr : null, panelEl: p };
       }
     };
   }
@@ -316,23 +408,69 @@
     }
   }
 
+  /* The words in an open panel, one rect per line box, so a tip can keep off them. `warn` marks a
+     line drawn in --lg-warn: by the house rule (NO SILENT FAILURES) that is a failure's reason,
+     the one thing a tip must never hide (Owen's screenshot, 2026-09-25). The anchor's own words
+     are left out: a tip is never placed over its element anyway. */
+  var WALK_MAX = 600;   // text nodes: a panel has ~150 (quick settings, 2026-09-25); a cap, not a budget
+  function textRects(root, skip) {
+    var out = [];
+    var probe = document.createElement('span');
+    probe.style.cssText = 'position:absolute;visibility:hidden;color:var(--lg-warn)';
+    tip.appendChild(probe);         // ours, not the panel: no mutation a page observer could see
+    var warnColor = getComputedStyle(probe).color;
+    tip.removeChild(probe);
+    var walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var range = document.createRange();
+    var colors = new Map();
+    for (var n = walk.nextNode(), i = 0; n && i < WALK_MAX; n = walk.nextNode(), i++) {
+      if (!/\S/.test(n.nodeValue) || (skip && skip.contains(n))) continue;
+      var el = n.parentElement;
+      if (!el) continue;
+      var col = colors.get(el);
+      if (col === undefined) { var cs = getComputedStyle(el); col = cs.visibility === 'visible' ? cs.color : ''; colors.set(el, col); }
+      if (!col) continue;
+      range.selectNodeContents(n);
+      var rs = range.getClientRects();
+      for (var j = 0; j < rs.length; j++) {
+        var r = rs[j];
+        if (r.width > 0 && r.height > 0) out.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom, warn: col === warnColor });
+      }
+    }
+    return out;
+  }
+
   function layout() {
     var vw = window.innerWidth, vh = window.innerHeight;
-    tip.style.maxWidth = Math.max(80, Math.min(320, vw - 2 * MARGIN)) + 'px';
+    var c = room ? room.context(anchor)
+      : { edge: 'bottom', pill: null, inPill: false, vis: { top: 0, bottom: vh }, canAsk: false };
+    // In a panel a tip is never wider than the panel: it wraps in whole lines inside it rather
+    // than running off its side (the screenshot's tip ran 43 px past the quick-settings panel).
+    var cap = Math.min(320, vw - 2 * MARGIN);
+    if (c.panel) cap = Math.min(cap, c.panel.right - c.panel.left - 2 * MARGIN);
+    tip.style.width = '';
+    tip.style.maxWidth = Math.max(80, cap) + 'px';
     var w = tip.offsetWidth, h = tip.offsetHeight;
     var ar = anchor.getBoundingClientRect();
     var a = { left: ar.left, right: ar.right, top: ar.top, bottom: ar.bottom };
-    var c = room ? room.context(anchor)
-      : { edge: 'bottom', pill: null, inPill: false, vis: { top: 0, bottom: vh }, canAsk: false };
-    var p = place({ a: a, w: w, h: h, vw: vw, vh: vh, edge: c.edge, pill: c.pill, inPill: c.inPill, vis: c.vis, canAsk: c.canAsk });
+    var o = { a: a, w: w, h: h, vw: vw, vh: vh, edge: c.edge, pill: c.pill, inPill: c.inPill, vis: c.vis, canAsk: c.canAsk };
+    if (c.panel) {
+      o.panel = c.panel;
+      try { o.avoid = textRects(c.panelEl, anchor); } catch (e) { o.avoid = []; lastErr = 'reading the panel\'s text: ' + msgOf(e); }
+      o.measure = function (width) { tip.style.width = width + 'px'; var hh = tip.offsetHeight; tip.style.width = ''; return hh; };
+    }
+    var p = place(o);
+    if (p.w && p.w !== w) { tip.style.width = p.w + 'px'; w = p.w; h = p.h; }
     var dpr = window.devicePixelRatio || 1;
     // Whole device pixels (a fractional translate blurs the text), rounded AWAY from what the tip
     // must stay clear of: up off the pill for a tip above it, down off the element for one below.
-    var away = p.side === 'over' ? Math.round : ((c.edge === 'top') !== (p.side === 'in') ? Math.ceil : Math.floor);
+    var away = p.side === 'over' || p.side === 'left' || p.side === 'right' ? Math.round
+      : p.side === 'above' ? Math.floor : p.side === 'below' ? Math.ceil
+      : ((c.edge === 'top') !== (p.side === 'in') ? Math.ceil : Math.floor);
     var x = Math.round(p.x * dpr) / dpr, y = away(p.y * dpr) / dpr;
     tip.style.transform = 'translate(' + x + 'px,' + y + 'px)';
     tip.setAttribute('data-side', p.side);
-    last = { x: x, y: y, w: w, h: h, side: p.side, need: p.need, ax: a.left, ay: a.top };
+    last = { x: x, y: y, w: w, h: h, side: p.side, need: p.need, covers: p.covers || null, ax: a.left, ay: a.top };
     if (p.need) askRoom(p.need);
   }
 
@@ -557,7 +695,7 @@
       installed: installed, shown: shown, mode: mode,
       anchor: n ? (n.id ? '#' + n.id : n.tagName.toLowerCase() + (n.className && typeof n.className === 'string' ? '.' + n.className.split(/\s+/).join('.') : '')) : null,
       text: n ? textOf(n) : '', held: held, note: roomNote, lastError: lastErr,
-      box: shown && last ? { x: last.x, y: last.y, w: last.w, h: last.h, side: last.side, need: last.need } : null,
+      box: shown && last ? { x: last.x, y: last.y, w: last.w, h: last.h, side: last.side, need: last.need, covers: last.covers } : null,
       room: room ? 'bar' : null
     };
   }

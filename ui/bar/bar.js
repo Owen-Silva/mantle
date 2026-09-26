@@ -1817,7 +1817,10 @@
     var toWin = document.createElement('button');
     toWin.type = 'button'; toWin.className = 'qslink';
     toWin.textContent = 'Windows quick settings';
-    toWin.title = 'Open the real Windows flyout (Win+A) — everything Mantle does not wrap yet';
+    // Plain words, and short: the old "Open the real Windows flyout (Win+A) — everything Mantle does
+    // not wrap yet" was jargon, and three lines in the 160 px beside the link, so under a power-mode
+    // warning its tip had nowhere to go but out of the panel (tips.js, headless 2026-09-25).
+    toWin.title = "Open Windows' own quick settings (Win+A)";
     toWin.addEventListener('click', function () { closePop(); keys('win+a', 'quick settings'); });
     var gear = document.createElement('button');
     gear.type = 'button'; gear.className = 'qsgear';

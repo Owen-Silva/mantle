@@ -127,6 +127,82 @@ const shots = [];
       problems.push(...page.problems.map(p => wall + ' qs: ' + p));
       await page.close();
     }
+    /* ---------------- inside the panel, over a warning (2026-09-25) ----------------
+       Owen's screenshot: the quick-settings footer link's tip drawn OVER the power tile's red "Power
+       mode did not change: ..." line, both texts mixed through the frost, the tip's end off the
+       panel. Same scene here: ?pm=refuse makes the mock refuse a mode change, so a click on
+       Efficiency leaves a warning up; then the pointer rests on the footer link.
+         owen      the warning carries the words of Owen's screenshot (two lines, as on his screen):
+                   light and dark desktop, 1x and 1.25x. The tip must stay INSIDE the panel.
+         refused   the mock's own refusal (three lines, so the footer is boxed in on every side):
+                   the tip may leave the panel for the room beside it, but never covers the warning. */
+    const OWEN_WARN = 'Power mode did not change: Windows accepted the change but still reports Efficiency.';
+    const powerScenes = [[1, 'light', 'owen'], [1, 'dark', 'owen'], [1.25, 'light', 'owen'], [1.25, 'dark', 'owen'], [1.25, 'light', 'refused']];
+    for (const [scale, wall, words] of powerScenes) {
+      const tag = `${wall} ${scale}x ${words}`;
+      const sctx = await browser.newContext({ deviceScaleFactor: scale, viewport: { width: 1120, height: 660 } });
+      const page = await open(sctx, '?mode=pill&pm=refuse&battery=battery', wall, 660);
+      await page.click('#network');
+      await page.waitForTimeout(700);
+      await page.click('#pop .pmbtn[data-mode="efficiency"]');
+      await page.waitForTimeout(500);
+      if (words === 'owen') {
+        await page.evaluate((t) => { const n = Array.from(document.querySelectorAll('#pop .pmnote')).find(e => !e.hidden); if (n) n.textContent = t; }, OWEN_WARN);
+      }
+      await hover(page, '#pop .qslink');
+      await page.waitForTimeout(800);
+      const g = await page.evaluate(() => {
+        const R = (r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+        const pop = document.getElementById('pop');
+        const link = pop.querySelector('.qslink');
+        const warn = Array.from(pop.querySelectorAll('.pmnote')).find(n => !n.hidden && /did not change/.test(n.textContent));
+        const tip = document.getElementById('mantle-tip');
+        const rg = document.createRange();
+        const lines = (root, skip) => {
+          const out = [];
+          const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+          for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+            if (!/\S/.test(n.nodeValue) || (skip && skip.contains(n))) continue;
+            rg.selectNodeContents(n);
+            for (const r of rg.getClientRects()) if (r.width > 0 && r.height > 0) out.push(Object.assign({ t: n.nodeValue.trim().slice(0, 24) }, R(r)));
+          }
+          return out;
+        };
+        const c = getComputedStyle(tip);
+        const pill = document.getElementById('bar').getBoundingClientRect();
+        return {
+          pop: R(pop.getBoundingClientRect()), link: R(link.getBoundingClientRect()), pill: R(pill),
+          warnLines: warn ? lines(warn) : [], warnText: warn ? warn.textContent.slice(0, 40) : '',
+          tip: R(tip.getBoundingClientRect()), words: lines(pop, link), title: link.getAttribute('data-mtip') || link.getAttribute('title') || '', tipText: tip.textContent,
+          bg: c.backgroundColor, img: c.backgroundImage, ov: c.textOverflow, ws: c.whiteSpace,
+          sw: tip.scrollWidth, cw: tip.clientWidth, sh: tip.scrollHeight, ch: tip.clientHeight, vw: innerWidth, vh: innerHeight
+        };
+      });
+      const s = await st(page);
+      const hit = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5;
+      const t = g.tip, l = g.link, P = g.pop;
+      const covered = g.words.filter(w => hit(t, w));
+      const gap = Math.max(l.top - t.bottom, t.top - l.bottom, l.left - t.right, t.left - l.right);
+      const inPanel = t.left >= P.left - 0.5 && t.right <= P.right + 0.5 && t.top >= P.top - 0.5 && t.bottom <= P.bottom + 0.5;
+      const box = `tip ${Math.round(t.left)},${Math.round(t.top)}..${Math.round(t.right)},${Math.round(t.bottom)}; panel ${Math.round(P.left)},${Math.round(P.top)}..${Math.round(P.right)},${Math.round(P.bottom)}`;
+      ok(g.warnLines.length >= 2, `${tag}: the power tile's warning is up, ${g.warnLines.length} lines ("${g.warnText}...")`);
+      ok(s.shown && s.anchor === 'button.qslink' && s.text === g.title && g.tipText === g.title, `${tag}: the footer link's tip is up with its whole title ("${s.text}")`);
+      ok(!g.warnLines.some(w => hit(t, w)) && s.box && s.box.covers && s.box.covers.warn === 0,
+        `${tag}: the tip covers no line of the warning (covers ${covered.length ? covered.map(w => '"' + w.t + '"').join(', ') : 'no text'}; side ${s.box && s.box.side})`);
+      if (words === 'owen') ok(inPanel, `${tag}: the tip stays inside the panel (${box})`);
+      else ok(t.left >= 0 && t.right <= g.vw && t.top >= 0 && t.bottom <= g.pill.top - 0.5, `${tag}: boxed in, the tip uses the room beside the panel: in the window, never over the pill (${box}; pill top ${Math.round(g.pill.top)})`);
+      ok(gap >= 0 && gap <= 7.5, `${tag}: the tip sits next to the link (gap ${gap.toFixed(1)} px, side ${s.box && s.box.side})`);
+      ok(g.ov !== 'ellipsis' && g.ws !== 'nowrap' && g.sw <= g.cw + 0.5 && g.sh <= g.ch + 0.5, `${tag}: wrapped in whole lines, nothing cut (overflow ${g.ov}, ${g.ws}, ${g.sw}/${g.cw} wide, ${g.sh}/${g.ch} tall)`);
+      ok(/^rgb\(/.test(g.bg) && g.img !== 'none', `${tag}: an opaque surface under the frost (${g.bg} under ${g.img.slice(0, 48)})`);
+      const pad = 12;
+      const x0 = Math.max(0, Math.min(P.left, t.left) - pad), x1 = Math.min(g.vw, Math.max(P.right, t.right) + pad);
+      const file = path.join(OUT, `tip-qs-powerwarn-${words}-${wall}-${scale}x.png`);
+      await page.screenshot({ path: file, clip: { x: x0, y: Math.max(0, P.top - pad), width: x1 - x0, height: Math.min(g.vh, g.pill.bottom + 4) - Math.max(0, P.top - pad) } });
+      shots.push(file);
+      problems.push(...page.problems.map(p => tag + ' powerwarn: ' + p));
+      await page.close();
+      await sctx.close();
+    }
     // a top bar: the tip goes below the pill
     {
       const page = await open(ctx, '?mode=pill&edge=top', 'dark');
@@ -164,9 +240,9 @@ const shots = [];
     ok(s.box.y >= pill.top - s.box.need - 1 && s.box.y + s.box.h <= pill.top - 5.9, `the tip is inside the room it asked for and clear of the pill (y ${s.box.y}..${s.box.y + s.box.h}, pill top ${pill.top}, room ${s.box.need})`);
     const multi = await page.evaluate(() => { const t = document.getElementById('mantle-tip'); return { lines: Math.round(t.getBoundingClientRect().height / 16), txt: t.textContent }; });
     ok(multi.txt.includes('\n') && multi.lines >= 2, 'the multi-line title keeps its line break');
-    const look = await page.evaluate(() => { const c = getComputedStyle(document.getElementById('mantle-tip')); return { pe: c.pointerEvents, ws: c.whiteSpace, bg: c.backgroundColor, fam: c.fontFamily }; });
+    const look = await page.evaluate(() => { const c = getComputedStyle(document.getElementById('mantle-tip')); return { pe: c.pointerEvents, ws: c.whiteSpace, bg: c.backgroundColor, img: c.backgroundImage, fam: c.fontFamily }; });
     ok(look.pe === 'none' && look.ws === 'pre-line', 'pointer-events none, pre-line');
-    ok(/255, 255, 255, 0\.72/.test(look.bg) && /Segoe UI/.test(look.fam), `the popover frost and the bar's face (${look.bg}; ${look.fam.split(',')[0]})`);
+    ok(/^rgb\(244, 246, 250\)$/.test(look.bg) && /255, 255, 255, 0\.72/.test(look.img) && /Segoe UI/.test(look.fam), `the popover frost on an opaque ground, and the bar's face (${look.img.slice(0, 44)} over ${look.bg}; ${look.fam.split(',')[0]})`);
 
     // live update in place: the volume keys while the tip is up
     await page.evaluate(() => window.__mockMain.volume(73));
