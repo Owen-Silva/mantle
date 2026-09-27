@@ -493,7 +493,7 @@
     var trimTxt = watching ? (wv.lastTrim && wv.lastTrim.ok ? ' · trimmed ' + ago(wv.lastTrim.at) : ' · not trimmed yet') : '';
     var txt = mk('span', 'spq-apptxt', (shown === false ? 'Running hidden' : shown === true ? 'Window open' : 'Running') + (memTxt ? ' · ' + memTxt : S.infoLoading ? ' · …' : '') + trimTxt);
     txt.title = (m ? 'Spotify’s ' + m.n + ' processes: ' + (m.privateWsMB != null ? m.privateWsMB + ' MB of RAM of their own (Task Manager’s Memory), ' : '') + m.wsMB + ' MB working set, ' + m.privateMB + ' MB committed'
-      : (inf && inf.memoryReason) || S.infoErr || 'Reading Spotify’s memory…') + (w && w.how ? '\nHidden by ' + w.how : '') + (w && w.trim ? '\n' + w.trim.text : '')
+      : (inf && inf.memoryReason) || S.infoErr || 'Reading Spotify’s memory…') + (w && w.how ? (w.adopted && w.how === 'adopted after a Mantle restart' ? '\nTaken over after a Mantle restart: an earlier Mantle started and hid it' : '\nHidden by ' + w.how) : '') + (w && w.trim ? '\n' + w.trim.text : '')
       + (watching ? '\nMemory watch: trimmed when over ' + wv.aboveMB + ' MB, checked every 30 s, at most once every ' + Math.round(wv.gapMs / 60000) + ' min; never the process playing the audio'
         : wv && wv.state === 'stopped' && wv.reason ? '\nMemory watch stopped: ' + wv.reason : '')
       + (wv && wv.lastTrim ? '\n' + wv.lastTrim.text + ' (' + ago(wv.lastTrim.at) + ')' : '') + (wv && wv.note ? '\n' + cap(wv.note) : '');
@@ -547,7 +547,7 @@
       : (HINT[st] != null ? HINT[st] : '');
     var wst = S.status && S.status.window && S.status.window.state;
     if (st === 'connected' && wst === 'hidden') hint = 'Hidden' + (hint ? ' · ' + hint : '');
-    else if (st === 'connected' && wst === 'failed') hint = 'Not hidden';
+    else if (st === 'connected' && wst === 'failed') hint = S.status.window.takeOverFailed ? 'Not watched' : 'Not hidden';
     S.hint.textContent = hint;
     S.hint.classList.toggle('warn', st !== 'connected' && st !== 'checking' && st !== 'starting' || !!S.qErr);
     S.body.hidden = !expanded;
