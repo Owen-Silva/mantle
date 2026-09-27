@@ -174,3 +174,25 @@
 
 /* no room for both: the card's source switcher folds away while Up next is open (spotify.js fit) */
 .pop.spq-squeeze .mc-src { display: none; }
+
+/* spothide lane (2026-09-26): Spotify runs hidden and is played from here. Same tokens, same rows. */
+.spq-app[hidden], .spq-tabs[hidden] { display: none; }
+.spq-app { padding: 0 8px 4px; }
+.spq-appmain { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.spq-apptxt { flex: 1 1 auto; min-width: 0; color: var(--lg-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spq-app .spq-fine { padding: 2px 0 0; }
+.spq-bad { color: var(--lg-warn); }
+.spq-link.warn { color: var(--lg-warn); text-decoration-color: var(--lg-warn-soft); }
+.spq-tabs { display: flex; align-items: center; gap: 4px; padding: 2px 4px 6px 8px; }
+.spq-tabs .spq-chip { padding: 3px 10px; background: transparent; color: var(--lg-ink-2); }
+.spq-tabs .spq-chip:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.spq-tabs .spq-chip.on { background: var(--lg-sunk); color: var(--lg-ink); }
+.spq-tabs .spq-chip:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.spq-gap { flex: 1 1 auto; }
+.spq-tabs .spq-tool { position: relative; }
+.spq-tool.on { color: var(--lg-acc); }
+.spq-tool.one::after { content: '1'; position: absolute; right: 1px; bottom: 0; font-size: 8px; line-height: 1; color: var(--lg-acc); }
+.spq-art.round { border-radius: 50%; }
+.spq-art.liked { background: var(--lg-acc-soft); color: var(--lg-acc); }
+/* the queue-add tool on a song result stays visible: it is the only way to queue from search */
+.spq-tools.keep { opacity: 1; }

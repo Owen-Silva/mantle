@@ -966,8 +966,18 @@
     if (SPQ === 'checking') return new Promise(function () {});
     if (SPQ_REASON[SPQ]) return { ok: SPQ === 'off', state: SPQ, reason: SPQ_REASON[SPQ], port: 47292 };
     return { ok: true, state: 'connected', reason: null, port: 47292, via: 'React context -> Registry(PlayerAPI)', version: '1.3.0.277',
-      caps: { skipTo: true, next: true, remove: true, move: true, search: true } };
+      caps: { skipTo: true, next: true, remove: true, move: true, search: true }, window: spqWin() };
   }
+  /* spothide lane: the hidden app (?spq=hidefail: the hide did not take) */
+  var SPQ_PLAYER = { paused: false, shuffle: true, repeat: 0, canShuffle: true, canRepeat: true, canRepeatTrack: true };
+  var SPQ_SHOWN = false;
+  function spqWin() {
+    if (SPQ === 'hidefail') return { state: 'failed', reason: 'Could not hide Spotify’s window: Spotify took the hide (its window state is now 3), but its window is still showing', pid: 4242, source: 'the pinned icon' };
+    return { state: SPQ_SHOWN ? 'shown' : 'hidden', how: 'Spotify’s own window-state service SetWindowState(HIDDEN)', pid: 4242, source: 'the pinned icon',
+      trim: { ok: true, text: 'Trimmed the hidden Spotify’s memory once: 912 MB → 71 MB of RAM across 7 processes' } };
+  }
+  function spqLib(n, kind, name, owner) { var it = spqItem(n); return { uri: 'spotify:' + kind + ':' + String(n).padStart(22, 'L'), kind: kind, name: name, owner: owner, image: kind === 'show' ? '' : it.image }; }
+  function spqGroup(kind, names, subs) { return names.map(function (nm, i) { var x = spqLib(20 + i, kind, nm, subs[i] || ''); x.sub = subs[i] || ''; return x; }); }
   var SPQ_SONGS = [['Downtown', 'Macklemore & Ryan Lewis, Eric Nally'], ['Thrift Shop', 'Macklemore & Ryan Lewis, Wanz'],
     ['Midnight City', 'M83'], ['Blinding Lights', 'The Weeknd'], ['Heat Waves', 'Glass Animals'], ['Mr. Brightside', 'The Killers'],
     ['Levitating', 'Dua Lipa'], ['Take On Me', 'a-ha'], ['Electric Feel', 'MGMT'], ['Do I Wanna Know?', 'Arctic Monkeys'],
@@ -1008,6 +1018,24 @@
   function reply(channel, payload) {
     switch (channel) {
       case 'spotify.status': return spqStatus();
+      case 'spotify.info':
+        return { ok: true, state: 'connected', window: spqWin(), running: true, visible: SPQ === 'hidefail' || SPQ_SHOWN,
+          memory: { n: 7, wsMB: SPQ_SHOWN ? 1077 : 236, privateMB: 613, privateWsMB: SPQ_SHOWN ? 587 : 188, visible: SPQ_SHOWN ? 1 : 0 }, memoryReason: null, player: SPQ_PLAYER, playerReason: null };
+      case 'spotify.library':
+        return { ok: true, liked: { uri: 'spotify:collection:tracks', name: 'Liked Songs' }, skipped: 1, total: 8, at: 1,
+          items: [spqLib(1, 'playlist', 'My Playlist #4', 'Owen Silva'), spqLib(2, 'playlist', 'My Playlist #2', 'Owen Silva'), spqLib(3, 'artist', 'Benson Boone', ''),
+            spqLib(4, 'playlist', 'Your Top Songs 2025', 'Spotify'), spqLib(5, 'artist', 'glaive', ''), spqLib(6, 'album', 'The Heist', 'Macklemore & Ryan Lewis'), spqLib(7, 'show', 'A Podcast', 'Some Network')] };
+      case 'spotify.searchAll':
+        return { ok: true, q: payload && payload.q, via: 'Spotify’s bundle',
+          tracks: spqGroup('track', ['Can’t Hold Us', 'Thrift Shop', 'Downtown'], ['Macklemore & Ryan Lewis, Ray Dalton', 'Macklemore & Ryan Lewis, Wanz', 'Macklemore & Ryan Lewis, Eric Nally']),
+          artists: spqGroup('artist', ['Macklemore'], ['']), albums: spqGroup('album', ['The Heist'], ['Macklemore & Ryan Lewis']),
+          playlists: spqGroup('playlist', ['This Is Macklemore'], ['Spotify']) };
+      case 'spotify.playUri': return { ok: true, uri: payload && payload.uri, verified: true, player: SPQ_PLAYER, reason: null };
+      case 'spotify.shuffle': SPQ_PLAYER.shuffle = !!(payload && payload.on); return { ok: true, verified: true, player: SPQ_PLAYER, reason: null };
+      case 'spotify.repeat': SPQ_PLAYER.repeat = payload && payload.mode; return { ok: true, verified: true, player: SPQ_PLAYER, reason: null };
+      case 'spotify.openWindow': SPQ_SHOWN = true; return { ok: true, verified: true, via: 'FocusMainWindowAPI.focusMainWindow', reason: null };
+      case 'spotify.hideWindow': SPQ_SHOWN = false; return { ok: true, verified: true, via: 'window-state service SetWindowState(HIDDEN)', reason: null };
+      case 'spotify.quit': return { ok: true, dryRun: true, reason: 'mock: would quit Spotify (its own LifecycleAPI.shutdown)' };
       case 'spotify.queue': return spqQueueReply();
       case 'spotify.search':
         if (SPQ === 'searchbroken') return { ok: false, state: 'error', q: payload && payload.q, reason: 'Search is unavailable: Spotify’s search answered without songs (PersistedQueryNotFound)' };

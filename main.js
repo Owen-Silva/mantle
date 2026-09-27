@@ -2365,15 +2365,16 @@ async function launchItem(item, fresh) {
   const aumid = (pin && pin.aumid) || item.aumid || null;
   const again = fresh ? ' another copy of' : '';
 
-  /* The Win32 Spotify, NOT running: start it with Up next's port, the way the now-playing card does
+  /* The Win32 Spotify, NOT running: start it with Up next's port and HIDDEN (spothide lane,
+     2026-09-26: Spotify's --minimized, then its own window service hides it), the way the card does
      (lib/spotify-launch.js, 2026-09-25). Anything else, or a Spotify already running (bring it forward,
      never restart it), falls through to the launch below unchanged. --test only says what it would do. */
   if (lnk || aumid) {
     const sp = await spotifyLaunch.launchSpotifyWithPort(
       pin ? { exe: pin.exe, target: pin.target, args: pin.args, lnkPath: pin.lnkPath, aumid } : { aumid },
-      { dryRun: !!flags.test, enabled: spotifyQueueOn() });
+      { dryRun: !!flags.test, enabled: spotifyQueueOn(), source: pin ? 'the pinned icon' : 'the bar' });
     if (sp.handled) {
-      process.stdout.write(`mantle: launch ${item.name}: ${sp.dryRun ? `${sp.reason} (--test)` : `started ${sp.path} ${sp.args.join(' ')}, pid ${sp.pid}`}\n`);
+      process.stdout.write(`mantle: launch ${item.name}: ${sp.dryRun ? `${sp.reason} (--test)` : `started ${sp.path} ${sp.args.join(' ')}, pid ${sp.pid}; ${sp.hide}`}\n`);
       return sp.dryRun
         ? { ok: true, reason: sp.reason, action: 'dry-run', dryRun: true }
         : { ok: true, reason: null, action: 'launched', path: sp.path };

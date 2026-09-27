@@ -17,6 +17,12 @@
  * the port taken by something else, Spotify's internals not found (an update), not installed, off,
  * and each action's result (verified against a re-read of the queue).
  *
+ * SPOTHIDE LANE (2026-09-26): Owen: "i can just start it and play music ... without opening the app".
+ * Mantle starts Spotify HIDDEN (lib/features/_spotify-app.js), so the section is now "Spotify": a line
+ * saying it runs hidden and its memory, with Open Spotify / Hide window and Quit (two clicks); tabs
+ * Up next | Library (Liked Songs, playlists, artists, albums) with shuffle and repeat; and one search
+ * over songs, artists, albums and playlists where a tap PLAYS it (a song's + still queues it).
+ *
  * FITTING: the card lives in the bar's one popover, and main gives a popover at most ROOM_MAX px
  * (main.js POPOVER_MAX), so a card taller than that would be cut off by the WINDOW, not by CSS (the
  * top bar's dropdown shipped clipped like that on 2026-09-24). The list therefore scrolls inside
@@ -54,8 +60,16 @@
     down: '<path d="M4.5 6.5L8 10l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
     note: '<path d="M6 11.6V3.9l6.4-1.4v7.3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="4.6" cy="11.8" r="1.6" fill="currentColor"/><circle cx="11" cy="10.2" r="1.6" fill="currentColor"/>',
     x: '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
-    search: '<circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.2 10.2L13.5 13.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'
+    search: '<circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.2 10.2L13.5 13.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+    // spothide lane
+    shuffle: '<path d="M2 4.5h2.6c1.4 0 2.2.7 3 2l1 1.6c.8 1.3 1.6 2 3 2H14M2 11.5h2.6c1.4 0 2.2-.7 3-2M9.4 6.3c.8-1.2 1.6-1.8 2.9-1.8H14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M12.4 2.8L14.2 4.5 12.4 6.2M12.4 9.8L14.2 11.5 12.4 13.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
+    repeat: '<path d="M3 7.5V6.5A2 2 0 0 1 5 4.5h8M13 8.5v1a2 2 0 0 1-2 2H3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M11.3 2.8L13 4.5 11.3 6.2M4.7 9.8L3 11.5 4.7 13.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
+    heart: '<path d="M8 13.2S2.5 9.9 2.5 6.1A2.9 2.9 0 0 1 8 4.8a2.9 2.9 0 0 1 5.5 1.3c0 3.8-5.5 7.1-5.5 7.1z" fill="currentColor"/>',
+    plus: '<path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
   };
+  var KIND = { track: 'Song', episode: 'Episode', album: 'Album', artist: 'Artist', playlist: 'Playlist', show: 'Podcast' };
+  var REPEAT = ['Repeat: off', 'Repeat: all', 'Repeat: this song'];
+  function mb(m) { if (!m) return ''; var v = m.privateWsMB != null ? m.privateWsMB : m.wsMB; return v == null ? '' : v >= 1000 ? (v / 1024).toFixed(1) + ' GB' : v + ' MB'; }
   var HINT = { checking: '', notrunning: 'Not running', noport: 'Needs restart', starting: 'Starting…', portbusy: 'Port busy',
     internals: 'Spotify changed', noinstall: 'Not found', error: 'Error', off: 'Off', missing: 'Off' };
 
@@ -76,7 +90,8 @@
     var was = S.status && S.status.state;
     S.status = st;
     if (st.state !== 'connected') { S.q = null; S.qErr = null; }
-    if (st.state === 'connected' && was !== 'connected' && expanded) refresh(true);
+    if (st.state === 'connected' && was !== 'connected' && expanded) { refresh(true); loadInfo(); if (S.tab === 'lib') loadLib(); }
+    if (st.state !== 'connected') { S.info = null; S.quitArmed = false; }
     arm();
     render();
   }
@@ -197,6 +212,74 @@
     }, function (e) { if (S === mine) { say('Spotify was not ' + (verb === 'restart' ? 'restarted' : 'started') + ': ' + why(e), true); loadStatus(); } });
   }
 
+  /* ------------------------------------------------------------------ spothide lane: the hidden app */
+
+  /* Running hidden or shown, its memory, shuffle and repeat: read on opening, on connecting and after
+     each window action (one PowerShell read in main; never on a timer). */
+  function loadInfo() {
+    if (!S || S.infoLoading) return;
+    var mine = S;
+    S.infoLoading = true;
+    call('info').then(function (r) {
+      if (S !== mine) return;
+      S.infoLoading = false; S.info = r.ok ? r : null; S.infoErr = r.ok ? '' : (r.reason || 'Spotify’s state could not be read');
+      render();
+    }, function (e) { if (S !== mine) return; S.infoLoading = false; S.infoErr = 'Spotify’s state could not be read: ' + why(e); render(); });
+  }
+  function loadLib() {
+    if (!S || S.libLoading) return;
+    var mine = S;
+    S.libLoading = true; render();
+    call('library').then(function (r) {
+      if (S !== mine) return;
+      S.libLoading = false;
+      if (r.ok) { S.lib = r; S.libErr = null; } else S.libErr = r;
+      render();
+    }, function (e) { if (S !== mine) return; S.libLoading = false; S.libErr = { reason: 'your library could not be read: ' + why(e) }; render(); });
+  }
+  function setTab(t) { S.tab = t; if (t === 'lib' && !S.lib) loadLib(); else if (t === 'queue') refresh(true); render(); }
+  function player() { return (S.info && S.info.player) || null; }
+  function playCtx(item) {
+    act('ctx:' + item.uri, 'playUri', { uri: item.uri }, function (r) {
+      if (!r.ok) say('Did not play it: ' + (r.reason || 'Spotify gave no reason'), true);
+      else if (!r.verified) say(r.reason, true);
+      else say('Playing ' + (item.kind === 'artist' ? item.name : '“' + item.name + '”'));
+      if (r.player && S.info) S.info.player = r.player;
+    });
+  }
+  function control(verb, args, label) {
+    act(verb, verb, args, function (r) {
+      if (r.player && S.info) S.info.player = r.player;
+      if (!r.ok) say(label + ' did not change: ' + (r.reason || 'Spotify gave no reason'), true);
+      else if (!r.verified) say(r.reason, true);
+      else say(verb === 'shuffle' ? (args.on ? 'Shuffle on' : 'Shuffle off') : REPEAT[args.mode]);
+    });
+  }
+  function windowDo(verb) {
+    act(verb, verb, {}, function (r) {
+      if (r.dryRun) say('Test instance: ' + r.reason);
+      else if (!r.ok) say((verb === 'openWindow' ? 'Spotify did not open: ' : 'Not hidden: ') + (r.reason || 'Spotify gave no reason'), true);
+      else if (!r.verified) say(r.reason, true);
+      else say(verb === 'openWindow' ? 'Spotify’s window is open.' : 'Spotify is hidden again.');
+      loadInfo();
+    });
+  }
+  /* Quit stops the music, so the first click only arms it and says so (as Restart does). */
+  function quitApp() {
+    if (!S.quitArmed) {
+      S.quitArmed = true; render();
+      setTimeout(function () { if (S && S.quitArmed) { S.quitArmed = false; render(); } }, 5000);
+      return;
+    }
+    S.quitArmed = false;
+    act('quit', 'quit', {}, function (r) {
+      if (r.dryRun) say('Test instance: ' + r.reason);
+      else if (!r.ok) say('Spotify did not quit: ' + (r.reason || 'no reason given'), true);
+      else { S.info = null; S.lib = null; say('Spotify quit.'); }
+      loadStatus();
+    });
+  }
+
   function searchSoon() {
     if (S.searchTimer) clearTimeout(S.searchTimer);
     var q = S.input.value.trim();
@@ -207,7 +290,7 @@
       var mine = S, asked = q;
       S.searching = true;
       render();
-      call('search', { q: asked }).then(function (r) {
+      call('searchAll', { q: asked }).then(function (r) {
         if (S !== mine || S.query !== asked) return;
         S.searching = false;
         S.results = r;
@@ -273,8 +356,8 @@
     if (s === 'starting') { box.appendChild(stateLine(reason || 'Starting Spotify…', 'dim')); box.appendChild(mk('div', 'spq-fine', 'Waiting for Spotify to open its local debugging port (up to 30 s).')); return; }
     if (s === 'notrunning') {
       box.appendChild(stateLine('Spotify isn’t running.'));
-      box.appendChild(actBtn('Start Spotify for Up next', function () { launch('start'); }));
-      box.appendChild(mk('div', 'spq-fine', 'Mantle starts it with a local debugging port (127.0.0.1:' + (st.port || 47292) + ') so it can read and edit the queue.'));
+      box.appendChild(actBtn('Start Spotify hidden', function () { launch('start'); }));
+      box.appendChild(mk('div', 'spq-fine', 'It runs with no window: play your library and search from here. Mantle starts it with a local debugging port (127.0.0.1:' + (st.port || 47292) + ').'));
       return;
     }
     if (s === 'noport') {
@@ -296,7 +379,8 @@
     var b = mk('button', 'spq-row');
     b.type = 'button';
     var art = mk('span', 'spq-art');
-    if (item.image) { var im = document.createElement('img'); im.alt = ''; im.src = item.image; art.appendChild(im); }
+    if (item.liked) { art.innerHTML = svg(G.heart, 14); art.classList.add('liked'); }
+    else if (item.image) { var im = document.createElement('img'); im.alt = ''; im.src = item.image; art.appendChild(im); }
     else { art.innerHTML = svg(G.note, 12); art.title = item.imageReason || ''; }
     b.appendChild(art);
     var txt = mk('span', 'spq-txt');
@@ -305,12 +389,18 @@
     b.appendChild(txt);
     wrap.appendChild(b);
     var caps = (S.q && S.q.caps) || {};
-    if (mode === 'search') {
-      var done = S.added[item.uri];
-      b.appendChild(mk('span', 'spq-tag', done ? 'Added' : (S.busy === 'add:' + item.uri ? 'Adding…' : 'Add')));
-      b.title = 'Add “' + item.name + '” to the end of the queue';
-      if (done) b.classList.add('done');
-      b.addEventListener('click', function () { add(item); });
+    if (mode === 'search' || mode === 'lib') {
+      // a tap plays it (spothide lane); a song can also go to the end of the queue
+      if (item.kind === 'artist') art.classList.add('round');
+      b.title = 'Play ' + (item.kind === 'artist' ? item.name : '“' + item.name + '”');
+      if (S.busy === 'ctx:' + item.uri) wrap.classList.add('busy');
+      b.addEventListener('click', function () { playCtx(item); });
+      if (item.kind === 'track') {
+        var done = S.added[item.uri];
+        var tl = mk('div', 'spq-tools keep');
+        tl.appendChild(tool(done ? G.note : G.plus, done ? 'Added to the queue' : 'Add to the end of the queue', function () { add(item); }, !!done));
+        wrap.appendChild(tl);
+      }
       return wrap;
     }
     b.title = 'Play “' + item.name + '” now' + (index ? ': the ' + (index === 1 ? 'song' : index + ' songs') + ' before it are used up, as in Spotify' : '');
@@ -326,15 +416,38 @@
     return wrap;
   }
 
+  function subLine(it) {
+    var who = it.sub || it.owner || '';
+    if (it.kind === 'track') return who;
+    return (KIND[it.kind] || 'Spotify') + (who && it.kind !== 'artist' ? ' · ' + who : '');
+  }
+  function drawLib(box, list) {
+    var l = S.lib, err = S.libErr;
+    if (err) { box.appendChild(stateLine(err.reason || 'your library could not be read', 'bad')); box.appendChild(linkBtn('Try again', function () { S.libErr = null; loadLib(); }, 'act')); return; }
+    if (!l) { box.appendChild(stateLine(S.libLoading ? 'Loading your library…' : 'Not loaded yet.', 'dim')); return; }
+    list.appendChild(row({ uri: l.liked.uri, kind: 'collection', name: l.liked.name, artists: 'Playlist · your liked songs', image: '', liked: true }, 0, 'lib'));
+    l.items.forEach(function (it, i) { list.appendChild(row({ uri: it.uri, kind: it.kind, name: it.name, artists: subLine(it), image: it.image, imageReason: it.imageReason }, i + 1, 'lib')); });
+    if (l.skipped) list.appendChild(mk('div', 'spq-fine', l.skipped + ' folder' + (l.skipped > 1 ? 's or items' : ' or item') + ' Mantle cannot play ' + (l.skipped > 1 ? 'are' : 'is') + ' not listed'));
+  }
   function drawConnected(box, list) {
     if (S.query) {
       var r = S.results;
       if (S.searching && !r) box.appendChild(stateLine('Searching…', 'dim'));
       else if (r && !r.ok) box.appendChild(stateLine(r.reason || 'the search failed', 'bad'));
-      else if (r && !r.items.length) box.appendChild(stateLine('No songs match “' + S.query + '”.', 'dim'));
-      else if (r) r.items.forEach(function (it, i) { list.appendChild(row(it, i, 'search')); });
+      else if (r) {
+        var any = false;
+        [['tracks', 'Songs'], ['artists', 'Artists'], ['albums', 'Albums'], ['playlists', 'Playlists']].forEach(function (g) {
+          var arr = r[g[0]] || [];
+          if (!arr.length) return;
+          any = true;
+          list.appendChild(mk('div', 'spq-sec', g[1]));
+          arr.forEach(function (it, i) { list.appendChild(row({ uri: it.uri, kind: it.kind, name: it.name, artists: subLine(it), image: it.image, imageReason: it.imageReason }, i, 'search')); });
+        });
+        if (!any) box.appendChild(stateLine('Nothing on Spotify matches “' + S.query + '”.', 'dim'));
+      }
       return;
     }
+    if (S.tab === 'lib') { drawLib(box, list); return; }
     var q = S.q, err = S.qErr;
     if (err) {
       box.appendChild(stateLine(err.reason || 'the queue could not be read', 'bad'));
@@ -342,7 +455,7 @@
       return;
     }
     if (!q) { box.appendChild(stateLine(S.loading ? 'Loading the queue…' : 'Not loaded yet.', 'dim')); return; }
-    if (!q.current && !q.queued.length && !q.nextUp.length) { box.appendChild(stateLine('Spotify has nothing playing: start something in Spotify first.', 'dim')); return; }
+    if (!q.current && !q.queued.length && !q.nextUp.length) { box.appendChild(stateLine('Nothing is playing: pick something from Library, or search below.', 'dim')); return; }
     if (!q.queued.length && !q.nextUp.length) { box.appendChild(stateLine('Nothing is queued after this song.', 'dim')); return; }
     var at = 0;
     if (q.queued.length) {
@@ -354,6 +467,51 @@
       list.appendChild(mk('div', 'spq-sec', 'Next up'));
       q.nextUp.forEach(function (it) { list.appendChild(row(it, at++, 'next', q.nextUp.length)); });
     }
+  }
+
+  /* The hidden app's line (running hidden · its memory, Open / Hide window, Quit, and what went wrong
+     in words) and the Up next | Library tabs with shuffle and repeat. Drawn only while connected. */
+  function drawAppLine(st) {
+    var line = S.appLine, tabs = S.tabs;
+    line.textContent = ''; tabs.textContent = '';
+    line.hidden = tabs.hidden = st !== 'connected';
+    if (st !== 'connected') return;
+    var w = (S.status && S.status.window) || null, inf = S.info, m = inf && inf.memory;
+    var shown = inf && inf.visible != null ? inf.visible : w ? w.state === 'shown' : null;
+    var main = mk('div', 'spq-appmain');
+    var txt = mk('span', 'spq-apptxt', (shown === false ? 'Running hidden' : shown === true ? 'Window open' : 'Running') + (m ? ' · ' + mb(m) : S.infoLoading ? ' · …' : ''));
+    txt.title = (m ? 'Spotify’s ' + m.n + ' processes: ' + (m.privateWsMB != null ? m.privateWsMB + ' MB of RAM of their own (Task Manager’s Memory), ' : '') + m.wsMB + ' MB working set, ' + m.privateMB + ' MB committed'
+      : (inf && inf.memoryReason) || S.infoErr || 'Reading Spotify’s memory…') + (w && w.how ? '\nHidden by ' + w.how : '') + (w && w.trim ? '\n' + w.trim.text : '');
+    main.appendChild(txt);
+    main.appendChild(linkBtn(shown === true ? 'Hide window' : 'Open Spotify', function () { windowDo(shown === true ? 'hideWindow' : 'openWindow'); }));
+    main.appendChild(linkBtn(S.quitArmed ? 'Click again to quit' : 'Quit', quitApp, S.quitArmed ? 'warn' : ''));
+    line.appendChild(main);
+    var bad = (w && w.state === 'failed' && w.reason) || (w && w.trim && !w.trim.ok && !w.trim.skipped && w.trim.text) || S.infoErr || (inf && inf.memoryReason) || '';
+    if (bad) line.appendChild(mk('div', 'spq-fine spq-bad', bad));
+
+    [['queue', 'Up next'], ['lib', 'Library']].forEach(function (t) {
+      var c = mk('button', 'spq-chip' + (S.tab === t[0] ? ' on' : ''), t[1]);
+      c.type = 'button';
+      c.setAttribute('aria-pressed', S.tab === t[0] ? 'true' : 'false');
+      c.addEventListener('click', function () {
+        if (S.query) { S.input.value = ''; S.query = ''; S.results = null; }
+        setTab(t[0]);
+      });
+      tabs.appendChild(c);
+    });
+    tabs.appendChild(mk('span', 'spq-gap'));
+    var p = player(), off = !p ? 'Spotify’s player state is not read yet' + (inf && inf.playerReason ? ' (' + inf.playerReason + ')' : '') : '';
+    var sh = tool(G.shuffle, off ? 'Shuffle: ' + off : p.canShuffle === false ? 'Shuffle: Spotify does not allow it here' : p.shuffle ? 'Shuffle is on (click to turn off)' : 'Shuffle is off (click to turn on)',
+      function () { control('shuffle', { on: !p.shuffle }, 'Shuffle'); }, !p || p.canShuffle === false);
+    var next = p ? (p.repeat + 1) % 3 : 1;
+    var rp = tool(G.repeat, off ? 'Repeat: ' + off : p.canRepeat === false ? 'Repeat: Spotify does not allow it here' : REPEAT[p.repeat] + ' (click for ' + REPEAT[next].slice(8) + ')',
+      function () { control('repeat', { mode: next }, 'Repeat'); }, !p || p.canRepeat === false);
+    sh.setAttribute('aria-pressed', p && p.shuffle ? 'true' : 'false');
+    rp.setAttribute('aria-pressed', p && p.repeat ? 'true' : 'false');
+    if (p && p.shuffle) sh.classList.add('on');
+    if (p && p.repeat) rp.classList.add('on');
+    if (p && p.repeat === 2) rp.classList.add('one');
+    tabs.appendChild(sh); tabs.appendChild(rp);
   }
 
   /* quiet: called from inside bar.js's own repaint, which measures the card itself afterwards */
@@ -370,6 +528,9 @@
     var n = S.q ? S.q.queued.length + S.q.nextUp.length : 0;
     var hint = st === 'connected' ? (S.qErr ? 'Error' : S.q ? (S.q.queued.length ? S.q.queued.length + ' queued' : n ? n + ' next' : 'Empty') : '')
       : (HINT[st] != null ? HINT[st] : '');
+    var wst = S.status && S.status.window && S.status.window.state;
+    if (st === 'connected' && wst === 'hidden') hint = 'Hidden' + (hint ? ' · ' + hint : '');
+    else if (st === 'connected' && wst === 'failed') hint = 'Not hidden';
     S.hint.textContent = hint;
     S.hint.classList.toggle('warn', st !== 'connected' && st !== 'checking' && st !== 'starting' || !!S.qErr);
     S.body.hidden = !expanded;
@@ -378,9 +539,11 @@
     var box = S.state, list = S.list;
     // keep the list (and its scroll) when nothing in it changed
     var sig = [st, S.status && S.status.reason, S.query, S.searching, S.loading && !S.q, S.busy, JSON.stringify(S.added), S.restartArmed,
-      S.q && S.q.at, S.qErr && S.qErr.reason, S.results && (S.results.q + (S.results.items || []).length + (S.results.reason || '')), S.kbdWhy].join('\u0001');
+      S.q && S.q.at, S.qErr && S.qErr.reason, S.results && (S.results.q + JSON.stringify([S.results.tracks, S.results.artists, S.results.albums, S.results.playlists].map(function (a) { return (a || []).length; })) + (S.results.reason || '')), S.kbdWhy,
+      S.tab, S.lib && S.lib.at, S.libLoading, S.libErr && S.libErr.reason, JSON.stringify(S.status && S.status.window), JSON.stringify(S.info), S.infoErr, S.quitArmed].join('\u0001');
     if (sig !== S.sig) {
       S.sig = sig;
+      drawAppLine(st);
       box.textContent = '';
       var keepTop = list.scrollTop;
       list.textContent = '';
@@ -436,13 +599,16 @@
       head.type = 'button';
       head.setAttribute('aria-expanded', 'false');
       var ico = mk('span', 'spq-ico'); ico.innerHTML = svg(G.queue, 14);
-      var label = mk('span', 'spq-label', 'Up next');
+      var label = mk('span', 'spq-label', 'Spotify');
       var hint = mk('span', 'spq-hint');
       var chev = mk('span', 'spq-chev'); chev.innerHTML = svg(G.chev, 14);
       head.appendChild(ico); head.appendChild(label); head.appendChild(hint); head.appendChild(chev);
       root.appendChild(head);
 
       var body = mk('div', 'spq-body');
+      var appLine = mk('div', 'spq-app'); appLine.hidden = true;
+      var tabs = mk('div', 'spq-tabs'); tabs.hidden = true;
+      body.appendChild(appLine); body.appendChild(tabs);
       var scroll = mk('div', 'spq-scroll');
       var state = mk('div', 'spq-state');
       var list = mk('div', 'spq-list');
@@ -452,8 +618,8 @@
       var addRow = mk('div', 'spq-add');
       var sico = mk('span', 'spq-sico'); sico.innerHTML = svg(G.search, 13);
       var input = mk('input', 'spq-input spq-search');
-      input.type = 'text'; input.placeholder = 'Add a song…'; input.spellcheck = false;
-      input.setAttribute('aria-label', 'Search Spotify for a song to add to the queue');
+      input.type = 'text'; input.placeholder = 'Search songs, artists, albums…'; input.spellcheck = false;
+      input.setAttribute('aria-label', 'Search Spotify: tap a result to play it');
       var clear = mk('button', 'spq-clear'); clear.type = 'button'; clear.innerHTML = svg(G.x, 12); clear.title = 'Clear the search';
       addRow.appendChild(sico); addRow.appendChild(input); addRow.appendChild(clear);
       body.appendChild(addRow);
@@ -469,14 +635,14 @@
       pop.insertBefore(root, before || null);
 
       S = { api: api, root: root, head: head, hint: hint, body: body, scroll: scroll, state: state, list: list,
-        addRow: addRow, input: input, sqLine: sqLine, clear: clear, kbdLine: kbdLine, noteEl: noteEl,
+        addRow: addRow, input: input, appLine: appLine, tabs: tabs, tab: 'queue', lib: null, libErr: null, libLoading: false, info: null, infoErr: '', infoLoading: false, quitArmed: false, sqLine: sqLine, clear: clear, kbdLine: kbdLine, noteEl: noteEl,
         status: null, q: null, qErr: null, results: null, query: '', added: {}, busy: '', noteText: '', noteBad: false,
         shown: null, sig: '', trackSig: null, timer: 0, settle: 0, searchTimer: 0, kbd: '', kbdWhy: '', loading: false, restartArmed: false };
 
       head.addEventListener('click', function () {
         expanded = !expanded;
         arm();
-        if (expanded) refresh(true);
+        if (expanded) { refresh(true); if (S.status && S.status.state === 'connected') loadInfo(); if (S.tab === 'lib' && !S.lib) loadLib(); }
         render();
       });
       input.addEventListener('mousedown', wantKeyboard);
