@@ -870,7 +870,7 @@ async function qsxChecks(s) {
  */
 const VKS = {
   LWIN: 0x5B, LSHIFT: 0xA0, LCTRL: 0xA2, LALT: 0xA4, TAB: 0x09, S: 0x53, V: 0x56, Z: 0x5A, X: 0x58,
-  LEFT: 0x25, UP: 0x26, RIGHT: 0x27, DOWN: 0x28, PRTSC: 0x2C, VOLUP: 0xAF, VOLDOWN: 0xAE, MUTE: 0xAD,
+  LEFT: 0x25, UP: 0x26, RIGHT: 0x27, DOWN: 0x28, PRTSC: 0x2C, VOLUP: 0xAF, VOLDOWN: 0xAE, MUTE: 0xAD, T: 0x54,
 };
 const CHORD_KEYS = {
   'Win+S': [VKS.S, false], 'Win+V': [VKS.V, false], 'Win+Tab': [VKS.TAB, false], 'Win+Left': [VKS.LEFT, false],
@@ -878,7 +878,7 @@ const CHORD_KEYS = {
   'Win+Shift+S': [VKS.S, true],
 };
 const VOL_CHORDS = ['VolumeUp', 'VolumeDown', 'VolumeMute'];   // bare keys (osd lane, 2026-09-24)
-const ALL_CHORDS = Object.keys(CHORD_KEYS).concat(['PrintScreen'], VOL_CHORDS);
+const ALL_CHORDS = Object.keys(CHORD_KEYS).concat(['PrintScreen'], VOL_CHORDS, ['Win+Alt+T']);   // Win+Alt+T: lane tbvideo, 2026-09-26
 const ALL_KEYS = ['VolumeUp', 'VolumeDown', 'VolumeMute'];
 const MOD_UP_VKS = new Set([VKS.LWIN, 0x5C, VKS.LALT, 0xA5, 0x12, VKS.LSHIFT, 0xA1, VKS.LCTRL, 0xA3]);
 
@@ -992,6 +992,26 @@ async function featureSeamChecks(s) {
     [winD, kv(VKS.S, true, { win: true }), kv(VKS.S, false, { win: true }), shD,
      kv(VKS.S, true, { win: true, shift: true }), kv(VKS.S, false, { win: true, shift: true }), shU, winU],
     ['P', 'S chord:Win+S', 'S', 'P', 'S chord:Win+Shift+S', 'S', 'P', 'D']);
+
+  // Win+Alt+T (lane tbvideo, 2026-09-26: the top bar's hide / show): Alt is PART of this chord. Both
+  // modifier keyups get the partner key (D), so neither Start nor the app's menu bar opens.
+  const altD = kv(VKS.LALT, true), altU = kv(VKS.LALT, false);
+  const wat = { win: true, alt: true };
+  await sim('Win+Alt+T is taken when on (Win first); Alt-up and Win-up both get the partner key', { chords: ['Win+Alt+T'] },
+    [winD, altD, kv(VKS.T, true, wat), kv(VKS.T, false, wat), altU, winU], ['P', 'P', 'S chord:Win+Alt+T', 'S', 'D', 'D']);
+  await sim('Win+Alt+T is taken when on (Alt first), with every chord on', { chords: ALL_CHORDS },
+    [altD, winD, kv(VKS.T, true, wat), kv(VKS.T, false, wat), winU, altU], ['P', 'P', 'S chord:Win+Alt+T', 'S', 'D', 'D']);
+  await sim("Win+Alt+T is Windows' own when off", { chords: ['Win+S'] },
+    [winD, altD, kv(VKS.T, true, wat), kv(VKS.T, false, wat), altU, winU], ['P', 'P', 'P', 'P', 'P', 'P']);
+  await sim("Win+T (taskbar cycling) is not Win+Alt+T", { chords: ALL_CHORDS },
+    [winD, kv(VKS.T, true, { win: true }), kv(VKS.T, false, { win: true }), winU], ['P', 'P', 'P', 'P']);
+  await sim('Alt+T (an app menu key) is not Win+Alt+T', { chords: ALL_CHORDS, altTab: false },
+    [altD, kv(VKS.T, true, { alt: true }), kv(VKS.T, false, { alt: true }), altU], ['P', 'P', 'P', 'P']);
+  await sim('Ctrl+Win+Alt+T and Win+Alt+Shift+T are not Win+Alt+T', { chords: ALL_CHORDS, altTab: false },
+    [kv(VKS.LCTRL, true), winD, altD, kv(VKS.T, true, Object.assign({ ctrl: true }, wat)), kv(VKS.T, false, wat), altU, winU, kv(VKS.LCTRL, false),
+     winD, altD, shD, kv(VKS.T, true, Object.assign({ shift: true }, wat)), kv(VKS.T, false, wat), shU, altU, winU],
+    ['P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P']);
+  await sim('a plain T while Win+Alt+T is on is just a T', { chords: ALL_CHORDS }, [kv(VKS.T, true), kv(VKS.T, false)], ['P', 'P']);
 
   // Held Win, repeats, and keys already down.
   await sim('Win+S, S again with Win still held: two chords', { chords: ['Win+S'] },

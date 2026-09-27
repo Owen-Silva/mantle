@@ -29,7 +29,7 @@ const SHOTS = [
   ['03-npp-file-recent', 'app=npp&open=2&sub=2'],
   ['04-npp-view-checks', 'app=npp&open=5'],
   ['05-app-menu', 'app=npp&open=1'],
-  ['06-mantle-restart-armed', 'app=npp&open=0&sub=6&armed=1'],
+  ['06-mantle-restart-armed', 'app=npp&open=0&sub=7&armed=1'],
   ['07-chrome-no-menus', 'app=chrome&open=1'],
   ['08-uwp-uia', 'app=uwp'],
   ['09-dialog-blocked', 'app=dialog&open=2'],

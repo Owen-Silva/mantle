@@ -59,8 +59,9 @@ namespace Mantle {
     // FEATURE CHORDS (wave 3, 2026-09-24). The chords lib/features/*.js may take from Windows,
     // and the keys they may watch. A chord is its key plus an EXACT modifier set: Win+Left does
     // not match Win+Shift+Left (move to the other monitor), Win+S does not match Win+Shift+S, and
-    // Ctrl or Alt held is never any chord. Index = bit in Chords / Observe. The names are the
-    // protocol (main sends them, events carry them): append, never reorder.
+    // Ctrl held is never any chord, and Alt only where the chord names it (Win+Alt+T). Index = bit
+    // in Chords / Observe. The names are the protocol (main sends them, events carry them):
+    // append, never reorder.
     //
     // THE VOLUME KEYS AS CHORDS (osd lane, 2026-09-24): bare VolumeUp / VolumeDown / VolumeMute, no
     // modifier (Win/Shift/Ctrl/Alt + a volume key stays Windows'). Windows' own flyout host cannot
@@ -68,14 +69,20 @@ namespace Mantle {
     // that Windows never sees the key: taken, Mantle steps the volume itself (osd.volume). Unlike a
     // Win chord, a held Volume Up/Down REPEATS (each auto-repeat is one more event, one more step,
     // as Windows does); a held Mute is one toggle (ChordRepeats).
+    //
+    // WIN+ALT+T (lane tbvideo, 2026-09-26): the top bar's hide / show. The first chord with Alt in
+    // its set (ChordAlt): Win+T (Windows' taskbar cycling) and Win+Ctrl+Alt+T stay Windows'. Taken,
+    // both Win and Alt get their partner key before their keyup (0xFF), so neither Start nor the
+    // focused app's menu bar opens. Windows' own use of it is Game Bar's recording-timer toggle.
     public static readonly string[] ChordNames = {
       "Win+S", "Win+V", "Win+Tab", "Win+Left", "Win+Right", "Win+Up", "Win+Down", "Win+Z",
-      "Win+Shift+S", "PrintScreen", "VolumeUp", "VolumeDown", "VolumeMute"
+      "Win+Shift+S", "PrintScreen", "VolumeUp", "VolumeDown", "VolumeMute", "Win+Alt+T"
     };
-    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD };
-    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false };
-    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false };
-    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false };
+    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD, 0x54 };
+    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false, true };
+    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false, false };
+    static readonly bool[] ChordAlt = { false, false, false, false, false, false, false, false, false, false, false, false, false, true };
+    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false, false };
     /// Observed keys are REPORTED on every keydown (auto-repeat included: a held Volume Up keeps
     /// stepping) and NEVER swallowed: Windows still changes the volume itself. A volume key that
     /// is also a TAKEN chord is the chord's (swallowed, a chord event); untaken, it is observed.
@@ -293,7 +300,7 @@ namespace Mantle {
     }
 
     static bool ChordMatches(int c, bool altFlag, bool shift, bool ctrl, bool winHeld) {
-      return !altFlag && !ctrl && winHeld == ChordWin[c] && shift == ChordShift[c];
+      return altFlag == ChordAlt[c] && !ctrl && winHeld == ChordWin[c] && shift == ChordShift[c];
     }
 
     /// A keydown of a key some chord uses: Swallow, or -1 = not a chord, carry on as before (Tab,
@@ -321,6 +328,8 @@ namespace Mantle {
         // Windows saw Win go down and (because we ate the key) nothing else: without a partner
         // key before the Win-up, Start would open. Exactly as for Win+N.
         if (ChordWin[c]) _swallowedInWin = true;
+        // Likewise Alt: an Alt-up with nothing seen since its keydown opens the app's menu bar.
+        if (ChordAlt[c]) { _altHeld = true; _swallowedInAlt = true; }
         Event = EvChord; Arg = c;
         return Swallow;
       }

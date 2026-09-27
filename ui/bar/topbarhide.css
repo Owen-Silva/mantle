@@ -1,0 +1,34 @@
+/* topbarhide.css - the Top bar row in quick settings (ui/bar/topbarhide.js). One Theme: the panel's
+ * --lg-* vocabulary only, the same tile button as the Game mode switch (gamemode.css); "Show top bar"
+ * is the accent block while the bar is hidden by hand, so the way back is the thing that stands out. */
+.tbrow { margin: 2px 0 9px; }
+.tbrow .tbsub { max-width: 66%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tbrow.hidden-by-hand .tbsub { color: var(--lg-ink-2); }
+.tbbtn {
+  display: block;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-tile);
+  color: var(--lg-ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.tbbtn:hover { background: var(--lg-hover); }
+.tbbtn:active { background: var(--lg-press); }
+.tbbtn:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.tbbtn.on, .tbbtn.on:hover { background: var(--lg-acc); color: var(--lg-acc-on); }
+.tbbtn:disabled { opacity: .6; }
+.tbrow.dead .tbbtn { background: var(--lg-sunk); color: var(--lg-ink-3); opacity: 1; }
+/* width 0 + min-width 100%: a long reason wraps inside the panel instead of widening it */
+.tbwhy { width: 0; min-width: 100%; margin-top: 5px; color: var(--lg-ink-2); line-height: 1.4; }
+.tbwhy.warn { color: var(--lg-warn); }
+.tbwhy[hidden] { display: none; }

@@ -249,6 +249,13 @@ const SHOTS = [
   { name: 'gm-nowatch', w: 1280, h: 600, q: '?mode=pill&gm=nowatch', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'gm-tray', w: 1280, h: 560, q: '?mode=pill&gm=tray', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'gm-click-on', w: 1280, h: 560, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.gmswitch', { wait: 300 }] },
+  /* TOP BAR (lane tbvideo, 2026-09-26, ui/bar/topbarhide.js): shown, hidden by hand (the "Win+Alt+T to show" line and
+     Show top bar), aside for a full-screen video, resting while a game runs, and a click hiding it. */
+  { name: 'tb-shown', w: 1280, h: 640, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'tb-hidden', w: 1280, h: 640, q: '?mode=pill&tb=hidden', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'tb-video', w: 1280, h: 640, q: '?mode=pill&tb=video', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'tb-rest', w: 1280, h: 640, q: '?mode=pill&tb=rest', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'tb-click-hide', w: 1280, h: 640, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.tbbtn', { wait: 300 }] },
   // The right-click menu (lane jumplist, 2026-09-24): Windows 11's jump list + app, pin, close. rclick = a
   // right-click; dsf = the device scale (1 or 1.25); desk = the desktop behind the transparent page.
   { name: 'jl-edge', w: 1280, h: 600, q: '?mode=pill', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },

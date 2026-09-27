@@ -1844,7 +1844,8 @@ function startFeatures() {
       sidecar,
       commands: COMMANDS,
       broadcast,
-      host: { openLauncher: openLauncherFor, barRect: () => barRect(), display: featureDisplay, rest: (on, why) => restMantle(on, why) },
+      host: { openLauncher: openLauncherFor, barRect: () => barRect(), display: featureDisplay, rest: (on, why) => restMantle(on, why),
+        media: () => lastMedia, onMedia: (fn) => { mediaListeners.add(fn); return () => mediaListeners.delete(fn); } },
     });
     COMMANDS['features.list'] = async () => features.list();
     if (flags.test) {
@@ -2997,6 +2998,7 @@ let mediaPickTimer = null;  // a re-read when a held pick's grace runs out, so i
 let mediaReading = null;    // the in-flight read, so a burst of triggers makes one read
 let mediaAgain = false;     // a trigger arrived during that read: read once more after it
 let mediaPollTimer = null;
+const mediaListeners = new Set(); // features that read the sessions (ctx.host.onMedia: the top bar's full-screen video rule)
 
 function sameAumid(a, b) { return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase(); }
 
@@ -3143,6 +3145,7 @@ function mediaPush(why) {
         payload.why = why;
         lastMedia = payload;
         broadcast('media', payload);
+        for (const fn of mediaListeners) { try { fn(payload); } catch (err) { process.stderr.write(`mantle: a media listener threw: ${err && err.message ? err.message : err}\n`); } }
         mediaPollArm(payload);
       } while (mediaAgain && !shuttingDown);
     } catch (err) {

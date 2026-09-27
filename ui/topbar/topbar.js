@@ -342,6 +342,7 @@
     if (it.act === 'power') p = call('topbar.power', { action: it.power, confirmed });
     else if (it.act === 'about' || it.act === 'settings') p = call('topbar.' + it.act);
     else if (it.act === 'overGames') p = call('topbar.overGames', { on: !it.checked }).then((r) => { if (r && r.ok) it.checked = !!r.overGames; return r; });
+    else if (it.act === 'hide') p = call('topbar.hidden', { on: true, via: 'the Mantle menu' });
     else if (it.act === 'newWindow') p = call('topbar.newWindow', { exe: it.exe, args: it.args });
     else if (it.act) p = call('topbar.window', { hwnd: f && f.hwnd, action: it.act });
     else if (src && src.source === 'win32') p = call('topbar.invoke', { hwnd: src.hwnd, item: it.id });

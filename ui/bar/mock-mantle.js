@@ -941,6 +941,27 @@
     return Object.assign({ ok: true }, gmState);
   }
 
+  /* ---- Top bar (lane tbvideo, 2026-09-26): lib/features/topbar.js's topbar.state, in its shape. ?tb=
+       shown (default)   hidden   hidden by hand     video   stepped aside for a full-screen video
+       off               switched off in the tray    rest    the feature is resting (its commands throw)
+       Clicks answer like the feature: topbar.hidden {on} hides / shows and pushes the state. */
+  var TB = q.get('tb') || 'shown';
+  var tbState = { hidden: TB === 'hidden', chord: 'Win+Alt+T', enabled: TB !== 'off', visible: TB === 'shown', stepAside: TB === 'hidden' || TB === 'video',
+    kind: TB === 'hidden' ? 'hidden' : TB === 'video' ? 'video' : null,
+    signal: TB === 'hidden' ? 'hidden by hand: Win+Alt+T or "Show top bar" in quick settings brings it back'
+      : TB === 'video' ? 'Google Chrome is playing video full screen; the top bar stepped aside until it leaves full screen' : null,
+    video: TB === 'video' ? { app: 'Google Chrome', how: 'browser' } : null, test: false };
+  function tbCall(name, p) {
+    if (TB === 'rest') throw new Error('Top menu bar is resting while VALORANT.exe runs; it is back when the game exits');
+    if (name === 'topbar.hidden') {
+      var on = !!(p && p.on);
+      tbState = Object.assign({}, tbState, { hidden: on, visible: !on, stepAside: on, kind: on ? 'hidden' : null,
+        signal: on ? 'hidden by hand: Win+Alt+T or "Show top bar" in quick settings brings it back' : null, video: null });
+      setTimeout(function () { emit('topbar.state', tbState); }, 5);
+    }
+    return Object.assign({ ok: true }, tbState);
+  }
+
   /* ---- Spotify's "Up next" queue (spotq lane; desktop-app rebuild by the spotapp lane, 2026-09-25):
        lib/features/spotify.js's replies, in its shapes. Needs ?media=playing (the card must be
        showing Spotify). ?spq=
@@ -1120,6 +1141,7 @@
       case 'osd.mixer': case 'osd.show': return { ok: true, shown: false, test: true, reason: null };   // ui/osd is its own page
       case 'powermode.get': return Object.assign({}, pmState);
       case 'gamemode.state': return Object.assign({}, gmState);
+      case 'topbar.state': case 'topbar.hidden': return tbCall(channel, payload);
       case 'gamemode.set': return gmSet(payload);
       case 'gamemode.auto': gmState = Object.assign({}, gmState, { auto: !!(payload && payload.on) }); return Object.assign({}, gmState);
       case 'gamemode.liftSaver': gmState = Object.assign({}, gmState, { liftSaver: !!(payload && payload.on) }); return Object.assign({}, gmState);

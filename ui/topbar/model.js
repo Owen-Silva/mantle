@@ -92,6 +92,9 @@
     // Owen's override for the game rule. Here because the tray has no per-feature items yet
     // (lib/features.js offers one checkbox per feature); `checked` is set from topbar.hello.
     { t: 'item', label: 'Keep the top bar over full-screen games', act: 'overGames', checked: false, enabled: true },
+    // Owen's "a way that i can manually hide it" (lane tbvideo, 2026-09-26). The same key shows it
+    // again, and so does the Top bar row in the bottom bar's quick settings (lib/features/topbar.js).
+    { t: 'item', label: 'Hide top bar', act: 'hide', key: 'Win+Alt+T', enabled: true },
     { t: 'sep' },
     { t: 'item', label: 'Lock', act: 'power', power: 'lock', enabled: true },
     { t: 'item', label: 'Sleep', act: 'power', power: 'sleep', enabled: true },

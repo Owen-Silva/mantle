@@ -1406,6 +1406,7 @@
       if (window.MantleQsMore) MantleQsMore.closed();   // its polls stop and the keyboard goes back
       if (window.MantlePowerMode) MantlePowerMode.closed(); // its 3 s re-read and its push stop
       if (window.MantleGameMode) MantleGameMode.closed();   // its push subscription stops
+      if (window.MantleTopbarHide) MantleTopbarHide.closed();
     }
     if (popKey === 'media') {
       mediaPaint = null; mediaNote = ''; mediaRoom = 0;
@@ -1817,6 +1818,9 @@
     /* GAME MODE (lane gamemode, 2026-09-25): on/off, what it did and did not do, and why (ui/bar/gamemode.js). */
     if (window.MantleGameMode) MantleGameMode.attach(pop, { call: call, on: on }, notes);
     else fail('gamemode', 'game mode missing', 'ui/bar/gamemode.js did not load, so quick settings has no Game mode tile', 'warn');
+    /* TOP BAR (lane tbvideo, 2026-09-26): hide / show it by hand, and "Hidden · Win+Alt+T to show" while it is (ui/bar/topbarhide.js). */
+    if (window.MantleTopbarHide) MantleTopbarHide.attach(pop, { call: call, on: on }, notes);
+    else fail('topbarhide', 'top bar row missing', 'ui/bar/topbarhide.js did not load, so quick settings cannot show a hidden top bar again (Win+Alt+T still does)', 'warn');
 
     var foot = document.createElement('div'); foot.className = 'qsfoot';
     var power = document.createElement('div'); power.className = 'qspower';
