@@ -253,6 +253,8 @@ const SHOTS = [
      Show top bar), aside for a full-screen video, resting while a game runs, and a click hiding it. */
   { name: 'tb-shown', w: 1280, h: 640, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'tb-hidden', w: 1280, h: 640, q: '?mode=pill&tb=hidden', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  // PEEK (lane tbpeek): hidden by hand, the watch of the top edge cannot work: its own warning line with the reason
+  { name: 'tb-nopeek', w: 1280, h: 640, q: '?mode=pill&tb=nopeek', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'tb-video', w: 1280, h: 640, q: '?mode=pill&tb=video', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'tb-rest', w: 1280, h: 640, q: '?mode=pill&tb=rest', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'tb-click-hide', w: 1280, h: 640, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.tbbtn', { wait: 300 }] },

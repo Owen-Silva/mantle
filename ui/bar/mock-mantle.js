@@ -944,19 +944,24 @@
   /* ---- Top bar (lane tbvideo, 2026-09-26): lib/features/topbar.js's topbar.state, in its shape. ?tb=
        shown (default)   hidden   hidden by hand     video   stepped aside for a full-screen video
        off               switched off in the tray    rest    the feature is resting (its commands throw)
+       nopeek            hidden by hand, but the peek at the top edge cannot watch the cursor (lane tbpeek)
        Clicks answer like the feature: topbar.hidden {on} hides / shows and pushes the state. */
   var TB = q.get('tb') || 'shown';
-  var tbState = { hidden: TB === 'hidden', chord: 'Win+Alt+T', enabled: TB !== 'off', visible: TB === 'shown', stepAside: TB === 'hidden' || TB === 'video',
-    kind: TB === 'hidden' ? 'hidden' : TB === 'video' ? 'video' : null,
-    signal: TB === 'hidden' ? 'hidden by hand: Win+Alt+T or "Show top bar" in quick settings brings it back'
+  var TB_HID = TB === 'hidden' || TB === 'nopeek';
+  var tbState = { hidden: TB_HID, chord: 'Win+Alt+T', enabled: TB !== 'off', visible: TB === 'shown', stepAside: TB_HID || TB === 'video',
+    kind: TB_HID ? 'hidden' : TB === 'video' ? 'video' : null,
+    signal: TB_HID ? 'hidden by hand: Win+Alt+T or "Show top bar" in quick settings brings it back'
       : TB === 'video' ? 'Google Chrome is playing video full screen; the top bar stepped aside until it leaves full screen' : null,
-    video: TB === 'video' ? { app: 'Google Chrome', how: 'browser' } : null, test: false };
+    video: TB === 'video' ? { app: 'Google Chrome', how: 'browser' } : null, test: false,
+    peek: TB === 'nopeek' ? { ok: false, reason: 'the mouse buttons cannot be read (koffi could not bind GetAsyncKeyState), so a peek could land in the middle of a drag', watching: true, shown: false }
+      : { ok: TB_HID ? true : null, reason: null, watching: TB_HID, shown: false } };
   function tbCall(name, p) {
     if (TB === 'rest') throw new Error('Top menu bar is resting while VALORANT.exe runs; it is back when the game exits');
     if (name === 'topbar.hidden') {
       var on = !!(p && p.on);
       tbState = Object.assign({}, tbState, { hidden: on, visible: !on, stepAside: on, kind: on ? 'hidden' : null,
-        signal: on ? 'hidden by hand: Win+Alt+T or "Show top bar" in quick settings brings it back' : null, video: null });
+        signal: on ? 'hidden by hand: Win+Alt+T or "Show top bar" in quick settings brings it back' : null, video: null,
+        peek: TB === 'nopeek' ? tbState.peek : { ok: on ? true : null, reason: null, watching: on, shown: false } });
       setTimeout(function () { emit('topbar.state', tbState); }, 5);
     }
     return Object.assign({ ok: true }, tbState);

@@ -168,6 +168,19 @@
     ];
   }
 
+  /* PEEK (lane tbpeek, 2026-09-27): hidden by hand, the bar can come out while the cursor rests on the
+     top edge. Its "Hide top bar" would be a no-op then, so the item becomes "Show top bar" (for good:
+     the strip back, no more peeking) until the peek ends. Mutates the item in place: titles() hands
+     the page this very array. Returns the item. */
+  function peekMenu(menu, on) {
+    var it = null;
+    for (var i = 0; i < (menu || []).length; i++) if (menu[i].act === 'hide' || menu[i].act === 'show') { it = menu[i]; break; }
+    if (!it) return null;
+    it.act = on ? 'show' : 'hide';
+    it.label = on ? 'Show top bar' : 'Hide top bar';
+    return it;
+  }
+
   return { appName: appName, cleanItems: cleanItems, newWindowArgs: newWindowArgs, appMenu: appMenu,
-           titles: titles, fitTitles: fitTitles, MANTLE_MENU: MANTLE_MENU, pct: pct, gb: gb, rate: rate, statCells: statCells, base: base };
+           titles: titles, fitTitles: fitTitles, MANTLE_MENU: MANTLE_MENU, pct: pct, gb: gb, rate: rate, statCells: statCells, base: base, peekMenu: peekMenu };
 }));

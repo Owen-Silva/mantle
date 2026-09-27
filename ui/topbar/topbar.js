@@ -343,6 +343,7 @@
     else if (it.act === 'about' || it.act === 'settings') p = call('topbar.' + it.act);
     else if (it.act === 'overGames') p = call('topbar.overGames', { on: !it.checked }).then((r) => { if (r && r.ok) it.checked = !!r.overGames; return r; });
     else if (it.act === 'hide') p = call('topbar.hidden', { on: true, via: 'the Mantle menu' });
+    else if (it.act === 'show') p = call('topbar.hidden', { on: false, via: 'the Mantle menu, while peeking' });
     else if (it.act === 'newWindow') p = call('topbar.newWindow', { exe: it.exe, args: it.args });
     else if (it.act) p = call('topbar.window', { hwnd: f && f.hwnd, action: it.act });
     else if (src && src.source === 'win32') p = call('topbar.invoke', { hwnd: src.hwnd, item: it.id });
@@ -542,6 +543,9 @@
   });
   mantle.on('topbar.note', (ev) => setNote(ev && ev.text));
   mantle.on('topbar.close', () => closeAll(false));
+  // PEEK (lane tbpeek): hidden by hand, the bar came out because the cursor rested on the top edge.
+  // Its Mantle menu then offers "Show top bar" (for good) where "Hide top bar" would be a no-op.
+  mantle.on('topbar.peek', (ev) => setPeek(!!(ev && ev.on)));
 
   renderBar();
   call('topbar.hello').then((r) => {
@@ -550,6 +554,8 @@
     if (r && r.note) setNote(r.note);
     const og = M.MANTLE_MENU.find((i) => i.act === 'overGames');
     if (og && r) og.checked = !!r.overGames;
+    if (r) setPeek(!!r.peek);
   });
+  function setPeek(on) { M.peekMenu(M.MANTLE_MENU, on); }
   window.__topbar = S;   // for shoot.js and the --test harness: read-only inspection
 }());

@@ -2,10 +2,13 @@
  *
  * Owen: "make a way that i can manually hide it". The top bar hides from its own Mantle menu or with
  * Win+Alt+T, and then it is gone from the screen, so THIS row is where "hidden" is said and undone:
- * "Hidden · Win+Alt+T to show" with a Show top bar button. While it shows, the button hides it.
+ * "Hidden · point at the top to peek" with a Show top bar button and a line naming Win+Alt+T (lane tbpeek:
+ * resting the cursor on the top edge peeks at the bar without un-hiding it; a watch that cannot work
+ * gets its own warning line with the reason). While it shows, the button hides it.
  *
  * WHAT IT TALKS TO (lib/features/topbar.js):
- *   topbar.state          -> {hidden, chord, enabled, visible, stepAside, kind, signal, video:{app,how}, test}
+ *   topbar.state          -> {hidden, chord, enabled, visible, stepAside, kind, signal, video:{app,how}, test,
+ *                             peek:{ok, reason, watching, shown}}
  *   topbar.hidden {on}    -> the same state, after hiding / showing
  *   'topbar.state' push   -> whenever it changes (hidden, shown, a video or game taking the screen)
  * A top bar that is resting while a game runs, or switched off in the tray, answers with its reason,
@@ -42,9 +45,20 @@
       return v;
     }
     if (v.hidden) {
-      v.sub = 'Hidden · ' + chord + ' to show';
       v.label = 'Show top bar';
       v.title = 'Show the top bar again and give it back its strip at the top of the screen (' + chord + ')';
+      // PEEK (lane tbpeek): hidden by hand, resting the cursor on the top edge brings it out for a look.
+      // A watch that cannot work says so, with its reason, instead of the peek quietly never coming.
+      var pk = st.peek || null;
+      if (pk && pk.ok === false) {
+        v.sub = 'Hidden · ' + chord + ' to show';
+        v.why = 'Pointing at the top edge cannot peek at it: ' + (pk.reason || 'no reason came back');
+        v.warn = true;
+      } else {
+        // the sub is one ellipsised line (~36 characters fit), so the way back for good gets its own line
+        v.sub = 'Hidden · point at the top to peek';
+        v.why = 'Resting the pointer on the top edge peeks at it; ' + chord + ' or Show top bar brings it back for good.';
+      }
       return v;
     }
     v.title = 'Hide the top bar; maximised windows get the whole screen (' + chord + ' shows it again)';
