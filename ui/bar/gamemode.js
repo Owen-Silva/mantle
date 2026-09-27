@@ -2,7 +2,8 @@
  *
  * WHAT IT TALKS TO (lib/features/gamemode.js):
  *   gamemode.state            -> {on, how, game:{file,title,why}, busy, auto, liftSaver, dry, enabled, watching,
- *                                 reason, actions:[{key,label,status,text}], last, fromCrash}
+ *                                 reason, actions:[{key,label,status,text}], last, fromCrash,
+ *                                 rest:{on, why, text, busy, last:{text}}}   <- Mantle resting while a game runs
  *   gamemode.set {on}         -> the same state (turn on / off by hand)
  *   gamemode.auto {on}        -> "Turn on by itself for games"
  *   gamemode.liftSaver {on}   -> "Lift Energy saver while gaming"
@@ -25,6 +26,7 @@
     ['Background apps', 'Efficiency mode for your other apps. Never the game, anti-cheat, Discord, music, recording, input software or anything playing sound'],
     ['Mantle itself', 'its own processes slowed down the same way'],
     ['Wallpaper', 'held paused, even for a windowed game'],
+    ['Mantle resting', "while a game runs, Mantle closes its hidden windows (launcher, Alt+Tab, Task View, clipboard, screenshot, snap, pop-ups, top bar) and gives their keys back to Windows; all back when the game exits"],
   ];
 
   function exeName(f) { return String(f || '').replace(/\.exe$/i, '').replace(/-Win64-Shipping$/i, ''); }
@@ -32,7 +34,7 @@
 
   /** PURE: the state -> what the tile shows. */
   function view(st) {
-    var v = { dead: false, on: false, pending: false, label: 'Turn on', sub: '', why: '', rows: [], plan: null, last: '', crash: '', auto: true, liftSaver: false };
+    var v = { dead: false, on: false, pending: false, label: 'Turn on', sub: '', why: '', rows: [], plan: null, last: '', crash: '', auto: true, liftSaver: false, rest: '' };
     if (!st || st.error) {
       v.dead = true; v.sub = 'Unavailable';
       v.why = 'Game mode did not answer' + (st && st.error ? ': ' + st.error : '');
@@ -46,6 +48,11 @@
     else if (st.busy === 'off') { v.sub = 'Putting things back…'; v.label = 'Turning off…'; }
     else if (v.on) { v.sub = st.how === 'manual' ? 'On (by hand)' : 'On · ' + (game || 'a game'); v.label = 'On' + (game && st.how !== 'manual' ? ' · ' + game : ''); }
     else { v.sub = v.auto ? (st.watching ? 'Off · watching for games' : 'Off') : 'Off · automatic is off'; }
+    // Mantle resting while a game runs: said under the switch whether game mode is on or not (a game
+    // can run behind another window with game mode off), with what was closed and the memory it freed.
+    var rest = st.rest || {};
+    if (rest.on && !v.on && !st.busy) v.sub = 'Off · Mantle resting';
+    if (rest.on || (rest.text && !rest.on)) v.rest = rest.text || ('Mantle is resting while ' + rest.why);
     var why = [];
     if (st.dry) why.push('Test run: planned and shown, nothing on this PC is changed');
     if (!v.on && st.watching === false && st.reason) why.push(st.reason);
@@ -57,8 +64,10 @@
       v.rows.push({ key: a.key, label: a.label, status: a.status, badge: BADGE[a.status] || a.status, text: a.text });
     }
     if (!v.on && !st.busy) v.plan = PLAN.map(function (p) { return { label: p[0], text: p[1] }; });
+    if (rest.on) v.rows.unshift({ key: 'rest', label: 'Mantle resting', status: 'done', badge: BADGE.done, text: v.rest });
     if (st.last) v.last = 'Last game: ' + (st.last.game ? exeName(st.last.game) : 'by hand') + ', ' + mins(st.last.minutes) + ' (' + st.last.why + '). ' + st.last.text;
     if (st.fromCrash) v.crash = 'After Mantle restarted: ' + st.fromCrash.text;
+    if (!rest.on && rest.last && rest.last.text) v.last = (v.last ? v.last + ' ' : '') + rest.last.text + '.';
     return v;
   }
 
@@ -109,7 +118,7 @@
       sw.classList.toggle('pending', v.pending);
       sw.disabled = v.dead;
       sw.title = v.on ? 'Turn game mode off and put everything back' : 'Turn game mode on now';
-      var words = [me.note, v.why, v.crash].filter(Boolean).join('. ');
+      var words = [me.note, v.rest, v.why, v.crash].filter(Boolean).join('. ');
       why.hidden = !words; why.textContent = words; why.classList.toggle('warn', !!me.note);
       more.setAttribute('aria-expanded', me.open ? 'true' : 'false');
       more.textContent = me.open ? 'Hide' : 'Details';

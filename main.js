@@ -1844,7 +1844,7 @@ function startFeatures() {
       sidecar,
       commands: COMMANDS,
       broadcast,
-      host: { openLauncher: openLauncherFor, barRect: () => barRect(), display: featureDisplay },
+      host: { openLauncher: openLauncherFor, barRect: () => barRect(), display: featureDisplay, rest: (on, why) => restMantle(on, why) },
     });
     COMMANDS['features.list'] = async () => features.list();
     if (flags.test) {
@@ -1877,6 +1877,146 @@ function openLauncherFor(a, from) {
   try { launcherWin.webContents.send('mantle:event', { name: 'launcher.open', payload }); } catch (_) { /* the page is reloading; showLauncher still shows it */ }
   showLauncher();
   return payload;
+}
+
+/** The launcher window, at start and again after Mantle rested for a game (again = true). */
+function makeLauncher(again) {
+  const launcher = createLauncher({ root: ROOT, test: flags.test });
+  const win = launcherWin = launcher.win;
+  watchPage(win, 'The launcher');
+  if (!launcher.load.loaded) process.stderr.write(`mantle: ${launcher.load.reason}\n`);
+  // A reload rebuilds the page, not the window, so the composition attribute
+  // should survive -- but "should" is cheap to stop relying on, and re-asking
+  // costs one JSON line.
+  win.webContents.on('did-finish-load', () => { if (launcherWin === win) reapplyGlass('the launcher', win, 'acrylic'); });
+  if (flags.test) {
+    // In test mode the launcher is the thing being looked at, so it is up from
+    // the start -- inactive, and with no hide-on-blur, or toback.ps1 sending it
+    // to the back would make it vanish. Made AGAIN mid-test it stays hidden: no
+    // toback.ps1 runs then, and a test never puts a window in front of Owen.
+    if (!again) win.once('ready-to-show', () => { if (!win.isDestroyed()) win.showInactive(); });
+  } else {
+    win.on('blur', () => hideLauncher());
+    if (again) win.once('ready-to-show', () => { if (launcherWin === win) squareCorners('the launcher', win).catch(() => {}); });
+  }
+  return win;
+}
+
+/*
+ * MANTLE RESTS WHILE A GAME RUNS (lane memfix, 2026-09-26). Owen had to close Mantle to play
+ * Valorant: "it was taking up too much ram and it made my game stutter". Game mode's watch
+ * (lib/features/gamemode.js) calls ctx.host.rest(true, 'VALORANT runs') while a known game runs or
+ * game mode is on, and rest(false, ...) when the last one has exited. Resting:
+ *   - every feature with `rest: true` is stopped (lib/features.js restAll): its windows are
+ *     destroyed, its chords go back to Windows, it reads healthy, "resting while VALORANT runs";
+ *   - the launcher window is destroyed and the Win key goes back to Windows' Start;
+ *   - the switcher window is destroyed and Alt+Tab goes back to Windows (lib/switcher.js rest);
+ *   - the wallpaper is unloaded, not paused (lib/wallpaper.js rest).
+ * KEPT: the bar (Owen alt-tabs out between games, and it is the only way to reach Mantle), the
+ * desktop layer's window (it is attached under the wallpaper; re-attaching is the fragile part of
+ * start-up), the main process, the sidecar (the keyboard hook, game mode's own scan).
+ * Waking makes everything again the way start-up makes it. One rest at a time (a chain).
+ */
+let restState = null;          // { why, since, closed:[names], before, after } while resting
+let restChain = Promise.resolve();
+function pageNames() {
+  const names = [];
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed()) continue;
+    const named = w === barWin ? 'bar' : w === launcherWin ? 'launcher' : w === desktopWin ? 'desktop' : w === switcher.overlayWindow() ? 'switcher' : null;
+    const m = /\/ui\/([^/]+)\/(.+?)(?:\.html)?(?:[?#]|$)/.exec(String(w.webContents.getURL() || '').replace(/\\/g, '/'));
+    names.push(named || (m ? (m[2] === 'index' ? m[1] : `${m[1]} ${m[2]}`) : (w.getTitle() || 'a window')));
+  }
+  return names;
+}
+function electronMB() {
+  let priv = 0, ws = 0;
+  try { for (const p of app.getAppMetrics()) { priv += p.memory.privateBytes || 0; ws += p.memory.workingSetSize || 0; } } catch (_) { /* no numbers */ }
+  return { private: Math.round(priv / 1024), ws: Math.round(ws / 1024) };
+}
+function mb(n) { return n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${n} MB`; }
+function restMantle(on, why) {
+  restChain = restChain.then(() => (on ? restNow(why) : wakeNow(why))).catch((err) => ({ ok: false, reason: err && err.message ? err.message : String(err) }));
+  return restChain;
+}
+async function restNow(why) {
+  if (shuttingDown) return { ok: false, reason: 'Mantle is closing' };
+  if (restState) {
+    if (restState.why !== why) { restState.why = why; if (features) await features.restAll(why); switcher.rest(why); }
+    return Object.assign({ ok: true, same: true }, restState);
+  }
+  const t0 = Date.now();
+  const before = electronMB();
+  const pagesBefore = pageNames();
+  restState = { why, since: t0, closed: [], before, after: null, text: null };
+  if (features) await features.restAll(why);
+  if (launcherWin && !launcherWin.isDestroyed()) {
+    hideLauncher();
+    const win = launcherWin;
+    launcherWin = null;
+    try { win.destroy(); } catch (_) { /* gone */ }
+    if (!flags.test && sidecar && !sidecar.blockedReason()) sidecar.call('hotkey', { winTap: false }, 4000).catch(() => {});
+    state.set('hotkey', { winTap: false, resting: true, reason: `the Win key opens Windows' Start while Mantle rests (${why}); Mantle's launcher is back when it exits` });
+  }
+  switcher.rest(why);
+  const wp = wallpaper.rest(why);
+  broadcast('mantle.rest', { on: true, why });   // the desktop page stops its clock, numbers and Mission Control
+  // A destroyed window's renderer takes a moment to exit; the numbers are read after it has.
+  await new Promise((r) => setTimeout(r, 1500));
+  const pagesAfter = pageNames();
+  const left = pagesAfter.slice();
+  restState.closed = pagesBefore.filter((n) => { const i = left.indexOf(n); if (i < 0) return true; left.splice(i, 1); return false; });
+  restState.after = electronMB();
+  restState.wallpaper = wp.had ? 'unloaded' : 'none showing';
+  // What is kept hands its idle pages back to Windows for the game (sidecar gamemode.trim: only
+  // Mantle's own Electron processes, never the sidecar). Measured on the --test instance: the kept
+  // processes' working set 429 MB -> 77 MB 30 s later. Private memory is unchanged by it.
+  let trimWords = '';
+  if (sidecar && !sidecar.blockedReason()) {
+    try {
+      const r = await sidecar.call('gamemode.trim', { pids: app.getAppMetrics().map((p) => p.pid) }, 6000);
+      trimWords = `; idle pages of ${(r && r.trimmed) || 0} Mantle process${r && r.trimmed === 1 ? '' : 'es'} handed back to Windows`;
+    } catch (err) {
+      trimWords = `; its idle pages were NOT handed back to Windows (${err.message})`;
+    }
+  } else trimWords = '; its idle pages were NOT handed back to Windows (the sidecar is not running)';
+  restState.text = `closed ${restState.closed.length} window${restState.closed.length === 1 ? '' : 's'} (${restState.closed.join(', ') || 'none'})` +
+    `${wp.had ? ', wallpaper unloaded' : ''}; Mantle's memory ${mb(before.private)} -> ${mb(restState.after.private)}` +
+    ` (working set ${mb(before.ws)} -> ${mb(restState.after.ws)})${trimWords}; kept: ${pagesAfter.join(', ') || 'no window'}, the sidecar and the main process`;
+  process.stdout.write(`mantle: rest: resting while ${why} in ${Date.now() - t0} ms: ${restState.text}\n`);
+  const mine = restState;
+  const later = setTimeout(() => { if (restState === mine) process.stdout.write(`mantle: rest: 30 s later: Mantle's working set ${mb(electronMB().ws)} (private ${mb(electronMB().private)})\n`); }, 30000);
+  if (later.unref) later.unref();
+  return Object.assign({ ok: true }, restState);
+}
+async function wakeNow(why) {
+  if (!restState) return { ok: true, same: true, text: 'Mantle was not resting' };
+  if (shuttingDown) { restState = null; return { ok: false, reason: 'Mantle is closing' }; }
+  const t0 = Date.now();
+  const was = restState;
+  restState = null;
+  const back = [];
+  wallpaper.rest(null);
+  broadcast('mantle.rest', { on: false, why });
+  if (features) back.push(...await features.wakeAll(why));
+  if (switcher.rest(null)) back.push('switcher');
+  if ((!launcherWin || launcherWin.isDestroyed()) && process.env.MANTLE_NO_LAUNCHER !== '1') {
+    makeLauncher(true);
+    back.push('launcher');
+    if (flags.test) state.set('hotkey', { winTap: false, reason: 'test mode: the Win key hook was not installed' });
+    else if (sidecar && !sidecar.blockedReason()) {
+      try {
+        const r = await sidecar.call('hotkey', { winTap: true }, 4000);
+        const installed = !!(r && r.installed);
+        state.set('hotkey', { winTap: installed, reason: installed ? 'a tap of the Win key opens the Mantle launcher' : 'the sidecar did not install the Win key hook and did not say why' });
+      } catch (err) {
+        state.set('hotkey', { winTap: false, reason: `the Win key still opens the Windows Start menu: ${err.message}` });
+      }
+    }
+  }
+  const text = `back after ${Math.round((Date.now() - was.since) / 60000)} min (${why}): ${back.join(', ') || 'nothing to bring back'}${was.wallpaper === 'unloaded' ? ', wallpaper' : ''}`;
+  process.stdout.write(`mantle: rest: ${text} in ${Date.now() - t0} ms\n`);
+  return { ok: true, back, text };
 }
 
 /** ctx.host.display(): the display under the cursor, which is where a feature's panel belongs. */
@@ -4876,8 +5016,12 @@ async function applyLive() {
     }
   }
 
-  // 4. The solo-Win-tap hook that opens the launcher.
-  try {
+  // 4. The solo-Win-tap hook that opens the launcher (not while Mantle rests for a game: the
+  // launcher window is closed then, and the Win key is Windows' Start until the game exits).
+  if (restState && (!launcherWin || launcherWin.isDestroyed())) {
+    await sidecar.call('hotkey', { winTap: false }).catch(() => {});
+    state.set('hotkey', { winTap: false, resting: true, reason: `the Win key opens Windows' Start while Mantle rests (${restState.why}); Mantle's launcher is back when it exits` });
+  } else try {
     const r = await sidecar.call('hotkey', { winTap: true });
     const installed = !!(r && r.installed);
     state.set('hotkey', {
@@ -5224,6 +5368,20 @@ app.on('second-instance', (_event, argv) => {
   if (click) {
     process.stdout.write(`mantle: a second instance asked the bar to click "${click.slice('--test-click='.length)}" (test mode)\n`);
     broadcast('bar.test.click', { what: click.slice('--test-click='.length) });
+    return;
+  }
+  // TEST ONLY: `electron . --test --profile-name=<x> --test-memory=<tag>` logs this test instance's
+  // memory line now (logMemory), so a measurement can be taken at a chosen moment.
+  const mem = flags.test && Array.isArray(argv) ? argv.find((a) => typeof a === 'string' && a.startsWith('--test-memory=')) : null;
+  if (mem) {
+    const tag = mem.slice('--test-memory='.length) || 'asked';
+    logMemory(tag);
+    // ...and each feature's health and keys, the Win key and Alt+Tab, in one line each (the rest's proof).
+    const st = state.get();
+    for (const [name, p] of Object.entries(st.features || {})) {
+      process.stdout.write(`mantle: state (${tag}): ${name}: ${p.ok ? 'healthy' : 'NOT healthy'}${p.resting ? ' RESTING' : ''}${p.stopped ? ' STOPPED' : ''}: ${p.reason} | ${p.keysReason}\n`);
+    }
+    process.stdout.write(`mantle: state (${tag}): Win key: ${st.hotkey && st.hotkey.reason} | Alt+Tab: ${st.switcher && st.switcher.reason} | windows: ${pageNames().join(', ')}\n`);
     return;
   }
   // TEST ONLY: `electron . --test --profile-name=<x> --test-chord=Win+V` (or --test-key=VolumeUp)
@@ -5957,6 +6115,16 @@ async function logMemory(tag) {
       parts.push(`${name} pid ${pid}: ${p ? fmt(p) : 'not in the app metrics'}`);
       byPid.delete(pid);
     }
+    // Every other window (the features' own, the wallpaper's), named by its page: ui/<dir>/<file>.
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (w.isDestroyed()) continue;
+      const pid = w.webContents.getOSProcessId();
+      const p = byPid.get(pid);
+      if (!p) continue;
+      const m = /\/ui\/(.+?)(?:[?#]|$)/.exec(String(w.webContents.getURL() || '').replace(/\\/g, '/'));
+      parts.push(`${m ? m[1] : (w.getTitle() || 'a window')} pid ${pid}: ${fmt(p)}`);
+      byPid.delete(pid);
+    }
     const mu = process.memoryUsage();
     for (const p of byPid.values()) {
       const who = p.type === 'Browser' ? 'main' : `${p.type}${p.name ? ` ${p.name}` : ''}`;
@@ -5995,22 +6163,7 @@ app.whenReady().then(() => {
     // Measurement switch only: how much of the footprint is the launcher window.
     process.stdout.write('mantle: MANTLE_NO_LAUNCHER=1: the launcher window was not created (measurement run; the Win key does nothing)\n');
   } else {
-    const launcher = createLauncher({ root: ROOT, test: flags.test });
-    launcherWin = launcher.win;
-    watchPage(launcherWin, 'The launcher');
-    if (!launcher.load.loaded) process.stderr.write(`mantle: ${launcher.load.reason}\n`);
-    // A reload rebuilds the page, not the window, so the composition attribute
-    // should survive -- but "should" is cheap to stop relying on, and re-asking
-    // costs one JSON line.
-    launcherWin.webContents.on('did-finish-load', () => { reapplyGlass('the launcher', launcherWin, 'acrylic'); });
-    if (flags.test) {
-      // In test mode the launcher is the thing being looked at, so it is up from
-      // the start -- inactive, and with no hide-on-blur, or toback.ps1 sending it
-      // to the back would make it vanish.
-      launcherWin.once('ready-to-show', () => launcherWin.showInactive());
-    } else {
-      launcherWin.on('blur', () => hideLauncher());
-    }
+    makeLauncher(false);
   }
 
   if (flags.desktop) {

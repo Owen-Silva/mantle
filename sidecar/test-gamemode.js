@@ -12,7 +12,7 @@ const T = require('./test-lib');
     const ping = await s.send('ping', {}, 6000);
     const cmds = (ping.result && ping.result.features && ping.result.features.commands) || [];
     t.check('no feature failed to register', ping.result && ping.result.features && ping.result.features.problems.length === 0, JSON.stringify(ping.result && ping.result.features && ping.result.features.problems));
-    for (const c of ['gamemode.scan', 'gamemode.apply', 'gamemode.power', 'gamemode.saver', 'gamemode.guard'])
+    for (const c of ['gamemode.scan', 'gamemode.apply', 'gamemode.power', 'gamemode.saver', 'gamemode.guard', 'gamemode.trim'])
       t.check(`${c} is registered`, cmds.includes(c), cmds.filter((x) => /^game/.test(x)).join(','));
 
     // ---- scan
@@ -113,6 +113,24 @@ const T = require('./test-lib');
       const sv2 = await s.send('gamemode.saver', { at: svb }, 6000);
       t.check(`saver: asking for the current level (${svb}%) is same-value`, sv2.result && sv2.result.same === true, JSON.stringify(sv2.result));
     }
+
+    // ---- trim (lane memfix): only the process that started the sidecar (here: this node) and its
+    // same-exe children; never the sidecar, never anything else (refused before any handle is opened)
+    const kid = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore', windowsHide: true });
+    await new Promise((r) => setTimeout(r, 400));
+    const sc2 = await s.send('gamemode.scan', { procs: true }, 10000);
+    const explorer = (sc2.result.procs || []).find((p) => /^explorer\.exe$/i.test(p.file));
+    const tr = await s.send('gamemode.trim', { pids: [process.pid, kid.pid, sc2.result.ownPid, explorer ? explorer.pid : 4, 999999] }, 8000);
+    const rs = (tr.result && tr.result.results) || [];
+    t.check('trim: the process that started the sidecar is trimmed', rs[0] && rs[0].ok === true, JSON.stringify(rs[0]));
+    t.check('trim: its same-exe child is trimmed', rs[1] && rs[1].ok === true, JSON.stringify(rs[1]));
+    t.check('trim: the sidecar itself is refused (the key hook)', rs[2] && rs[2].ok === false && /sidecar itself/.test(rs[2].why), JSON.stringify(rs[2]));
+    t.check('trim: any other process (explorer) is refused by name', rs[3] && rs[3].ok === false && /not one of Mantle's own/.test(rs[3].why), JSON.stringify(rs[3]));
+    t.check('trim: a pid that does not exist says so', rs[4] && rs[4].ok === false && /exited/.test(rs[4].why), JSON.stringify(rs[4]));
+    t.check('trim: counts what it trimmed', tr.result && tr.result.trimmed === 2, JSON.stringify(tr.result && tr.result.trimmed));
+    const trBad = await s.send('gamemode.trim', {}, 4000);
+    t.check('trim: no pids is an error', trBad.ok === false, JSON.stringify(trBad));
+    try { kid.kill(); } catch (_) { /* gone */ }
   } finally {
     await s.stop();
   }

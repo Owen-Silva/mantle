@@ -22,6 +22,7 @@ module.exports = {
   defaultOn: true,                    // the tray switch until Owen flips it (then it is remembered)
   chords: ['Win+V'],                  // taken from Windows ONLY while on AND healthy AND live
   observe: [],                        // keys reported to you, never swallowed
+  rest: true,                         // OPTIONAL: stopped while a game runs, installed again after (see Resting)
   install(ctx) {                      // may be async (10 s to settle, else the feature is down)
     const { BrowserWindow } = require('electron');
     const win = new BrowserWindow({ show: false, frame: false, transparent: true, skipTaskbar: true,
@@ -67,6 +68,7 @@ notifs qs wallpaper shell tray media battery volume net apps mantle test.
 | `ctx.host.openLauncher({ mode, query })` | shows the launcher; BEFORE showing, its page gets event `launcher.open` = `{ mode, query, from: '<name>' }` (`mode:'search'` is the search lane's to handle in ui/launcher). Throws if there is no launcher window |
 | `ctx.host.barRect()` | the bar's rect in DIP (its SHAPE in hover mode), or null |
 | `ctx.host.display()` | the display under the cursor: `{ id, bounds, workArea, scaleFactor, primary, cursor }` (DIP) |
+| `ctx.host.rest(on, why)` | ADDED (memfix). Game mode's watch only: `rest(true, 'VALORANT runs')` makes Mantle rest, `rest(false, why)` brings it back. `Promise<{ ok, text, closed, before, after }>` |
 | `ctx.settings.get(key, dflt)` / `.set(key, value)` | JSON in `<userData>/features/<name>.json` (live `%APPDATA%\mantle`, test `%TEMP%\mantle-test-<profile>`). Values are copied (JSON round trip). `set` throws in plain words if it cannot write. `.file` = the path |
 | `ctx.test.fireChord(chord)` / `.fireKey(key)` | TEST ONLY. `ctx.test` is `null` in a live run. Routes exactly like the hook would (so a chord for a feature that is off/unhealthy is NOT delivered). Returns `{ delivered, feature }` / `{ delivered, handlers }` or `{ delivered:false, reason }` |
 
@@ -102,6 +104,18 @@ lib/state.js problems() and ui/desktop/desktop.js show a row (title = label) whe
 ON, not stopped, and either `ok === false` (reason) or, outside test mode, `broken` (chords that
 should be Mantle's and are not). The tray has a checkbox per feature and the failing reason
 under it. `window.mantle.call('features.list')` returns every feature's live record.
+
+## Resting while a game runs (lane memfix, 2026-09-26)
+
+A module with `rest: true` is STOPPED while a known game runs or game mode is on (game mode's watch,
+main.js restMantle, lib/features.js restAll): `stop(why, { rest: true })` runs, so destroy your
+windows there (each is a renderer process), but keep what must outlive them (clipboard keeps the
+sidecar's history). Its chords go back to Windows, its commands answer "... is resting while
+VALORANT runs", and its state piece reads HEALTHY with `resting` set (no strip row). When the last
+game exits, wakeAll() runs your install() again with a fresh ctx: the same path as start-up.
+Resting now: clipboard, osd, screenshot, snap, taskview, topbar, search (Win+S needs the launcher,
+which rests too). Main also closes the launcher (Win key -> Start) and the switcher (Alt+Tab ->
+Windows), and unloads the wallpaper. Kept: the bar, the desktop layer, main, the sidecar.
 
 ## stop()
 

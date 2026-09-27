@@ -110,9 +110,10 @@
   // the way back paint before re-aiming, so a resumed clock is never a second
   // late. Deliberately NOT keyed off visibilityState at load: if the event never
   // fires here, the clock keeps running, which is the safe way round.
+  let restingNow = false;   // Mantle resting while a game runs: the clock stays stopped (mantle.rest below)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { clearTimeout(clockTimer); clockTimer = 0; }
-    else startClock();
+    else if (!restingNow) startClock();
   });
 
   // ---------------------------------------------------------------------
@@ -171,7 +172,7 @@
     }
   }
   tickStats();
-  setInterval(tickStats, 5000);
+  let statsTimer = setInterval(tickStats, 5000);
 
   // ---------------------------------------------------------------------
   // Mission Control (the local dashboard on 127.0.0.1:7373).
@@ -219,7 +220,7 @@
     }
   }
   probeMissionControl();
-  setInterval(probeMissionControl, 30000);
+  let mcTimer = setInterval(probeMissionControl, 30000);
 
   // ---------------------------------------------------------------------
   // The state strip: every piece of Mantle that is not doing its job, with the
@@ -641,6 +642,23 @@
     window.mantle.on('wallpaper.sysinfo', (json) => { if (!wallPause.paused) toFrame({ kind: 'sysinfo', json }); });
     window.mantle.on('wallpaper.cursor', (pt) => { if (pt) toFrame({ kind: 'cursor', x: pt.x, y: pt.y }); });
     window.mantle.on('state', renderState);
+    // Mantle resting while a game runs (lane memfix, 2026-09-26; main.js restMantle): this layer is
+    // behind the game, so the clock, the 5 s numbers and Mission Control's frame (a whole live page)
+    // stop until it exits, and the panel says why. Everything restarts the way the page starts it.
+    window.mantle.on('mantle.rest', (r) => {
+      restingNow = !!(r && r.on);
+      if (r && r.on) {
+        clearTimeout(clockTimer); clockTimer = 0;
+        clearInterval(statsTimer); statsTimer = 0;
+        clearInterval(mcTimer); mcTimer = 0;
+        unmountMissionControl('closed while Mantle rests (' + r.why + ')');
+        els.mcNote.textContent = 'Mission Control closed while Mantle rests (' + r.why + '); back when the game exits.';
+      } else if (r && !statsTimer) {
+        startClock();
+        tickStats(); statsTimer = setInterval(tickStats, 5000);
+        probeMissionControl(); mcTimer = setInterval(probeMissionControl, 30000);
+      }
+    });
     window.mantle.on('desktop.backdrop', setBackdrop);
   } else {
     failBackdrop('window.mantle.on is not available, so this page never receives the wallpaper ' +

@@ -88,6 +88,50 @@ namespace Mantle {
       t.Add("gamemode.power", Lanes.Qs, Power);       // the power mode for ONE named source
       t.Add("gamemode.saver", Lanes.Qs, Saver);       // Energy saver's "turn on at" level (opt-in)
       t.Add("gamemode.guard", Lanes.Slow, GuardCmd);  // PURE: would a target be refused, and why
+      t.Add("gamemode.trim", Lanes.Slow, Trim);       // Mantle resting: its OWN Electron processes' idle pages back to Windows
+    }
+
+    [DllImport("psapi.dll", SetLastError = true)] static extern bool EmptyWorkingSet(IntPtr h);
+    const uint SET_QUOTA = 0x0100;
+
+    /// Mantle resting while a game runs (lane memfix, 2026-09-26). {pids:[...]} -> {results:[{pid, ok,
+    /// why?}], trimmed}. EmptyWorkingSet on Mantle's OWN Electron processes only: the one that started
+    /// this sidecar (--parent-pid) and its direct children running the same exe. Never this sidecar (its
+    /// keyboard hook must never wait on a page fault), never anything else: every other pid is refused
+    /// by name, from the Toolhelp list, before any handle is opened. Measured on the --test instance:
+    /// the kept processes' working set 429 MB -> 77 MB 30 s later. Allowed in passive (--test) too, like
+    /// MenuBar's fixture: the only processes it can reach are the calling instance's own.
+    static string Trim(Dictionary<string, object> req, ref object result) {
+      var pids = req.ContainsKey("pids") ? req["pids"] as List<object> : null;
+      if (pids == null) return "gamemode.trim needs pids: [pid, ...]";
+      string err;
+      List<Proc> snap = Snapshot(out err);
+      if (err != null) return err;
+      Proc main = null;
+      foreach (Proc p in snap) if (Program.ParentPid > 0 && p.Pid == (uint)Program.ParentPid) { main = p; break; }
+      var outList = new List<object>();
+      int trimmed = 0;
+      foreach (object o in pids) {
+        long want = 0;
+        try { want = Convert.ToInt64(o, CultureInfo.InvariantCulture); } catch { want = 0; }
+        IDictionary r = Json.Obj("pid", want, "ok", false);
+        outList.Add(r);
+        Proc p = null;
+        foreach (Proc q in snap) if (q.Pid == (ulong)Math.Max(0, want)) { p = q; break; }
+        if (main == null) { r["why"] = "refused: this sidecar has no Mantle process that started it (--parent-pid)"; continue; }
+        if (p == null) { r["why"] = "it has exited"; continue; }
+        if (p.Pid == (uint)Program.OwnPid) { r["why"] = "refused: the sidecar itself (it runs the keyboard hook)"; continue; }
+        bool mine = p.Pid == main.Pid || (p.Ppid == main.Pid && string.Equals(p.File, main.File, StringComparison.OrdinalIgnoreCase));
+        if (!mine) { r["why"] = "refused: " + p.File + " is not one of Mantle's own processes"; continue; }
+        IntPtr h = N.OpenProcess(SET_QUOTA | QUERY_INFORMATION | QUERY_LIMITED, false, p.Pid);
+        if (h == IntPtr.Zero) { r["why"] = "could not be opened (error " + Marshal.GetLastWin32Error() + ")"; continue; }
+        try {
+          if (EmptyWorkingSet(h)) { r["ok"] = true; trimmed++; }
+          else r["why"] = "EmptyWorkingSet failed (error " + Marshal.GetLastWin32Error() + ")";
+        } finally { N.CloseHandle(h); }
+      }
+      result = Json.Obj("results", outList, "trimmed", trimmed, "passive", Program.Passive);
+      return null;
     }
 
     // ------------------------------------------------------------------ the never-touch rule

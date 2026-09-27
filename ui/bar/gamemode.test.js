@@ -12,7 +12,7 @@ check('an error: dead with the error', v.dead && /stopped/.test(v.why));
 v = G.view({ enabled: false, auto: true });
 check('tray switch off: dead, says where', v.dead && /tray/.test(v.why));
 v = G.view({ on: false, auto: true, watching: true, actions: [] });
-check('off + watching', !v.on && v.sub === 'Off · watching for games' && v.label === 'Turn on' && v.plan.length === 4);
+check('off + watching', !v.on && v.sub === 'Off · watching for games' && v.label === 'Turn on' && v.plan.length === 5 && v.plan[4].label === 'Mantle resting');
 v = G.view({ on: false, auto: false, watching: true });
 check('off + automatic off', v.sub === 'Off · automatic is off');
 v = G.view({ on: false, auto: true, watching: false, reason: 'games are not being watched: the sidecar is not running' });
@@ -31,6 +31,18 @@ v = G.view({ on: false, auto: true, watching: true, last: { game: 'RobloxPlayerB
 check('the last game is summarised', /Last game: RobloxPlayerBeta, 42 min \(RobloxPlayerBeta\.exe exited\)\. 12 apps back to normal/.test(v.last), v.last);
 v = G.view({ on: false, auto: true, watching: true, fromCrash: { text: '41 apps back to normal' } });
 check('put back after a restart: said', /After Mantle restarted: 41 apps back to normal/.test(v.crash));
+// Mantle resting while a game runs (lane memfix): said under the switch, on or off, and a Details row.
+const restText = 'Mantle is resting while VALORANT runs: closed 9 windows (launcher, switcher); Mantle\'s memory 585 MB -> 330 MB';
+v = G.view({ on: false, auto: true, watching: true, rest: { on: true, why: 'VALORANT runs', text: restText } });
+check('resting, game mode off: the sub line says so', v.sub === 'Off · Mantle resting');
+check('resting: the words (with the memory) are under the switch', v.rest === restText);
+check('resting: a Details row first', v.rows.length === 1 && v.rows[0].key === 'rest' && v.rows[0].status === 'done' && v.rows[0].text === restText);
+v = G.view({ on: true, how: 'auto', game: { file: 'VALORANT-Win64-Shipping.exe' }, auto: true, actions: [{ key: 'power', label: 'Power mode', status: 'done', text: 'x' }], rest: { on: true, why: 'VALORANT runs', text: restText } });
+check('resting, game mode on: sub unchanged, rest row before the actions', v.sub === 'On · VALORANT' && v.rows[0].key === 'rest' && v.rows[1].key === 'power');
+v = G.view({ on: false, auto: true, watching: true, rest: { on: false, text: 'Mantle could not rest while VALORANT runs: no answer' } });
+check('could not rest: said, not silent', /could not rest/.test(v.rest) && v.sub === 'Off · watching for games');
+v = G.view({ on: false, auto: true, watching: true, rest: { on: false, last: { text: 'Mantle rested 42 min (VALORANT runs) and is back: VALORANT exited' } } });
+check('after the game: the rest is in the last line', /Mantle rested 42 min .* is back: VALORANT exited\./.test(v.last) && !v.rest);
 console.log(`GAMEMODE TILE TEST: ${pass} passed, ${fail} failed`);
 if (fails.length) console.log(fails.join('\n'));
 process.exit(fail ? 1 : 0);
