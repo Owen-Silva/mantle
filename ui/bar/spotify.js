@@ -69,7 +69,16 @@
   };
   var KIND = { track: 'Song', episode: 'Episode', album: 'Album', artist: 'Artist', playlist: 'Playlist', show: 'Podcast' };
   var REPEAT = ['Repeat: off', 'Repeat: all', 'Repeat: this song'];
-  function mb(m) { if (!m) return ''; var v = m.privateWsMB != null ? m.privateWsMB : m.wsMB; return v == null ? '' : v >= 1000 ? (v / 1024).toFixed(1) + ' GB' : v + ' MB'; }
+  function mbText(v) { return v == null ? '' : v >= 1000 ? (v / 1024).toFixed(1) + ' GB' : v + ' MB'; }
+  function mb(m) { if (!m) return ''; return mbText(m.privateWsMB != null ? m.privateWsMB : m.wsMB); }
+  function ago(at) { var sec = Math.max(0, (Date.now() - at) / 1000); return sec < 60 ? 'just now' : sec < 3600 ? Math.round(sec / 60) + ' min ago' : Math.round(sec / 3600) + ' h ago'; }
+  function cap(t) { return t ? t.charAt(0).toUpperCase() + t.slice(1) : ''; }
+  /* sptrim lane: the memory watch, from the push or from info, whichever read is newer (a tie goes to
+     the push: it carries a stop). */
+  function watchView() {
+    var ws = S.status && S.status.window && S.status.window.watch, wi = S.info && S.info.window && S.info.window.watch;
+    return ws && wi ? ((wi.at || 0) > (ws.at || 0) ? wi : ws) : ws || wi || null;
+  }
   var HINT = { checking: '', notrunning: 'Not running', noport: 'Needs restart', starting: 'Starting…', portbusy: 'Port busy',
     internals: 'Spotify changed', noinstall: 'Not found', error: 'Error', off: 'Off', missing: 'Off' };
 
@@ -479,15 +488,23 @@
     var w = (S.status && S.status.window) || null, inf = S.info, m = inf && inf.memory;
     var shown = inf && inf.visible != null ? inf.visible : w ? w.state === 'shown' : null;
     var main = mk('div', 'spq-appmain');
-    var txt = mk('span', 'spq-apptxt', (shown === false ? 'Running hidden' : shown === true ? 'Window open' : 'Running') + (m ? ' · ' + mb(m) : S.infoLoading ? ' · …' : ''));
+    var wv = watchView(), watching = !!(wv && wv.state === 'watching');
+    var memTxt = watching && wv.mb != null && wv.at && Date.now() - wv.at < 90000 ? mbText(wv.mb) : m ? mb(m) : '';
+    var trimTxt = watching ? (wv.lastTrim && wv.lastTrim.ok ? ' · trimmed ' + ago(wv.lastTrim.at) : ' · not trimmed yet') : '';
+    var txt = mk('span', 'spq-apptxt', (shown === false ? 'Running hidden' : shown === true ? 'Window open' : 'Running') + (memTxt ? ' · ' + memTxt : S.infoLoading ? ' · …' : '') + trimTxt);
     txt.title = (m ? 'Spotify’s ' + m.n + ' processes: ' + (m.privateWsMB != null ? m.privateWsMB + ' MB of RAM of their own (Task Manager’s Memory), ' : '') + m.wsMB + ' MB working set, ' + m.privateMB + ' MB committed'
-      : (inf && inf.memoryReason) || S.infoErr || 'Reading Spotify’s memory…') + (w && w.how ? '\nHidden by ' + w.how : '') + (w && w.trim ? '\n' + w.trim.text : '');
+      : (inf && inf.memoryReason) || S.infoErr || 'Reading Spotify’s memory…') + (w && w.how ? '\nHidden by ' + w.how : '') + (w && w.trim ? '\n' + w.trim.text : '')
+      + (watching ? '\nMemory watch: trimmed when over ' + wv.aboveMB + ' MB, checked every 30 s, at most once every ' + Math.round(wv.gapMs / 60000) + ' min; never the process playing the audio'
+        : wv && wv.state === 'stopped' && wv.reason ? '\nMemory watch stopped: ' + wv.reason : '')
+      + (wv && wv.lastTrim ? '\n' + wv.lastTrim.text + ' (' + ago(wv.lastTrim.at) + ')' : '') + (wv && wv.note ? '\n' + cap(wv.note) : '');
     main.appendChild(txt);
     main.appendChild(linkBtn(shown === true ? 'Hide window' : 'Open Spotify', function () { windowDo(shown === true ? 'hideWindow' : 'openWindow'); }));
     main.appendChild(linkBtn(S.quitArmed ? 'Click again to quit' : 'Quit', quitApp, S.quitArmed ? 'warn' : ''));
     line.appendChild(main);
-    var bad = (w && w.state === 'failed' && w.reason) || (w && w.trim && !w.trim.ok && !w.trim.skipped && w.trim.text) || S.infoErr || (inf && inf.memoryReason) || '';
-    if (bad) line.appendChild(mk('div', 'spq-fine spq-bad', bad));
+    var watchBad = wv ? (wv.state === 'unavailable' ? wv.reason : watching ? wv.error || (wv.lastTrim && !wv.lastTrim.ok ? wv.lastTrim.text : '') : '') : '';
+    var bad = (w && w.state === 'failed' && w.reason) || (w && w.trim && !w.trim.ok && !w.trim.skipped && w.trim.text) || watchBad || S.infoErr || (inf && inf.memoryReason) || '';
+    if (bad) line.appendChild(mk('div', 'spq-fine spq-bad', cap(bad)));
+    else if (watching && wv.note) line.appendChild(mk('div', 'spq-fine', cap(wv.note)));
 
     [['queue', 'Up next'], ['lib', 'Library']].forEach(function (t) {
       var c = mk('button', 'spq-chip' + (S.tab === t[0] ? ' on' : ''), t[1]);
