@@ -17,11 +17,20 @@
   const menusEl = document.getElementById('menus');
   const barEl = document.getElementById('bar');
   const S = { focus: null, menu: null, uia: {}, stats: null, paused: null, note: null, open: null, armed: null, titles: [],
-              fit: null, vis: 0, rightKey: null, asked: null, waitT: 0 };
+              fit: null, vis: 0, rightKey: null, asked: null, waitT: 0,
+              timer: null, timerSkew: 0, tickT: 0, notes: null };   // the two small tools (lane tbtools)
   const ARM_MS = 4000, ARM_MIN_MS = 300, HOVER_SUB_MS = 110;
   const APP_MIN = 96;   // the app's name ellipsizes down to this before any menu moves into »
   const GLYPH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
     '<rect x="2" y="2.5" width="12" height="11" rx="2.5"/><path d="M2 6h12"/></svg>';
+  // THE TWO SMALL TOOLS (lane tbtools, 2026-09-27): a timer / stopwatch and quick notes at the right
+  // end of the bar. Same stroke glyphs as the Mantle mark: no fill, no colour of their own.
+  const TIMER_GLYPH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">' +
+    '<circle cx="8" cy="9.25" r="5.25"/><path d="M8 9.25V6.5M6.25 1.75h3.5M12.3 4.45l.95-.95"/></svg>';
+  const PAUSE_GLYPH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">' +
+    '<path d="M5.75 4.5v7M10.25 4.5v7"/></svg>';
+  const NOTE_GLYPH = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M3.25 2.25h6.5l3 3v8.5h-9.5z"/><path d="M9.5 2.5v3h3M5.75 8.25h4.5M5.75 11h3"/></svg>';
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const call = (name, args) => Promise.resolve(mantle.call(name, args || {})).catch((e) => ({ ok: false, reason: (e && e.message) || String(e) }));
@@ -96,6 +105,7 @@
         `<button class="t st${c.why ? ' na' : ''}${S.open && S.open.stat === c.key ? ' open' : ''}" data-k="${c.key}"` +
         ` title="${esc(c.why || '')}"><span class="k">${c.label}</span><span class="v">${esc(c.value)}</span></button>`).join('');
     }
+    html += toolsHtml();
     rightEl.innerHTML = html;
     // a note or "stats paused" changes how much room the left side has: re-fit it (not on every
     // 1 s sample: the cells keep their width, so the key does not change). The window's width is in
@@ -104,9 +114,97 @@
     if (key !== S.rightKey) { S.rightKey = key; if (!fromBar) { sizeBar(); layoutLeft(); } }
   }
 
+  /* ---- the two small tools (lane tbtools, 2026-09-27) ---------------------------------------
+     TIMER: lib/features/timer.js keeps the time (it never rests: a timer still ends during a game)
+     and sends timer.state on every change; this page only DRAWS it. While a timer or stopwatch runs,
+     one setTimeout per shown second rewrites the cell's text (TimerCore.nextTickMs); nothing ticks
+     while nothing runs, while it is paused, or while this window is hidden. Hidden by hand, the peek
+     shows the bar and so the time. NOTES: the pad is its own window (lib/features/notes.js, ui/notes):
+     the button opens it under itself, and shows it pressed while it is open, amber when a save failed. */
+  const TC = () => window.TimerCore || null;   // lib/features/_timer-core.js, loaded by index.html
+  // timer.state carries main's clock; a fake one (the self-test's) moves the page with it
+  const tnow = () => Date.now() + (S.timerSkew || 0);
+  function toolsHtml() {
+    const C = TC();
+    const cell = C ? M.timerCell(S.timer, tnow(), C) : null;
+    const tOpen = S.open && S.open.tool === 'timer';
+    let h;
+    if (cell) {
+      h = `<button class="t tool tm${cell.paused ? ' pz' : ''}${cell.up ? ' up' : ''}${tOpen ? ' open' : ''}" data-tool="timer"` +
+        ` title="${esc(cell.title)}" aria-label="${esc(cell.title)}">${cell.paused ? PAUSE_GLYPH : TIMER_GLYPH}<span class="v">${esc(cell.text)}</span></button>`;
+    } else {
+      const why = !C ? 'Timer: its script (lib/features/_timer-core.js) did not load, so no time can be shown' : 'Timer and stopwatch';
+      h = `<button class="t glyph tool${tOpen ? ' open' : ''}${C ? '' : ' bad'}" data-tool="timer" title="${esc(why)}" aria-label="Timer and stopwatch">${TIMER_GLYPH}</button>`;
+    }
+    const nb = M.notesButton(S.notes);
+    h += `<button class="t glyph tool${nb.open ? ' open' : ''}${nb.bad ? ' bad' : ''}" data-tool="notes" title="${esc(nb.title)}" aria-label="Quick notes">${NOTE_GLYPH}</button>`;
+    return h;
+  }
+  function retick() {
+    clearTimeout(S.tickT); S.tickT = 0;
+    const C = TC();
+    if (!S.timer || !C || document.hidden) return;
+    const ms = C.nextTickMs(S.timer, tnow());
+    if (ms == null) return;
+    S.tickT = setTimeout(() => { S.tickT = 0; tickCell(); retick(); }, Math.max(20, ms + 15));
+  }
+  // one text node per second; a new width ("9:59" after "10:00") re-lays the right side out instead
+  function tickCell() {
+    const v = rightEl.querySelector('.tool.tm .v');
+    const cell = TC() ? M.timerCell(S.timer, tnow(), TC()) : null;
+    if (!v || !cell || v.textContent.length !== cell.text.length) { renderStats(); return; }
+    v.textContent = cell.text;
+    v.parentElement.title = cell.title;
+  }
+  function toolItems(tool) {
+    if (tool !== 'timer') return [];
+    if (!TC()) return [{ t: 'info', bad: true, enabled: false, text: 'The timer\'s script (lib/features/_timer-core.js) did not load, so the timer cannot be shown here' }];
+    return M.timerMenu(S.timer, tnow(), TC());
+  }
+  function openTool(tool) {
+    const b = rightEl.querySelector(`[data-tool="${tool}"]`);
+    const right = b ? Math.round(b.getBoundingClientRect().right) : visibleWidth() - 4;
+    S.armed = null; S.edit = null;
+    S.open = { ti: -1, tool, stack: [{ items: toolItems(tool), sel: -1, x: Math.max(4, right - 240), right, path: [] }] };
+    renderStats();
+    renderMenus();
+  }
+  // a new timer.state while the menu is open: new rows, the hovered row and an armed Cancel kept
+  function refreshToolMenu() {
+    const o = S.open;
+    if (!o || o.tool !== 'timer' || S.edit) return;
+    const items = toolItems('timer');
+    const lv = o.stack[0];
+    if (JSON.stringify(items) === JSON.stringify(lv.items)) return;
+    const armedAct = S.armed && S.armed.item && S.armed.item.act;
+    lv.items = items;
+    if (lv.sel >= items.length) lv.sel = -1;
+    o.stack.length = 1;
+    S.armed = armedAct ? (items.find((x) => x.act === armedAct) ? { item: items.find((x) => x.act === armedAct), at: S.armed.at } : null) : null;
+    renderMenus();
+  }
+  function toolClick(tool, b) {
+    if (tool === 'timer') { if (S.open && S.open.tool === 'timer') closeAll(true); else openTool('timer'); return; }
+    if (tool !== 'notes') return;
+    // `wasOpen`: this very click's focus change may have closed the pad already (its window lost the
+    // keyboard to this bar); then the click meant "close", and notes.js leaves it closed
+    const wasOpen = !!(S.notes && S.notes.open);
+    if (S.open) closeAll(false);
+    const r = b.getBoundingClientRect();
+    call('notes.toggle', { x: Math.round((window.screenX || 0) + r.right), app: (S.focus && S.focus.hwnd) || null, via: 'the top bar', wasOpen }).then((res) => {
+      if (res && res.ok === false) setNote('Quick notes: ' + (res.reason || res.error || 'the pad did not open, and no reason came back'));
+    });
+  }
+
   /* ---- dropdowns --------------------------------------------------------------------------- */
   function rowHtml(it, i, sel, level) {
     if (it.t === 'sep') return '<div class="sep"></div>';
+    if (it.t === 'info') return `<div class="info${it.bad ? ' bad' : ''}">${esc(it.text)}</div>`;
+    if (S.edit && S.edit.item === it) {   // window layouts / the timer's own length: typed in the menu itself
+      const ph = it.placeholder || 'Name it, e.g. Work', aria = it.aria || 'Layout name', ml = it.maxlength || 40;
+      return `<div class="r sel edit" data-l="${level}" data-r="${i}" role="menuitem"><span class="ck"></span>` +
+        `<input class="lbi" type="text" maxlength="${ml}" spellcheck="false" aria-label="${esc(aria)}" placeholder="${esc(ph)}" value="${esc(S.edit.value)}"><span></span><span></span></div>`;
+    }
     const armed = S.armed && S.armed.item === it;
     const off = it.enabled === false || (it.ownerDraw && !it.label);
     const label = armed ? it.confirm : (it.label || (it.ownerDraw ? '(the app draws this item itself)' : '(untitled)'));
@@ -163,6 +261,10 @@
       if (lv.y != null) dd.style.top = lv.y + 'px';
       dd._owner = lv;
       menusEl.appendChild(dd);
+      // a tool's menu hangs from its button's RIGHT edge (the stat menus do the same)
+      // (measured at left 0 first: placed near the screen's right edge, a wide menu - a long info
+      // line - shrinks to the room left and then grows past its button once moved)
+      if (lv.right != null) { dd.style.left = '0px'; dd.style.left = Math.max(4, Math.round(lv.right - dd.getBoundingClientRect().width)) + 'px'; }
       // keep a submenu on screen: flip it to the left of its parent when it would run off the right
       const r = dd.getBoundingClientRect(), vis = visibleWidth();
       if (r.right > vis - 4) dd.style.left = Math.max(4, (level > 0 ? lv.flipX : vis - 4 - r.width)) + 'px';
@@ -171,6 +273,10 @@
       keepSelVisible(dd, lv.sel);
       lv.el = dd;
     });
+    if (S.edit) {
+      const inp = menusEl.querySelector('input.lbi');
+      if (inp && document.activeElement !== inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+    }
     notifyMain();
   }
 
@@ -266,6 +372,7 @@
     if (!S.open) return;
     S.open = null;
     S.armed = null;
+    S.edit = null;
     menusEl.innerHTML = '';
     renderBar();
     tellClosed(!!refocus);
@@ -331,6 +438,15 @@
     const it = lv.items[i];
     if (!it || it.t === 'sep' || it.enabled === false) return;
     if (it.items) { openSub(level, i); return; }
+    if (S.edit && S.edit.item === it) return;   // a click in the name box
+    if (it.act === 'layoutNew' || it.act === 'layoutRename' || it.act === 'timerCustom') {   // a name / a timer length, typed right here
+      S.armed = null;
+      S.edit = { item: it, value: it.act === 'layoutRename' ? it.layout : '' };
+      lv.sel = i;
+      lv.info = null; lv.bad = false;
+      renderMenus();
+      return;
+    }
     if (it.confirm) {
       if (!S.armed || S.armed.item !== it) { S.armed = { item: it, at: Date.now() }; renderMenus(); setTimeout(() => { if (S.armed && S.armed.item === it) { S.armed = null; if (S.open) renderMenus(); } }, ARM_MS); return; }
       if (Date.now() - S.armed.at < ARM_MIN_MS) return;   // a double-click is not two decisions
@@ -339,12 +455,21 @@
     const f = S.focus;
     const src = menuSource();
     let p;
-    if (it.act === 'power') p = call('topbar.power', { action: it.power, confirmed });
+    if (it.act === 'layoutRestore') p = call('layouts.restore', { name: it.layout, via: 'the Mantle menu' });
+    else if (it.act === 'layoutSave') p = call('layouts.save', { name: it.layout, replace: true });
+    else if (it.act === 'layoutDelete') p = call('layouts.delete', { name: it.layout });
+    else if (it.act === 'power') p = call('topbar.power', { action: it.power, confirmed });
     else if (it.act === 'about' || it.act === 'settings') p = call('topbar.' + it.act);
     else if (it.act === 'overGames') p = call('topbar.overGames', { on: !it.checked }).then((r) => { if (r && r.ok) it.checked = !!r.overGames; return r; });
     else if (it.act === 'hide') p = call('topbar.hidden', { on: true, via: 'the Mantle menu' });
     else if (it.act === 'show') p = call('topbar.hidden', { on: false, via: 'the Mantle menu, while peeking' });
     else if (it.act === 'newWindow') p = call('topbar.newWindow', { exe: it.exe, args: it.args });
+    else if (it.act === 'timerStart') p = call('timer.start', { ms: it.ms });
+    else if (it.act === 'timerStopwatch') p = call('timer.stopwatch');
+    else if (it.act === 'timerPause') p = call('timer.pause');
+    else if (it.act === 'timerResume') p = call('timer.resume');
+    else if (it.act === 'timerAdd') p = call('timer.add', { ms: it.ms });
+    else if (it.act === 'timerCancel') p = call('timer.cancel');
     else if (it.act) p = call('topbar.window', { hwnd: f && f.hwnd, action: it.act });
     else if (src && src.source === 'win32') p = call('topbar.invoke', { hwnd: src.hwnd, item: it.id });
     else if (src && src.source === 'uia') {
@@ -445,9 +570,11 @@
   });
   leftEl.addEventListener('mouseover', (e) => {
     const b = e.target.closest('.t');
-    if (b && S.open && !S.open.stat && S.open.ti !== +b.dataset.i) openMenu(+b.dataset.i);   // Mac: slide across the titles
+    if (b && S.open && !S.open.stat && !S.open.tool && S.open.ti !== +b.dataset.i) openMenu(+b.dataset.i);   // Mac: slide across the titles
   });
   rightEl.addEventListener('mousedown', (e) => {
+    const tb = e.target.closest('.tool');
+    if (tb) { e.preventDefault(); toolClick(tb.dataset.tool, tb); return; }
     const b = e.target.closest('.st');
     if (!b) return;
     e.preventDefault();
@@ -489,17 +616,29 @@
   document.addEventListener('keydown', (e) => {
     const o = S.open;
     if (!o) return;
+    if (S.edit && e.target && e.target.classList && e.target.classList.contains('lbi')) {
+      if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); S.edit = null; renderMenus(); }
+      return;   // every other key types into the box
+    }
     const level = o.stat ? 0 : o.stack.length - 1;
     const lv = o.stat ? null : o.stack[level];
     switch (e.key) {
       case 'Escape': if (lv && level > 0) { o.stack.pop(); renderMenus(); } else closeAll(true); break;
       case 'ArrowDown': if (lv) move(level, 1); break;
       case 'ArrowUp': if (lv) move(level, -1); break;
-      case 'ArrowRight': if (lv && lv.items[lv.sel] && lv.items[lv.sel].items) { openSub(level, lv.sel); move(level + 1, 1); } else stepTitle(1); break;
-      case 'ArrowLeft': if (lv && level > 0) { o.stack.pop(); renderMenus(); } else stepTitle(-1); break;
+      // a tool's menu is not one of the app's titles: Left / Right do not walk into them
+      case 'ArrowRight': if (lv && lv.items[lv.sel] && lv.items[lv.sel].items) { openSub(level, lv.sel); move(level + 1, 1); } else if (!o.tool) stepTitle(1); break;
+      case 'ArrowLeft': if (lv && level > 0) { o.stack.pop(); renderMenus(); } else if (!o.tool) stepTitle(-1); break;
       case 'Enter': case ' ': if (lv && lv.sel >= 0) activate(level, lv.sel); break;
       default: {
         if (!lv || e.key.length !== 1) return;
+        // the timer's menu: typing a number starts the custom length with it ("12" Enter = 12 min)
+        if (o.tool === 'timer' && level === 0 && /^[0-9]$/.test(e.key)) {
+          const j = lv.items.findIndex((it) => it.act === 'timerCustom');
+          // the box already open but this key missed it (the input had no focus): add to it, never restart it
+          if (j >= 0) { S.armed = null; S.edit = S.edit && S.edit.item === lv.items[j] ? { item: S.edit.item, value: (S.edit.value + e.key).slice(0, S.edit.item.maxlength || 12) } : { item: lv.items[j], value: e.key }; lv.sel = j; lv.info = null; lv.bad = false; renderMenus(); e.preventDefault(); return; }
+        }
         const k = e.key.toLowerCase();
         const j = lv.items.findIndex((it) => it.t !== 'sep' && it.enabled !== false && (it.mn === k || (!it.mn && (it.label || '').toLowerCase().startsWith(k))));
         if (j < 0) return;
@@ -527,6 +666,35 @@
     }
   }
   mantle.on('topbar.focus', takeFocus);
+  /* WINDOW LAYOUTS (lane layouts): the menus follow lib/features/layouts.js; the name box's text is
+     kept on every keystroke (a hover re-renders the menu). The result shows in the layouts pop-up;
+     a refusal also shows here, as every menu action's does. */
+  mantle.on('layouts.state', (st) => { M.layoutMenus(M.MANTLE_MENU, st); });
+  document.addEventListener('input', (e) => { if (S.edit && e.target && e.target.classList && e.target.classList.contains('lbi')) S.edit.value = e.target.value; });
+  function commitEdit() {
+    const ed = S.edit;
+    if (!ed) return;
+    if (ed.item.act === 'timerCustom') {   // the timer's length: checked here first, so a typo keeps the box and says why
+      const C = TC();
+      const v = C ? C.parseDuration(ed.value) : { ok: false, reason: 'the timer\'s script did not load' };
+      if (!v.ok) {
+        const lv = S.open && S.open.stack[S.open.stack.length - 1];
+        if (lv) { lv.info = v.reason; lv.bad = true; }
+        renderMenus();
+        return;
+      }
+      S.edit = null;
+      closeAll(true);
+      call('timer.start', { text: ed.value }).then((r) => { if (r && r.ok === false) setNote('Timer: ' + (r.reason || r.error || 'it did not start, and no reason came back')); });
+      return;
+    }
+    const renaming = ed.item.act === 'layoutRename';
+    const label = renaming ? 'Rename ' + ed.item.layout : 'Save layout';
+    const p = renaming ? call('layouts.rename', { from: ed.item.layout, to: ed.value }) : call('layouts.save', { name: ed.value });
+    S.edit = null;
+    closeAll(true);
+    p.then((r) => { if (r && r.ok === false) setNote(label + ': ' + (r.reason || r.error || 'it did not happen, and no reason came back')); });
+  }
   mantle.on('topbar.title', (ev) => {
     if (!S.focus || ev.hwnd !== S.focus.hwnd) return;
     S.focus.title = ev.title;
@@ -546,6 +714,21 @@
   // PEEK (lane tbpeek): hidden by hand, the bar came out because the cursor rested on the top edge.
   // Its Mantle menu then offers "Show top bar" (for good) where "Hide top bar" would be a no-op.
   mantle.on('topbar.peek', (ev) => setPeek(!!(ev && ev.on)));
+  // THE TWO SMALL TOOLS (lane tbtools): lib/features/timer.js and lib/features/notes.js
+  mantle.on('timer.state', (st) => {
+    const was = S.timer;
+    S.timer = st && typeof st === 'object' ? st : null;
+    // main's clock, when it is not this page's (a fake one in the self-test); real clocks agree within ms
+    const skew = S.timer && typeof S.timer.now === 'number' ? S.timer.now - Date.now() : 0;
+    S.timerSkew = Math.abs(skew) > 2000 ? skew : 0;
+    renderStats();
+    retick();
+    refreshToolMenu();
+    const d = S.timer && S.timer.done;
+    if (d && d.popup === 'failed' && !(was && was.done && was.done.endAt === d.endAt && was.done.popup === 'failed')) setNote(`Timer done: ${d.label || ''}`);
+  });
+  mantle.on('notes.state', (st) => { S.notes = st && typeof st === 'object' ? st : null; renderStats(); });
+  document.addEventListener('visibilitychange', retick);
 
   renderBar();
   call('topbar.hello').then((r) => {

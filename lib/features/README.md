@@ -40,8 +40,9 @@ Chord names: `Win+S` `Win+V` `Win+Tab` `Win+Left` `Win+Right` `Win+Up` `Win+Down
 `Win+Shift+S` `PrintScreen`, and the bare volume keys `VolumeUp` `VolumeDown` `VolumeMute` (any
 modifier held leaves them Windows'). Observed keys (seen, never taken): the same three volume keys;
 one feature may not list a key both as a chord and as observed.
-With a modifier IN the chord: `Win+Alt+T` (top bar hide/show) and `Win+Ctrl+T` (keep on top): Alt /
-Ctrl held is part of those two only, and their keyups get the partner key like Win's.
+With a modifier IN the chord: `Win+Alt+T` (top bar hide/show), `Win+Alt+N` (quick notes) and
+`Win+Ctrl+T` (keep on top): Alt / Ctrl held is part of those three only, and their keyups get the
+partner key like Win's.
 A chord may be claimed by ONE feature (the second claim is refused and named, in file order).
 Reserved names (Mantle's own prefixes): features state sys windows bar launcher desktop switcher
 notifs qs wallpaper shell tray media battery volume net apps mantle test.
@@ -117,8 +118,10 @@ sidecar's history). Its chords go back to Windows, its commands answer "... is r
 VALORANT runs", and its state piece reads HEALTHY with `resting` set (no strip row). When the last
 game exits, wakeAll() runs your install() again with a fresh ctx: the same path as start-up.
 Resting now: clipboard, osd, screenshot, snap, taskview, topbar, search (Win+S needs the launcher,
-which rests too), ontop (its pins go off top for the game and back on after, lib/features/ontop.js). Main also closes the launcher (Win key -> Start) and the switcher (Alt+Tab ->
+which rests too), ontop (its pins go off top for the game and back on after, lib/features/ontop.js), notes (its pad closes). Main also closes the launcher (Win key -> Start) and the switcher (Alt+Tab ->
 Windows), and unloads the wallpaper. Kept: the bar, the desktop layer, main, the sidecar.
+The timer deliberately does NOT rest (a countdown must survive a game): it learns of the rest from
+lib/features/_tools-hub.js (topbar sets it) and holds its done pop-up, beeping once, until the game ends.
 
 ## stop()
 

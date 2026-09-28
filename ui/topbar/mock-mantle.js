@@ -75,6 +75,22 @@
   STATS.nogpu = JSON.parse(JSON.stringify(STATS.ok));
   STATS.nogpu.gpu = { pct: null, reason: 'Windows has no GPU performance counters here (\\GPU Engine is missing), so the GPU cannot be measured' };
   const stats = q.get('stats') === 'paused' ? null : (STATS[q.get('stats')] || STATS.ok);
+  // THE TWO SMALL TOOLS (lane tbtools): timer=run|pause|sw|swpause|idle|persistbad  tool=timer (its menu
+  // open)  custom=<text> (typed into its Custom… box)  notes=open|bad  notes=click (the icon pressed)
+  const T0 = Date.now();
+  const TIMERS = {
+    // a started one ends exactly ms on, as timer.js does (the +400 is only for the fixed 18:42 shot)
+    run: (ms, label) => ({ kind: 'timer', endAt: ms ? Date.now() + ms : T0 + 18 * 60000 + 42000 + 400, totalMs: ms || 25 * 60000, label: label || '25 min', startedAt: T0 - 60000, now: Date.now() }),
+    pause: () => ({ kind: 'timer', paused: true, leftMs: 7 * 60000 + 5000, totalMs: 15 * 60000, label: '15 min', now: Date.now() }),
+    sw: () => ({ kind: 'stopwatch', startAt: T0 - (12 * 60000 + 5000) - 300, now: Date.now() }),
+    swpause: () => ({ kind: 'stopwatch', paused: true, elapsedMs: 41 * 60000 + 17000, now: Date.now() }),
+    idle: () => ({ kind: 'idle', now: Date.now() }),
+    persistbad: () => ({ kind: 'idle', persist: { ok: false, reason: "EPERM: operation not permitted, open 'C:\\Users\\user\\AppData\\Roaming\\mantle\\features\\timer.json'" }, now: Date.now() }),
+  };
+  const NOTES = {
+    open: { open: true, count: 3, saved: { ok: true, at: T0 }, file: 'C:\\Users\\user\\Documents\\Mantle Notes\\notes.md' },
+    bad: { open: false, count: 3, saved: { ok: false, reason: "EACCES: permission denied, open 'C:\\Users\\user\\Documents\\Mantle Notes\\notes.md.tmp-7'" } },
+  };
   const handlers = {};
   const fail = q.get('fail') === '1';
   window.__mockCalls = [];
@@ -90,6 +106,12 @@
         case 'topbar.uia': return Promise.resolve({ menu: { source: 'uia', hwnd: focus.hwnd, items: [
           { t: 'item', pos: 0, label: 'View', mn: 'v', items: [], lazy: true, enabled: true }, { t: 'item', pos: 1, label: 'History', mn: 'h', items: null, enabled: true }] } });
         case 'topbar.power': return Promise.resolve(args.confirmed || /lock|sleep/.test(args.action) ? { ok: true, dryRun: true, reason: 'dry run: would run shutdown.exe' } : { ok: false, reason: 'asks first' });
+        case 'timer.start': {   // the two small tools (lane tbtools): a started timer comes back as timer.state
+          const C = window.TimerCore, v = args.ms ? { ok: true, ms: args.ms, label: C.labelFor(args.ms) } : C.parseDuration(args.text);
+          if (!v.ok) return Promise.resolve({ ok: false, reason: v.reason });
+          setTimeout(() => window.mantle.emit('timer.state', TIMERS.run(v.ms, v.label)), 10);
+          return Promise.resolve({ ok: true });
+        }
         default: return Promise.resolve({ ok: true });
       }
     },
@@ -97,11 +119,21 @@
   window.addEventListener('load', () => {
     if (q.get('stats') === 'paused') window.mantle.emit('topbar.stats', { paused: true, reason: 'the screen is locked' });
     if (q.get('note') === '1') window.mantle.emit('topbar.note', { text: 'the top bar cannot follow the focused app: the sidecar did not answer within 4 s' });
+    if (TIMERS[q.get('timer')]) window.mantle.emit('timer.state', TIMERS[q.get('timer')]());
+    if (NOTES[q.get('notes')]) window.mantle.emit('notes.state', NOTES[q.get('notes')]);
     setTimeout(() => {
       const open = q.get('open'), stat = q.get('stat');
       const S = window.__topbar;
       const down = (el) => el && el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       if (stat) down(document.querySelector(`.st[data-k="${stat}"]`));
+      if (q.get('tool')) down(document.querySelector(`.tool[data-tool="${q.get('tool')}"]`));
+      if (q.get('custom') != null && S && S.open && S.open.tool === 'timer') {
+        const row = document.querySelector('.r[data-l="0"][data-r="5"]');   // Custom…
+        if (row) row.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        const inp = document.querySelector('input.lbi');
+        if (inp) { inp.value = q.get('custom'); inp.dispatchEvent(new Event('input', { bubbles: true })); }
+        if (q.get('enter') === '1' && inp) inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      }
       if (open != null) {
         down(document.querySelector(`.t[data-i="${open}"]`));
         const r = q.get('sub');

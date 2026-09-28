@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle quick notes</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="notes.css">
+</head>
+<body>
+<!-- Quick notes (lib/features/notes.js): drops down from the top bar like one of its menus.
+     Tabs = the notes (each one's first line), "+" = a new note, the text, and a footer that says in
+     plain words whether it is saved, and if not, why and where. The text never leaves this page
+     except when main asks for it (window.__notesTake); nothing here sends text in a call. -->
+<main id="pad" class="pad" aria-label="Quick notes">
+  <div class="top">
+    <div id="tabs" class="tabs" role="tablist" aria-label="Notes"></div>
+    <button id="add" class="add" type="button" title="New note (Ctrl+N)" aria-label="New note">
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M6 1.5v9M1.5 6h9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" fill="none"/></svg>
+    </button>
+  </div>
+  <div class="sheet">
+    <textarea id="text" spellcheck="true" autocomplete="off" aria-label="Note text" placeholder="Type a note"></textarea>
+  </div>
+  <footer id="foot" class="foot">
+    <div class="words">
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <div id="notice" class="notice" hidden></div>
+    </div>
+    <button id="del" class="del" type="button">Delete</button>
+  </footer>
+</main>
+<script src="mock-mantle.js"></script>
+<script src="notes.js"></script>
+</body>
+</html>

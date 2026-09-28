@@ -1,0 +1,111 @@
+/* notes.css — the quick notes pad (lib/features/notes.js), in the taskbar island's theme
+ * (glass-light.css --lg-* ONLY; one theme for every Mantle surface, Owen 2026-09-21). It is one of
+ * the top bar's dropdowns (ui/topbar/topbar.css .dd): popover glass, 1px lip, 10px radius, the
+ * downward shadow, square to the bar. Light frost, dark ink, plain hairlines, NO glow.
+ * The window is the pad plus room for its shadow (notes.js WIN_W/WIN_H: 16 px each side, 24 below).
+ * The writing surface is a second layer of the same popover fill: .72 over .72 reads as paper over
+ * whatever app is behind, so the text never fights the screen under it. */
+:root { --pad-w: 380px; --pad-h: 340px; --side: 16px; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+body {
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px;
+  color: var(--lg-ink);
+  cursor: default;
+  user-select: none;
+}
+
+.pad {
+  position: absolute; left: var(--side); top: 0; width: var(--pad-w); height: var(--pad-h);
+  display: flex; flex-direction: column;
+  padding: 5px;
+  background-color: var(--lg-fill-strong);
+  border: 1px solid var(--lg-edge-in);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 var(--lg-edge-in), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  color: var(--lg-ink);
+}
+/* the top bar dropdown's entrance, once per open */
+.pad.anim { animation: pad-in 140ms var(--lg-ease) backwards; }
+@keyframes pad-in { from { opacity: 0; transform: translateY(-3px); } }
+
+/* ---- tabs: one per note, its first line; sideways scroll when many ---- */
+.top { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; height: 26px; }
+.tabs {
+  flex: 1 1 auto; min-width: 0; height: 100%;
+  display: flex; align-items: center; gap: 2px;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior: contain;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tab, .add, .del {
+  height: 22px; padding: 0 9px; border: 0; border-radius: var(--lg-r-ctl);
+  background: transparent; color: var(--lg-ink-2); font: inherit; white-space: nowrap;
+  display: inline-flex; align-items: center; flex: 0 0 auto;
+}
+.tab { max-width: 150px; }
+.tab .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab.empty { color: var(--lg-ink-3); }
+.tab:hover, .add:hover, .del:hover { background: var(--lg-hover); }
+.tab:active, .add:active, .del:active { background: var(--lg-press); }
+.tab.on { background: var(--lg-press); color: var(--lg-ink); }
+.tab.on.empty { color: var(--lg-ink-2); }
+.add { width: 24px; padding: 0; justify-content: center; }
+.add svg { display: block; }
+.tab:focus-visible, .add:focus-visible, .del:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
+/* a hint that more tabs sit off to the side: a plain hairline, not a fade */
+.top.more-r .tabs { box-shadow: inset -1px 0 0 var(--lg-edge-out); }
+.top.more-l .tabs { box-shadow: inset 1px 0 0 var(--lg-edge-out); }
+.top.more-l.more-r .tabs { box-shadow: inset 1px 0 0 var(--lg-edge-out), inset -1px 0 0 var(--lg-edge-out); }
+
+/* ---- the text ---- */
+.sheet {
+  flex: 1 1 auto; min-height: 0; margin-top: 5px; display: flex;
+  background-color: var(--lg-fill-strong);
+  border-radius: var(--lg-r-ctl);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+}
+textarea {
+  flex: 1 1 auto; min-width: 0; resize: none; border: 0; outline: 0; margin: 0;
+  padding: 10px 12px;
+  background: transparent; color: var(--lg-ink); caret-color: var(--lg-acc);
+  font-family: inherit; font-size: 13px; line-height: 1.5;
+  user-select: text; cursor: text;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+textarea::placeholder { color: var(--lg-ink-3); }
+textarea::selection { background: var(--lg-acc-soft); color: var(--lg-ink); }
+textarea::-webkit-scrollbar { width: 10px; }
+textarea::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 5px; border: 3px solid transparent; background-clip: content-box; }
+textarea::-webkit-scrollbar-thumb:hover { background: var(--lg-press); background-clip: content-box; }
+
+/* ---- footer: saved / not saved (and why), Delete ---- */
+.foot {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  min-height: 28px; padding: 5px 0 0 4px;
+  font-size: 11.5px; color: var(--lg-ink-3);
+}
+.words { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; padding: 2px 0; }
+.status.warn {
+  color: var(--lg-warn); background: var(--lg-warn-soft); border-radius: var(--lg-r-ctl);
+  padding: 3px 7px; white-space: normal; line-height: 1.35;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden;
+}
+.notice { line-height: 1.35; color: var(--lg-ink-2); }
+.notice.warn { color: var(--lg-warn); }
+.del { color: var(--lg-ink-2); align-self: flex-start; margin-top: 1px; }
+.del.armed { background: var(--lg-warn-soft); color: var(--lg-warn); }
+.del.armed:hover { background: var(--lg-warn-soft); }
+.del:disabled { color: var(--lg-ink-3); background: transparent; }
+
+/* ---- over file:// with mock-mantle.js: a made-up desktop and a strip standing in for the top bar ---- */
+body.mock { background: linear-gradient(160deg, #6d7fa6 0%, #b9c3d6 55%, #e7e2da 100%); }
+body.mock.busy { background: repeating-linear-gradient(90deg, #ffffff 0 22px, #1d2433 22px 24px, #ffffff 24px 46px), #fff; }
+body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3a3f4c 100%); }
+body.mock::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 28px;
+  background-color: var(--lg-fill-fb);
+  box-shadow: inset 0 -1px 0 var(--lg-edge-out), var(--lg-lip-up);
+}
+body.mock .pad { top: 30px; }

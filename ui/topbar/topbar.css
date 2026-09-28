@@ -99,6 +99,11 @@ body.mock .dd, body.solid .dd { background-color: #F7F8FB; }
 .r .ar { color: var(--lg-ink-3); font-size: 10px; text-align: right; }
 .r.sel { background: var(--lg-acc); color: var(--lg-acc-on); }
 .r.sel .ck, .r.sel .kb, .r.sel .ar { color: var(--lg-acc-on); }
+/* window layouts: the name box inside a menu row (lane layouts) */
+.r.edit { background: var(--lg-acc-soft); }
+.r.edit .lbi { width: 100%; min-width: 150px; height: 20px; padding: 0 6px; border: 1px solid var(--lg-acc); border-radius: 4px;
+  background: var(--lg-fill-strong); color: var(--lg-ink); font: inherit; outline: none; }
+.r.edit .lbi::placeholder { color: var(--lg-ink-3); }
 .r.off { color: var(--lg-ink-3); }
 .r.off.sel { background: var(--lg-hover); color: var(--lg-ink-3); }
 .r.armed { background: var(--lg-warn-soft); color: var(--lg-warn); }
@@ -117,3 +122,16 @@ body.mock .dd, body.solid .dd { background-color: #F7F8FB; }
 /* the fill's height is set through the CSSOM (topbar.js renderStatMenu): the page's CSP
  * (style-src file:) drops inline style="" attributes, which left every bar empty */
 .core i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--lg-acc); opacity: .75; }
+
+/* THE TWO SMALL TOOLS (lane tbtools, 2026-09-27): the timer / stopwatch and quick notes at the right
+ * end of the bar, after the stats. The running time is the stats' kind of cell: tabular figures, so a
+ * digit changing never moves the bar. Paused = the pause glyph and the muted ink; a notes save that
+ * failed = warn ink and a dot (the reason is the tooltip, and the pad itself says it in full). */
+.t.tool { padding: 0 7px; }
+.t.tool[data-tool="timer"] { margin-left: 4px; }
+.t.tm { gap: 5px; padding: 0 8px 0 7px; font-variant-numeric: tabular-nums; }
+.t.tm svg { width: 13px; height: 13px; display: block; flex: 0 0 auto; }
+.t.tm .v { display: inline-block; min-width: 4.6ch; text-align: right; }   /* >= "59:59" (4.4ch was 0.1 px short of it) */
+.t.tm.pz { color: var(--lg-ink-3); }
+.t.tool.bad { color: var(--lg-warn); }
+.t.tool.bad::after { content: ''; width: 5px; height: 5px; margin-left: 3px; border-radius: 50%; background: var(--lg-warn); }

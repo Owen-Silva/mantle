@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle timer done</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="timer.css">
+</head>
+<body>
+<!-- "Timer done" (lib/features/timer.js): made when a timer reaches zero, at the primary screen's
+     top-right under the top bar, destroyed on Again / Dismiss or after 2 minutes. It never takes the
+     keyboard (focusable:false); its buttons still take a click. A soft two-note chime is made here
+     with Web Audio (no files); a chime that cannot play says why on the card. -->
+<div id="card" class="card" role="alertdialog" aria-labelledby="title" aria-describedby="sub" hidden>
+  <span class="glyph" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16"><circle cx="8" cy="9.2" r="5.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6.4 1.9h3.2M8 1.9v2M8 9.2V6.4M12.1 4.4l1 -1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+  </span>
+  <div class="words">
+    <div id="title" class="title"></div>
+    <div id="sub" class="sub"></div>
+  </div>
+  <div class="acts">
+    <button id="again" class="b" type="button">Again</button>
+    <button id="dismiss" class="b" type="button">Dismiss</button>
+  </div>
+  <i id="life" class="life" aria-hidden="true"></i>
+</div>
+<script src="mock-mantle.js"></script>
+<script src="../../lib/features/_timer-core.js"></script>
+<script src="timer.js"></script>
+</body>
+</html>

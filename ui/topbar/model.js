@@ -96,6 +96,11 @@
     // again, and so does the Top bar row in the bottom bar's quick settings (lib/features/topbar.js).
     { t: 'item', label: 'Hide top bar', act: 'hide', key: 'Win+Alt+T', enabled: true },
     { t: 'sep' },
+    // Window layouts (lane layouts, 2026-09-27): filled from lib/features/layouts.js's layouts.state
+    // by layoutMenus() below; until that arrives they say why they are empty.
+    { t: 'item', label: 'Layouts', act: 'layouts', mn: 'y', items: [{ t: 'item', label: 'Window layouts are not running', enabled: false }], enabled: true },
+    { t: 'item', label: 'Save layout…', act: 'layoutsSave', mn: 'v', items: [{ t: 'item', label: 'Window layouts are not running', enabled: false }], enabled: true },
+    { t: 'sep' },
     { t: 'item', label: 'Lock', act: 'power', power: 'lock', enabled: true },
     { t: 'item', label: 'Sleep', act: 'power', power: 'sleep', enabled: true },
     { t: 'item', label: 'Restart…', act: 'power', power: 'restart', confirm: 'Click again to restart', enabled: true },
@@ -181,6 +186,122 @@
     return it;
   }
 
-  return { appName: appName, cleanItems: cleanItems, newWindowArgs: newWindowArgs, appMenu: appMenu,
-           titles: titles, fitTitles: fitTitles, MANTLE_MENU: MANTLE_MENU, pct: pct, gb: gb, rate: rate, statCells: statCells, base: base, peekMenu: peekMenu };
+  /* WINDOW LAYOUTS (lane layouts): the two submenus from layouts.state {layouts:[{name,count,apps}],
+     enabled, busy}. Layouts > <name> puts it back (one click); Rename / Delete are under it. Save
+     layout… > New layout… asks for a name in the menu itself; Replace <name> overwrites (confirmed).
+     layoutMenus mutates the items in place, like peekMenu. */
+  function layoutItems(st) {
+    var ls = (st && st.layouts) || [];
+    var busy = st && st.busy;
+    if (st && st.enabled === false) {
+      return { restore: [{ t: 'item', label: 'Window layouts are switched off in the tray', enabled: false }],
+               save: [{ t: 'item', label: 'Window layouts are switched off in the tray', enabled: false }] };
+    }
+    var restore = ls.map(function (l) {
+      return { t: 'item', label: l.name, act: 'layoutRestore', layout: l.name, enabled: !busy,
+               key: l.count + (l.count === 1 ? ' window' : ' windows') };
+    });
+    if (busy) restore.unshift({ t: 'item', label: 'Putting ' + busy + ' back…', enabled: false });
+    if (!ls.length) restore.push({ t: 'item', label: 'No layouts yet: Save layout… names what is on screen', enabled: false });
+    else {
+      restore.push({ t: 'sep' });
+      restore.push({ t: 'item', label: 'Rename', enabled: true, items: ls.map(function (l) {
+        return { t: 'item', label: l.name + '…', act: 'layoutRename', layout: l.name, enabled: true };
+      }) });
+      restore.push({ t: 'item', label: 'Delete', enabled: true, items: ls.map(function (l) {
+        return { t: 'item', label: l.name, act: 'layoutDelete', layout: l.name, confirm: 'Click again to delete ' + l.name, enabled: true };
+      }) });
+    }
+    var save = [{ t: 'item', label: 'New layout…', act: 'layoutNew', enabled: true }];
+    if (ls.length) {
+      save.push({ t: 'sep' });
+      ls.forEach(function (l) {
+        save.push({ t: 'item', label: 'Replace ' + l.name, act: 'layoutSave', layout: l.name, confirm: 'Click again to replace ' + l.name, enabled: true });
+      });
+    }
+    return { restore: restore, save: save };
+  }
+  function layoutMenus(menu, st) {
+    var x = layoutItems(st);
+    for (var i = 0; i < (menu || []).length; i++) {
+      if (menu[i].act === 'layouts') menu[i].items = x.restore;
+      else if (menu[i].act === 'layoutsSave') menu[i].items = x.save;
+    }
+    return x;
+  }
+
+  /* THE TOP BAR'S TWO SMALL TOOLS (lane tbtools, 2026-09-27): a timer / stopwatch and quick notes,
+     two buttons at the right end of the bar. The engine is lib/features/timer.js (it never rests, so a
+     timer still ends during a game) and its pure math is lib/features/_timer-core.js, which the page
+     loads too (window.TimerCore) and hands in here as `core`: one definition of "18:42" everywhere.
+     `st` is timer.state: {kind:'idle'|'timer'|'stopwatch', paused, endAt, leftMs, label, startAt,
+     elapsedMs, persist, ...}. */
+  var TIMER_PRESETS = [5, 15, 25, 50];
+  var ADD_MS = 5 * 60000;
+  function clockAt(ms) {
+    try { return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch (_) { return ''; }
+  }
+  function presetItems(prefix) {
+    return TIMER_PRESETS.map(function (m) {
+      return { t: 'item', label: (prefix || '') + m + ' minutes', act: 'timerStart', ms: m * 60000, mn: '', enabled: true };
+    });
+  }
+  /* What the bar shows for the timer: null = the plain icon (nothing runs). */
+  function timerCell(st, now, core) {
+    if (!st || !core || (st.kind !== 'timer' && st.kind !== 'stopwatch')) return null;
+    if (st.kind === 'timer') {
+      var left = st.paused ? st.leftMs : core.leftMs(st, now);
+      var t = core.formatClock(left);
+      return { text: t, up: false, paused: !!st.paused,
+        title: (st.label || 'Timer') + ' timer · ' + (st.paused ? 'paused with ' + t + ' left' : 'ends ' + clockAt(st.endAt)) };
+    }
+    var e = core.formatClock(st.paused ? st.elapsedMs : core.elapsedMs(st, now), true);
+    return { text: e, up: true, paused: !!st.paused, title: 'Stopwatch · ' + e + (st.paused ? ' (paused)' : '') };
+  }
+  /* The timer's dropdown. Rows of t:'info' are plain words (never selectable). */
+  function timerMenu(st, now, core) {
+    var items = [];
+    var kind = st && st.kind;
+    var cell = timerCell(st, now, core);
+    if (kind === 'timer') {
+      items.push({ t: 'info', enabled: false, text: cell.title });
+      items.push(st.paused ? { t: 'item', label: 'Resume', act: 'timerResume', enabled: true } : { t: 'item', label: 'Pause', act: 'timerPause', enabled: true });
+      items.push({ t: 'item', label: 'Add 5 minutes', act: 'timerAdd', ms: ADD_MS, enabled: true });
+      items.push({ t: 'item', label: 'Cancel timer', act: 'timerCancel', confirm: 'Click again to cancel the timer', enabled: true });
+      items.push({ t: 'sep' });
+      items.push({ t: 'item', label: 'Start another', mn: 's', enabled: true,
+        items: presetItems().concat([{ t: 'sep' }, { t: 'item', label: 'Stopwatch', act: 'timerStopwatch', enabled: true }]) });
+    } else if (kind === 'stopwatch') {
+      // words that hold still while it runs (the bar itself counts): the open menu is not redrawn every second
+      items.push({ t: 'info', enabled: false, text: st.paused ? 'Stopwatch · paused at ' + cell.text : 'Stopwatch · running' });
+      items.push(st.paused ? { t: 'item', label: 'Resume', act: 'timerResume', enabled: true } : { t: 'item', label: 'Pause', act: 'timerPause', enabled: true });
+      items.push({ t: 'item', label: 'Reset to 0:00', act: 'timerStopwatch', enabled: true });
+      items.push({ t: 'item', label: 'Stop stopwatch', act: 'timerCancel', confirm: 'Click again to stop the stopwatch', enabled: true });
+      items.push({ t: 'sep' });
+      items.push({ t: 'item', label: 'Start a timer', mn: 's', enabled: true, items: presetItems() });
+    } else {
+      items = presetItems();
+      items.push({ t: 'sep' });
+      items.push({ t: 'item', label: 'Custom…', act: 'timerCustom', key: '12 or 1:30', mn: 'c', enabled: true,
+        placeholder: 'Minutes (12) or h:mm (1:30)', aria: 'Timer length', maxlength: 12 });
+      items.push({ t: 'sep' });
+      items.push({ t: 'item', label: 'Stopwatch', act: 'timerStopwatch', enabled: true });
+    }
+    if (!st) items.push({ t: 'info', bad: true, enabled: false, text: 'The timer has not answered yet: it may be switched off in the tray or not running' });
+    if (st && st.persist && st.persist.ok === false) items.push({ t: 'info', bad: true, enabled: false, text: 'Not kept across a restart: ' + (st.persist.reason || 'the settings file cannot be written') });
+    if (st && st.done && st.done.popup === 'failed') items.push({ t: 'info', bad: true, enabled: false, text: 'Timer done: ' + (st.done.label || '') + '. Its pop-up did not show: ' + (st.done.reason || 'no reason came back') });
+    return items;
+  }
+  /* The notes button's look from notes.state {open, count, saved:{ok, reason}, file}. */
+  function notesButton(st) {
+    var bad = !!(st && st.saved && st.saved.ok === false);
+    return {
+      open: !!(st && st.open), bad: bad,
+      title: bad ? 'Quick notes: NOT saved: ' + (st.saved.reason || 'no reason came back') : 'Quick notes (Win+Alt+N)' + (st && st.count ? ' · ' + st.count + (st.count === 1 ? ' note' : ' notes') : ''),
+    };
+  }
+
+  return { layoutItems: layoutItems, layoutMenus: layoutMenus, appName: appName, cleanItems: cleanItems, newWindowArgs: newWindowArgs, appMenu: appMenu,
+           titles: titles, fitTitles: fitTitles, MANTLE_MENU: MANTLE_MENU, pct: pct, gb: gb, rate: rate, statCells: statCells, base: base, peekMenu: peekMenu,
+           timerCell: timerCell, timerMenu: timerMenu, notesButton: notesButton, clockAt: clockAt, TIMER_PRESETS: TIMER_PRESETS };
 }));

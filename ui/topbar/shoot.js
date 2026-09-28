@@ -41,6 +41,16 @@ const SHOTS = [
   ['15-paused', 'stats=paused'],
   ['16-dark-file', 'app=npp&open=2&dark=1'],
   ['17-desktop', 'app=desktop&open=1'],
+  // the two small tools (lane tbtools, 2026-09-27)
+  ['30-timer-menu', 'app=npp&timer=idle&tool=timer'],
+  ['31-timer-running', 'app=npp&timer=run'],
+  ['32-timer-running-menu', 'app=npp&timer=run&tool=timer'],
+  ['33-timer-paused', 'app=npp&timer=pause'],
+  ['34-stopwatch-menu', 'app=npp&timer=sw&tool=timer'],
+  ['35-timer-custom', 'app=npp&timer=idle&tool=timer&custom=1:30'],
+  ['36-timer-custom-typo', 'app=npp&tool=timer&custom=abc&enter=1'],
+  ['37-notes-bad-timer-running', 'app=npp&notes=bad&timer=run'],
+  ['38-timer-persist-bad', 'app=npp&timer=persistbad&tool=timer'],
 ];
 
 /* ---- 4. fit ---------------------------------------------------------------------------------- */
@@ -294,6 +304,133 @@ async function dropChecks(browser, check) {
   await p3.close();
 }
 
+/* ---- 6. the two small tools (lane tbtools, 2026-09-27) --------------------------------------- */
+async function toolChecks(browser, check) {
+  const page = await browser.newPage({ viewport: { width: 1536, height: 420 }, deviceScaleFactor: 1.25 });
+  const load = async (q) => { await page.goto(PAGE + '?' + q); await page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 5000 }); };
+  await load('app=npp');
+  // the running time's cell never changes width as its digits do (tabular figures + a min width)
+  const widths = await page.evaluate(() => {
+    const out = [];
+    for (const left of [59 * 60000 + 59000, 10 * 60000, 9 * 60000 + 59000, 5000]) {
+      window.mantle.emit('timer.state', { kind: 'timer', endAt: Date.now() + left - 1, totalMs: 3600000, label: '1 h', now: Date.now() });
+      const b = document.querySelector('.tool.tm');
+      out.push([b && b.querySelector('.v').textContent, b ? Math.round(b.getBoundingClientRect().width * 10) / 10 : null]);
+    }
+    window.mantle.emit('timer.state', { kind: 'idle', now: Date.now() });
+    return out;
+  });
+  check('tools: the running time keeps its width from 59:59 down to 0:05', widths.every((w) => w[1] != null && w[1] === widths[0][1]) &&
+    JSON.stringify(widths.map((w) => w[0])) === '["59:59","10:00","9:59","0:05"]', JSON.stringify(widths));
+  // the menu hangs from the button's right edge; arrows stay in it; a digit starts the custom length
+  const m = await page.evaluate(async () => {
+    const S = window.__topbar;
+    const key = (k) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+    document.querySelector('.tool[data-tool="timer"]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    const out = { open: !!(S.open && S.open.tool === 'timer') };
+    const dd = document.querySelector('.dd'), b = document.querySelector('.tool[data-tool="timer"]');
+    out.rightGap = dd && b ? Math.round(dd.getBoundingClientRect().right - b.getBoundingClientRect().right) : null;
+    out.rows = [...document.querySelectorAll('.dd .r .lb')].map((e) => e.textContent);
+    key('ArrowDown'); out.first = S.open.stack[0].sel;
+    key('ArrowLeft'); key('ArrowRight'); out.stayed = !!(S.open && S.open.tool === 'timer');
+    // the first digit opens the box with it; a second one dispatched on the document (not the focused
+    // box, as a real key would be) must ADD to it, never restart it
+    key('1');
+    const b1 = !!document.querySelector('input.lbi') && !!S.edit && S.edit.value === '1';
+    key('2');
+    const inp = document.querySelector('input.lbi');
+    out.boxStarted = b1 && !!inp && !!S.edit && S.edit.value === '12';
+    if (inp) { inp.value = '12'; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); }
+    await new Promise((r) => setTimeout(r, 60));
+    const st = window.__mockCalls.filter((c) => c.name === 'timer.start').pop();
+    out.started = st ? st.args : null;
+    out.closed = !S.open;
+    const ms = window.__mockCalls.filter((c) => c.name === 'topbar.menuState').pop();
+    out.refocus = ms && ms.args.refocus;
+    out.cell = (document.querySelector('.tool.tm .v') || {}).textContent || null;
+    return out;
+  });
+  check('tools: the timer button opens its menu, hung from the button\'s right edge', m.open && m.rightGap != null && Math.abs(m.rightGap) <= 1, JSON.stringify(m));
+  check('tools: the timer menu offers 5 / 15 / 25 / 50 minutes, Custom… and Stopwatch',
+    JSON.stringify(m.rows) === '["5 minutes","15 minutes","25 minutes","50 minutes","Custom…","Stopwatch"]', JSON.stringify(m.rows));
+  check('tools: ArrowDown selects 5 minutes; Left / Right do not walk into the app\'s menus', m.first === 0 && m.stayed, JSON.stringify(m));
+  check('tools: typing a digit opens the Custom box with it; "12" Enter starts timer.start {text:"12"}, closes, gives the app its keyboard back',
+    m.boxStarted && m.started && m.started.text === '12' && m.closed && m.refocus === true, JSON.stringify(m));
+  check('tools: the started timer shows on the bar (12:00)', m.cell === '12:00' || m.cell === '11:59', m.cell);
+  // a typo keeps the box open and says why; nothing is started
+  await load('app=npp&tool=timer&custom=abc&enter=1');
+  // (every amber line: with no timer.state yet the menu also says "The timer has not answered yet")
+  const typo = await page.evaluate(() => ({ info: [...document.querySelectorAll('.dd .info.bad')].map((e) => e.textContent).join(' | '), box: !!document.querySelector('input.lbi'),
+    started: window.__mockCalls.filter((c) => c.name === 'timer.start').length,
+    rightGap: (() => { const dd = document.querySelector('.dd'), b = document.querySelector('.tool[data-tool="timer"]'); return dd && b ? Math.round(dd.getBoundingClientRect().right - b.getBoundingClientRect().right) : null; })() }));
+  check('tools: a typo in the custom length keeps the box and says how to type it; nothing starts', /Type minutes \(12\)/.test(typo.info) && typo.box && typo.started === 0, JSON.stringify(typo));
+  check('tools: a WIDE timer menu (two long amber lines) still hangs from its button\'s right edge', typo.rightGap != null && Math.abs(typo.rightGap) <= 1, JSON.stringify(typo));
+  // one tick a second while it runs, none while paused or idle
+  await load('app=npp&timer=run');
+  const t0 = await page.evaluate(() => document.querySelector('.tool.tm .v').textContent);
+  await page.waitForTimeout(1150);
+  const t1 = await page.evaluate(() => ({ text: document.querySelector('.tool.tm .v').textContent, tick: !!window.__topbar.tickT }));
+  const secs = (s) => s.split(':').reduce((a, x) => a * 60 + +x, 0);
+  check('tools: while a timer runs the bar counts down one second at a time (and a tick is armed)', secs(t0) - secs(t1.text) === 1 && t1.tick, JSON.stringify([t0, t1]));
+  await load('app=npp&timer=pause');
+  const pz = await page.evaluate(() => ({ tick: window.__topbar.tickT, cls: document.querySelector('.tool.tm').className, text: document.querySelector('.tool.tm .v').textContent }));
+  check('tools: a paused timer shows its time muted with the pause glyph, and nothing ticks', !pz.tick && /\bpz\b/.test(pz.cls) && pz.text === '7:05', JSON.stringify(pz));
+  await load('app=npp&timer=idle');
+  const idle = await page.evaluate(() => ({ tick: window.__topbar.tickT, cell: !!document.querySelector('.tool.tm'), icon: !!document.querySelector('.tool[data-tool="timer"] svg') }));
+  check('tools: idle = the plain icon and no tick at all', !idle.tick && !idle.cell && idle.icon, JSON.stringify(idle));
+  // notes: the button calls notes.toggle with its right edge in screen DIP and what it knew
+  for (const [q, want] of [['app=npp', false], ['app=npp&notes=open', true]]) {
+    await load(q);
+    const n = await page.evaluate(() => {
+      const b = document.querySelector('.tool[data-tool="notes"]');
+      b.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      const c = window.__mockCalls.filter((x) => x.name === 'notes.toggle').pop();
+      return { args: c ? c.args : null, right: Math.round((window.screenX || 0) + b.getBoundingClientRect().right), cls: b.className };
+    });
+    check(`tools: the notes button calls notes.toggle {x, app, wasOpen:${want}}`, n.args && n.args.x === n.right && n.args.app === '4242' && n.args.wasOpen === want &&
+      (want ? /\bopen\b/.test(n.cls) : true), JSON.stringify(n));
+  }
+  await load('app=npp&notes=bad');
+  const bad = await page.evaluate(() => { const b = document.querySelector('.tool[data-tool="notes"]'); return { cls: b.className, title: b.title }; });
+  check('tools: a failed notes save turns the button amber and its tooltip says why', /\bbad\b/.test(bad.cls) && /NOT saved: EACCES/.test(bad.title), JSON.stringify(bad));
+  // the tools never push the stats off the screen (the bar's own fit rule), at the narrowest width
+  const fit = await browser.newPage({ viewport: { width: 1280, height: 420 }, deviceScaleFactor: 1.5 });
+  await fit.goto(PAGE + '?app=word&timer=run&notes=bad');
+  await fit.waitForFunction(() => document.documentElement.dataset.ready === '1');
+  const f = await fit.evaluate(measureFit);
+  const tr = await fit.evaluate(() => { const b = document.querySelector('.tool[data-tool="notes"]').getBoundingClientRect(); return Math.round(b.right); });
+  check('tools: at 1280 x 1.5 the stats and both tools stay on screen, nothing scrolls or wraps', f.cellsOn && tr <= f.vis && f.scroll[0] === f.scroll[1] && f.wrapped === 0, JSON.stringify({ f, tr }));
+  await fit.screenshot({ path: path.join(OUT, '1280-39-tools-fit-word.png') });
+  await fit.close();
+  await page.close();
+}
+
+/* ---- 7. the tools' own pages: the notes pad (ui/notes) and the timer's done pop-up (ui/timer) ---- */
+const OTHER = [
+  // [shot, page, query, viewport w, h]
+  ['40-notes-pad', 'ui/notes/index.html', 'mock=3notes', 420, 380],
+  ['41-notes-failed', 'ui/notes/index.html', 'mock=failed', 420, 380],
+  ['42-notes-armed', 'ui/notes/index.html', 'mock=armed', 420, 380],
+  ['43-timer-done', 'ui/timer/index.html', 'mock=done&label=25%20min', 340, 120],
+  ['44-timer-done-off', 'ui/timer/index.html', 'mock=off', 340, 120],
+  ['45-timer-done-game', 'ui/timer/index.html', 'mock=game', 340, 120],
+];
+async function otherPages(browser, check) {
+  for (const [name, file, q, w, h] of OTHER) {
+    const p = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1.25 });
+    const errs = [];
+    p.on('pageerror', (e) => errs.push(e.message));
+    try {
+      await p.goto('file:///C:/Users/user/mantle/' + file + '?' + q);
+      await p.waitForTimeout(500);
+      await p.screenshot({ path: path.join(OUT, `${name}.png`) });
+      const scroll = await p.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+      check(`${name}: renders with no page error and nothing scrolls sideways`, errs.length === 0 && scroll[0] <= scroll[1], JSON.stringify({ errs, scroll }));
+    } catch (e) { check(`${name}: loads`, false, e.message); }
+    await p.close();
+  }
+}
+
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   const browser = await chromium.launch({ executablePath: CHROME, headless: true });
@@ -364,6 +501,8 @@ async function dropChecks(browser, check) {
     await page.close();
     await fitChecks(browser, check);
     await dropChecks(browser, check);
+    await toolChecks(browser, check);
+    await otherPages(browser, check);
   } finally {
     await browser.close();
   }

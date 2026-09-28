@@ -84,16 +84,22 @@ namespace Mantle {
     // before its keyup (Start stays shut) and so does CTRL (_swallowedInCtrl): with the T eaten, a
     // Ctrl down/up with nothing between is a "lone Ctrl tap" to whatever watches for one (Windows'
     // "show the pointer when I press Ctrl", double-Ctrl tools). The Ctrl keyup itself always passes.
+    //
+    // WIN+ALT+N (lane tbtools, 2026-09-27): the top bar's quick notes pad. A second Alt chord, taken
+    // exactly like Win+Alt+T (ChordAlt: Win and Alt both get the partner key before their keyup).
+    // Not a Windows shortcut: RegisterHotKey(MOD_WIN|MOD_ALT, 'N') succeeded on 25H2 (26200) while
+    // the controls Win+Alt+T, Win+Alt+R, Win+Alt+G and Win+Alt+K (Game Bar's) were refused as taken
+    // (error 1409). Win+N (notifications), Win+Ctrl+Alt+N and Win+Alt+Shift+N stay Windows'.
     public static readonly string[] ChordNames = {
       "Win+S", "Win+V", "Win+Tab", "Win+Left", "Win+Right", "Win+Up", "Win+Down", "Win+Z",
-      "Win+Shift+S", "PrintScreen", "VolumeUp", "VolumeDown", "VolumeMute", "Win+Alt+T", "Win+Ctrl+T"
+      "Win+Shift+S", "PrintScreen", "VolumeUp", "VolumeDown", "VolumeMute", "Win+Alt+T", "Win+Ctrl+T", "Win+Alt+N"
     };
-    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD, 0x54, 0x54 };
-    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false, true, true };
-    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false, false, false };
-    static readonly bool[] ChordAlt = { false, false, false, false, false, false, false, false, false, false, false, false, false, true, false };
-    static readonly bool[] ChordCtrl = { false, false, false, false, false, false, false, false, false, false, false, false, false, false, true };
-    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false, false, false };
+    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD, 0x54, 0x54, 0x4E };
+    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false, true, true, true };
+    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false };
+    static readonly bool[] ChordAlt = { false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, true };
+    static readonly bool[] ChordCtrl = { false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false };
+    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false };
     /// Observed keys are REPORTED on every keydown (auto-repeat included: a held Volume Up keeps
     /// stepping) and NEVER swallowed: Windows still changes the volume itself. A volume key that
     /// is also a TAKEN chord is the chord's (swallowed, a chord event); untaken, it is observed.
