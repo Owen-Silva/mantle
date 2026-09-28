@@ -567,6 +567,10 @@
        it shows it is the wall; it measured 0 wide (hidden) otherwise. Like the tray, its left edge
        never moves with the chips: the island is right-anchored and the chips are to its left. */
     var tray = $('tray'), vol = $('volume');
+    /* The Downloads button (ui/bar/downloads.js) sits left of the speaker: while it shows, IT is the
+       first instrument, so the wall (with an empty tray the dock slid under it, mock 2026-09-27). */
+    var dlb = $('downloads');
+    if (dlb && dlb.getBoundingClientRect().width > 0) vol = dlb;
     var anchor = (el.media && el.media.getBoundingClientRect().width > 0) ? el.media
       : (tray && tray.getBoundingClientRect().width > 0) ? tray : (vol || el.right);
     /* EDGE MODE COUNTS THE STRIP (2026-09-23). Pill mode hides the strip (bar.css), so the rule
@@ -1415,6 +1419,7 @@
       if (window.MantleSpotify) MantleSpotify.closed();   // its 8 s queue refresh stops, the keyboard goes back
     }
     if (popKey.indexOf('jl:') === 0 && window.MantleJumpList) MantleJumpList.closed();   // gives the keyboard back
+    if (popKey === 'dl' && window.MantleDownloads) MantleDownloads.closed();             // its 30 s age ticker stops
     if (isFlyKey(popKey)) flyTeardown();
     popKey = null;
     el.pop.hidden = true;
@@ -1477,7 +1482,7 @@
     if (!popKey) return;
     if (el.pop.contains(ev.target)) return;
     // the anchors toggle themselves, so a click on one must not also be an outside click
-    if (ev.target.closest && ev.target.closest('#volume, #network, #battery, #clock, #notifs, #more, #media, .cell')) return;
+    if (ev.target.closest && ev.target.closest('#volume, #network, #battery, #clock, #notifs, #downloads, #more, #media, .cell')) return;
     closePop();
   }, true);
   document.addEventListener('keydown', function (ev) {
@@ -2897,6 +2902,19 @@
     });
   } else {
     fail('qsmore', 'Wi-Fi list missing', 'ui/bar/qs-more.js did not load, so quick settings has no Wi-Fi list, Bluetooth devices, output picker or mixer', 'warn');
+  }
+
+  /* The Downloads shelf (ui/bar/downloads.js), handed the same helpers as the bell. Without that
+     file the button would be dead, so it is hidden and the strip says why. */
+  if (window.MantleDownloads && MantleDownloads.init) {
+    MantleDownloads.init({
+      call: call, callR: callR, on: on, msg: msg, fail: fail, clearFail: clearFail,
+      openPop: openPop, closePop: closePop, popKey: function () { return popKey; }
+    });
+  } else {
+    var dlBtn = document.getElementById('downloads');
+    if (dlBtn) dlBtn.hidden = true;
+    fail('downloads', 'downloads shelf missing', 'ui/bar/downloads.js did not load, so the Downloads button is hidden', 'warn');
   }
 
   if (window.MantleNotifs) {

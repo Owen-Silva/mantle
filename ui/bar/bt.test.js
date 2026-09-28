@@ -243,6 +243,18 @@ check('battery glyph half at 50', /width="4\.30"/.test(T.batteryGlyph(50)));
 check('battery glyph clamps', /width="8\.60"/.test(T.batteryGlyph(250)) && (T.batteryGlyph(-5).match(/<rect/g) || []).length === 2);
 check('state glyphs', T.NO_BT.indexOf('<path') === 0 && T.PLUS.indexOf('<path') === 0);
 
+/* Hostile device data (lane secreview-dl, 2026-09-27): a device NAME is drawn as text by qs-more.js
+   (textContent / title / data-bt), and nothing a device says ever reaches a field that is markup
+   (icon, the battery glyph). A regression pin: it passed before and must keep passing. */
+{
+  const evil = '<img src=x onerror=alert(1)>"\\‮\u0001\uD800';
+  const hx = T.describe(row({ name: evil, kind: '<svg onload=x>', battery: '<b>', connected: true, canConnect: false, connectWhy: '<i>why</i>' }));
+  const iconIsOurs = Object.keys(T.ICONS).some((k) => T.ICONS[k] === hx.icon);
+  check('hostile name: the name goes through as text (unchanged), the icon is one of ours', hx.name === evil && iconIsOurs && hx.kind === 'other', JSON.stringify({ kind: hx.kind }));
+  check('hostile battery: not a number is no level, and the glyph stays plain markup', hx.battery === null && T.batteryGlyph('<script>').indexOf('<script') === -1 && T.batteryGlyph(1e9).indexOf('NaN') === -1);
+  check('hostile name: the tip is text built from the name, no markup of ours added', hx.tip.indexOf(evil) === 0 && hx.tip.indexOf('<svg') === -1);
+}
+
 for (const f of failures) console.log('FAIL ' + f);
 console.log('BT WORDS TEST: ' + passed + ' passed, ' + failures.length + ' failed');
 process.exit(failures.length ? 1 : 0);

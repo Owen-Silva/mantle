@@ -166,6 +166,18 @@ const SHOTS = [
   { name: 'notifs-none', w: 1280, h: 330, q: '?mode=pill&notifs=none', click: '#notifs' },
   { name: 'notifs-off', w: 1280, h: 330, q: '?mode=pill&notifs=off', click: '#notifs' },
   { name: 'notifs-edge', w: 1280, h: 540, q: '?notifs=some', click: '#notifs' },
+  /* The Downloads shelf (lane downloads, 2026-09-27; mock states in mock-mantle.js ?dl=). The panel
+     re-reads on open (30 ms in the mock), hence the waits. */
+  { name: 'dl-button', w: 1280, h: 60, q: '?mode=pill&dl=new' },
+  { name: 'dl-panel', w: 1280, h: 540, q: '?mode=pill&dl=new', steps: ['#downloads', { wait: 300 }] },
+  { name: 'dl-hover', keepHover: true, w: 1280, h: 540, q: '?mode=pill&dl=some', steps: ['#downloads', { wait: 300 }, { hover: '.dl-list > :nth-child(3)' }] },
+  { name: 'dl-none', w: 1280, h: 330, q: '?mode=pill&dl=none', steps: ['#downloads', { wait: 300 }] },
+  { name: 'dl-missing', w: 1280, h: 330, q: '?mode=pill&dl=missing', steps: ['#downloads', { wait: 300 }] },
+  { name: 'dl-plain', w: 1280, h: 540, q: '?mode=pill&dl=plain', steps: ['#downloads', { wait: 300 }] },
+  { name: 'dl-openfail', w: 1280, h: 540, q: '?mode=pill&dl=openfail', steps: ['#downloads', { wait: 300 }, '.dl-list > :nth-child(1)', { wait: 300 }] },
+  { name: 'dl-rest', w: 1280, h: 330, q: '?mode=pill&dl=rest', steps: ['#downloads', { wait: 300 }] },
+  { name: 'dl-off', w: 1280, h: 60, q: '?mode=pill&dl=off' },
+  { name: 'dl-edge', w: 1280, h: 540, q: '?dl=new', steps: ['#downloads', { wait: 300 }] },
   /* Quick settings one level down (ui/bar/qs-more.js, 2026-09-23): the Wi-Fi list, the password
      field, the output picker and the mixer, in every state they have to get right. `steps` runs in
      order: a string clicks that selector, {wait: ms} pauses, {fill, text} types into a field,

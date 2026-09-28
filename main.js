@@ -1994,6 +1994,35 @@ async function restNow(why) {
   if (later.unref) later.unref();
   return Object.assign({ ok: true }, restState);
 }
+/*
+ * IDLE PAGES BACK TO WINDOWS (lane ramdiet, 2026-09-27). Start-up touches pages no idle Mantle
+ * touches again (every page's first load and layout, the features' installs), and they sit in
+ * Mantle's working set until Windows is short of RAM. TRIM_AFTER_MS after start, and after every
+ * wake from a game, the sidecar's gamemode.trim (EmptyWorkingSet on Mantle's OWN Electron pids,
+ * the rest's own call) hands them back. Private memory is unchanged by it; the numbers are logged.
+ */
+const TRIM_AFTER_MS = 60 * 1000;
+let trimTimer = null;
+function trimOwnSoon(why) {
+  clearTimeout(trimTimer);
+  trimTimer = setTimeout(() => { trimTimer = null; trimOwn(why).catch(() => {}); }, TRIM_AFTER_MS);
+  if (trimTimer.unref) trimTimer.unref();
+}
+async function trimOwn(why) {
+  if (shuttingDown || restState) return;   // resting: restNow trims already
+  if (!sidecar || sidecar.blockedReason()) {
+    process.stdout.write(`mantle: trim (${why}): NOT done: the sidecar is not running (${sidecar ? sidecar.blockedReason() : 'none'})\n`);
+    return;
+  }
+  const before = electronMB();
+  try {
+    const r = await sidecar.call('gamemode.trim', { pids: app.getAppMetrics().map((p) => p.pid) }, 6000);
+    const after = electronMB();
+    process.stdout.write(`mantle: trim (${why}): idle pages of ${(r && r.trimmed) || 0} Mantle processes handed back to Windows; working set ${mb(before.ws)} -> ${mb(after.ws)} (private ${mb(after.private)}, unchanged by a trim)\n`);
+  } catch (err) {
+    process.stdout.write(`mantle: trim (${why}): NOT done: ${err.message}\n`);
+  }
+}
 async function wakeNow(why) {
   if (!restState) return { ok: true, same: true, text: 'Mantle was not resting' };
   if (shuttingDown) { restState = null; return { ok: false, reason: 'Mantle is closing' }; }
@@ -2021,6 +2050,7 @@ async function wakeNow(why) {
   }
   const text = `back after ${Math.round((Date.now() - was.since) / 60000)} min (${why}): ${back.join(', ') || 'nothing to bring back'}${was.wallpaper === 'unloaded' ? ', wallpaper' : ''}`;
   process.stdout.write(`mantle: rest: ${text} in ${Date.now() - t0} ms\n`);
+  trimOwnSoon(`${Math.round(TRIM_AFTER_MS / 1000)} s after the wake`);
   return { ok: true, back, text };
 }
 
@@ -5392,6 +5422,14 @@ app.on('second-instance', (_event, argv) => {
     process.stdout.write(`mantle: state (${tag}): Win key: ${st.hotkey && st.hotkey.reason} | Alt+Tab: ${st.switcher && st.switcher.reason} | windows: ${pageNames().join(', ')}\n`);
     return;
   }
+  // TEST ONLY (lane ramdiet): `electron . --test --profile-name=<x> --test-unload` unloads every
+  // idle-unloadable window NOW (lib/features/_idle-unload.js), as IDLE_UNLOAD_MS unused would.
+  if (flags.test && Array.isArray(argv) && argv.includes('--test-unload')) {
+    let went = [];
+    try { went = require('./lib/features/_idle-unload').unloadAll('a second instance asked (test)'); } catch (err) { went = [`failed: ${err.message}`]; }
+    process.stdout.write(`mantle: test-unload: ${went.length ? went.join(', ') : 'nothing to unload'}\n`);
+    return;
+  }
   // TEST ONLY: `electron . --test --profile-name=<x> --test-chord=Win+V` (or --test-key=VolumeUp)
   // makes THIS test instance act as if the hook had seen that chord: the feature lanes' end-to-end
   // proof, with no keyboard hook and no synthetic keystroke anywhere near Owen's desktop.
@@ -6113,14 +6151,14 @@ async function logMemory(tag) {
     // Windows it carries privateBytes (KB). Renderers are matched to their
     // window through the OS pid, so the log names the page, not "renderer".
     const byPid = new Map(app.getAppMetrics().map((p) => [p.pid, p]));
-    const fmt = (p) => `private ${Math.round((p.memory.privateBytes || 0) / 1024)} MB, ws ${Math.round(p.memory.workingSetSize / 1024)} MB`;
+    const fmt = (p, w) => `private ${Math.round((p.memory.privateBytes || 0) / 1024)} MB, ws ${Math.round(p.memory.workingSetSize / 1024)} MB${w ? (w.isVisible() ? ', visible' : ', hidden') : ''}`;
     let privateTotal = 0;
     for (const p of byPid.values()) privateTotal += (p.memory.privateBytes || 0);
     for (const [name, w] of [['bar', barWin], ['launcher', launcherWin], ['desktop', desktopWin], ['switcher', switcher.overlayWindow()]]) {
       if (!w || w.isDestroyed()) { parts.push(`${name}: no window`); continue; }
       const pid = w.webContents.getOSProcessId();
       const p = byPid.get(pid);
-      parts.push(`${name} pid ${pid}: ${p ? fmt(p) : 'not in the app metrics'}`);
+      parts.push(`${name} pid ${pid}: ${p ? fmt(p, w) : 'not in the app metrics'}`);
       byPid.delete(pid);
     }
     // Every other window (the features' own, the wallpaper's), named by its page: ui/<dir>/<file>.
@@ -6130,7 +6168,7 @@ async function logMemory(tag) {
       const p = byPid.get(pid);
       if (!p) continue;
       const m = /\/ui\/(.+?)(?:[?#]|$)/.exec(String(w.webContents.getURL() || '').replace(/\\/g, '/'));
-      parts.push(`${m ? m[1] : (w.getTitle() || 'a window')} pid ${pid}: ${fmt(p)}`);
+      parts.push(`${m ? m[1] : (w.getTitle() || 'a window')} pid ${pid}: ${fmt(p, w)}`);
       byPid.delete(pid);
     }
     const mu = process.memoryUsage();
@@ -6162,6 +6200,19 @@ app.whenReady().then(() => {
   });
   if (!bar.load.loaded) process.stderr.write(`mantle: ${bar.load.reason}\n`);
 
+  if (flags.test) {
+    // TEST ONLY (lane ramdiet): how long each window takes from new BrowserWindow to its page loaded,
+    // the cost an idle-unloaded window pays again on its next use.
+    app.on('browser-window-created', (_e, w) => {
+      const t0 = Date.now();
+      w.webContents.once('did-finish-load', () => {
+        if (w.isDestroyed()) return;
+        const m = /\/ui\/(.+?)(?:[?#]|$)/.exec(String(w.webContents.getURL() || '').replace(/\\/g, '/'));
+        process.stdout.write(`mantle: window loaded: ${m ? m[1] : (w.getTitle() || 'a window')} in ${Date.now() - t0} ms\n`);
+      });
+    });
+  }
+  trimOwnSoon(`${Math.round(TRIM_AFTER_MS / 1000)} s after start`);
   const memFirst = setTimeout(() => logMemory('30 s after start'), 30000);
   if (memFirst.unref) memFirst.unref();
   const memEvery = setInterval(() => logMemory('every 30 min'), 30 * 60 * 1000);

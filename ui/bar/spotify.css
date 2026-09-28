@@ -196,3 +196,8 @@
 .spq-art.liked { background: var(--lg-acc-soft); color: var(--lg-acc); }
 /* the queue-add tool on a song result stays visible: it is the only way to queue from search */
 .spq-tools.keep { opacity: 1; }
+/* spotdeath lane: "Restart Spotify after games" */
+.spq-opt { display: flex; align-items: center; gap: 6px; padding: 4px 8px 0; color: var(--lg-ink-3); font-size: 11.5px; line-height: 1.45; cursor: pointer; }
+.spq-opt:hover { color: var(--lg-ink-2); }
+.spq-opt input { margin: 0; accent-color: var(--lg-acc); }
+.spq-opt input:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: 1px; }

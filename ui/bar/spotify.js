@@ -79,7 +79,7 @@
     var ws = S.status && S.status.window && S.status.window.watch, wi = S.info && S.info.window && S.info.window.watch;
     return ws && wi ? ((wi.at || 0) > (ws.at || 0) ? wi : ws) : ws || wi || null;
   }
-  var HINT = { checking: '', notrunning: 'Not running', noport: 'Needs restart', starting: 'Starting…', portbusy: 'Port busy',
+  var HINT = { checking: '', notrunning: 'Not running', noport: 'Needs restart', starting: 'Starting…', loading: 'Loading…', portbusy: 'Port busy',
     internals: 'Spotify changed', noinstall: 'Not found', error: 'Error', off: 'Off', missing: 'Off' };
 
   function isSpotify(s) {
@@ -215,6 +215,7 @@
       if (S !== mine) return;
       if (r.dryRun) say('Test instance: ' + r.reason);
       else if (!r.ok) say((verb === 'restart' ? 'Not restarted: ' : 'Not started: ') + (r.reason || 'no reason given'), true);
+      else if (r.loading) say(r.note || 'Spotify is still loading; Mantle connects once it has loaded.');
       else if (r.note) say(r.note, true);
       else say(verb === 'restart' ? 'Spotify restarted. Press play to carry on.' : 'Spotify started.');
       loadStatus();
@@ -358,15 +359,45 @@
     return b;
   }
 
+  /* spotdeath lane: "Restart Spotify after games" (main's revive view: on, state, text, plan). */
+  function reviveOpt(st) {
+    var rv = st && st.revive, lab = mk('label', 'spq-opt');
+    var cb = mk('input');
+    cb.type = 'checkbox';
+    cb.checked = !rv || rv.on !== false;
+    cb.addEventListener('change', function () {
+      var on = cb.checked, mine = S;
+      call('revive', { on: on }).then(function (r) {
+        if (S !== mine) return;
+        if (!r.ok) { cb.checked = !on; say('Not changed: ' + (r.reason || 'no reason given'), true); return; }
+        loadStatus();
+      }, function (e) { if (S === mine) { cb.checked = !on; say('Not changed: ' + why(e), true); } });
+    });
+    lab.title = 'When the hidden Spotify closes while a game runs, Mantle starts it again, hidden and not playing, after the game exits (once per game).';
+    lab.appendChild(cb);
+    lab.appendChild(mk('span', '', 'Restart Spotify after games'));
+    return lab;
+  }
+  function reviveWords(st) { var rv = st && st.revive; return rv && rv.state && rv.state !== 'idle' && rv.text ? rv : null; }
+
   /* The not-connected states: what is wrong, why, and the one thing that fixes it. */
   function drawApp(box, st) {
     var s = st.state, reason = st.reason || '';
     if (s === 'checking') { box.appendChild(stateLine('Checking Spotify…', 'dim')); return; }
     if (s === 'starting') { box.appendChild(stateLine(reason || 'Starting Spotify…', 'dim')); box.appendChild(mk('div', 'spq-fine', 'Waiting for Spotify to open its local debugging port (up to 30 s).')); return; }
+    if (s === 'loading') {
+      box.appendChild(stateLine('Spotify is still loading.', 'dim'));
+      box.appendChild(mk('div', 'spq-fine spq-why', reason || 'Its page has not finished loading yet.'));
+      box.appendChild(linkBtn('Try again', function () { S.qErr = null; loadStatus(); }, 'act'));
+      return;
+    }
     if (s === 'notrunning') {
-      box.appendChild(stateLine('Spotify isn’t running.'));
-      box.appendChild(actBtn('Start Spotify hidden', function () { launch('start'); }));
+      var rv = reviveWords(st);
+      box.appendChild(stateLine(rv ? rv.text : 'Spotify isn’t running.', rv ? 'bad' : ''));
+      if (rv && rv.plan) box.appendChild(mk('div', 'spq-fine', rv.plan));
+      box.appendChild(actBtn(rv && rv.state === 'waiting' && rv.on ? 'Start it now instead' : 'Start Spotify hidden', function () { launch('start'); }));
       box.appendChild(mk('div', 'spq-fine', 'It runs with no window: play your library and search from here. Mantle starts it with a local debugging port (127.0.0.1:' + (st.port || 47292) + ').'));
+      box.appendChild(reviveOpt(st));
       return;
     }
     if (s === 'noport') {
@@ -389,7 +420,9 @@
     b.type = 'button';
     var art = mk('span', 'spq-art');
     if (item.liked) { art.innerHTML = svg(G.heart, 14); art.classList.add('liked'); }
-    else if (item.image) { var im = document.createElement('img'); im.alt = ''; im.src = item.image; art.appendChild(im); }
+    // secreview-sp lane: only the data: art main fetched from Spotify's image server. Never an address:
+    // a file://host/share one would be an SMB fetch (the bar's CSP allows file: images).
+    else if (typeof item.image === 'string' && /^data:image\/[a-z0-9.+-]+;base64,/i.test(item.image)) { var im = document.createElement('img'); im.alt = ''; im.src = item.image; art.appendChild(im); }
     else { art.innerHTML = svg(G.note, 12); art.title = item.imageReason || ''; }
     b.appendChild(art);
     var txt = mk('span', 'spq-txt');
@@ -505,6 +538,9 @@
     var bad = (w && w.state === 'failed' && w.reason) || (w && w.trim && !w.trim.ok && !w.trim.skipped && w.trim.text) || watchBad || S.infoErr || (inf && inf.memoryReason) || '';
     if (bad) line.appendChild(mk('div', 'spq-fine spq-bad', cap(bad)));
     else if (watching && wv.note) line.appendChild(mk('div', 'spq-fine', cap(wv.note)));
+    var rv = S.status && S.status.revive;
+    if (rv && rv.state === 'done' && rv.at && Date.now() - rv.at < 20 * 60000 && rv.plan) line.appendChild(mk('div', 'spq-fine', rv.text + ' ' + rv.plan));
+    line.appendChild(reviveOpt(S.status));
 
     [['queue', 'Up next'], ['lib', 'Library']].forEach(function (t) {
       var c = mk('button', 'spq-chip' + (S.tab === t[0] ? ' on' : ''), t[1]);
@@ -549,7 +585,7 @@
     if (st === 'connected' && wst === 'hidden') hint = 'Hidden' + (hint ? ' · ' + hint : '');
     else if (st === 'connected' && wst === 'failed') hint = S.status.window.takeOverFailed ? 'Not watched' : 'Not hidden';
     S.hint.textContent = hint;
-    S.hint.classList.toggle('warn', st !== 'connected' && st !== 'checking' && st !== 'starting' || !!S.qErr);
+    S.hint.classList.toggle('warn', st !== 'connected' && st !== 'checking' && st !== 'starting' && st !== 'loading' || !!S.qErr);
     S.body.hidden = !expanded;
     if (!expanded) { if (!quiet) relayout(); return; }
 

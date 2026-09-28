@@ -1,0 +1,111 @@
+/* ui/bar/downloads.css — the Downloads button and its shelf (ui/bar/downloads.js).
+   The island theme and nothing else: --lg-* tokens only (glass-light.css), light frost, dark ink,
+   plain hairlines. The accent marks exactly what the bell's does: the dot on the button when
+   something finished downloading, and the dot on a row that is new since the shelf was last opened. */
+
+/* ---------------------------------------------------------------- the button */
+.dls { position: relative; }
+.dls[hidden] { display: none; }                 /* .btn's display:flex would beat [hidden] */
+.dls.off { color: var(--lg-ink-3); }
+.dls .dldot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lg-acc);
+  box-shadow: 0 0 0 1.5px var(--lg-dot-ring);
+  pointer-events: none;
+}
+.dls .dldot[hidden] { display: none; }
+
+/* ---------------------------------------------------------------- the shelf */
+.pop.dl { width: 340px; max-width: 340px; padding: 11px 8px 8px; }
+
+.dl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 6px 4px; }
+.dl-head h3 { margin: 0; }
+.dl-sub { font-size: 11px; color: var(--lg-ink-3); font-variant-numeric: tabular-nums; }
+.dl-sub[hidden] { display: none; }
+
+/* Main caps a popover at 480 px (POPOVER_MAX): 12 rows scroll inside the list instead (eight and a half
+   rows show; the cut row says there is more). */
+.dl-list { max-height: 366px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 1px; }
+.dl-list::-webkit-scrollbar { width: 6px; }
+.dl-list::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 3px; }
+
+.dl-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 5px 4px 5px 10px;
+  border-radius: var(--lg-r-ctl);
+  cursor: default;
+  transition: background-color 120ms steps(2);
+}
+.dl-row:hover { background: var(--lg-hover); }
+.dl-row:active { background: var(--lg-press); }
+.dl-row:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.dl-row.busy { opacity: .5; pointer-events: none; }
+
+/* New since the shelf was last opened: one accent dot at the row's left edge (as on a toast). */
+.dl-row.fresh::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: var(--lg-acc);
+}
+
+.dl-icon { flex: 0 0 28px; width: 28px; height: 28px; object-fit: contain; }
+.dl-tile {
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--lg-tile);
+  color: var(--lg-ink-2);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.dl-text { flex: 1 1 auto; min-width: 0; }
+.dl-name { color: var(--lg-ink); font-size: 12.5px; font-weight: 500; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-meta { color: var(--lg-ink-3); font-size: 11px; line-height: 1.3; margin-top: 1px; font-variant-numeric: tabular-nums; }
+
+/* Show in folder: there on hover (and on keyboard focus), out of the way otherwise. */
+.dl-reveal {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-3);
+  opacity: 0;
+  cursor: default;
+  transition: background-color 120ms steps(2), color 120ms steps(2);
+}
+.dl-row:hover .dl-reveal, .dl-row:focus-within .dl-reveal { opacity: 1; }
+.dl-reveal:hover { background: var(--lg-press); color: var(--lg-ink); }
+.dl-reveal:focus-visible { opacity: 1; outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+
+.dl-empty { padding: 18px 8px 16px; text-align: center; }
+.dl-empty .big { font-size: 13.5px; }
+.dl-bad .big { color: var(--lg-warn); }
+.dl-path { margin-top: 6px; color: var(--lg-ink-3); font-size: 11px; overflow-wrap: anywhere; user-select: text; }
+
+.pop.dl .note { margin: 6px 6px 0; }
+.pop.dl .note[hidden], .dl-detail[hidden] { display: none; }
+.dl-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; margin: 6px 2px 0; padding-top: 6px; border-top: 1px solid var(--lg-edge-out); }
+.dl-detail { flex: 1 0 100%; min-width: 0; padding: 0 4px; color: var(--lg-ink-3); font-size: 11px; line-height: 1.35; }
+.dl-folder { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.dl-folder:disabled { color: var(--lg-ink-3); background: transparent; }

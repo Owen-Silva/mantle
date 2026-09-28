@@ -22,6 +22,20 @@
 // .NET's MainWindowHandle makes: visible and unowned), so main can tell the window was shown. No
 // PowerShell and no performance counters: a few milliseconds.
 //
+// THE HELD HANDLE (lane spotdeath, 2026-09-27). The hidden Spotify dies during games and nothing said
+// how. So once spotify.mem has passed a RUNNING root through the whole guard (path + `created`), this
+// file keeps ONE SYNCHRONIZE | QUERY_LIMITED handle on that root between reads (static, under a lock),
+// used for nothing but WaitForSingleObject(0), GetExitCodeProcess and GetProcessTimes: never to read
+// memory, trim, suspend or end anything. When the root is then reported exited, the result carries
+// `exitCode` (the uint: 0 = it quit, 0xC0000xxx = it crashed, anything else = whatever ended it chose
+// that code, e.g. TerminateProcess(code)) and `exitedAt` (the exit FILETIME, same format as `created`),
+// and the handle is closed. Released on that exit, on a new root (or a new `created` for the same pid;
+// the old one is closed first), and when the sidecar ends. Nothing held (the exit came before any
+// read, or the sidecar restarted since) = no exitCode and no exitedAt: never guessed.
+// The zombie trap: while a handle is held, an exited process can STILL be in the Toolhelp list. So
+// both commands first ask the held handle (when it is the asked root) whether it has exited, and if it
+// has, answer "has exited" right there: no snapshot, no targets, spotify.trim touches nothing.
+//
 // PASSIVE (--test): both commands work, like gamemode.trim, because the guard is the same in both
 // modes: they can only ever reach a Spotify.exe under this process's %APPDATA%. The tests
 // (sidecar/test-spotifymem.js) start their sidecar with APPDATA pointed at a scratch folder, so the
@@ -68,6 +82,8 @@ namespace Mantle {
       [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetProcessTimes(IntPtr h, out long creation, out long exit, out long kernel, out long user);
       [DllImport("psapi.dll", SetLastError = true)] public static extern bool GetProcessMemoryInfo(IntPtr h, ref PMC_EX2 c, uint size);
       [DllImport("psapi.dll", SetLastError = true)] public static extern bool EmptyWorkingSet(IntPtr h);
+      [DllImport("kernel32.dll", SetLastError = true)] public static extern uint WaitForSingleObject(IntPtr h, uint ms);
+      [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetExitCodeProcess(IntPtr h, out uint code);
       [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc fn, IntPtr lParam);
       [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
       [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
@@ -75,7 +91,17 @@ namespace Mantle {
     }
 
     const uint QUERY_LIMITED = 0x1000, SET_QUOTA = 0x0100, GW_OWNER = 4;
+    const uint SYNCHRONIZE = 0x00100000, WAIT_OBJECT_0 = 0, WAIT_FAILED = 0xFFFFFFFF, STILL_ACTIVE = 259;
     const int MAX_DEPTH = 6;
+
+    // The held handle (see the header): one root at a time, every read and write under `held`.
+    static readonly object held = new object();
+    static IntPtr heldH = IntPtr.Zero;
+    static uint heldPid;
+    static long heldCreated;
+
+    /// How the held root ended. Code null = GetExitCodeProcess failed; At null = no exit time read.
+    sealed class Exit { public object Code; public string At; }
 
     public static void Register(FeatureTable t) {
       t.Add("spotify.mem", Lanes.Slow, Mem);    // {root, created?, exe?, pids?} -> each process's memory, read only
@@ -124,11 +150,81 @@ namespace Mantle {
       } finally { N.CloseHandle(h); }
     }
 
+    /// secreview-sp lane (2026-09-27): the guard read each pid on handles it has closed again, so by the
+    /// time the trim opens its own handle the pid may belong to another process (Windows reuses pids).
+    /// Checked again on the very handle EmptyWorkingSet gets, which pins the process: the same start
+    /// time the guard saw and the same image. null = the same process.
+    static string SameProcess(IntPtr h, Target t, string exe) {
+      if (t.Created == 0) return "refused: its start time was never read, so it cannot be told from a reused pid";
+      long c, x, k, u;
+      if (!N.GetProcessTimes(h, out c, out x, out k, out u)) return "refused: its start time could not be read again (error " + Marshal.GetLastWin32Error() + ")";
+      if (c != t.Created) return "refused: pid " + t.Pid + " is now a different process (its pid was reused after the check)";
+      var sb = new StringBuilder(1024); uint size = 1024;
+      if (!N.QueryFullProcessImageNameW(h, 0, sb, ref size)) return "refused: its path could not be read again (error " + Marshal.GetLastWin32Error() + ")";
+      if (!string.Equals(sb.ToString(0, (int)size), exe, StringComparison.OrdinalIgnoreCase)) return "refused: it is no longer " + exe;
+      return null;
+    }
+
+    /// Hold the one SYNCHRONIZE | QUERY_LIMITED handle on a root that just passed the whole guard. Kept
+    /// while it is the same process (pid and start time); anything else closes the old handle first. A
+    /// handle whose start time is not `created` (the root ended and its pid was reused between the guard
+    /// and here) is closed at once and nothing is held. No start time known = nothing held.
+    static void Hold(uint pid, long created) {
+      if (pid == 0 || created == 0) return;
+      lock (held) {
+        if (heldH != IntPtr.Zero && heldPid == pid && heldCreated == created) return;
+        Release();
+        IntPtr h = N.OpenProcess(SYNCHRONIZE | QUERY_LIMITED, false, pid);
+        if (h == IntPtr.Zero) return;
+        long c, x, k, u;
+        if (!N.GetProcessTimes(h, out c, out x, out k, out u) || c != created) { N.CloseHandle(h); return; }
+        heldH = h; heldPid = pid; heldCreated = created;
+      }
+    }
+
+    /// Close and forget the held handle. The caller holds the `held` lock.
+    static void Release() {
+      if (heldH != IntPtr.Zero) N.CloseHandle(heldH);
+      heldH = IntPtr.Zero; heldPid = 0; heldCreated = 0;
+    }
+
+    /// When the held handle is the asked root (same pid, and the same start time when the caller passes
+    /// `created`) and that process has EXITED: its exit code and exit time, and the handle is closed and
+    /// forgotten. null = nothing held for this root, or it is still running (the handle stays).
+    static Exit TakeExit(uint root, string wantCreated) {
+      lock (held) {
+        if (heldH == IntPtr.Zero || heldPid != root) return null;
+        if (!string.IsNullOrEmpty(wantCreated) && wantCreated != heldCreated.ToString(CultureInfo.InvariantCulture)) return null;
+        uint w = N.WaitForSingleObject(heldH, 0);
+        uint code;
+        bool haveCode = N.GetExitCodeProcess(heldH, out code);
+        // Signalled is the answer; only when the wait itself failed does the exit code decide.
+        bool exited = w == WAIT_OBJECT_0 || (w == WAIT_FAILED && haveCode && code != STILL_ACTIVE);
+        if (!exited) return null;
+        var e = new Exit();
+        if (haveCode) e.Code = (long)code;
+        long c, x, k, u;
+        if (N.GetProcessTimes(heldH, out c, out x, out k, out u) && x != 0) e.At = x.ToString(CultureInfo.InvariantCulture);
+        Release();
+        return e;
+      }
+    }
+
+    static string ExitedWhy(uint root) { return "the Spotify Mantle started (pid " + root + ") has exited"; }
+
+    /// Adds exitCode / exitedAt to a result only when the held handle said how the root ended.
+    static void AddExit(IDictionary d, Exit e) {
+      if (e == null) return;
+      d["exitCode"] = e.Code;
+      d["exitedAt"] = e.At;
+    }
+
     /// The guard, both steps. Fills `targets` (root first) and `refused` ({pid, file, why}). Returns
-    /// a plain-words error only for a request that cannot be answered at all.
+    /// a plain-words error only for a request that cannot be answered at all. `exited` is set only when
+    /// the root is reported exited AND the held handle said how (see the header).
     static string Resolve(string verb, Dictionary<string, object> req, out string exe, out bool running, out string rootWhy,
-                          out long rootCreated, List<Target> targets, List<object> refused) {
-      exe = ExpectedExe(); running = false; rootWhy = null; rootCreated = 0;
+                          out long rootCreated, out Exit exited, List<Target> targets, List<object> refused) {
+      exe = ExpectedExe(); running = false; rootWhy = null; rootCreated = 0; exited = null;
       if (exe == null) return "this sidecar has no APPDATA, so it does not know where Spotify.exe is";
       string asked = Json.GetString(req, "exe");
       if (!string.IsNullOrEmpty(asked) && !string.Equals(asked, exe, StringComparison.OrdinalIgnoreCase))
@@ -136,6 +232,11 @@ namespace Mantle {
       int rootInt = Json.GetInt(req, "root", 0);
       if (rootInt <= 0) return "spotify." + verb + " needs root: the pid of the Spotify.exe Mantle started";
       uint root = (uint)rootInt;
+      string wantCreated = Json.GetString(req, "created");
+      // The zombie trap: a held root that has exited can still be in the Toolhelp list, so ask the
+      // handle first and answer "has exited" before any snapshot.
+      exited = TakeExit(root, wantCreated);
+      if (exited != null) { rootWhy = ExitedWhy(root); return null; }
       string err;
       List<Proc> snap = Snapshot(out err);
       if (err != null) return err;
@@ -149,11 +250,10 @@ namespace Mantle {
         l.Add(p);
       }
       Proc rp;
-      if (!byPid.TryGetValue(root, out rp)) { rootWhy = "the Spotify Mantle started (pid " + root + ") has exited"; return null; }
+      if (!byPid.TryGetValue(root, out rp)) { rootWhy = ExitedWhy(root); exited = TakeExit(root, wantCreated); return null; }
       if (!IsSpotifyName(rp.File)) { rootWhy = "refused: pid " + root + " is " + rp.File + ", not Spotify.exe"; refused.Add(Json.Obj("pid", root, "file", rp.File, "why", rootWhy)); return null; }
       string why = CheckPath(root, exe, out rootCreated);
       if (why != null) { rootWhy = "pid " + root + " " + why; refused.Add(Json.Obj("pid", root, "file", rp.File, "why", why)); return null; }
-      string wantCreated = Json.GetString(req, "created");
       if (!string.IsNullOrEmpty(wantCreated) && wantCreated != rootCreated.ToString(CultureInfo.InvariantCulture)) {
         rootWhy = "refused: pid " + root + " is a different Spotify.exe from the one Mantle started (it started at another time)";
         refused.Add(Json.Obj("pid", root, "file", rp.File, "why", rootWhy));
@@ -241,9 +341,11 @@ namespace Mantle {
       var sw = Stopwatch.StartNew();
       var targets = new List<Target>();
       var refused = new List<object>();
-      string exe, rootWhy; bool running; long created;
-      string err = Resolve("mem", req, out exe, out running, out rootWhy, out created, targets, refused);
+      string exe, rootWhy; bool running; long created; Exit exited;
+      string err = Resolve("mem", req, out exe, out running, out rootWhy, out created, out exited, targets, refused);
       if (err != null) return err;
+      // Only spotify.mem takes the held handle, and only on a root that passed the whole guard.
+      if (running) Hold((uint)Json.GetInt(req, "root", 0), created);
       var vis = running ? VisibleWindows() : new Dictionary<uint, int>();
       var procs = new List<object>();
       long sWs = 0, sPws = 0, sPriv = 0; int visible = 0; bool pwsOk = true;
@@ -257,10 +359,12 @@ namespace Mantle {
         if (priv >= 0) sPriv += priv;
         procs.Add(Json.Obj("pid", t.Pid, "ppid", t.Ppid, "ws", ws, "pws", pws, "priv", priv, "visible", v));
       }
-      result = Json.Obj("exe", exe, "root", Json.GetInt(req, "root", 0), "running", running, "why", rootWhy,
+      IDictionary d = Json.Obj("exe", exe, "root", Json.GetInt(req, "root", 0), "running", running, "why", rootWhy,
                         "created", created == 0 ? null : created.ToString(CultureInfo.InvariantCulture),
                         "n", procs.Count, "ws", sWs, "pws", pwsOk ? (object)sPws : null, "priv", sPriv, "visible", visible,
                         "procs", procs, "refused", refused, "ms", sw.ElapsedMilliseconds);
+      AddExit(d, exited);
+      result = d;
       return null;
     }
 
@@ -268,8 +372,8 @@ namespace Mantle {
       var sw = Stopwatch.StartNew();
       var targets = new List<Target>();
       var refused = new List<object>();
-      string exe, rootWhy; bool running; long created;
-      string err = Resolve("trim", req, out exe, out running, out rootWhy, out created, targets, refused);
+      string exe, rootWhy; bool running; long created; Exit exited;
+      string err = Resolve("trim", req, out exe, out running, out rootWhy, out created, out exited, targets, refused);
       if (err != null) return err;
       var skip = new HashSet<uint>();
       var sk = req.ContainsKey("skip") ? req["skip"] as List<object> : null;
@@ -290,6 +394,8 @@ namespace Mantle {
         IntPtr h = N.OpenProcess(SET_QUOTA | QUERY_LIMITED, false, t.Pid);
         if (h == IntPtr.Zero) { r["why"] = "could not be opened to trim (error " + Marshal.GetLastWin32Error() + ")"; continue; }
         try {
+          string same = SameProcess(h, t, exe);
+          if (same != null) { r["why"] = same; refused.Add(Json.Obj("pid", t.Pid, "file", null, "why", same)); continue; }
           if (N.EmptyWorkingSet(h)) { r["ok"] = true; trimmed++; }
           else r["why"] = "EmptyWorkingSet failed (error " + Marshal.GetLastWin32Error() + ")";
         } finally { N.CloseHandle(h); }
@@ -300,11 +406,13 @@ namespace Mantle {
         if (pws1 >= 0) after += pws1;
         if ((bool)r["ok"] && pws0 >= 0 && pws1 >= 0) { trimmedBefore += pws0; trimmedAfter += pws1; }
       }
-      result = Json.Obj("exe", exe, "root", Json.GetInt(req, "root", 0), "running", running, "why", rootWhy,
+      IDictionary d = Json.Obj("exe", exe, "root", Json.GetInt(req, "root", 0), "running", running, "why", rootWhy,
                         "created", created == 0 ? null : created.ToString(CultureInfo.InvariantCulture),
                         "trimmed", trimmed, "results", rows, "refused", refused,
                         "before", before, "after", after, "trimmedBefore", trimmedBefore, "trimmedAfter", trimmedAfter,
                         "passive", Program.Passive, "ms", sw.ElapsedMilliseconds);
+      AddExit(d, exited);
+      result = d;
       return null;
     }
   }

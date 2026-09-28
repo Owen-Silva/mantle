@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle window layouts</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="layouts.css">
+</head>
+<body>
+<!-- The result of a window layout (lib/features/layouts.js): "Work: 3 placed, 1 opened, 1 not
+     found (Notion isn't installed)", then one line per window that did not go where it was saved,
+     each with its reason (no silent failures). The volume pop-up's surface and place (like the keep
+     on top pop-up). It never takes a click or the focus. -->
+<div id="t" class="toast" role="status" aria-live="polite" hidden>
+  <span class="glyph" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16"><rect x="1.8" y="2.8" width="7" height="10.4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="10.2" y="2.8" width="4" height="4.6" rx="1.1" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="10.2" y="8.6" width="4" height="4.6" rx="1.1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+  </span>
+  <span class="words"><span id="text" class="text"></span><span id="lines" class="lines"></span></span>
+</div>
+<script src="layouts.js"></script>
+</body>
+</html>

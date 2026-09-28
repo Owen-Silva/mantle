@@ -13,7 +13,7 @@
 //
 // THREE THINGS FIX IT, all here:
 //
-//   1. LANES. Latency-critical work (place, morph, focus, keys, hit tests,
+//   1. LANES. Latency-critical work (place, morph, keys, hit tests,
 //      the cached Quick Settings reads) stays on the message-loop
 //      thread - the "ui" lane - because hooks, the loop window and everything
 //      SetWinEventHook touched are tied to that thread. Work that can be slow
@@ -24,8 +24,11 @@
 //                 Quick Settings SWITCHES (a radio or WMI call can take seconds).
 //        audio    volume: fast, but it spikes under load and a dragged slider
 //                 must not wait behind an icon load.
+//        focus    focus / minimize / close / toggle: they act on ANOTHER app's
+//                 window, and Windows can make the caller wait on that app's
+//                 thread (see the registry comment below).
 //      capture and slow are STA threads, because the shell's link and icon objects
-//      are apartment-threaded; audio is MTA. The registry that says which command goes where
+//      are apartment-threaded; audio and focus are MTA. The registry that says which command goes where
 //      is `_laneOf` in the Lanes class below.
 //
 //   2. DEADLINES. The client sends `ttl` (its own timeout in ms) with every
@@ -164,7 +167,7 @@ namespace Mantle {
   }
 
   static class Lanes {
-    public const string Ui = "ui", Capture = "capture", Slow = "slow", Audio = "audio", Qs = "qs";
+    public const string Ui = "ui", Capture = "capture", Slow = "slow", Audio = "audio", Qs = "qs", Focus = "focus";
 
     // ============================================================ THE REGISTRY
     //
@@ -207,6 +210,16 @@ namespace Mantle {
       // Notifications.cs: the listener read (up to ~0.8 s under load) runs on
       // its own MTA thread while the slow lane waits; icons are shell calls.
       { "notifications", Slow },
+      // The four window verbs (Windows.cs). Their own lane since 2026-09-27: on
+      // ui, a `focus` under Valorant took ~5.2 s (a synchronous ShowWindow and
+      // an AttachThreadInput to the game's thread), the bar's `place` queued
+      // behind it past its 4 s limit, and main hid the bar instead of parking
+      // it. WindowList.Focus no longer blocks either (async restore, a bounded
+      // attach), but a verb that acts on another app's window can always meet
+      // a thread that will not answer, so none of them may share a lane with
+      // the bar's own moves. `focus.rehearse` (the test's stand-in) rides here
+      // too, registered from Windows.cs.
+      { "focus", Focus }, { "minimize", Focus }, { "close", Focus }, { "toggle", Focus },
     };
 
     // Commands whose READ is served from a cache (QuickSettings.cs) or is one
@@ -240,6 +253,9 @@ namespace Mantle {
       // and WMI calls were proven there); AboveNormal like audio, because a slider
       // is being dragged.
       _workers[Qs] = new Lane(Qs, exec, ApartmentState.STA, ThreadPriority.AboveNormal);
+      // MTA: no COM here, only user32 calls on other processes' windows. AboveNormal: a click
+      // on the bar is waiting for it.
+      _workers[Focus] = new Lane(Focus, exec, ApartmentState.MTA, ThreadPriority.AboveNormal);
     }
 
     /// The worker for a lane name, or null for ui (the message loop).
@@ -258,7 +274,7 @@ namespace Mantle {
         // Test-only (passive only, see Program): lets the harness park a
         // chosen lane and prove the others still answer.
         string l = Json.GetString(req, "lane");
-        return l == Ui || l == Capture || l == Audio || l == Qs ? l : Slow;
+        return l == Ui || l == Capture || l == Audio || l == Qs || l == Focus ? l : Slow;
       }
       string arg;
       if (_switchArg.TryGetValue(cmd, out arg)) return Json.HasKey(req, arg) ? Qs : Ui;
@@ -347,13 +363,17 @@ namespace Mantle {
       var lanes = new List<object>();
       lanes.Add(Json.Obj("name", Ui, "queued", Thread.VolatileRead(ref UiQueued), "busy", busy,
                          "busyMs", busy == null ? (object)null : (object)MsSince(UiBusySinceTs)));
-      foreach (string name in new string[] { Capture, Slow, Audio, Qs }) {
+      foreach (string name in new string[] { Capture, Slow, Audio, Qs, Focus }) {
         Lane w = Worker(name);
         if (w != null) lanes.Add(w.Snapshot());
       }
       return Json.Obj("lanes", lanes,
                       "expired", Thread.VolatileRead(ref Expired),
-                      "merged", Thread.VolatileRead(ref Merged));
+                      "merged", Thread.VolatileRead(ref Merged),
+                      // Focus attach helpers the focus lane stopped waiting for and that are still
+                      // stuck on another app's thread (WindowList.AttachAndRaise). Non-zero for long
+                      // = some app is not answering; each one detaches the moment it returns.
+                      "focusHelpersOut", WindowList.HelpersOut);
     }
   }
 

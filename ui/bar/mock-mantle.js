@@ -967,6 +967,74 @@
     return Object.assign({ ok: true }, tbState);
   }
 
+  /* ---- The Downloads shelf (lane downloads, 2026-09-27): lib/features/downloads.js's replies, in its
+       shapes. The names are invented (a student's worksheets, a developer's installers). ?dl=
+         some (default)  12 items, nothing new            new        2 new (the button's dot), 1 still downloading
+         none            an empty folder                  missing    the folder was moved away (reason + path)
+         unreadable      access denied                    plain      the sidecar could not answer (the plain read's note)
+         unwatched       the watch stopped (the foot says) openfail  a click's open fails (the note says why)
+         test            a --test run (opens are dry runs) rest       resting while a game runs (commands throw)
+         off             turned off in the tray: the button is hidden
+       Icons stand in for Windows' shell icons: a page with a coloured band (drawn here, never shipped). */
+  var DL = q.get('dl') || 'some';
+  function dlIcon(label, color) {
+    var s = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>" +
+      "<path d='M8 2.5h11l7 7v19a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-25a1 1 0 0 1 1-1z' fill='#fdfdfd' stroke='#a3abb5'/>" +
+      "<path d='M19 2.5v6a1 1 0 0 0 1 1h6' fill='none' stroke='#a3abb5'/>" +
+      "<rect x='3' y='15.5' width='20' height='9' rx='1.6' fill='" + color + "'/>" +
+      "<text x='13' y='22.4' font-family='Segoe UI,Arial,sans-serif' font-size='6.4' font-weight='700' fill='#fff' text-anchor='middle'>" + label + "</text></svg>";
+    return 'data:image/svg+xml,' + encodeURIComponent(s);
+  }
+  var DL_NOW = Date.now(), MIN = 60000, HR = 3600000, DAY = 86400000;
+  var dlItems = [
+    ['Kitchen Remodel - Floor Plan.pdf', 421888, 2 * MIN, dlIcon('PDF', '#d8453b')],
+    ['monthly-report-template.docx', 90112, 14 * MIN, dlIcon('DOCX', '#2f6fd6')],
+    ['northwind-site-assets.zip', 25794560, 64 * MIN, dlIcon('ZIP', '#b8872a')],
+    ['Screenshot 2026-09-27 101522.png', 1258291, 3 * HR, dlIcon('PNG', '#7a55c7')],
+    ['node-v22.12.0-x64.msi', 31561728, 5 * HR, dlIcon('MSI', '#56606b')],
+    ['Book Club Chapter 7 Notes.pdf', 2411724, 27 * HR, dlIcon('PDF', '#d8453b')],
+    ['garden-schedule-fall.xlsx', 19456, 30 * HR, dlIcon('XLSX', '#1f8a4c')],
+    ['fly-connectome-sample', 0, 2 * DAY + 3 * HR, null, true],
+    ['drone-footage-clip.mp4', 155189248, 3 * DAY, dlIcon('MP4', '#1a8a8f')],
+    ['README.md', 4096, 4 * DAY, null],
+    ['Recipe Book Volume 3.pdf', 655360, 9 * DAY, dlIcon('PDF', '#d8453b')],
+    ['VSCodeUserSetup-x64-1.104.exe', 102760448, 12 * DAY, dlIcon('EXE', '#3b7bbf')]
+  ].map(function (a, i) {
+    return { item: 'd' + (i + 1), name: a[0], size: a[1], at: DL_NOW - a[2], icon: a[3], dir: !!a[4], fresh: DL === 'new' && i < 2 };
+  });
+  var dlNew = DL === 'new' ? 2 : 0;
+  function dlBad() {
+    if (DL === 'missing') return { state: 'missing', reason: 'the Downloads folder does not exist (it was moved, renamed or deleted)', folder: 'C:\\Users\\user\\OneDrive\\Downloads' };
+    if (DL === 'unreadable') return { state: 'unreadable', reason: 'Windows refused to list the Downloads folder (access denied)', folder: 'C:\\Users\\user\\Downloads' };
+    return null;
+  }
+  function dlState() {
+    if (DL === 'off') return { on: false, ok: true, state: 'off', reason: 'the Downloads shelf is off in Mantle\u2019s tray menu', count: 0, newCount: 0, partial: 0, watching: false, rev: 1 };
+    if (DL === 'rest') return { on: true, ok: true, state: 'resting', reason: 'the Downloads shelf is resting while VALORANT.exe runs; it is back when the game exits', count: 0, newCount: 0, partial: 0, watching: false, rev: 1 };
+    var bad = dlBad();
+    if (bad) return { on: true, ok: false, state: bad.state, reason: bad.reason, count: 0, newCount: 0, partial: 0, watching: false, rev: 1 };
+    return { on: true, ok: true, state: 'ok', reason: null, count: DL === 'none' ? 0 : 12, newCount: dlNew, partial: DL === 'new' ? 1 : 0, watching: DL !== 'unwatched', rev: 1 };
+  }
+  function dlList() {
+    if (DL === 'rest') throw new Error('Downloads shelf (bar) is resting while VALORANT.exe runs; it is back when the game exits');
+    var bad = dlBad();
+    if (bad) return { ok: false, state: bad.state, reason: bad.reason, folder: bad.folder, via: 'known folder', items: [], total: 0, newCount: 0, partial: 0, rev: 1 };
+    var items = DL === 'none' ? [] : dlItems.map(function (it) { return Object.assign({}, it, { fresh: it.fresh && dlNew > 0 }); });
+    return { ok: true, state: 'ok', reason: null, folder: 'C:\\Users\\user\\Downloads', via: DL === 'plain' ? 'plain read' : 'known folder', items: items,
+      total: DL === 'none' ? 0 : 347, newCount: dlNew, partial: DL === 'new' ? 1 : 0, rev: 1, test: DL === 'test',
+      detail: DL === 'plain' ? 'A plainer read (hidden files may show): the sidecar could not answer (the sidecar is not running).' : null,
+      watching: DL !== 'unwatched', watchReason: DL === 'unwatched' ? 'the folder watch stopped (EPERM); the list is re-read when you open it' : null, seenNote: null };
+  }
+  function dlCall(name, p) {
+    if (DL === 'rest') throw new Error('Downloads shelf (bar) is resting while VALORANT.exe runs; it is back when the game exits');
+    if (name === 'downloads.list') return dlList();
+    if (name === 'downloads.seen') { dlNew = 0; setTimeout(function () { emit('downloads.state', dlState()); }, 5); return { ok: true, seenAt: Date.now(), note: null }; }
+    if (DL === 'test') return { ok: true, dryRun: true, reason: 'test run: would ' + (name === 'downloads.reveal' ? 'show it selected in Explorer' : name === 'downloads.folder' ? 'open the Downloads folder' : 'open it with its default app') };
+    if (name === 'downloads.open' && DL === 'openfail') return { ok: false, reason: 'No application is associated with the specified file for this operation.' };
+    if (name === 'downloads.drag') return { ok: false, reason: 'mock: a real drag needs Electron (webContents.startDrag)' };
+    return { ok: true };
+  }
+
   /* ---- Hot corners (lane corners, 2026-09-27): lib/features/corners.js's corners.state, in its shape. ?hc=
        default (top-left Task view, bottom-right Show desktop)   fail  the bottom-right's last push failed
        game  the last push did nothing because a game runs        rest  resting (its commands throw)
@@ -1170,6 +1238,8 @@
       case 'topbar.state': case 'topbar.hidden': return tbCall(channel, payload);
       case 'corners.state': case 'corners.set': return hcCall(channel, payload);
       case 'corners.ack': return { ok: false };
+      case 'downloads.list': case 'downloads.seen': case 'downloads.open': case 'downloads.reveal':
+      case 'downloads.folder': case 'downloads.drag': return dlCall(channel, payload);
       case 'gamemode.set': return gmSet(payload);
       case 'gamemode.auto': gmState = Object.assign({}, gmState, { auto: !!(payload && payload.on) }); return Object.assign({}, gmState);
       case 'gamemode.liftSaver': gmState = Object.assign({}, gmState, { liftSaver: !!(payload && payload.on) }); return Object.assign({}, gmState);
@@ -1360,6 +1430,7 @@
         else if (channel === 'net') cb(netNow);
         else if (channel === 'qs') cb(qsSnapshot());     // main replays its last whole picture
         else if (channel === 'state') cb(state());
+        else if (channel === 'downloads.state') cb(dlState());   // lib/features/downloads.js replays its state (sync)
         else if (channel === 'spotify.status') cb(SPQ === 'checking' ? { ok: true, state: 'checking', reason: 'checking Spotify…', port: 47292 } : spqStatus());   // lib/features/spotify.js replays its last state (sync)
       }, 30);
       return function off() {

@@ -218,6 +218,42 @@ namespace Mantle {
     }
 
     // ------------------------------------------------------------------- verbs
+    //
+    // NONE OF THESE MAY WAIT ON ANOTHER APP'S THREAD (2026-09-27). They run on the focus lane
+    // (Lanes.cs), but a lane that waits seconds still makes the NEXT click wait, and Focus is also
+    // called from the switcher's own thread, the top bar and the clipboard history. Live, a focus
+    // under Valorant took ~5.2 s. Measured against a fixture whose thread was asleep:
+    //   ShowWindow(SW_RESTORE) on a minimised window  6,762 ms  (it SENDS WM_QUERYOPEN and waits)
+    //   SetWindowPos, i.e. BringWindowToTop           6,757 ms  (it SENDS WM_WINDOWPOSCHANGING)
+    //   AttachThreadInput itself                          1 ms  (but a call made WHILE attached,
+    //                                                           like the activation
+    //                                                           SetForegroundWindow sends, waits)
+    //   ShowWindowAsync, SetWindowPos+ASYNCWINDOWPOS    0-1 ms
+    // So the restore and the z-order are POSTED, and attach -> SetForegroundWindow -> detach runs
+    // on a pool thread that Focus waits for at most AttachWaitMs (AttachAndRaise).
+
+    /// How long Focus waits for the attach step before it stops waiting. Long enough for a loaded
+    /// but healthy app to answer its activation; short enough that a game that is not answering
+    /// costs one click under a second, not the 5.2 s measured live (and not the lane).
+    public const int AttachWaitMs = 800;
+
+    const int SW_SHOWNOACTIVATE = 4;
+    const uint SWP_ASYNCWINDOWPOS = 0x4000;
+    static readonly IntPtr HWND_TOP = IntPtr.Zero;
+
+    static class N {
+      [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr hwnd);
+      // Never sends WM_GETTEXT, so a hung window cannot block the fixture check.
+      [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+      public static extern int InternalGetWindowText(IntPtr hwnd, StringBuilder sb, int max);
+    }
+
+    static int _helpersOut;
+    /// Attach helpers Focus stopped waiting for that have not returned yet (ping reports it as
+    /// load.focusHelpersOut). Each one detaches the moment its call returns.
+    public static int HelpersOut { get { return System.Threading.Thread.VolatileRead(ref _helpersOut); } }
+
+    sealed class Helper { public bool Done, Abandoned; }
 
     static string Check(IntPtr hwnd) {
       if (hwnd == IntPtr.Zero) return "no hwnd given";
@@ -234,27 +270,23 @@ namespace Mantle {
       string bad = Check(hwnd);
       if (bad != null) return bad;
 
-      if (Win32.IsIconic(hwnd)) Win32.ShowWindow(hwnd, Win32.SW_RESTORE);
+      // POSTED: the restore lands when the window's own thread gets to it, and a hung one can
+      // never hold us (the table above). SetForegroundWindow on a still-minimised window is fine:
+      // the switcher's "direct" path has done it in this order since it shipped.
+      if (Win32.IsIconic(hwnd)) Win32.ShowWindowAsync(hwnd, Win32.SW_RESTORE);
 
       IntPtr fg = Win32.GetForegroundWindow();
       if (fg == hwnd) return null;
 
-      int fgPid;
-      int fgThread = Win32.GetWindowThreadProcessId(fg, out fgPid);
-      int me = Win32.GetCurrentThreadId();
-      bool attached = false;
-      try {
-        if (fgThread != 0 && fgThread != me) attached = Win32.AttachThreadInput(me, fgThread, true);
-        Win32.SetForegroundWindow(hwnd);
-        Win32.BringWindowToTop(hwnd);
-      } finally {
-        if (attached) Win32.AttachThreadInput(me, fgThread, false);
-      }
-
+      string late = AttachAndRaise(hwnd, fg, false, null);
       if (Win32.GetForegroundWindow() == hwnd) return null;
+      // The helper is still attached to the app in front and waiting on it: an Alt tap now would
+      // only race it. Say so; the window may still come forward when that app answers.
+      if (late != null) return late;
 
       // Last resort: Windows relaxes the foreground lock for a process that has
-      // just seen input, so we synthesise a bare Alt press/release.
+      // just seen input, so we synthesise a bare Alt press/release. Not attached
+      // here, so SetForegroundWindow posts the change and does not wait.
       Hotkey.TapAltForFocusLock();
       Win32.SetForegroundWindow(hwnd);
       if (Win32.GetForegroundWindow() == hwnd) return null;
@@ -263,10 +295,119 @@ namespace Mantle {
              ": Windows refused the foreground change (another app holds the foreground lock)";
     }
 
+    /// The documented escalation step, BOUNDED: attach this thread's input to the thread in front
+    /// (which is what lets Windows hand the foreground over), SetForegroundWindow, a POSTED raise to
+    /// the top, detach. It runs on a pool thread and the caller waits at most AttachWaitMs. Null
+    /// when it finished in time, else the words for the caller. The helper ALWAYS detaches, in its
+    /// finally, whenever its call returns; HelpersOut counts the ones still out.
+    ///
+    /// No attach when the window in front is hung (IsHungAppWindow: ~5 s without pumping): joining
+    /// the input queue of a thread that is not reading it is exactly the stall this exists to avoid.
+    ///
+    /// `rehearse` (focus.rehearse, the test only): attach to the TARGET's own thread (the fixture
+    /// the test hung on purpose, standing in for a busy game) and, in place of SetForegroundWindow,
+    /// make one synchronous no-op SetWindowPos on it - a call that waits on that thread exactly as
+    /// the activation SetForegroundWindow sends while attached does. It never takes the foreground
+    /// and never taps Alt, so a test run cannot move anything on Owen's screen.
+    static string AttachAndRaise(IntPtr hwnd, IntPtr fg, bool rehearse, IDictionary steps) {
+      IntPtr to = rehearse ? hwnd : fg;
+      int toPid = 0;
+      int toThread = to == IntPtr.Zero ? 0 : Win32.GetWindowThreadProcessId(to, out toPid);
+      bool hung = to != IntPtr.Zero && N.IsHungAppWindow(to);
+      bool wantAttach = toThread != 0 && !hung;
+      if (steps != null) steps["attach"] = wantAttach ? "tried" : hung ? "skipped: that window is not responding" : "skipped: no thread to attach to";
+
+      var h = new Helper();
+      var done = new System.Threading.ManualResetEvent(false);
+      bool attachedOk = false;
+      System.Threading.ThreadPool.QueueUserWorkItem(delegate {
+        int me = Win32.GetCurrentThreadId();
+        bool attached = false;
+        try {
+          if (wantAttach && toThread != me) attached = Win32.AttachThreadInput(me, toThread, true);
+          attachedOk = attached;
+          if (!rehearse) Win32.SetForegroundWindow(hwnd);
+          else if (attached) Win32.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
+                                                Win32.SWP_NOSIZE | Win32.SWP_NOMOVE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
+          // BringWindowToTop is a synchronous SetWindowPos(HWND_TOP): posted instead.
+          Win32.SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0,
+                             Win32.SWP_NOSIZE | Win32.SWP_NOMOVE | SWP_ASYNCWINDOWPOS | (rehearse ? Win32.SWP_NOACTIVATE : 0u));
+        } catch (Exception) {
+          // Nothing to add: the caller's own foreground check says whether it landed.
+        } finally {
+          if (attached) { try { Win32.AttachThreadInput(me, toThread, false); } catch (Exception) { } }
+          lock (h) {
+            h.Done = true;
+            if (h.Abandoned) System.Threading.Interlocked.Decrement(ref _helpersOut);
+          }
+          try { done.Set(); } catch (ObjectDisposedException) { /* the caller finished first */ }
+        }
+      });
+
+      bool inTime = done.WaitOne(AttachWaitMs);
+      if (!inTime) {
+        lock (h) {
+          if (h.Done) inTime = true;
+          else { h.Abandoned = true; System.Threading.Interlocked.Increment(ref _helpersOut); }
+        }
+      }
+      if (steps != null) steps["attached"] = attachedOk;
+      if (!inTime) return "the app in front" + (toPid > 0 ? " (pid " + toPid + ")" : "") + " did not answer within " +
+                          AttachWaitMs + " ms while Mantle handed the foreground over, so Mantle stopped waiting; " +
+                          "the window may still come forward once that app answers";
+      done.Close();
+      return null;
+    }
+
+    /// POSTED like Focus's restore: a synchronous ShowWindow on a hung window waits on it.
     public static string Minimize(IntPtr hwnd) {
       string bad = Check(hwnd);
       if (bad != null) return bad;
-      Win32.ShowWindow(hwnd, Win32.SW_MINIMIZE);
+      Win32.ShowWindowAsync(hwnd, Win32.SW_MINIMIZE);
+      return null;
+    }
+
+    // ---------------------------------------------------------- focus.rehearse (tests only)
+
+    const string FixtureTitle = "Mantle focus fixture";
+    const string FixtureExe = "mantle-focus-fixture.exe";
+
+    /// The fixture sidecar/test-lanes.js compiles into %TEMP%, and only it: title, exe name AND an
+    /// exe under %TEMP% (as WindowTop.IsFixture).
+    static bool IsFixture(IntPtr hwnd) {
+      var sb = new StringBuilder(256);
+      N.InternalGetWindowText(hwnd, sb, sb.Capacity);
+      if (!sb.ToString().StartsWith(FixtureTitle, StringComparison.Ordinal)) return false;
+      int pid;
+      Win32.GetWindowThreadProcessId(hwnd, out pid);
+      string exe = Win32.GetProcessPath(pid) ?? "";
+      string temp;
+      try { temp = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath()); } catch (Exception) { return false; }
+      return string.Equals(System.IO.Path.GetFileName(exe), FixtureExe, StringComparison.OrdinalIgnoreCase) &&
+             exe.StartsWith(temp, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// `focus.rehearse {hwnd}`: every step of Focus that talks to another app's thread - the restore,
+    /// the attach, a call made while attached, the raise - with the same code and the same bound,
+    /// on the fixture only, without ever taking the foreground (AttachAndRaise's `rehearse`). Runs in
+    /// passive, which is the point: `focus` itself is refused there. Answers what each step did.
+    public static string Rehearse(Dictionary<string, object> req, ref object result) {
+      IntPtr hwnd = Json.GetHwnd(req, "hwnd");
+      string bad = Check(hwnd);
+      if (bad != null) return bad;
+      if (!IsFixture(hwnd))
+        return "focus.rehearse only runs on the test fixture (\"" + FixtureTitle + "\", " + FixtureExe + " under %TEMP%)";
+      var sw = System.Diagnostics.Stopwatch.StartNew();
+      var steps = Json.Obj();
+      bool iconic = Win32.IsIconic(hwnd);
+      if (iconic) Win32.ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE);
+      steps["restore"] = iconic ? "posted" : "not minimised";
+      steps["late"] = AttachAndRaise(hwnd, IntPtr.Zero, true, steps);
+      steps["ms"] = sw.ElapsedMilliseconds;
+      steps["waitMs"] = AttachWaitMs;
+      steps["helpersOut"] = HelpersOut;
+      steps["thread"] = System.Threading.Thread.CurrentThread.Name ?? "ui";
+      result = steps;
       return null;
     }
 
@@ -286,6 +427,17 @@ namespace Mantle {
       if (bad != null) return bad;
       if (Win32.GetForegroundWindow() == hwnd) return Minimize(hwnd);
       return Focus(hwnd);
+    }
+  }
+
+  /// focus.rehearse (WindowList.Rehearse): the test's way into Focus's blocking-prone steps.
+  [MantleFeature]
+  static class FocusRehearsal {
+    public static void Register(FeatureTable t) {
+      t.Add("focus.rehearse", Lanes.Ui, WindowList.Rehearse);
+      // On the focus lane, like `focus`. FeatureTable.Add only accepts the lanes it knew when it was
+      // written, so the lane is set here (Lanes.Register overwrites the one Add just registered).
+      Lanes.Register("focus.rehearse", Lanes.Focus);
     }
   }
 }

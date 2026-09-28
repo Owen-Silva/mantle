@@ -1,0 +1,83 @@
+/* layouts.css - the window layouts pop-up (lane layouts, 2026-09-27), a copy of ui/ontop/ontop.css The volume pop-up's surface
+ * (ui/osd/osd.css .osd): --lg-fill-strong, hairline edges, the pill radius, the bar's exit curve.
+ * EVERY colour is a --lg-* token from ../shared/glass-light.css. No backdrop-filter, no glow.
+ * The window is transparent and wider than the pill; the pill sits at the bottom centre (top when
+ * the bar is docked at the top: body[data-below]). */
+:root { --m: 18px; }
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px;
+  -webkit-font-smoothing: antialiased;
+  color: var(--lg-ink-2);
+  user-select: none;
+  cursor: default;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding: var(--m);
+}
+body[data-below] { align-items: flex-start; }
+
+.toast {
+  flex: none;
+  max-width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 16px 8px 12px;
+  background-color: var(--lg-fill-strong);
+  border: 1px solid var(--lg-edge-in);
+  border-radius: var(--lg-r-pop);
+  box-shadow: inset 0 1px 0 var(--lg-edge-in), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  transition: opacity var(--lg-dur-out) var(--lg-ease);
+}
+.toast[hidden] { display: none; }
+.toast.fading { opacity: 0; }
+
+.glyph {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--lg-acc-soft);
+  color: var(--lg-acc);
+}
+.toast[data-tone="warn"] .glyph { background: var(--lg-warn-soft); color: var(--lg-warn); }
+.toast[data-tone="quiet"] .glyph { background: var(--lg-sunk); color: var(--lg-ink-3); }
+
+.words { display: flex; flex-direction: column; min-width: 0; }
+.text {
+  color: var(--lg-ink);
+  font-weight: 600;
+  line-height: 1.3;
+  /* the summary can be long ("Work: 3 placed, 1 opened, 1 not found (Notion isn't installed)") */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.lines { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.line {
+  color: var(--lg-ink-2);
+  font-size: 11.5px;
+  line-height: 1.3;
+  /* a reason can be a sentence: two lines, then an ellipsis (the full text is in the log) */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.lines:empty { display: none; }

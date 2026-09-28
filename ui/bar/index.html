@@ -24,6 +24,7 @@
 <link rel="stylesheet" href="corners.css">
 <link rel="stylesheet" href="jumplist.css">
 <link rel="stylesheet" href="spotify.css">
+<link rel="stylesheet" href="downloads.css">
 </head>
 <!-- data-edge says which screen edge the bar is docked to. bar.js overwrites it from State.edge.
      class="pre edge": the flush, fully transparent state with NO transition, which is how the
@@ -69,6 +70,16 @@
     <div id="tray" class="tray" role="group" aria-label="Notification area"></div>
     <div class="sep" aria-hidden="true"></div>
 
+    <!-- The Downloads shelf (ui/bar/downloads.js; lib/features/downloads.js): the newest files in
+         Downloads, with a dot when one finished since the shelf was last opened. Hidden while the
+         feature is off in the tray. -->
+    <button id="downloads" class="btn glyph dls" type="button" title="Downloads" aria-label="Downloads">
+      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+        <path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" d="M8 2.3v7.6M5 7.1l3 2.9 3-2.9"/>
+        <path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" d="M2.6 10.1v1.9c0 .8.6 1.4 1.4 1.4h8c.8 0 1.4-.6 1.4-1.4v-1.9"/>
+      </svg>
+      <span class="dldot" hidden></span>
+    </button>
     <button id="volume" class="btn glyph" type="button" title="Volume"></button>
     <!-- drawn by bar.js from the sidecar's network reading (net.js); it was a fixed Wi-Fi drawing
          here until 2026-09-23, full bars whatever the network did -->
@@ -128,6 +139,8 @@
 <script src="jumplist.js"></script>
 <!-- Spotify's "Up next" queue inside the now-playing card (window.MantleSpotify; lib/features/spotify.js) -->
 <script src="spotify.js"></script>
+<!-- the Downloads shelf's button and panel (window.MantleDownloads; lib/features/downloads.js) -->
+<script src="downloads.js"></script>
 <script src="bar.js"></script>
 <!-- Mantle-themed tooltips for every title (window.MantleTips); data-room: it asks bar.popover for room above the pill -->
 <script src="../shared/tips.js" data-room="bar"></script>
