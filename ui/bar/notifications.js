@@ -327,7 +327,7 @@
       noteEl.hidden = !say;
       detail.textContent = (data && data.detail) ? 'Plainer than it could be: ' + data.detail : '';
       detail.hidden = !detail.textContent;
-      /* Main caps a popover at 480 px (POPOVER_MAX). Measured in the mock: the plain-source detail
+      /* Sized for 480 px, under main's 640 cap (POPOVER_MAX). Measured in the mock: the plain-source detail
          alone brings the panel to 466, so any extra line takes its room from the list. */
       list.style.maxHeight = (say || detail.textContent) ? '240px' : '';
 

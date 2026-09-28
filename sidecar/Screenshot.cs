@@ -41,6 +41,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace Mantle {
   [MantleFeature]
@@ -48,6 +49,7 @@ namespace Mantle {
     public static void Register(FeatureTable t) {
       t.Add("shot.grab", Lanes.Capture, Grab);
       t.Add("shot.save", Lanes.Capture, Save);
+      t.Add("shot.copy", Lanes.Capture, Copy);      // the clipboard, straight from the frame (no PNG in between)
       t.Add("shot.release", Lanes.Capture, Release);
       t.Add("shot.folder", Lanes.Slow, Folder);
       t.Add("shot.ocr", Lanes.Capture, OcrCmd);     // "Copy text": Ocr.cs reads the same frozen frame
@@ -103,6 +105,19 @@ namespace Mantle {
 
         int vx = ShotNative.GetSystemMetrics(76), vy = ShotNative.GetSystemMetrics(77);
         int vw = ShotNative.GetSystemMetrics(78), vh = ShotNative.GetSystemMetrics(79);
+        // Tests only (synthetic): `size` {w,h} makes the frame that big (a 4K frame on a 1080p
+        // desktop, for timings), `fill` tiles a picture from under %TEMP% over the pattern
+        // (screen-like content, for encode timings). Never the screen, so nothing of Owen's.
+        object sizeObj;
+        if (synthetic && Json.TryGet(req, "size", out sizeObj) && sizeObj is Dictionary<string, object>) {
+          int sw0 = Json.GetInt((Dictionary<string, object>)sizeObj, "w", 0), sh0 = Json.GetInt((Dictionary<string, object>)sizeObj, "h", 0);
+          if (sw0 > 0 && sh0 > 0) { vw = sw0; vh = sh0; }
+        }
+        string fill = synthetic ? Json.GetString(req, "fill") : null;
+        if (!string.IsNullOrEmpty(fill)) {
+          string ferr = CheckTempDir(Path.GetDirectoryName(fill), "shot.grab: a fill picture");
+          if (ferr != null) return ferr;
+        }
         if (vw <= 0 || vh <= 0) return "shot.grab: the virtual screen size could not be read";
         if ((long)vw * vh > MaxPixels)
           return "shot.grab: the desktop is " + vw + "x" + vh + " physical pixels, more than the " +
@@ -129,6 +144,10 @@ namespace Mantle {
           f.Bits = bits;
           if (synthetic) {
             FillSynthetic(f);
+            if (!string.IsNullOrEmpty(fill)) {
+              string ferr = FillFrom(f, fill);
+              if (ferr != null) { FreeFrame(f); return "shot.grab: " + ferr; }
+            }
             object tl;
             if (Json.TryGet(req, "text", out tl) && tl is List<object> && ((List<object>)tl).Count > 0) {
               object at;
@@ -211,6 +230,30 @@ namespace Mantle {
           row[o + 3] = (byte)((x * 7 + y * 3) & 255);
         }
         Marshal.Copy(row, 0, new IntPtr(f.Bits.ToInt64() + (long)y * f.W * 4), row.Length);
+      }
+    }
+
+    /// Tests only: tile a picture (under %TEMP%) over the whole frame. null = done, else the reason.
+    static string FillFrom(Frame f, string file) {
+      try {
+        using (var src = new Bitmap(file)) {
+          int tw = src.Width, th = src.Height;
+          BitmapData bd = src.LockBits(new Rectangle(0, 0, tw, th), ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
+          try {
+            var row = new byte[f.W * 4];
+            for (int y = 0; y < f.H; y++) {
+              int sy = y % th;
+              for (int x0 = 0; x0 < f.W; x0 += tw) {
+                int n = Math.Min(tw, f.W - x0);
+                Marshal.Copy(new IntPtr(bd.Scan0.ToInt64() + (long)sy * bd.Stride), row, x0 * 4, n * 4);
+              }
+              Marshal.Copy(row, 0, new IntPtr(f.Bits.ToInt64() + (long)y * f.W * 4), row.Length);
+            }
+          } finally { src.UnlockBits(bd); }
+        }
+        return null;
+      } catch (Exception e) {
+        return "the fill picture could not be read (" + e.GetType().Name + ")";
       }
     }
 
@@ -380,6 +423,210 @@ namespace Mantle {
       }
     }
 
+    /* ---- shot.copy ------------------------------------------------------------------------ */
+
+    /// {grab, x, y, w, h (physical, virtual-screen coords), dryRun?, dump?}
+    ///   -> {format:"CF_DIB", w, h, x, y, bytes, dryRun, dumped?, ms:{crop, clipboard, total}}
+    ///
+    /// WHY (lane shotspeed, 2026-09-27). The copy used to wait for the PNG encode (80-260 ms),
+    /// then main decoded that PNG and re-encoded it to hand `clipboard.write` an image/png Blob:
+    /// "copied" came 863 ms (p50) after the selection, and a paste inside that second got the OLD
+    /// clipboard. Now the clipboard gets a CF_DIB cut straight from the frozen frame (no encode at
+    /// all: a row copy), BEFORE shot.save encodes the file. CF_DIB is the format PrintScreen's own
+    /// bitmap reaches every app as: Paint, Discord and browsers read it (Chromium turns it into
+    /// image/png itself). 32 bpp BI_RGB, bottom-up, the fourth byte set to 255: BitBlt leaves it
+    /// undefined, and Chromium reads a 32-bit DIB as premultiplied alpha, so 0 in a black area
+    /// would paste as transparent while 255 is opaque everywhere.
+    ///
+    /// `dryRun` builds the very same memory block and frees it instead of handing it to Windows
+    /// (a test's copy, never Owen's clipboard); `dump` (a folder under %TEMP%, dryRun only) also
+    /// writes it as "<dump>\clip-<grab>.bmp" so a test can check it pixel for pixel. A passive
+    /// sidecar refuses a real copy.
+    static string Copy(Dictionary<string, object> req, ref object result) {
+      int id = Json.GetInt(req, "grab", 0);
+      int x = Json.GetInt(req, "x", 0), y = Json.GetInt(req, "y", 0);
+      int w = Json.GetInt(req, "w", 0), h = Json.GetInt(req, "h", 0);
+      bool dry = Json.GetBool(req, "dryRun", false);
+      string dump = dry ? Json.GetString(req, "dump") : null;
+      if (w <= 0 || h <= 0) return "shot.copy: w and h must be positive physical pixels";
+      if (!dry && Program.Passive) return FeatureTable.PassiveRefusal + ": would have put a screenshot on the clipboard";
+      if (!string.IsNullOrEmpty(dump)) { string derr = CheckTempDir(dump, "shot.copy: a dump"); if (derr != null) return derr; }
+
+      var total = Stopwatch.StartNew();
+      IntPtr hMem = IntPtr.Zero;
+      long bytes;
+      double cropMs = 0, clipMs = 0;
+      string dumped = null;
+      try {
+        lock (_lock) {
+          if (_cur == null || _cur.Id != id)
+            return "shot.copy: capture " + id + " is gone (it was released, or a newer one replaced it)";
+          int l = Math.Max(x, _cur.X), t = Math.Max(y, _cur.Y);
+          int r = Math.Min(x + w, _cur.X + _cur.W), b = Math.Min(y + h, _cur.Y + _cur.H);
+          if (r <= l || b <= t) return "shot.copy: the rect " + x + "," + y + " " + w + "x" + h + " is outside the capture";
+          x = l; y = t; w = r - l; h = b - t;
+          int stride = w * 4;
+          bytes = 40 + (long)stride * h;
+          hMem = ShotNative.GlobalAlloc(0x0002 /* GMEM_MOVEABLE */, new UIntPtr((ulong)bytes));
+          if (hMem == IntPtr.Zero) return "shot.copy: no memory for a " + w + "x" + h + " picture (" + (bytes >> 20) + " MB)";
+          IntPtr p = ShotNative.GlobalLock(hMem);
+          if (p == IntPtr.Zero) return "shot.copy: the picture's memory could not be locked";
+          try {
+            // BITMAPINFOHEADER: 40 bytes, positive height = bottom-up rows, 32 bpp, BI_RGB.
+            var hdr = new byte[40];
+            PutI32(hdr, 0, 40); PutI32(hdr, 4, w); PutI32(hdr, 8, h);
+            hdr[12] = 1; hdr[14] = 32;
+            PutI32(hdr, 20, stride * h);
+            Marshal.Copy(hdr, 0, p, 40);
+            var row = new byte[stride];
+            long src = _cur.Bits.ToInt64() + (long)(y - _cur.Y) * _cur.W * 4 + (long)(x - _cur.X) * 4;
+            long dst = p.ToInt64() + 40;
+            for (int k = 0; k < h; k++) {
+              Marshal.Copy(new IntPtr(src + (long)k * _cur.W * 4), row, 0, stride);
+              for (int i = 3; i < stride; i += 4) row[i] = 255;
+              Marshal.Copy(row, 0, new IntPtr(dst + (long)(h - 1 - k) * stride), stride);
+            }
+            cropMs = total.Elapsed.TotalMilliseconds;
+            if (!string.IsNullOrEmpty(dump)) {
+              Directory.CreateDirectory(dump);
+              dumped = Path.Combine(dump, "clip-" + id + ".bmp");
+              var fh = new byte[14];
+              fh[0] = (byte)'B'; fh[1] = (byte)'M';
+              PutI32(fh, 2, (int)(14 + bytes)); PutI32(fh, 10, 14 + 40);
+              var all = new byte[bytes];
+              Marshal.Copy(p, all, 0, (int)bytes);
+              using (var fs = new FileStream(dumped, FileMode.Create, FileAccess.Write, FileShare.None)) {
+                fs.Write(fh, 0, fh.Length);
+                fs.Write(all, 0, all.Length);
+              }
+            }
+          } finally {
+            ShotNative.GlobalUnlock(hMem);
+          }
+        }
+
+        if (!dry) {
+          var sw = Stopwatch.StartNew();
+          bool keep;
+          string werr = ClipOwner.SetDib(hMem, out keep);
+          clipMs = sw.Elapsed.TotalMilliseconds;
+          if (keep) hMem = IntPtr.Zero;             // Windows owns it now (or the late work frees it)
+          if (werr != null) return "shot.copy: " + werr;
+        }
+        result = Json.Obj("ok", true, "format", "CF_DIB", "w", w, "h", h, "x", x, "y", y, "bytes", bytes,
+          "dryRun", dry, "dumped", dumped,
+          "ms", Json.Obj("crop", Math.Round(cropMs, 2), "clipboard", Math.Round(clipMs, 2),
+                         "total", Math.Round(total.Elapsed.TotalMilliseconds, 2)));
+        return null;
+      } catch (Exception e) {
+        return "shot.copy: the screenshot could not be copied (" + e.GetType().Name + ": " + e.Message + ")";
+      } finally {
+        if (hMem != IntPtr.Zero) ShotNative.GlobalFree(hMem);
+      }
+    }
+
+    /// The clipboard's owner window must belong to a thread that PUMPS messages (Windows sends the
+    /// owner WM_DESTROYCLIPBOARD when another app empties the clipboard; a thread parked on the
+    /// capture lane's queue would hang that app). So: one message-only window on its own STA
+    /// thread, made at the first copy and kept, the way ClipHistory.cs's listener does it.
+    static class ClipOwner {
+      const int WM_WORK = 0x8000 + 0x52;            // WM_APP + 0x52
+      static readonly object _lk = new object();
+      static readonly object _start = new object();
+      static readonly Queue<Action> _work = new Queue<Action>();
+      static Win _win;
+
+      sealed class Win : System.Windows.Forms.NativeWindow {
+        public Win() {
+          var cp = new System.Windows.Forms.CreateParams();
+          cp.Caption = "Mantle screenshot clipboard";
+          cp.Parent = new IntPtr(-3);                 // HWND_MESSAGE: never shown, never in any z-order
+          CreateHandle(cp);
+        }
+        protected override void WndProc(ref System.Windows.Forms.Message m) {
+          if (m.Msg == WM_WORK) { Drain(); return; }
+          base.WndProc(ref m);
+        }
+      }
+
+      static void Drain() {
+        while (true) {
+          Action a;
+          lock (_lk) { if (_work.Count == 0) return; a = _work.Dequeue(); }
+          try { a(); } catch (Exception) { }
+        }
+      }
+
+      static string Ensure() {
+        lock (_start) {
+          lock (_lk) if (_win != null) return null;
+          string err = null;
+          var ready = new ManualResetEvent(false);
+          var t = new Thread(delegate () {
+            try {
+              var w = new Win();
+              lock (_lk) _win = w;
+            } catch (Exception e) { err = "its window could not be made (" + e.Message + ")"; ready.Set(); return; }
+            ready.Set();
+            System.Windows.Forms.Application.Run();
+          });
+          t.IsBackground = true;
+          t.Name = "shot-clipboard";
+          t.SetApartmentState(ApartmentState.STA);
+          t.Start();
+          if (!ready.WaitOne(3000)) return "the clipboard thread did not start within 3 s";
+          return err;
+        }
+      }
+
+      /// Empty the clipboard and give it `hDib` as CF_DIB. null = done. `keep` true = the caller
+      /// must NOT free hDib: Windows owns it, or (a timeout after the work began) it may yet.
+      public static string SetDib(IntPtr hDib, out bool keep) {
+        keep = false;
+        string e0 = Ensure();
+        if (e0 != null) return "the clipboard could not be reached: " + e0;
+        string r = null;
+        bool started = false, cancelled = false, taken = false;
+        var done = new ManualResetEvent(false);
+        IntPtr hwnd;
+        lock (_lk) {
+          _work.Enqueue(delegate () {
+            lock (_lk) { if (cancelled) return; started = true; }
+            try {
+              IntPtr me = _win.Handle;
+              bool open = false;
+              for (int i = 0; i < 6 && !open; i++) { open = ShotNative.OpenClipboard(me); if (!open) Thread.Sleep(25); }
+              if (!open) { r = "another app is holding the clipboard"; return; }
+              try {
+                if (!ShotNative.EmptyClipboard()) { r = "Windows would not empty the clipboard (error " + Marshal.GetLastWin32Error() + ")"; return; }
+                if (ShotNative.SetClipboardData(8 /* CF_DIB */, hDib) == IntPtr.Zero)
+                  r = "Windows refused the picture (error " + Marshal.GetLastWin32Error() + ")";
+                else taken = true;
+              } finally { ShotNative.CloseClipboard(); }
+            } catch (Exception ex) { r = ex.GetType().Name + ": " + ex.Message; }
+            finally {
+              bool late;
+              lock (_lk) late = cancelled;
+              if (late && !taken) ShotNative.GlobalFree(hDib);   // the caller gave up on it: ours to free
+              done.Set();
+            }
+          });
+          hwnd = _win.Handle;
+        }
+        ShotNative.PostMessageW(hwnd, WM_WORK, IntPtr.Zero, IntPtr.Zero);
+        if (!done.WaitOne(3000)) {
+          lock (_lk) {
+            if (done.WaitOne(0)) { keep = taken; return r; }   // it finished just now after all
+            cancelled = true;
+            keep = started;                  // begun: it frees hDib itself unless Windows took it
+          }
+          return "the clipboard did not answer within 3 s";
+        }
+        keep = taken;
+        return r;
+      }
+    }
+
     /* ---- shot.ocr (the overlay's "Copy text" mode, Ocr.cs) --------------------------------- */
 
     /// {grab, x, y, w, h (physical, virtual-screen coords)} -> {lines:[{text,x,y,w,h}], lang, scale,
@@ -531,6 +778,17 @@ namespace Mantle {
   static class ShotNative {
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left, Top, Right, Bottom; }
+
+    // shot.copy: the clipboard, and the global memory block it takes.
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool OpenClipboard(IntPtr hwnd);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool CloseClipboard();
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool EmptyClipboard();
+    [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr SetClipboardData(uint fmt, IntPtr h);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool PostMessageW(IntPtr h, int msg, IntPtr w, IntPtr l);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GlobalLock(IntPtr h);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GlobalUnlock(IntPtr h);
+    [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr GlobalFree(IntPtr h);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct BITMAPINFOHEADER {

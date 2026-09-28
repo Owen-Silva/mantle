@@ -76,11 +76,20 @@
      one — one failure path, one place that can forget to report. Channels that still reply with a
      bare object (state.get, sys.stats, volume.get) pass straight through untouched. */
   function callR(channel, payload) {
-    return call(channel, payload).then(function (r) {
+    var p = call(channel, payload).then(function (r) {
       if (r && typeof r === 'object' && r.ok === false)
         throw new Error(r.reason || channel + ' replied ok:false and gave no reason');
       return r || {};
     });
+    /* Every popover room request, whoever sends it (this file, qs-more, downloads, notifications,
+       the jump list), has its answer checked here: main's room is capped (POPOVER_MAX), and a
+       panel taller than that SCROLLS and says so instead of losing its top (popFit). */
+    if (channel === 'bar.popover' && payload && payload.open) {
+      if (!popLast || popLast.key !== payload.key) popLast = { key: payload.key, asked: 0, room: 0, max: 0 };
+      popLast.asked = Math.round(Number(payload.height)) || 0;
+      p = p.then(function (r) { popFit(payload.key, r); return r; });
+    }
+    return p;
   }
 
   /* on(): subscribe, and if that is impossible SAY WHY. onFail lets a caller report the failure
@@ -1180,7 +1189,7 @@
         call: call, callR: callR, msg: msg,
         resize: function () {
           if (popKey !== jlKey(b)) return;
-          callR('bar.popover', { open: true, height: el.pop.offsetHeight + 16, key: popKey }).catch(function () {});
+          callR('bar.popover', { open: true, height: popNeed(), key: popKey }).catch(function () {});
           popPlace(b);
         },
         close: closePop,
@@ -1400,6 +1409,83 @@
   /* ================================================================= popovers */
 
   var popKey = null, popTimer = 0;
+  var popLast = null;   // the open popover's last room request {key, asked} and main's answer {room, max}
+
+  /* ROOM (2026-09-27): main gives a popover at most POPOVER_MAX (its reply's `max`). A panel taller
+     than that used to be cut off by the window's edge with no word (the live log had Quick Settings
+     asking up to 618 px of a 480 cap). Now it is held to the room it got and scrolls, and a line at
+     its top says why. The flyouts are left alone: their live previews are DWM boxes placed over the
+     page, and a scrolling flyout would slide its cards out from under them. */
+
+  /* What the popover needs, as the bar.popover height: its NATURAL height (not the capped box,
+     and not counting the cap's own note) plus the 16 main has always been asked for. */
+  function popNeed() {
+    var p = el.pop, note = p.querySelector(':scope > .popcap');
+    if (!p.style.maxHeight && !note) return p.offsetHeight + 16;
+    var mh = p.style.maxHeight, top = p.scrollTop;
+    p.style.maxHeight = '';
+    if (note) note.style.display = 'none';
+    var h = p.offsetHeight;
+    if (note) note.style.display = '';
+    p.style.maxHeight = mh;
+    p.scrollTop = top;
+    return h + 16;
+  }
+
+  /* The sticky line at the popover's top: the cap, or a room request that failed. */
+  function popNote(text, tip) {
+    var note = el.pop.querySelector(':scope > .popcap');
+    if (!text) { if (note) note.parentNode.removeChild(note); return; }
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'note popcap';
+      note.setAttribute('role', 'status');
+    }
+    if (el.pop.firstChild !== note) el.pop.insertBefore(note, el.pop.firstChild);
+    note.textContent = text;
+    note.title = tip || text;
+  }
+
+  function popUncap() {
+    el.pop.classList.remove('popcapped');
+    el.pop.style.maxHeight = '';
+    popNote('');
+  }
+
+  /* Main's answer to a room request: fits, capped (scroll + say so), or the panel grew while the
+     request was in flight and asks again. `r` is {height, total, capped, max} (main.js bar.popover). */
+  function popFit(key, r) {
+    if (!key || popKey !== key || isFlyKey(key) || el.pop.hidden || !r) return;
+    var room = Math.round(Number(r.height)), max = Math.round(Number(r.max));
+    if (!(room > 0) || !(max > 0)) return;   // an answer without its numbers: nothing to judge by
+    if (popLast && popLast.key === key) { popLast.room = room; popLast.max = max; }
+    var need = popNeed();
+    if (need <= room) { popUncap(); return; }
+    if (!r.capped && room < max) { popAsk(key, need); return; }   // it grew since it asked (or asked from a capped box)
+    el.pop.classList.add('popcapped');
+    el.pop.style.maxHeight = Math.max(80, room - 16) + 'px';
+    popNote('Taller than the screen allows: scroll for the rest',
+      'This panel needs ' + need + ' px and a popover gets at most ' + max + ' px (main.js POPOVER_MAX), so it scrolls');
+  }
+
+  function popAsk(key, need) {
+    callR('bar.popover', { open: true, height: need, key: key }).catch(function (e) {
+      if (popKey === key) popNote('This panel may be clipped: bar.popover — ' + msg(e));
+    });
+  }
+
+  /* A panel that changes height after it opened (Quick Settings filling in, Game mode's Details, a
+     note appearing) asks for its room again. A module that already asked for this height (qs-more,
+     notifications, downloads, the jump list, the media card) is not asked for twice, and a panel
+     already scrolling at the cap is not re-asked while it still does not fit. */
+  function popResized() {
+    if (!popKey || isFlyKey(popKey) || el.pop.hidden || !popLast || popLast.key !== popKey) return;
+    var need = popNeed();
+    if (need === popLast.asked) return;
+    if (popLast.max && popLast.room >= popLast.max && need > popLast.max && el.pop.classList.contains('popcapped')) return;
+    popAsk(popKey, need);
+  }
+  if (window.ResizeObserver) new ResizeObserver(popResized).observe(el.pop);
 
   function closePop() {
     if (!popKey) return;
@@ -1422,8 +1508,10 @@
     if (popKey === 'dl' && window.MantleDownloads) MantleDownloads.closed();             // its 30 s age ticker stops
     if (isFlyKey(popKey)) flyTeardown();
     popKey = null;
+    popLast = null;
     el.pop.hidden = true;
-    el.pop.className = 'pop';          // drop any per-panel class (.cal)
+    el.pop.className = 'pop';          // drop any per-panel class (.cal, and .popcapped)
+    el.pop.style.maxHeight = '';       // a cap belongs to the panel that was held to it
     el.pop.textContent = '';
     if (popTimer) { clearTimeout(popTimer); popTimer = 0; }
     call('bar.popover', { open: false }).catch(function () {});   // shrink request; failure is reported on open, not here
@@ -1440,7 +1528,7 @@
        windows changed) keeps the window grown: closing first would shrink it and grow it straight
        back, a visible jump on every icon crossed. The one bar.popover call below resizes it only if
        the height changed, and main takes the old pictures down on that call. */
-    if (o.swap && isFlyKey(popKey)) { flyTeardown(); el.pop.className = 'pop'; }
+    if (o.swap && isFlyKey(popKey)) { flyTeardown(); el.pop.className = 'pop'; el.pop.style.maxHeight = ''; }
     else closePop();
     popKey = key;
     el.pop.textContent = '';
@@ -1451,8 +1539,9 @@
 
     /* The bar window is only 48px tall, so a popover drawn here would be cut off by the window,
        not by CSS. Ask the main process for room. If that channel does not exist yet, SAY SO in
-       the popover instead of letting it silently disappear off the edge of the window. */
-    var h = el.pop.offsetHeight + 16;
+       the popover instead of letting it silently disappear off the edge of the window. A panel
+       taller than the room main can give scrolls, and says so (callR -> popFit). */
+    var h = popNeed();
     var room = callR('bar.popover', { open: true, height: h, key: key }).catch(function (e) {
       if (popKey !== key) return;
       var note = document.createElement('div');
@@ -1847,7 +1936,9 @@
     else fail('topbarhide', 'top bar row missing', 'ui/bar/topbarhide.js did not load, so quick settings cannot show a hidden top bar again (Win+Alt+T still does)', 'warn');
     /* HOT CORNERS (lane corners, 2026-09-27): what each screen corner does (ui/bar/corners.js); its choices open below the grid, so it asks for room again. */
     if (window.MantleCorners) MantleCorners.attach(pop, { call: call, on: on, resize: function () {
-      if (popKey === 'qs') callR('bar.popover', { open: true, height: el.pop.offsetHeight + 16, key: 'qs' }).catch(function () {});
+      if (popKey === 'qs') callR('bar.popover', { open: true, height: popNeed(), key: 'qs' }).catch(function (e) {
+        if (popKey === 'qs') popNote('This panel may be clipped: bar.popover — ' + msg(e));
+      });
     } }, notes);
     else fail('corners', 'hot corners row missing', 'ui/bar/corners.js did not load, so quick settings cannot change what the screen corners do', 'warn');
 
@@ -2654,15 +2745,11 @@
       if (window.MantleSpotify) MantleSpotify.paint(s, el.pop);
 
       /* The card can change height after it opened (a refusal note, a second source, the queue
-         opening): ask main for the room again so nothing is cut off by the window's edge. */
-      var h = el.pop.offsetHeight + 16;
+         opening): ask main for the room again so nothing is cut off by the window's edge. Over
+         main's cap the card scrolls and its top line says so (callR -> popFit), as every panel does. */
+      var h = popNeed();
       if (mediaRoom && h !== mediaRoom && popKey === 'media') {
-        callR('bar.popover', { open: true, height: h, key: 'media' }).then(function (r) {
-          if (r && r.capped && popKey === 'media') {
-            note.textContent = 'this card is taller than the room main gives a popover (' + r.max + ' px), so its top may be cut off';
-            note.hidden = false;
-          }
-        }, function (e) {
+        callR('bar.popover', { open: true, height: h, key: 'media' }).then(null, function (e) {
           note.textContent = 'this card may be clipped: bar.popover — ' + msg(e);
           note.hidden = false;
         });
@@ -2898,7 +2985,7 @@
   if (window.MantleQsMore) {
     MantleQsMore.init({
       call: call, callR: callR, on: on, msg: msg, fail: fail, closePop: closePop,
-      svg: svg, wifiGlyph: wifiGlyph, volumeSvg: volumeSvg
+      svg: svg, wifiGlyph: wifiGlyph, volumeSvg: volumeSvg, popNeed: popNeed
     });
   } else {
     fail('qsmore', 'Wi-Fi list missing', 'ui/bar/qs-more.js did not load, so quick settings has no Wi-Fi list, Bluetooth devices, output picker or mixer', 'warn');

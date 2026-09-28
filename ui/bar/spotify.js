@@ -34,7 +34,7 @@
 (function () {
   'use strict';
 
-  var ROOM_MAX = 480;          // main.js POPOVER_MAX: the most room a popover is ever given (DIP)
+  var ROOM_MAX = 480;          // the card's own budget (DIP), under main.js POPOVER_MAX (640 since 2026-09-27, was this 480)
   var LIST_PREF = 244;         // the list's own cap when there is room: about five rows
   var LIST_MIN = 72;
   var LIST_WANT = 150;         // under this (about four rows), the card's source list folds away while Up next is open

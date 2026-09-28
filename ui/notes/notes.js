@@ -37,8 +37,14 @@
 
   /** A tab's words: the note's first line with text, trimmed to ~18 characters. */
   function label(text) {
-    const line = String(text || '').split('\n').map((l) => l.trim()).find((l) => l) || '';
-    if (!line) return '';
+    // Never split the whole note: this runs per keystroke, and a note can be 8 MB (it split every
+    // line of it, secreview2). The first line with text is the one holding the first non-space
+    // character (\s is exactly what trim() drops), so only that one line is read.
+    const s = String(text || '');
+    const i = s.search(/\S/);
+    if (i < 0) return '';
+    const nl = s.indexOf('\n', i);
+    const line = s.slice(i, Math.min(nl < 0 ? s.length : nl, i + 4096)).trimEnd();   // 4096 >> TAB_CHARS: cut below anyway
     return line.length > TAB_CHARS ? line.slice(0, TAB_CHARS - 1).trimEnd() + '…' : line;
   }
 

@@ -1396,7 +1396,7 @@
       case 'shell.quit':
       case 'bar.popover':
         // main's shape too (main.js bar.popover): the room it gave, and whether the ask was over its cap
-        return { ok: true, reason: '', mock: true, max: 480, height: Math.min(480, Number(payload && payload.height) || 0), capped: !!(payload && payload.open && Number(payload.height) > 480) };
+        return { ok: true, reason: '', mock: true, max: 640, height: Math.min(640, Number(payload && payload.height) || 0), capped: !!(payload && payload.open && Number(payload.height) > 640) };
       // The flyout's live previews are drawn by DWM from Electron main; a browser page has no
       // compositor to ask. Every card says so, which is also how the reason text gets eyeballed.
       case 'bar.thumbs':

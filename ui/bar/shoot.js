@@ -127,8 +127,8 @@ const SHOTS = [
   { name: 'msrc-back', w: 1280, h: 560, q: '?mode=pill&media=three&pick=spotify', steps: ['#mchip', { js: "__mockMain.media('wait')" }, { wait: 300 }, { js: "__mockMain.media('three')" }, { wait: 300 }, { probe: SRC_ROWS }] },
   { name: 'msrc-settle', w: 1280, h: 560, q: '?mode=pill&media=both', steps: ['#mchip', { wait: 300 }, { js: "__mockMain.media('three'); setTimeout(() => document.querySelector('.mc-s[data-aumid^=\"Microsoft.ZuneMusic\"]').click(), 120)" }, { wait: 400 }, { probe: SRC_ROWS }] },
   /* Spotify's "Up next" queue (spotq lane, 2026-09-25; ui/bar/spotify.js, ?spq= in the mock). Each
-     opens the card, opens the dropdown and PROBES the fit: main gives a popover at most 480 px
-     (POPOVER_MAX), so `need` must be <= 480 or the window would cut the card off (the top bar's
+     opens the card, opens the dropdown and PROBES the fit: the card keeps to 480 px (spotify.js
+     ROOM_MAX, under main's 640 POPOVER_MAX), so `need` must be <= 480 or it overran (the top bar's
      dropdown shipped clipped that way on 2026-09-24). A miss is a console error = a PAGE PROBLEM. */
   ...['queue', 'long', 'noport', 'notrunning', 'checking', 'starting', 'loading', 'empty', 'noplayer', 'error', 'internals', 'portbusy', 'noinstall', 'off'].map((st) => (
     { name: 'spq-' + st, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=' + st, steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] })),

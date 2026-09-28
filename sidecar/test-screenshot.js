@@ -125,7 +125,7 @@ async function main() {
     const ping = await s.send('ping');
     const cmds = (ping.result && ping.result.features && ping.result.features.commands) || [];
     const probs = (ping.result && ping.result.features && ping.result.features.problems) || [];
-    check('ping lists the four shot.* commands', ['shot.grab', 'shot.save', 'shot.release', 'shot.folder'].every((c) => cmds.includes(c)),
+    check('ping lists the five shot.* commands', ['shot.grab', 'shot.save', 'shot.copy', 'shot.release', 'shot.folder'].every((c) => cmds.includes(c)),
       JSON.stringify(cmds).slice(0, 200));
     check('no feature registration problem names Screenshot', !probs.some((p) => /Screenshot/.test(p)), JSON.stringify(probs));
 
@@ -220,6 +220,60 @@ async function main() {
     const refused = await s.send('shot.save', { grab: r.grab, dir: pics, name: 'mantle-test-must-not-exist', x: m0.x, y: m0.y, w: 10, h: 10 });
     check('PASSIVE: a save outside %TEMP% (the real Pictures folder) is refused', refused.ok === false && /passive/.test(refused.error), refused.error);
     check('...and wrote nothing there', !fs.existsSync(path.join(pics, 'mantle-test-must-not-exist.png')));
+
+    // --- copy: the clipboard's CF_DIB, straight from the frame (lane shotspeed) ---------------------
+    // dryRun only: the block a live copy hands Windows is built, dumped as a BMP here, and freed.
+    const DUMP = path.join(OUT, 'dump');
+    const cpy = await s.send('shot.copy', Object.assign({ grab: r.grab, dryRun: true, dump: DUMP }, crop));
+    const cr = cpy.result || {};
+    check('copy (dryRun) answers ok with CF_DIB at the crop size', cpy.ok === true && cr.format === 'CF_DIB' && cr.dryRun === true && cr.w === crop.w && cr.h === crop.h &&
+      cr.bytes === 40 + crop.w * 4 * crop.h, cpy.error || JSON.stringify(cr));
+    check('copy reports its timings', cr.ms && typeof cr.ms.crop === 'number' && cr.ms.clipboard === 0, JSON.stringify(cr.ms));
+    if (cr.dumped && fs.existsSync(cr.dumped)) {
+      const b = fs.readFileSync(cr.dumped);
+      const off = b.readUInt32LE(10), hw = b.readInt32LE(18), hh = b.readInt32LE(22);
+      check('the DIB is BITMAPINFOHEADER, 32 bpp BI_RGB, BOTTOM-UP (positive height), at the crop size',
+        b.readUInt32LE(14) === 40 && off === 54 && hw === crop.w && hh === crop.h && b.readUInt16LE(28) === 32 && b.readUInt32LE(30) === 0 &&
+        b.readUInt32LE(34) === crop.w * 4 * crop.h && b.length === 14 + cr.bytes, JSON.stringify({ off, hw, hh }));
+      let bad = 0, alpha = 0, n = 0;
+      for (let y = 0; y < crop.h; y++) for (let x = 0; x < crop.w; x += 5) {
+        n++;
+        const o = off + (crop.h - 1 - y) * crop.w * 4 + x * 4;       // bottom-up rows
+        if (!same([b[o + 2], b[o + 1], b[o]], expected(crop.x + x, crop.y + y))) bad++;
+        if (b[o + 3] !== 255) alpha++;
+      }
+      check(`every sampled DIB pixel is the pattern at its virtual position (${n} sampled)`, bad === 0, `${bad} wrong`);
+      check('every DIB pixel\'s fourth byte is 255 (opaque in apps that read it as alpha; the frame\'s is junk)', alpha === 0, `${alpha} not 255`);
+    } else check('copy dryRun + dump wrote the BMP under the test folder', false, cr.dumped);
+    const cpyLive = await s.send('shot.copy', Object.assign({ grab: r.grab }, crop));
+    check('PASSIVE: a real copy (not dryRun) is refused, so a test never touches the clipboard', cpyLive.ok === false && /passive/.test(cpyLive.error), cpyLive.error);
+    const cpyOff = await s.send('shot.copy', { grab: r.grab, dryRun: true, x: r.virt.x - 50, y: r.virt.y - 50, w: 100, h: 80 });
+    check('copy clips a rect hanging off the screen, like save', cpyOff.ok && cpyOff.result.w === 50 && cpyOff.result.h === 30, cpyOff.error);
+    const cpyOut = await s.send('shot.copy', { grab: r.grab, dryRun: true, x: r.virt.x - 500, y: r.virt.y, w: 100, h: 100 });
+    check('copy of a rect entirely off the screen is refused with the reason', cpyOut.ok === false && /outside the capture/.test(cpyOut.error), cpyOut.error);
+    const cpyDump = await s.send('shot.copy', Object.assign({ grab: r.grab, dryRun: true, dump: 'C:\\Users\\Public\\mantle-shot-nope' }, crop));
+    check('copy refuses a dump folder outside %TEMP%', cpyDump.ok === false && /may only go under/.test(cpyDump.error), cpyDump.error);
+
+    // --- the test-only grab options: size (a 4K frame) and fill (a picture from %TEMP%) --------------
+    const fillPng = path.join(OUT, 'fill.bmp');
+    { const w = 3, h = 2, buf = Buffer.alloc(54 + w * h * 4); buf.write('BM', 0, 'latin1'); buf.writeUInt32LE(buf.length, 2); buf.writeUInt32LE(54, 10);
+      buf.writeUInt32LE(40, 14); buf.writeInt32LE(w, 18); buf.writeInt32LE(-h, 22); buf.writeUInt16LE(1, 26); buf.writeUInt16LE(32, 28);
+      for (let i = 0; i < w * h; i++) { buf[54 + i * 4] = 10 + i; buf[55 + i * 4] = 20; buf[56 + i * 4] = 30; buf[57 + i * 4] = 255; }
+      fs.writeFileSync(fillPng, buf); }
+    const gs = await s.send('shot.grab', { dir: FRAMES, synthetic: true, size: { w: 3840, h: 2160 }, fill: fillPng });
+    check('a synthetic grab takes a size (3840x2160 on any desktop)', gs.ok && gs.result.virt.w === 3840 && gs.result.virt.h === 2160, gs.error);
+    if (gs.ok) {
+      const c4 = await s.send('shot.copy', { grab: gs.result.grab, dryRun: true, dump: DUMP, x: gs.result.virt.x + 3, y: gs.result.virt.y, w: 3, h: 2 });
+      const d4 = c4.ok && fs.readFileSync(c4.result.dumped);
+      // bottom-up: the dump's first row is the frame's row 1 (tile pixels 3..5), its second row 0..2
+      check('...and a fill picture is tiled over it (the copy reads it back)', !!d4 && d4[54] === 13 && d4[58] === 14 && d4[66] === 10 && d4[55] === 20 && d4[56] === 30 && d4[57] === 255,
+        c4.error || (d4 && [d4[54], d4[58], d4[66], d4[55], d4[56]].join(',')));
+    }
+    const gf = await s.send('shot.grab', { dir: FRAMES, synthetic: true, fill: 'C:\\Users\\Public\\x.png' });
+    check('a fill outside %TEMP% is refused', gf.ok === false && /may only go under/.test(gf.error), gf.error);
+    // back to a normal synthetic grab for the release checks below
+    const gb = await s.send('shot.grab', { dir: FRAMES, synthetic: true });
+    if (gb.ok) { r.grab = gb.result.grab; monsNow.splice(0, monsNow.length, ...gb.result.monitors.filter((m) => m.file)); }
 
     // --- release ------------------------------------------------------------------------------------
     const rel = await s.send('shot.release', { grab: r.grab + 1000 });

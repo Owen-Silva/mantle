@@ -16,7 +16,9 @@
     the clock        once a second, aligned to the second boundary, paused while
                      the document is hidden
     the stats        every 5 seconds
-    Mission Control  every 30 seconds
+    Mission Control  every 30 seconds while it answers; while it is down the
+                     wait doubles (30 s, 1, 2, 4, 8 min) up to one check every
+                     10 min, and the tile says when the next check is
   ...plus the wallpaper at the bottom of the page (THE WALLPAPER, below), which
   is the one thing here that moves, and which main pauses by Owen's Lively rules.
 
@@ -182,9 +184,44 @@
   // Chromium error page, which is the blank tile this is meant to avoid. The
   // probe runs in the main process because a fetch() from here can only ever
   // report "Failed to fetch"; main gets the real ECONNREFUSED.
+  //
+  // The dashboard is usually NOT running, and a flat 30 s probe of a closed
+  // port is ~120 refused connections an hour for nothing (lane mainrel-mc,
+  // 2026-09-27). So the probe is a chained setTimeout that backs off while the
+  // port stays shut -- the first retry after 30 s, then 1, 2, 4, 8 min, capped
+  // at 10 min -- and drops straight back to 30 s the moment a probe answers.
+  // One chain only: every (re)start clears the pending timer, and a probe still
+  // in flight from an older chain (or from before a rest) is ignored when it
+  // lands, so it can neither remount the frame nor schedule a second chain.
+  // ui/desktop/mc-probe.test.js runs this file in node against a fake clock.
   // ---------------------------------------------------------------------
   const MC_ORIGIN = 'http://127.0.0.1:7373';
   let mcMounted = false;
+  let mcTimer = 0;   // the one pending probe of the chain (a setTimeout id), 0 when none
+  let mcFails = 0;   // probes in a row that did not answer
+  let mcChain = 0;   // bumped by every start/stop; a probe from an older chain is ignored
+
+  // mc-backoff:begin (pure; mc-probe.test.js lifts this region out and checks it directly)
+  const MC_EVERY_MS = 30 * 1000;        // the cadence while the dashboard answers
+  const MC_MAX_MS = 10 * 60 * 1000;     // the slowest it ever gets while it does not
+  // The wait before the next probe, given how many probes in a row have failed
+  // (0 = the last one answered): 30 s, 30 s, 1 min, 2, 4, 8, then 10 min forever.
+  function mcNextDelay(fails) {
+    if (!(fails > 1)) return MC_EVERY_MS;
+    return Math.min(MC_EVERY_MS * Math.pow(2, Math.min(fails, 20) - 1), MC_MAX_MS);
+  }
+  // mc-backoff:end
+
+  // "30 s" / "4 min", plus the clock time for anything a minute or more away
+  // (12-hour, the same way the clock above is written).
+  function mcWhen(ms) {
+    const s = Math.round(ms / 1000);
+    if (s < 60) return 'in ' + s + ' s';
+    const at = new Date(Date.now() + ms);
+    const h24 = at.getHours();
+    const h = (h24 % 12) === 0 ? 12 : (h24 % 12);
+    return 'in ' + Math.round(s / 60) + ' min, at ' + h + ':' + pad2(at.getMinutes()) + ' ' + (h24 < 12 ? 'AM' : 'PM');
+  }
 
   function mountMissionControl() {
     if (mcMounted) return;
@@ -200,27 +237,53 @@
     els.mcHeadNote.classList.add('live');   // the one --lg-acc mark on this layer
   }
 
-  function unmountMissionControl(reason) {
+  // nextMs: when the next probe is due, for the sentence (omitted when there is none).
+  function unmountMissionControl(reason, nextMs) {
     mcMounted = false;
     els.mcFrame.replaceChildren();
     els.mcFrame.hidden = true;
     els.mcHeadNote.textContent = '';
     els.mcHeadNote.classList.remove('live');
     els.mcNote.hidden = false;
-    els.mcNote.textContent = 'Mission Control offline: ' + reason + '. Retrying every 30s.';
+    els.mcNote.textContent = 'Mission Control offline: ' + reason + '.' +
+      (nextMs > 0 ? ' Next check ' + mcWhen(nextMs) + '.' : '') +
+      (nextMs > MC_EVERY_MS ? ' Checks slow down while it stays down, to one every 10 min at most.' : '');
   }
 
   async function probeMissionControl() {
+    mcTimer = 0;
+    const chain = mcChain;
+    let ok = false;
+    let reason = '';
     try {
       const r = await window.mantle.call('net.probe', { url: MC_ORIGIN + '/' });
-      if (r && r.ok) mountMissionControl();
-      else unmountMissionControl((r && r.reason) || 'it did not answer and did not say why');
+      ok = !!(r && r.ok);
+      if (!ok) reason = (r && r.reason) || 'it did not answer and did not say why';
     } catch (err) {
-      unmountMissionControl(err.message);
+      reason = (err && err.message) || String(err);
     }
+    if (chain !== mcChain) return;   // stopped or restarted while this probe was out: stale
+    mcFails = ok ? 0 : mcFails + 1;
+    const next = mcNextDelay(mcFails);
+    if (ok) mountMissionControl();
+    else unmountMissionControl(reason, next);
+    clearTimeout(mcTimer);
+    mcTimer = setTimeout(probeMissionControl, next);
   }
-  probeMissionControl();
-  let mcTimer = setInterval(probeMissionControl, 30000);
+
+  // Probe now and carry the chain on from there. Safe to call at any time: the
+  // pending probe is cancelled first, so there is never more than one chain.
+  function startMissionControl() {
+    stopMissionControl();
+    mcFails = 0;
+    probeMissionControl();
+  }
+  function stopMissionControl() {
+    mcChain++;
+    clearTimeout(mcTimer);
+    mcTimer = 0;
+  }
+  startMissionControl();
 
   // ---------------------------------------------------------------------
   // The state strip: every piece of Mantle that is not doing its job, with the
@@ -650,13 +713,13 @@
       if (r && r.on) {
         clearTimeout(clockTimer); clockTimer = 0;
         clearInterval(statsTimer); statsTimer = 0;
-        clearInterval(mcTimer); mcTimer = 0;
+        stopMissionControl();
         unmountMissionControl('closed while Mantle rests (' + r.why + ')');
         els.mcNote.textContent = 'Mission Control closed while Mantle rests (' + r.why + '); back when the game exits.';
       } else if (r && !statsTimer) {
         startClock();
         tickStats(); statsTimer = setInterval(tickStats, 5000);
-        probeMissionControl(); mcTimer = setInterval(probeMissionControl, 30000);
+        startMissionControl();   // clears any pending probe first: never two chains
       }
     });
     window.mantle.on('desktop.backdrop', setBackdrop);

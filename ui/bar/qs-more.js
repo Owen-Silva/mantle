@@ -57,7 +57,7 @@
   var BT_RENEW_MS = 30000;      // the sidecar's watch lapses 90 s after its last renewal
   var BT_POLL_MS = 3000;        // only when the watch cannot run: a list is 26 ms (measured 2026-09-23)
   /* The sub-view's own height. The popover adds 24 (padding and border) and main's room request
-     another 16, so 360 asks for 400 of main's 480 cap (POPOVER_MAX), leaving slack for a note. */
+     another 16, so 360 asks for 400 of main's 640 cap (POPOVER_MAX), leaving slack for a note. */
   var VIEW_H = 360;
 
   /* The last reads, so reopening a view draws at once and then refreshes. Names, levels and
@@ -240,10 +240,12 @@
   }
 
   /* The panel changes height between the main view and a sub-view: ask main for the room again
-     (the notification centre's pattern), and say so if it cannot be had. */
+     (the notification centre's pattern), and say so if it cannot be had. Main's answer is checked
+     in bar.js (callR -> popFit): over its cap the panel scrolls and its top line says so. The
+     height is the panel's natural one (B.popNeed), not a box already held to the cap. */
   function room() {
     if (!S) return;
-    var hgt = S.pop.offsetHeight + 16;
+    var hgt = B.popNeed ? B.popNeed() : S.pop.offsetHeight + 16;
     if (hgt === S.room) return;
     S.room = hgt;
     B.callR('bar.popover', { open: true, height: hgt, key: 'qs' }).catch(function (e) {

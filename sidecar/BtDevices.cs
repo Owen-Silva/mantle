@@ -835,9 +835,11 @@ namespace Mantle {
       string op = connect ? "connect" : "disconnect";
       lock (_opLock) {
         if (_busyDevice != null)
-          return Json.Obj("ok", false, "op", op, "device", deviceId,
-                          "reason", "Mantle is still " + (_busyOp == "connect" ? "connecting" : "disconnecting") + " " +
-                                    (_busyName ?? "another device") + "; wait for it to finish");
+          // The other device's name goes in its own field, never in the reason: reasons reach the log
+          // (secreview2 2026-09-27); the row can show busyName if it wants to.
+          return Json.Obj("ok", false, "op", op, "device", deviceId, "busyName", _busyName,
+                          "reason", "Mantle is still " + (_busyOp == "connect" ? "connecting" : "disconnecting") +
+                                    " another device; wait for it to finish");
         _busyDevice = deviceId;
         _busyOp = op;
         _busyName = null;

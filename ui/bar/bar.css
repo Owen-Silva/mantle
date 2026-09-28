@@ -513,6 +513,28 @@ body[data-edge="top"] .pop { animation-name: pop-wipe-down; }
 .pop .big { font-size: 15px; color: var(--lg-ink); margin-bottom: 4px; }
 .pop .sub { color: var(--lg-ink-3); line-height: 1.45; }
 .pop .note { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--lg-edge-out); color: var(--lg-warn); line-height: 1.45; }
+/* CAPPED (2026-09-27, bar.js popFit): a panel taller than the room main gives a popover
+   (POPOVER_MAX) is held to that room and SCROLLS, and the warn line at its top says why. The line
+   sticks while the panel scrolls, across the panel's full width (the negative margins undo the
+   padding), on the panel's own surface laid three times plus the warn tint, so the rows passing under it
+   stay out of its way. Only while capped: a panel that fits has neither the line nor a scrollbar. */
+.pop.popcapped { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.pop.popcapped::-webkit-scrollbar { width: 6px; }
+.pop.popcapped::-webkit-scrollbar-button { display: none; height: 0; }
+.pop.popcapped::-webkit-scrollbar-track { background: transparent; }
+.pop.popcapped::-webkit-scrollbar-thumb { background: var(--lg-press); border-radius: 3px; }
+.pop.popcapped::-webkit-scrollbar-thumb:hover { background: var(--lg-ink-3); }
+.pop > .note.popcap {
+  position: sticky; top: -11px; z-index: 2;   /* sticky insets count from INSIDE the panel's 11px top padding */
+  margin: -11px -12px 9px; padding: 7px 12px;
+  border-top: 0; border-bottom: 1px solid var(--lg-edge-out);
+  background: linear-gradient(var(--lg-warn-soft), var(--lg-warn-soft)),
+              linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)),
+              linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), var(--lg-fill-strong);
+  font-size: 12px; line-height: 1.4;
+}
+.pop.dl > .note.popcap { margin-left: -8px; margin-right: -8px; padding-left: 8px; padding-right: 8px; }
+.pop.ntf > .note.popcap { margin-left: -10px; margin-right: -10px; padding-left: 10px; padding-right: 10px; }
 
 .pop input[type="range"] {
   flex: 1 1 auto;

@@ -167,17 +167,122 @@ const BAR_MODE = flags.dock ? 'dock' : 'hover';
  * that have no terminal -- the logon task (tools/install-autostart.ps1) -- this
  * is the only copy of the log there is. Appends, stamps each start, and never
  * takes Mantle down: a log file that cannot be written is simply not written.
+ *
+ * Every line in the FILE starts with the local time, HH:MM:SS.mmm, and the first
+ * line of a run and the first after midnight carry the date too (the 2026-09-27
+ * log review had to guess every duration: 62 of 33k lines had a time). The
+ * terminal copy is left as it was. At 5 MB the file becomes <path>.1 (the old .1
+ * becomes .2, the old .2 goes), always between two lines, so no line is split or
+ * lost; the 3.3 MB of the first six days had grown with no end. A rotation that
+ * fails (a reader holding the file) keeps writing where it was, says so IN the
+ * log, and tries again 1 MB later.
  */
+// <mainrel:logtee> (lib/main-rel.test.js runs this region on its own: no outside names in it)
+function makeLogTee(fs, file, opts) {
+  const o = Object.assign({ maxBytes: 5 * 1024 * 1024, keep: 2, retryBytes: 1024 * 1024, now: () => new Date(), clock: () => Number(process.hrtime.bigint()) / 1e6, say: () => {} }, opts || {});
+  let fd = null;
+  let lost = null;               // { since, tried, writes, reason } while a rotation left the file closed
+  const REOPEN_MS = 5000;
+  let size = 0;
+  let atLineStart = true;
+  let lastDay = '';
+  let rotateAt = o.maxBytes;
+  const two = (n) => String(n).padStart(2, '0');
+  function stamp() {
+    const d = o.now();
+    const day = `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+    const time = `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+    if (day === lastDay) return `${time} `;
+    lastDay = day;
+    return `${day} ${time} `;
+  }
+  function open() {
+    fd = fs.openSync(file, 'a');
+    size = fs.fstatSync(fd).size;
+  }
+  // Raw bytes, stamped one line at a time. '\n' is one byte that never occurs inside a UTF-8
+  // sequence, so splitting the Buffer on it cannot cut a character in half.
+  function put(chunk) {
+    const buf = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : Buffer.from(chunk);
+    const parts = [];
+    let i = 0;
+    while (i < buf.length) {
+      if (atLineStart) { parts.push(Buffer.from(stamp(), 'utf8')); atLineStart = false; }
+      const j = buf.indexOf(0x0a, i);
+      if (j === -1) { parts.push(buf.subarray(i)); break; }
+      parts.push(buf.subarray(i, j + 1));
+      atLineStart = true;
+      i = j + 1;
+    }
+    const all = Buffer.concat(parts);
+    fs.writeSync(fd, all);
+    size += all.length;
+  }
+  function rotate(why) {
+    const t0 = o.clock();
+    const was = size;
+    try { fs.closeSync(fd); } catch (_) { /* reopened below either way */ }
+    fd = null;
+    let failed = null;
+    for (let k = o.keep; k >= 1 && !failed; k--) {
+      const from = k === 1 ? file : `${file}.${k - 1}`;
+      try { if (fs.existsSync(from)) fs.renameSync(from, `${file}.${k}`); } catch (err) { failed = `${from} -> .${k}: ${err && err.code ? err.code : err && err.message}`; }
+    }
+    try { open(); } catch (err) {
+      fd = null;
+      lost = { since: o.clock(), tried: o.clock(), writes: 0, reason: err && err.code ? err.code : String(err && err.message) };
+      o.say(`mantle: the log file could not be reopened after rotating it (${err && err.message}); logging to the terminal only, trying again every ${REOPEN_MS / 1000} s\n`);
+      return { ok: false, ms: o.clock() - t0, reason: err && err.message };
+    }
+    const ms = o.clock() - t0;
+    rotateAt = failed ? size + o.retryBytes : o.maxBytes;
+    const line = failed
+      ? `mantle: log: could NOT rotate at ${(was / 1048576).toFixed(1)} MB (${failed}); still writing to this file, next try at ${(rotateAt / 1048576).toFixed(1)} MB\n`
+      : `mantle: log: ${why}: the previous ${(was / 1048576).toFixed(1)} MB is now ${file.split(/[\\/]/).pop()}.1 (${o.keep} old files kept), rotated in ${ms.toFixed(1)} ms\n`;
+    put(line);
+    if (failed) o.say(line);
+    return { ok: !failed, ms, reason: failed };
+  }
+  return {
+    start(header) {
+      open();
+      if (size >= o.maxBytes) rotate('rotated at start');
+      if (size > 0) { fs.writeSync(fd, '\n'); size += 1; }   // a blank line between runs, as before
+      put(header);
+    },
+    write(chunk) {
+      if (fd === null) {
+        // Closed by a rotation that could not reopen it: it used to stay closed for the whole run (the
+        // logon task has no terminal, so every later line was lost unsaid). Try again every
+        // REOPEN_MS, and the first line back says how long and how many writes were lost.
+        if (!lost) return;
+        const t = o.clock();
+        if (t - lost.tried < REOPEN_MS) { lost.writes++; return; }
+        lost.tried = t;
+        try { open(); } catch (_) { fd = null; lost.writes++; return; }
+        const gone = lost;
+        lost = null;
+        atLineStart = true;
+        put(`mantle: log: this file could not be opened for ${((t - gone.since) / 1000).toFixed(0)} s (${gone.reason}); ${gone.writes} writes to it were lost\n`);
+      }
+      put(chunk);
+      if (atLineStart && size >= rotateAt) rotate(`rotated at ${(o.maxBytes / 1048576).toFixed(0)} MB`);
+    },
+    get size() { return size; },
+  };
+}
+// </mainrel:logtee>
 (function teeLogToFile() {
   const arg = process.argv.slice(1).find((a) => typeof a === 'string' && a.startsWith('--log='));
   const file = arg ? arg.slice('--log='.length).replace(/^"|"$/g, '') : '';
   if (!file) return;
   const fs = require('fs');
-  let fd = null;
+  const sayErr = process.stderr.write.bind(process.stderr);   // the terminal only: never back into the tee
+  let tee = null;
   try {
     fs.mkdirSync(require('path').dirname(file), { recursive: true });
-    fd = fs.openSync(file, 'a');
-    fs.writeSync(fd, `\n===== mantle start ${new Date().toISOString()} pid ${process.pid}: ${process.argv.slice(1).join(' ')}\n`);
+    tee = makeLogTee(fs, file, { say: (s) => { try { sayErr(s); } catch (_) {} } });
+    tee.start(`===== mantle start ${new Date().toISOString()} pid ${process.pid}: ${process.argv.slice(1).join(' ')}\n`);
   } catch (err) {
     process.stderr.write(`mantle: --log=${file} cannot be written (${err && err.message ? err.message : err}); logging to the terminal only\n`);
     return;
@@ -185,7 +290,7 @@ const BAR_MODE = flags.dock ? 'dock' : 'hover';
   for (const stream of [process.stdout, process.stderr]) {
     const orig = stream.write.bind(stream);
     stream.write = (chunk, ...rest) => {
-      try { fs.writeSync(fd, typeof chunk === 'string' ? chunk : Buffer.from(chunk)); } catch (_) { /* never fatal */ }
+      try { tee.write(chunk); } catch (_) { /* never fatal */ }
       return orig(chunk, ...rest);
     };
   }
@@ -550,7 +655,14 @@ let lastRestoreEvent = null;
 
 // The most the bar may grow for a popover. A cap, not a suggestion: a bar that
 // asked for 4000px would become a full-screen always-on-top window.
-const POPOVER_MAX = 480;   // was 320: the Quick Settings panel asked for 429 live (2026-09-21) and had its top cut off
+// 640, was 480 (2026-09-27): the live log had Quick Settings asking 483-488 px (its main view
+// had grown past the cap: 3-8 px of its top cut off, 15 times), 523-542 px, and 602-618 px with a
+// list expanded (about 130 px cut off), 22 capped asks in all; 640 holds the largest seen. On
+// Owen's 1536x864 DIP screen (1920x1080 at 125%) the tall window then reaches y=162 DIP, still
+// well under the top bar. The pages that size themselves to "main's 480 cap" (spotify.js
+// ROOM_MAX, qs-more.js, downloads/notifications) keep working: they ask for less.
+// Was 320 before that: Quick Settings asked for 429 live (2026-09-21) and had its top cut off.
+const POPOVER_MAX = 640;
 // In hover mode the window is ALWAYS POPOVER_MAX taller than the bar (barTall), so this is also
 // how much invisible window sits above the pill -- cut away by its shape until a popover opens.
 // The popover's entrance: .pop's wipe in ui/bar/bar.css runs this long (the window's old 200 ms grow).
@@ -653,14 +765,38 @@ const KEYS_ALLOWED = new Set(['win+a', 'win+n', 'win+d']);
 // ---------------------------------------------------------------------------
 // Talking to the pages.
 // ---------------------------------------------------------------------------
+// <mainrel:broadcast> (lib/main-rel.test.js runs this region with fake windows)
+/*
+ * A page whose renderer died is NOT destroyed: its webContents lives on until it reloads or its
+ * window closes. Electron's send() to it does not throw -- it prints "Error sending from
+ * webFrameMain: Render frame was disposed" with a stack, once per send (measured with a probe:
+ * a renderer killed after one reload, 1 error per send; isCrashed() is already true inside its
+ * render-process-gone handler). One mass kill put 142 of them and ~635 stack lines in the live
+ * log, one per state change. So a dead page is skipped, and said once per death, not per send.
+ */
+const deadPagesSaid = new WeakSet();
 function broadcast(name, payload) {
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue;
     const wc = win.webContents;
     if (!wc || wc.isDestroyed()) continue;
+    let dead = false;
+    try { dead = wc.isCrashed(); } catch (_) { dead = true; }
+    if (dead) {
+      if (!deadPagesSaid.has(wc)) {
+        deadPagesSaid.add(wc);
+        let url = '';
+        try { url = String(wc.getURL() || ''); } catch (_) { /* gone */ }
+        const page = (/\/ui\/([^?#]+)/.exec(url.replace(/\\/g, '/')) || [])[1] || 'a page';
+        process.stdout.write(`mantle: ${page}'s renderer is gone, so it gets no state until it is reloaded (said once per death)\n`);
+      }
+      continue;
+    }
+    deadPagesSaid.delete(wc);
     try { wc.send('mantle:event', { name, payload }); } catch (_) { /* window went away mid-send */ }
   }
 }
+// </mainrel:broadcast>
 
 let lastProblemLine = null;
 
@@ -2179,6 +2315,9 @@ function groupRunning(list) {
     if (!g.host && w.host) g.host = w.host;
     g.windows.push({
       hwnd: String(w.hwnd),
+      // The window's (app's) pid rides along so "Keep on top" can refuse a reused handle
+      // (ontop.js compares it with the window's pid AND its app's pid; security review #19).
+      pid: Number(w.pid) || 0,
       title: String(w.title || ''),
       active: !!w.foreground,
       minimized: !!w.minimized,
@@ -2912,8 +3051,15 @@ async function qsBtToggle(op, a) {
   // "device", not "id": lib/sidecar.js refuses an argument named id (the protocol's own).
   const device = a && typeof a.device === 'string' ? a.device : '';
   if (!device) return { ok: false, op, reason: `qs.bt.${op} needs device: a row's id from qs.bt.list` };
-  const r = await qsMore('btdevices', { op, device },
+  let r = await qsMore('btdevices', { op, device },
     `the Bluetooth device could not be ${op === 'connect' ? 'connected' : 'disconnected'}`, QS_BT_MS.toggle);
+  // Security review #20: a failed connect's reason named the device ("Mantle is still connecting
+  // <name>"), and a reason can reach the log. The row already shows which device it is.
+  if (r && r.ok === false && typeof r.reason === 'string' && typeof r.name === 'string' && r.name.length > 1) r.reason = r.reason.split(r.name).join('the device');
+  // The BUSY reply (BtDevices.cs Toggle: another toggle still running) carries NO name field but names
+  // the OTHER device ("Mantle is still connecting <its name>; wait for it to finish"), so the split
+  // above never saw it (security review 2).
+  if (r && r.ok === false && typeof r.reason === 'string') r.reason = r.reason.replace(/^Mantle is still (connecting|disconnecting) [\s\S]+?; wait for it to finish$/, 'Mantle is still $1 another device; wait for it to finish');
   // A headset that connects usually becomes the sound output, so the main
   // panel's volume slider is repainted from a fresh read.
   if (qsWatching) qsPush(`a Bluetooth device ${r.ok ? (op === 'connect' ? 'connected' : 'disconnected') : 'did not ' + op}`);
@@ -6091,8 +6237,127 @@ async function runFlyoutTest(match, dir) {
 // ---------------------------------------------------------------------------
 // Boot.
 // ---------------------------------------------------------------------------
+// <mainrel:revive> (lib/main-rel.test.js runs this region with a fake clock)
+/*
+ * A page whose renderer dies (render-process-gone, not a clean exit) is reloaded: its WINDOW stays
+ * exactly as it is (the bar is parked below the screen and is never hide()/show()n), only the page
+ * is loaded again. Bounded: at most `tries` reloads in `windowMs`, spaced by `delays`; one more
+ * death inside that window and Mantle stops and SAYS so (report -> the desktop strip and the tray,
+ * through the same features piece a broken feature uses). Never while Mantle is quitting or
+ * Windows is ending the session (blocked()), when every page is dying on purpose.
+ */
+function makePageReviver(o) {
+  const pages = new Map();   // key -> { deaths: [ms], timer, gaveUp }
+  const secs = (ms) => `${Math.round(ms / 100) / 10} s`;
+  function rec(key) {
+    if (!pages.has(key)) pages.set(key, { deaths: [], timer: null, gaveUp: false });
+    return pages.get(key);
+  }
+  return {
+    died(key, label, reason, reload) {
+      if (reason === 'clean-exit') return 'clean';   // the page ended on purpose (its window closing)
+      const p = rec(key);
+      const blocked = o.blocked();
+      if (blocked) {
+        o.report(key, false, `${label}'s renderer died (${reason}) and was not reloaded: ${blocked}`);
+        return 'blocked';
+      }
+      const t = o.now();
+      p.deaths = p.deaths.filter((d) => t - d < o.windowMs);
+      p.deaths.push(t);
+      if (p.timer) { o.cancel(p.timer); p.timer = null; }
+      if (p.gaveUp || p.deaths.length > o.tries) {
+        p.gaveUp = true;
+        const why = `${label}'s renderer died ${p.deaths.length} times in ${Math.round(o.windowMs / 60000)} min (the last: ${reason}), so Mantle stopped reloading it: restart Mantle from its tray icon`;
+        o.report(key, false, why);
+        o.say(`mantle: ${why}\n`);
+        return 'gave-up';
+      }
+      const n = p.deaths.length;
+      const delay = o.delays[Math.min(n - 1, o.delays.length - 1)];
+      o.report(key, false, `${label}'s renderer died (${reason}); reloading it in ${secs(delay)} (try ${n} of ${o.tries} in ${Math.round(o.windowMs / 60000)} min)`);
+      o.say(`mantle: ${label}'s renderer died (${reason}); reloading the page in ${secs(delay)}, try ${n} of ${o.tries}\n`);
+      p.timer = o.later(() => {
+        p.timer = null;
+        const late = o.blocked();
+        if (late) { o.report(key, false, `${label}'s renderer died (${reason}) and was not reloaded: ${late}`); return; }
+        let err = null;
+        try { err = reload(); } catch (e) { err = e && e.message ? e.message : String(e); }
+        // reload() answers null (reloading), false (its window was closed since: nothing to reload), or why not
+        if (err === false) { p.deaths = []; o.report(key, true, `${label}'s window was closed before its reload, so there was nothing to reload`); }
+        else if (err) o.report(key, false, `${label}'s renderer died (${reason}) and could not be reloaded: ${err}`);
+      }, delay);
+      return 'reload';
+    },
+    // did-finish-load: the page is back (a reload of ours, or any other load after a death).
+    loaded(key, label) {
+      const p = pages.get(key);
+      if (!p || !p.deaths.length) return false;
+      const n = p.deaths.length;
+      if (p.gaveUp) { p.gaveUp = false; p.deaths = []; }
+      o.report(key, true, `${label} was reloaded after its renderer died (${n} time${n === 1 ? '' : 's'} in the last ${Math.round(o.windowMs / 60000)} min)`);
+      return true;
+    },
+  };
+}
+// </mainrel:revive>
+
+const PAGE_KEYS = { 'The bar': 'page.bar', 'The launcher': 'page.launcher', 'The desktop layer': 'page.desktop' };
+const pageReviver = makePageReviver({
+  tries: 3, windowMs: 2 * 60 * 1000, delays: [1000, 5000, 15000],
+  now: () => Date.now(),
+  later: (fn, ms) => setTimeout(fn, ms),
+  cancel: (t) => clearTimeout(t),
+  say: (line) => process.stdout.write(line),
+  blocked: () => (shuttingDown ? 'Mantle is quitting' : sessionEndingReason()),
+  // The same piece shape a feature publishes (lib/features.js), which the desktop strip and the
+  // tray already list when ok is false: a dead page is said where Owen looks, not only here.
+  report: (key, ok, reason) => {
+    const label = key === 'page.bar' ? 'The bar page' : key === 'page.launcher' ? 'The launcher page' : 'The desktop page';
+    state.set('features', { [key]: { label, on: true, ok, reason, keys: false, keysReason: '', broken: null, stopped: false } });
+  },
+});
+
+/*
+ * WINDOWS ENDING THE SESSION (sign-out, restart, shut down). Electron's before-quit/will-quit do
+ * NOT fire then, so until 2026-09-27 the clean restore never ran: the pages were killed one by one
+ * (each reloaded into a dying session), and the next start's guard had to clear the taskbar
+ * region (3 times in the log). Every top-level window gets WM_QUERYENDSESSION/WM_ENDSESSION, so
+ * every watched window listens and the first one acts:
+ *   query-session-end (the question, which another app can still cancel): no reloads for 60 s;
+ *   session-end (it WILL end): the same shutdown() road as the tray's Quit. It starts inside the
+ *   WM_ENDSESSION handler; Windows may end the process before the sidecar's async restore
+ *   finishes, which is what the sidecar's own exit restore, its guard and the restore record
+ *   at the next start are for.
+ */
+// <mainrel:session> (lib/main-rel.test.js runs this region with a fake shutdown)
+let sessionEnding = null;   // { phase: 'query'|'end', reasons, at }
+function sessionEndingReason() {
+  if (!sessionEnding) return null;
+  if (sessionEnding.phase === 'end') return `Windows is ending the session (${sessionEnding.reasons})`;
+  const ago = Date.now() - sessionEnding.at;
+  return ago < 60000 ? `Windows asked to end the session (${sessionEnding.reasons}) ${Math.round(ago / 1000)} s ago` : null;
+}
+function onSessionEnd(phase, e) {
+  const reasons = e && Array.isArray(e.reasons) && e.reasons.length ? e.reasons.join(', ') : 'no reason given';
+  if (sessionEnding && sessionEnding.phase === 'end') return;
+  if (phase === 'query') {
+    if (sessionEnding && Date.now() - sessionEnding.at < 5000) return;   // every window is asked: one line
+    sessionEnding = { phase, reasons, at: Date.now() };
+    process.stdout.write(`mantle: Windows asked whether the session may end (${reasons}): yes; dead pages are not reloaded for the next 60 s\n`);
+    return;
+  }
+  sessionEnding = { phase: 'end', reasons, at: Date.now() };
+  shutdown(`Windows is ending the session (${reasons})`);
+}
+// </mainrel:session>
+
 function watchPage(win, label) {
   const wc = win.webContents;
+  const pageKey = PAGE_KEYS[label] || `page.${label}`;
+  win.on('query-session-end', (e) => onSessionEnd('query', e));
+  win.on('session-end', (e) => onSessionEnd('end', e));
+  wc.on('did-finish-load', () => pageReviver.loaded(pageKey, label));
   // A page that will not load must say so on screen, not leave a blank window.
   let swapped = false;
   wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
@@ -6108,9 +6373,16 @@ function watchPage(win, label) {
     }));
   });
   wc.on('render-process-gone', (_e, details) => {
-    process.stderr.write(`mantle: the ${label} renderer died: ${details.reason}\n`);
+    const reason = (details && details.reason) || 'no reason given';
+    process.stderr.write(`mantle: ${label}'s renderer died: ${reason}\n`);
     // The flyout that asked for the previews is gone, and nothing will ever ask to remove them.
-    if (win === barWin) clearThumbs(`the bar page died (${details.reason})`);
+    if (win === barWin) clearThumbs(`the bar page died (${reason})`);
+    // Reload the PAGE, never the window: the bar stays parked where it is (no hide/show).
+    pageReviver.died(pageKey, label, reason, () => {
+      if (win.isDestroyed() || wc.isDestroyed()) return false;   // closed since (an idle unload): nothing left to reload
+      wc.reload();
+      return null;
+    });
   });
   if (win === barWin) {
     // Same for a reload: the new page starts with no flyout open, over whatever the old one drew.

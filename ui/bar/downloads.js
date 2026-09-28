@@ -354,7 +354,7 @@
       if (v && v.ok && !v.watching && v.watchReason) words.push('Not watching: ' + v.watchReason + '.');
       detail.textContent = words.join(' ');
       detail.hidden = !detail.textContent;
-      /* Main caps a popover at 480 px (POPOVER_MAX): a note or a detail line takes its room from the list. */
+      /* Sized for 480 px, under main's 640 cap (POPOVER_MAX): a note or a detail line takes its room from the list. */
       list.style.maxHeight = (say || detail.textContent) ? '300px' : '';
 
       /* The panel changes height as files come and go: ask main for the room again so nothing is

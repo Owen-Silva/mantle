@@ -52,6 +52,17 @@
     };
   }
 
+  /* The keep-on-top request. The window's pid goes with its hwnd when the bar knows it, so main
+     can refuse a handle Windows has since given to another program (security review #19). */
+  function otArgs(wins, hwnd, on, name) {
+    var a = { hwnd: String(hwnd), on: !!on, name: name || '' };
+    for (var i = 0; i < (wins || []).length; i++) {
+      var w = wins[i];
+      if (w && String(w.hwnd) === String(hwnd) && Number(w.pid) > 0) { a.pid = Number(w.pid); break; }
+    }
+    return a;
+  }
+
   function iconBox(src, glyph, letter) {
     var box = el('span', 'jl-ico');
     if (src) {
@@ -199,7 +210,7 @@
       }
       var otRow = row(onH ? 'Stop keeping on top' : 'Keep on top', iconBox(null, onH ? GLYPH.unpin : GLYPH.pin), function () {
         // a refusal is {ok:false, reason}: callR throws it, run() keeps the menu open and says why
-        run(onH ? 'Stopping' : 'Keeping on top', api.callR('ontop.set', { hwnd: target, on: !onH, name: item.name || '' }));
+        run(onH ? 'Stopping' : 'Keeping on top', api.callR('ontop.set', otArgs(wins, target, !onH, item.name)));
       }, onH ? 'ontop-on' : '');
       otRow.title = !OT ? 'Keep on top: the bar did not load ui/bar/ontop.js'
         : OT.error() ? 'Keep on top: ' + OT.error()
@@ -278,5 +289,5 @@
     return false;
   }
 
-  window.MantleJumpList = { open: open, closed: closed, key: key, _appOf: appOf };
+  window.MantleJumpList = { open: open, closed: closed, key: key, _appOf: appOf, _otArgs: otArgs };
 })();
