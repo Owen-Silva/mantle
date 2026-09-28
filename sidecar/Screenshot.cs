@@ -50,6 +50,7 @@ namespace Mantle {
       t.Add("shot.save", Lanes.Capture, Save);
       t.Add("shot.release", Lanes.Capture, Release);
       t.Add("shot.folder", Lanes.Slow, Folder);
+      t.Add("shot.ocr", Lanes.Capture, OcrCmd);     // "Copy text": Ocr.cs reads the same frozen frame
     }
 
     /// The frame names start with this, and only files that do are ever deleted from `dir`.
@@ -74,7 +75,9 @@ namespace Mantle {
 
     /* ---- shot.grab ------------------------------------------------------------------------ */
 
-    /// {dir, exclude?:[hwnd,...], synthetic?:bool} -> {grab, virt, monitors[], windows[], ms}
+    /// {dir, exclude?:[hwnd,...], synthetic?:bool, text?:[line,...], textAt?:{x,y}, textPx?, textPad?}
+    ///   -> {grab, virt, monitors[], windows[], textBox, ms}
+    /// `text` (synthetic only, for the OCR tests) draws known lines over the pattern: DrawSyntheticText.
     static string Grab(Dictionary<string, object> req, ref object result) {
       string dir = Json.GetString(req, "dir");
       string derr = CheckTempDir(dir, "shot.grab: the frames");
@@ -110,6 +113,7 @@ namespace Mantle {
         f.X = vx; f.Y = vy; f.W = vw; f.H = vh; f.Synthetic = synthetic;
 
         double bltMs, writeMs;
+        IDictionary textBox = null;      // synthetic `text` only (tests): where it was drawn
         var sw = Stopwatch.StartNew();
         IntPtr screen = ShotNative.GetDC(IntPtr.Zero);
         if (screen == IntPtr.Zero) return "shot.grab: the screen DC could not be opened";
@@ -125,6 +129,12 @@ namespace Mantle {
           f.Bits = bits;
           if (synthetic) {
             FillSynthetic(f);
+            object tl;
+            if (Json.TryGet(req, "text", out tl) && tl is List<object> && ((List<object>)tl).Count > 0) {
+              object at;
+              Json.TryGet(req, "textAt", out at);
+              textBox = DrawSyntheticText(f, (List<object>)tl, at as Dictionary<string, object>, Json.GetInt(req, "textPx", 20), Json.GetInt(req, "textPad", -1));
+            }
           } else {
             IntPtr mem = ShotNative.CreateCompatibleDC(screen);
             if (mem == IntPtr.Zero) { FreeFrame(f); return "shot.grab: a memory DC could not be created"; }
@@ -177,7 +187,7 @@ namespace Mantle {
         _cur = f;
         result = Json.Obj("ok", true, "grab", f.Id, "synthetic", synthetic,
           "virt", Json.Obj("x", vx, "y", vy, "w", vw, "h", vh),
-          "monitors", mons, "windows", wins, "staleDeleted", stale,
+          "monitors", mons, "windows", wins, "staleDeleted", stale, "textBox", textBox,
           "ms", Json.Obj("blt", Math.Round(bltMs, 2), "write", Math.Round(writeMs, 2),
                          "windows", Math.Round(winMs, 2), "total", Math.Round(total.Elapsed.TotalMilliseconds, 2)));
         return null;
@@ -367,6 +377,71 @@ namespace Mantle {
         return "shot.save: the screenshot could not be saved (" + e.GetType().Name + ": " + e.Message + ")";
       } finally {
         if (bmp != null) bmp.Dispose();
+      }
+    }
+
+    /* ---- shot.ocr (the overlay's "Copy text" mode, Ocr.cs) --------------------------------- */
+
+    /// {grab, x, y, w, h (physical, virtual-screen coords)} -> {lines:[{text,x,y,w,h}], lang, scale,
+    /// angle, x, y, w, h, ms:{crop, scale, ocr, total}}. The crop comes from the SAME frozen frame
+    /// as shot.save, in memory: no file, and nothing here logs the pixels or the text.
+    static string OcrCmd(Dictionary<string, object> req, ref object result) {
+      int id = Json.GetInt(req, "grab", 0);
+      int x = Json.GetInt(req, "x", 0), y = Json.GetInt(req, "y", 0);
+      int w = Json.GetInt(req, "w", 0), h = Json.GetInt(req, "h", 0);
+      if (w <= 0 || h <= 0) return "shot.ocr: w and h must be positive physical pixels";
+      var total = Stopwatch.StartNew();
+      byte[] px;
+      lock (_lock) {
+        if (_cur == null || _cur.Id != id)
+          return "shot.ocr: capture " + id + " is gone (it was released, or a newer one replaced it)";
+        int l = Math.Max(x, _cur.X), t = Math.Max(y, _cur.Y);
+        int r = Math.Min(x + w, _cur.X + _cur.W), b = Math.Min(y + h, _cur.Y + _cur.H);
+        if (r <= l || b <= t) return "shot.ocr: the rect " + x + "," + y + " " + w + "x" + h + " is outside the capture";
+        x = l; y = t; w = r - l; h = b - t;
+        px = new byte[(long)w * h * 4];
+        int stride = _cur.W * 4;
+        long src = _cur.Bits.ToInt64() + (long)(y - _cur.Y) * stride + (long)(x - _cur.X) * 4;
+        for (int k = 0; k < h; k++) Marshal.Copy(new IntPtr(src + (long)k * stride), px, k * w * 4, w * 4);
+      }
+      double cropMs = total.Elapsed.TotalMilliseconds;
+      IDictionary rec;
+      string err = Ocr.Recognize(px, w, h, Json.GetInt(req, "scale", 0), out rec);
+      Array.Clear(px, 0, px.Length);
+      if (err != null) return "shot.ocr: " + err;
+      rec["x"] = x; rec["y"] = y; rec["w"] = w; rec["h"] = h;
+      var ms = (IDictionary)rec["ms"];
+      ms["crop"] = Math.Round(cropMs, 2);
+      ms["total"] = Math.Round(total.Elapsed.TotalMilliseconds, 2);
+      result = rec;
+      return null;
+    }
+
+    /// --test only (synthetic grabs): known text drawn black on white over the pattern, at `at`
+    /// {x, y} physical px from the PRIMARY monitor's top-left, `px` high (the font's em size),
+    /// one entry of `lines` per line, on a white box `textPad` px bigger all round (default: one em).
+    /// Returns the white box it drew, in virtual-screen px.
+    static IDictionary DrawSyntheticText(Frame f, List<object> lines, Dictionary<string, object> at, int emPx, int padPx) {
+      int ox = 0, oy = 0;
+      foreach (ShotNative.MonitorRow m in ShotNative.Monitors()) if (m.Primary) { ox = m.X; oy = m.Y; }
+      ox += at != null ? Json.GetInt(at, "x", 60) : 60;
+      oy += at != null ? Json.GetInt(at, "y", 60) : 60;
+      if (emPx < 6) emPx = 6;
+      if (emPx > 200) emPx = 200;
+      using (var bmp = new Bitmap(f.W, f.H, f.W * 4, PixelFormat.Format32bppRgb, f.Bits))
+      using (var g = Graphics.FromImage(bmp))
+      using (var font = new Font("Segoe UI", emPx, FontStyle.Regular, GraphicsUnit.Pixel)) {
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        float lh = font.GetHeight(g);
+        float bw = 0;
+        foreach (object o in lines) bw = Math.Max(bw, g.MeasureString(o as string ?? "", font).Width);
+        int pad = padPx >= 0 ? Math.Min(padPx, 2000) : Math.Max(8, emPx);
+        var box = new Rectangle(ox - f.X - pad, oy - f.Y - pad, (int)Math.Ceiling(bw) + 2 * pad, (int)Math.Ceiling(lh * lines.Count) + 2 * pad);
+        g.FillRectangle(Brushes.White, box);
+        for (int i = 0; i < lines.Count; i++)
+          g.DrawString(lines[i] as string ?? "", font, Brushes.Black, ox - f.X, oy - f.Y + i * lh);
+        g.Flush();
+        return Json.Obj("x", box.X + f.X, "y", box.Y + f.Y, "w", box.Width, "h", box.Height, "lineH", Math.Round(lh, 2));
       }
     }
 

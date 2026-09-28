@@ -74,7 +74,7 @@ namespace Mantle {
 
     public static IDictionary Bluetooth() {
       return _bluetooth.Get() ?? Pending(_bluetooth, "Bluetooth",
-        "present", true, "on", false, "via", "powershell");
+        "present", true, "on", false, "radio", null, "canSwitch", false, "via", "powershell");
     }
 
     public static IDictionary Brightness() {
@@ -388,7 +388,9 @@ namespace Mantle {
         case "brightness": keys = new[] { "ok", "present", "level", "reason" }; break;
         case "power": keys = new[] { "ok", "present", "saver", "percent", "ac", "charging", "reason" }; break;
         case "volume": keys = new[] { "ok", "level", "muted" }; break;
-        default: keys = new[] { "ok", "present", "on", "reason" }; break;   // bluetooth, nightlight
+        // off -> disabled keeps on:false: the radio's own state and airplane mode push too
+        case "bluetooth": keys = new[] { "ok", "present", "on", "radio", "canSwitch", "airplane", "reason" }; break;
+        default: keys = new[] { "ok", "present", "on", "reason" }; break;   // nightlight
       }
       var sb = new StringBuilder();
       foreach (string k in keys)

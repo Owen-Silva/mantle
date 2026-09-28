@@ -108,3 +108,25 @@
   border-top: 1px solid var(--lg-edge-out);
 }
 .pop.jl .jl-foot .jl-i.app { color: var(--lg-ink); font-weight: 600; }
+
+/* ---- "Keep on top" (lane ontop, 2026-09-27) -------------------------------------------------
+ * The pin badge on the icon of an app with a window Mantle keeps on top (ui/bar/ontop.js), in the
+ * cell's top-right corner, over the icon and clear of the running line at the bottom. The accent
+ * disc with a white pin (7.2:1, glass-light.css); a hairline of the bar's own fill separates it
+ * from any icon colour. The menu row's note (why a window cannot be pinned) reuses .jl-why. */
+.cell .ontop-badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--lg-acc);
+  color: var(--lg-acc-on);
+  box-shadow: 0 0 0 1.5px var(--lg-fill-strong);
+  pointer-events: none;
+}
+.cell .ontop-badge svg { display: block; }
+.pop.jl .jl-i.ontop-on .jl-ico { color: var(--lg-acc); }

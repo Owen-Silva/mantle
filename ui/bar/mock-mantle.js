@@ -967,6 +967,27 @@
     return Object.assign({ ok: true }, tbState);
   }
 
+  /* ---- Hot corners (lane corners, 2026-09-27): lib/features/corners.js's corners.state, in its shape. ?hc=
+       default (top-left Task view, bottom-right Show desktop)   fail  the bottom-right's last push failed
+       game  the last push did nothing because a game runs        rest  resting (its commands throw)
+       Choosing a corner's action answers like the feature: corners.set {corner, action} saves and pushes. */
+  var HC = q.get('hc') || 'default';
+  var hcState = { enabled: true, test: false, actions: { tl: 'taskview', tr: 'off', bl: 'off', br: 'desktop' }, corners: ['tl', 'tr', 'bl', 'br'],
+    choices: [{ id: 'off', label: 'Off' }, { id: 'taskview', label: 'Task view' }, { id: 'desktop', label: 'Show desktop' },
+      { id: 'launcher', label: 'Launcher' }, { id: 'qs', label: 'Quick settings' }, { id: 'lock', label: 'Lock screen' }],
+    watching: true, watch: { ok: true, reason: null }, zone: 6, dwell: 250,
+    last: HC === 'game' ? { corner: 'br', action: 'desktop', at: Date.now(), ok: false, blocked: true, said: 'VALORANT is running (a known game)' } : null,
+    fails: HC === 'fail' ? { br: { at: Date.now(), action: 'desktop', said: 'Show desktop did not run: Shell.Application ToggleDesktop failed (Access is denied)' } } : {} };
+  function hcCall(name, p) {
+    if (HC === 'rest') throw new Error('Hot corners is resting while VALORANT.exe runs; it is back when the game exits');
+    if (name === 'corners.set' && p && p.corner && p.action) {
+      var acts = Object.assign({}, hcState.actions); acts[p.corner] = p.action;
+      hcState = Object.assign({}, hcState, { actions: acts });
+      setTimeout(function () { emit('corners.state', hcState); }, 5);
+    }
+    return Object.assign({ ok: true }, hcState);
+  }
+
   /* ---- Spotify's "Up next" queue (spotq lane; desktop-app rebuild by the spotapp lane, 2026-09-25):
        lib/features/spotify.js's replies, in its shapes. Needs ?media=playing (the card must be
        showing Spotify). ?spq=
@@ -1147,6 +1168,8 @@
       case 'powermode.get': return Object.assign({}, pmState);
       case 'gamemode.state': return Object.assign({}, gmState);
       case 'topbar.state': case 'topbar.hidden': return tbCall(channel, payload);
+      case 'corners.state': case 'corners.set': return hcCall(channel, payload);
+      case 'corners.ack': return { ok: false };
       case 'gamemode.set': return gmSet(payload);
       case 'gamemode.auto': gmState = Object.assign({}, gmState, { auto: !!(payload && payload.on) }); return Object.assign({}, gmState);
       case 'gamemode.liftSaver': gmState = Object.assign({}, gmState, { liftSaver: !!(payload && payload.on) }); return Object.assign({}, gmState);

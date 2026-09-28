@@ -184,6 +184,28 @@
     foot.appendChild(row(pinned ? 'Unpin from taskbar' : 'Pin to taskbar', iconBox(null, pinned ? GLYPH.unpin : GLYPH.pin), function () {
       run(pinned ? 'Unpinning' : 'Pinning', api.callR('jumplist.pin', { app: cur.app, pin: !pinned }), function () { api.refreshPinned(); });
     }));
+    // 3b. keep on top (lane ontop, 2026-09-27; lib/features/ontop.js): one of this app's windows
+    // Mantle keeps on top -> "Stop keeping on top"; else the window in use (the active one, then
+    // the first) -> "Keep on top". A refusal (admin window, not responding, already on top by its
+    // own setting) keeps the menu open with the reason, like every action here.
+    if (wins.length) {
+      var OT = window.MantleOnTop || null;
+      var onH = OT ? OT.pinnedOf(wins) : null;
+      var target = onH;
+      if (!target) {
+        var pick = wins[0];
+        for (var wi = 0; wi < wins.length; wi++) if (wins[wi] && (wins[wi].active || wins[wi].foreground) && !wins[wi].minimized) { pick = wins[wi]; break; }
+        target = String(pick.hwnd);
+      }
+      var otRow = row(onH ? 'Stop keeping on top' : 'Keep on top', iconBox(null, onH ? GLYPH.unpin : GLYPH.pin), function () {
+        // a refusal is {ok:false, reason}: callR throws it, run() keeps the menu open and says why
+        run(onH ? 'Stopping' : 'Keeping on top', api.callR('ontop.set', { hwnd: target, on: !onH, name: item.name || '' }));
+      }, onH ? 'ontop-on' : '');
+      otRow.title = !OT ? 'Keep on top: the bar did not load ui/bar/ontop.js'
+        : OT.error() ? 'Keep on top: ' + OT.error()
+          : (onH ? 'Mantle keeps this window above the others' : 'Keep this window above all the others') + ' (Win+Ctrl+T does the same for the window in front)';
+      foot.appendChild(otRow);
+    }
     // 4. close, politely (WM_CLOSE: the app still asks to save)
     if (wins.length) {
       foot.appendChild(row(wins.length === 1 ? 'Close window' : 'Close all windows', iconBox(null, GLYPH.close), function () {

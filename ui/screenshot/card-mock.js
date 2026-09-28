@@ -2,6 +2,7 @@
  * window.mantle ONLY when it is absent; under Electron the real preload wins.
  *
  *   ?state=ok | nosave | nocopy | neither     what happened to the capture
+ *          text | notext | textfail            what happened to a Copy text capture
  *   ?life=0                                   never time out (for a still screenshot)
  */
 (function () {
@@ -38,6 +39,12 @@
       copyError: st === 'nocopy' || st === 'neither' ? 'another app was holding the clipboard' : null,
     };
     if (info.saveError) info.path = null;
+    // The Copy text card (states text | notext | textfail). The preview is made-up sample text.
+    if (st === 'text') info = { seq: 3, kind: 'text', copied: true, lifeMs: info.lifeMs, text: { lines: 3, chars: 146, headline: 'Copied 3 lines', preview: 'Question 7: A train leaves the station at…' } };
+    if (st === 'notext') info = { seq: 3, kind: 'text', copied: false, lifeMs: info.lifeMs, text: { lines: 0, chars: 0 } };
+    if (st === 'textfail') info = { seq: 3, kind: 'text', copied: false, lifeMs: info.lifeMs, textError: 'no OCR language is installed (Windows Settings > Time & language > Language & region)' };
     (listeners['screenshot.card'] || []).forEach(function (cb) { cb(info); });
   });
+  // shoot.js: push another card into the same page (one card window serves every capture).
+  window.__cardEmit = function (name, payload) { (listeners[name] || []).forEach(function (cb) { cb(payload); }); };
 }());

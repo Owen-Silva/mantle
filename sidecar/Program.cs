@@ -1093,6 +1093,15 @@ namespace Mantle {
             bool want;
             string aerr = StrictBool(req, "on", out want);
             if (aerr != null) return aerr;
+            // dryRun:true - the switch's own read and gate, stopping short of
+            // SetStateAsync (Bluetooth.Plan). It switches nothing, so passive
+            // answers it: the tests' proof of the ON path (2026-09-27).
+            bool dry = false;
+            if (Json.HasKey(req, "dryRun")) {
+              string derr = StrictBool(req, "dryRun", out dry);
+              if (derr != null) return derr;
+            }
+            if (dry) { result = Mantle.Bluetooth.Plan(want); return null; }
             if (Passive) return PassiveRefusal + ": bluetooth would switch the live radio";
             result = QuickSettings.SetBluetooth(want); // qs lane
             return null;

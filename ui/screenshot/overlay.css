@@ -69,6 +69,11 @@ body.selecting #hint, body.selecting #bar { opacity: 0; transition: opacity 120m
 #bar button[aria-pressed="true"] { background: var(--lg-acc-soft); color: var(--lg-acc); font-weight: 600; }
 #bar button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 #bar #close { padding: 0; width: 32px; justify-content: center; }
+/* Copy text when Windows' OCR cannot be reached: still focusable and clickable (a press says why,
+   in the hint), but reads as unavailable. */
+#bar button.off { color: var(--lg-ink-3); }
+#bar button.off:hover { background: var(--lg-hover); color: var(--lg-ink-3); }
+#hint.warn { color: var(--lg-warn); white-space: normal; max-width: min(560px, 80vw); text-align: center; }
 #bar .sep { width: 1px; height: 20px; margin: 0 4px; background: var(--lg-edge-out); }
 
 /* NO SILENT FAILURES: a frame that could not be shown says so, in the middle of the screen. */

@@ -436,6 +436,7 @@
       }
     }
     paintInd(b, wins);
+    if (window.MantleOnTop) MantleOnTop.paint(b, wins);   // the "kept on top" pin badge (ui/bar/ontop.js)
   }
 
   /* place(): put `node` right after `prev`, and only touch the DOM when it is not already there. */
@@ -1407,6 +1408,7 @@
       if (window.MantlePowerMode) MantlePowerMode.closed(); // its 3 s re-read and its push stop
       if (window.MantleGameMode) MantleGameMode.closed();   // its push subscription stops
       if (window.MantleTopbarHide) MantleTopbarHide.closed();
+      if (window.MantleCorners) MantleCorners.closed();     // its push subscription stops
     }
     if (popKey === 'media') {
       mediaPaint = null; mediaNote = ''; mediaRoom = 0;
@@ -1659,7 +1661,8 @@
       if (!r || typeof r !== 'object') r = { ok: false, part: part, reason: 'qs.set answered with nothing' };
       if (r.state) qsApplyReply(r);           // the read-back, not the click
       if (r.ok === false) {
-        qsNote[key] = qsWhy(part, r.reason);
+        qsNote[key] = part === 'bluetooth' && window.MantleBt && MantleBt.refusedNote
+          ? MantleBt.refusedNote(r.reason, value) : qsWhy(part, r.reason);
         fail('qsset', part + ' failed', 'qs.set ' + part + ' was refused: ' + (r.reason || 'no reason given'), 'warn');
         // no read-back came with it (an unknown part, a bad value): what the system says, again
         if (!r.state) qsSnapshot().then(qsRepaint, qsRepaint);
@@ -1683,6 +1686,14 @@
   function qsWhy(part, reason) {
     var label = qsLabel(part), why = reason || 'no reason was given';
     return why.toLowerCase().indexOf(label.toLowerCase()) === 0 ? why : label + ' did not change: ' + why;
+  }
+
+  /* The Bluetooth tile's words and what a click does (bt.js tile). bt.js is loaded before this
+     file; if it ever is not, the tile says so rather than the panel throwing. */
+  function btTile(b) {
+    if (window.MantleBt && MantleBt.tile) return MantleBt.tile(b);
+    return { sub: 'Unavailable', tip: 'Bluetooth: bt.js did not load, so the tile cannot be drawn',
+             on: false, live: false, open: null, glyph: 'rune' };
   }
 
   function svg(body, size) {
@@ -1744,7 +1755,15 @@
       };
     }
     tiles.wifi.b.addEventListener('click', toggle('wifi'));
-    tiles.bluetooth.b.addEventListener('click', toggle('bluetooth'));
+    /* Bluetooth (2026-09-27): a radio Mantle cannot switch (none, disabled, access denied, not
+       readable) opens Windows' own page for it rather than doing nothing; one still being read
+       says so. bt.js tile() decides which. */
+    tiles.bluetooth.b.addEventListener('click', function () {
+      var p = qsPart('bluetooth'), t = btTile(p);
+      if (!t.live && t.open) { closePop(); act('open', { target: t.open.target }, t.open.what); return; }
+      if (p && !t.live && !qsBusy.bluetooth) { qsNote.bluetooth = t.tip.split('\n')[0]; paint(); return; }
+      toggle('bluetooth')();
+    });
     tiles.nightlight.b.addEventListener('click', toggle('nightlight'));
     /* ENERGY SAVER has no switch another app may use (powrprof.dll exports only the power-mode
        overlay; checked 2026-09-23), so the tile shows the state and opens Windows' own page. It
@@ -1821,6 +1840,11 @@
     /* TOP BAR (lane tbvideo, 2026-09-26): hide / show it by hand, and "Hidden · Win+Alt+T to show" while it is (ui/bar/topbarhide.js). */
     if (window.MantleTopbarHide) MantleTopbarHide.attach(pop, { call: call, on: on }, notes);
     else fail('topbarhide', 'top bar row missing', 'ui/bar/topbarhide.js did not load, so quick settings cannot show a hidden top bar again (Win+Alt+T still does)', 'warn');
+    /* HOT CORNERS (lane corners, 2026-09-27): what each screen corner does (ui/bar/corners.js); its choices open below the grid, so it asks for room again. */
+    if (window.MantleCorners) MantleCorners.attach(pop, { call: call, on: on, resize: function () {
+      if (popKey === 'qs') callR('bar.popover', { open: true, height: el.pop.offsetHeight + 16, key: 'qs' }).catch(function () {});
+    } }, notes);
+    else fail('corners', 'hot corners row missing', 'ui/bar/corners.js did not load, so quick settings cannot change what the screen corners do', 'warn');
 
     var foot = document.createElement('div'); foot.className = 'qsfoot';
     var power = document.createElement('div'); power.className = 'qspower';
@@ -1874,17 +1898,11 @@
         wifiGlyph(w && w.on ? (wBars || 1) : 0), false);
       if (!partOk(w)) problems.push('Wi-Fi: ' + partWhy(w, 'Wi-Fi'));
 
-      // ---- Bluetooth
-      var slow = b && b.via && /powershell/i.test(String(b.via));
-      paintTile('bluetooth', b && b.on, !b || b.present !== false, partOk(b),
-        !b ? 'Unknown'
-          : !partOk(b) ? 'Unavailable'
-          : b.present === false ? 'No radio'
-          : (b.on ? 'On' : 'Off') + (slow ? ' · slow' : ''),
-        !partOk(b) ? 'Bluetooth — ' + partWhy(b, 'Bluetooth')
-          : (slow ? 'Switched via PowerShell, so it takes a second or two\n' : '') +
-            'Turn Bluetooth ' + (b && b.on ? 'off' : 'on'),
-        BT_GLYPH, false);
+      // ---- Bluetooth: its words are bt.js tile() (2026-09-27: an OFF radio read "No radio" and
+      // the tile went dead). A radio Mantle cannot switch still clicks: it opens Settings.
+      var bt = btTile(b);
+      paintTile('bluetooth', bt.on, true, bt.live || !!bt.open, bt.sub, bt.tip,
+        bt.glyph === 'none' ? svg(MantleBt.NO_BT) : BT_GLYPH, false);
       if (!partOk(b)) problems.push('Bluetooth: ' + partWhy(b, 'Bluetooth'));
 
       // ---- Night light (a switch since 2026-09-23: Display.SetNightLight)
@@ -1965,6 +1983,18 @@
   }
 
   function openQs(anchor) { openPop('qs', anchor || el.right, buildQsPop); }
+  /* A HOT CORNER set to Quick settings (lib/features/corners.js): open it (or close it, like Win+A
+     twice) and answer, so a panel that did not open is a failure with a reason on the corner. */
+  on('corners.qs', function (p) {
+    var seq = p && p.seq;
+    try {
+      var was = popKey === 'qs';
+      if (was) closePop(); else openQs();
+      call('corners.ack', { seq: seq, ok: true, closed: was }).catch(function () {});
+    } catch (e) {
+      call('corners.ack', { seq: seq, ok: false, reason: 'the bar could not open it: ' + msg(e) }).catch(function () {});
+    }
+  }, function () { /* no feature seam: nothing sends it */ });
 
   el.volume.addEventListener('click', function () { openQs(el.volume); });
   el.network.addEventListener('click', function () { openQs(el.network); });

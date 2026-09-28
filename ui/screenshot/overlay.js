@@ -11,10 +11,17 @@
  * monitor has its own page, and each page has exactly one scale.
  *
  * Modes: Rectangle (drag; mouse-up captures, like Windows), Window (the window under the pointer
- * is highlighted, a click captures it), Full screen (a click captures this monitor). Keyboard:
- * R / W / F pick the mode, the arrows move a crosshair (Shift: 10 px), Enter or Space acts (in
- * Rectangle: the first press anchors, the arrows stretch, the second captures), Esc cancels, Tab
- * walks the mode bar.
+ * is highlighted, a click captures it), Full screen (a click captures this monitor), Copy text
+ * (drag like Rectangle; main reads the text in the area with Windows' OCR and copies it as plain
+ * text instead of saving a picture). Keyboard: R / W / F / T pick the mode, the arrows move a
+ * crosshair (Shift: 10 px), Enter or Space acts (in Rectangle and Copy text: the first press
+ * anchors, the arrows stretch, the second captures), Esc cancels, Tab walks the mode bar.
+ *
+ * Copy text is a MODE (a fourth button) rather than a modifier because the bar already is the
+ * place a capture's outcome is picked, and a held key is invisible: the pressed button and its
+ * hint say what the drag will do. It is NOT remembered for the next capture (main never stores
+ * it), so Win+Shift+S always opens as a screenshot. When Windows' OCR cannot be reached, the
+ * button is aria-disabled with the reason as its tooltip, and T or a click says it in the hint.
  */
 (function () {
   'use strict';
@@ -28,9 +35,11 @@
     rect: 'Drag to capture an area · Esc to cancel',
     window: 'Click a window to capture it · Esc to cancel',
     full: 'Click to capture this screen · Esc to cancel',
+    text: 'Drag over text to copy it · Esc to cancel',
   };
   var S = {
     seq: 0, grab: 0, mon: null, windows: [], mode: 'rect', view: null,
+    ocr: { available: false, why: 'Mantle has not said yet whether Windows’ OCR is available' },
     ptr: null,          // the last pointer position on this page (CSS px)
     kbd: null,          // the keyboard crosshair (CSS px), when the arrows are in use
     anchor: null,       // where a Rectangle drag (or a keyboard selection) started
@@ -71,7 +80,7 @@
   }
 
   function showGuides(p) {
-    var on = !!p && S.mode === 'rect' && !S.dragging && !S.anchor;
+    var on = !!p && drags(S.mode) && !S.dragging && !S.anchor;
     gx.hidden = gy.hidden = !on;
     if (!on) return;
     gx.style.transform = 'translateY(' + Math.round(p.y) + 'px)';
@@ -83,7 +92,7 @@
     if (!S.mon || !p) return null;
     var v = S.view || view();
     var phys;
-    if (S.mode === 'rect') {
+    if (drags(S.mode)) {
       if (!S.anchor) return null;
       var r = G.normRect(S.anchor.x, S.anchor.y, p.x, p.y);
       phys = G.cssToPhys(r, S.mon, v);
@@ -104,12 +113,32 @@
     showHole(t && t.css, t && t.phys);
   }
 
+  /** Rectangle and Copy text are both a drag; they differ only in what main does with the area. */
+  function drags(mode) { return mode === 'rect' || mode === 'text'; }
+
+  /** The Copy text button says whether Windows' OCR can be reached, and if not, why (its tooltip). */
+  function showOcr() {
+    var b = bar.querySelector('button[data-mode="text"]');
+    if (!b) return;
+    var ok = !!(S.ocr && S.ocr.available);
+    b.setAttribute('aria-disabled', String(!ok));
+    b.classList.toggle('off', !ok);
+    b.title = ok ? 'Copy text (T)' : 'Copy text is unavailable: ' + ((S.ocr && S.ocr.why) || 'no reason was given');
+  }
+
   function setMode(mode, tell) {
     if (!HINTS[mode]) return;
+    if (mode === 'text' && !(S.ocr && S.ocr.available)) {
+      // NO SILENT FAILURES: the press is answered, in the hint, with the reason; the mode stays.
+      hint.textContent = 'Copy text is unavailable: ' + ((S.ocr && S.ocr.why) || 'no reason was given');
+      hint.classList.add('warn');
+      return;
+    }
+    hint.classList.remove('warn');
     S.mode = mode;
     S.anchor = null;
     S.dragging = false;
-    document.body.classList.remove('mode-rect', 'mode-window', 'mode-full', 'selecting');
+    document.body.classList.remove('mode-rect', 'mode-window', 'mode-full', 'mode-text', 'selecting');
     document.body.classList.add('mode-' + mode);
     Array.prototype.forEach.call(bar.querySelectorAll('.mode'), function (b) {
       b.setAttribute('aria-pressed', String(b.getAttribute('data-mode') === mode));
@@ -162,7 +191,9 @@
     S.seq = f.seq; S.grab = f.grab; S.mon = f.monitor; S.windows = f.windows || [];
     S.failed = false; S.done = false;
     S.view = view();
-    setMode(f.mode || 'rect', false);
+    S.ocr = f.ocr || { available: false, why: 'Mantle did not say whether Windows’ OCR is available' };
+    showOcr();
+    setMode(f.mode === 'text' && !S.ocr.available ? 'rect' : (f.mode || 'rect'), false);
     if (f.cursor) {
       // Where the pointer already is (physical), so the guides and the Window highlight are
       // right from the first frame, before any mouse move.
@@ -207,7 +238,7 @@
     if (S.done || S.failed || e.button !== 0 || onBar(e)) return;
     S.kbd = null;
     S.ptr = pt(e);
-    if (S.mode === 'rect') {
+    if (drags(S.mode)) {
       S.anchor = S.ptr;
       S.dragging = true;
       document.body.classList.add('selecting');
@@ -228,7 +259,7 @@
     if (onBar(e) && !S.dragging) return;
     S.ptr = pt(e);
     var t = target(S.ptr);
-    if (S.mode === 'rect') {
+    if (drags(S.mode)) {
       S.dragging = false;
       document.body.classList.remove('selecting');
       if (!commit(t, 'pointer')) { S.anchor = null; redraw(); }     // a click, not a drag: keep going
@@ -249,7 +280,8 @@
     if (S.done || S.failed) return;
     var onButton = e.target && e.target.tagName === 'BUTTON';
     var k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    if (k === 'r' || k === 'w' || k === 'f') { setMode(k === 'r' ? 'rect' : k === 'w' ? 'window' : 'full', true); e.preventDefault(); return; }
+    var byKey = { r: 'rect', w: 'window', f: 'full', t: 'text' }[k];
+    if (byKey) { setMode(byKey, true); e.preventDefault(); return; }
     var step = e.shiftKey ? 10 : 1;
     var d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[k];
     var v = S.view || view();
@@ -264,7 +296,7 @@
       e.preventDefault();
       var p = S.kbd || S.ptr || { x: Math.round(v.w / 2), y: Math.round(v.h / 2) };
       S.kbd = p;
-      if (S.mode === 'rect' && !S.anchor) { S.anchor = p; document.body.classList.add('selecting'); redraw(); return; }
+      if (drags(S.mode) && !S.anchor) { S.anchor = p; document.body.classList.add('selecting'); redraw(); return; }
       commit(target(p), 'keyboard');
     }
   });

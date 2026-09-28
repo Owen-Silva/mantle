@@ -38,6 +38,8 @@ const switcher = require('./lib/switcher');
 const { createFeatures } = require('./lib/features');
 // the known-game list (pure): a known game in front keeps the bar hidden even in a window (valofix)
 const GamePlan = require('./lib/features/_gamemode-plan');
+// hot corners (lane corners): an ACTIVE corner's square is the corner's, not the reveal band's
+const HotCorners = require('./lib/features/_corners');
 
 /*
  * The pinned-taskbar reader (lane C's file). It is REQUIRED IN A TRY on purpose:
@@ -1452,7 +1454,9 @@ async function hoverTick() {
   // until the pill was already there.
   const bandTop = atTop ? b.y : b.y + b.height - REVEAL_BAND_DIP;
   const bandBottom = atTop ? b.y + REVEAL_BAND_DIP : b.y + b.height;
-  const inBand = pt.x >= b.x && pt.x < b.x + b.width && pt.y >= bandTop && pt.y < bandBottom;
+  // A hot corner set to an action (lib/features/_corners.js) keeps its 6 DIP square: pushing into it
+  // runs the corner and does NOT also reveal the bar; the rest of the edge reveals as before.
+  const inBand = pt.x >= b.x && pt.x < b.x + b.width && pt.y >= bandTop && pt.y < bandBottom && !HotCorners.claims(pt, b);
 
   if (hoverFirstTick) {
     hoverFirstTick = false;

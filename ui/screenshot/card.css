@@ -52,6 +52,10 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 .x svg { width: 14px; height: 14px; }
 .x:hover { background: var(--lg-hover); color: var(--lg-ink); }
 
+/* The Copy text card: no picture and no file actions (nothing was saved); the preview is the name line. */
+#card.text-card .thumb, #card.text-card .actions { display: none; }
+#card.text-card .name { color: var(--lg-ink); }
+
 /* How long the card has left: a hairline that shrinks, paused while the pointer or focus is on it. */
 .timer {
   position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--lg-acc); opacity: .35;

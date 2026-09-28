@@ -162,6 +162,80 @@ check('ago just now', T.ago(1200) === 'just now' && T.ago(undefined) === 'just n
 check('busyOf', show(T.busyOf({ busy: { device: id, op: 'connect', ms: 800 } })) === show({ id, what: 'connect' }) &&
   T.busyOf({ busy: null }) === null && T.busyOf({ busy: { device: id, op: 'pair' } }) === null);
 
+// ---- the quick-settings tile (2026-09-27: an OFF radio read "No radio" and the tile went dead)
+// OFF is the sidecar's real read on Owen's machine with his radio switched off, after the fix.
+const OFF = { ok: true, present: true, on: false, radio: 'off', canSwitch: true, airplane: false, access: 'Allowed', via: 'winrt', reason: null, ageMs: 292, stale: false };
+const ON = Object.assign({}, OFF, { on: true, radio: 'on' });
+let t = T.tile(OFF);
+check('tile off: reads Off, switches, never No radio', t.sub === 'Off' && t.live === true && t.open === null && t.on === false &&
+  t.glyph === 'rune' && t.tip === 'Turn Bluetooth on', show(t));
+t = T.tile(ON);
+check('tile on: reads On, lit, switches off', t.sub === 'On' && t.live === true && t.on === true && t.tip === 'Turn Bluetooth off', show(t));
+t = T.tile(Object.assign({}, OFF, { via: 'powershell' }));
+check('tile off via PowerShell says slow', t.sub === 'Off · slow' && /PowerShell/.test(t.tip) && t.live === true, show(t));
+t = T.tile(Object.assign({}, OFF, { airplane: true }));
+check('tile off in airplane mode still switches on, and says so', t.sub === 'Off · airplane mode' && t.live === true &&
+  /Airplane mode is on; Bluetooth can still be switched on/.test(t.tip), show(t));
+// an older sidecar: no radio / canSwitch fields, an off radio it did find
+t = T.tile({ ok: true, present: true, on: false, via: 'winrt', reason: null });
+check('tile off from an older sidecar still switches', t.sub === 'Off' && t.live === true, show(t));
+
+// disabled: airplane mode, and a hardware switch; Mantle cannot switch it, so a click opens Settings
+const DIS_PLANE = Object.assign({}, OFF, { radio: 'disabled', canSwitch: false, airplane: true,
+  reason: 'Bluetooth is turned off by airplane mode, and Windows does not let an app switch a disabled radio on; turn airplane mode off' });
+t = T.tile(DIS_PLANE);
+check('tile disabled by airplane mode', t.sub === 'Airplane mode' && t.live === false && t.on === false &&
+  t.open && t.open.target === 'ms-settings:network-airplanemode' &&
+  /^Bluetooth is turned off by airplane mode/.test(t.tip) && /Mantle can’t switch it on: Windows refuses a disabled radio/.test(t.tip) &&
+  /Click to open airplane mode settings\.$/.test(t.tip), show(t));
+t = T.tile(Object.assign({}, DIS_PLANE, { airplane: false, reason: 'Bluetooth is turned off by a hardware switch or the PC\'s firmware (Windows reports the radio Disabled), and Windows does not let an app switch it on' }));
+check('tile disabled by a hardware switch', t.sub === 'Disabled' && t.live === false && t.open.target === 'ms-settings:bluetooth' &&
+  /hardware switch/.test(t.tip) && /Click to open Bluetooth settings\.$/.test(t.tip), show(t));
+t = T.tile(Object.assign({}, OFF, { radio: 'disabled', canSwitch: false, reason: null }));
+check('tile disabled with no reason still says why', t.sub === 'Disabled' && /disabled by a hardware switch or the firmware/.test(t.tip) && !!t.open, show(t));
+
+// missing: the radio list has no Bluetooth radio - No radio, the reason, and a way out
+const NONE = { ok: true, present: false, on: false, radio: 'none', canSwitch: false, airplane: false, access: 'Allowed', via: 'winrt',
+  reason: 'Windows lists no Bluetooth radio on this PC: the adapter is missing or unplugged, or its driver is turned off in Device Manager' };
+t = T.tile(NONE);
+check('tile missing: No radio, with the reason and Bluetooth settings', t.sub === 'No radio' && t.live === false && t.glyph === 'none' &&
+  t.open && t.open.target === 'ms-settings:bluetooth' && t.open.what === 'Bluetooth settings' &&
+  /^No Bluetooth radio: Windows lists no Bluetooth radio on this PC: the adapter is missing/.test(t.tip) &&
+  /Click to open Bluetooth settings\.$/.test(t.tip), show(t));
+t = T.tile({ ok: true, present: false, on: false });
+check('tile missing with no reason still says why and opens Settings', t.sub === 'No radio' && /Windows lists no Bluetooth radio/.test(t.tip) && !!t.open, show(t));
+
+// access denied: read fine, Windows will not take a switch from Mantle
+t = T.tile(Object.assign({}, OFF, { canSwitch: false, access: 'DeniedByUser',
+  reason: 'Windows denies Mantle control of the radios (DeniedByUser); allow it in Settings > Privacy & security > Radios' }));
+check('tile locked by radio access opens the radio privacy page', t.sub === 'Off · locked' && t.live === false &&
+  t.open.target === 'ms-settings:privacy-radios' && /DeniedByUser/.test(t.tip), show(t));
+
+// not readable / not read yet
+t = T.tile({ ok: false, present: true, on: false, radio: null, reason: 'the radio list did not answer in time' });
+check('tile unreadable: Unavailable, the reason, and Settings', t.sub === 'Unavailable' && t.live === false &&
+  /^Bluetooth can’t be read: The radio list did not answer in time\./.test(t.tip) && t.open.target === 'ms-settings:bluetooth', show(t));
+t = T.tile({ ok: false, pending: true, present: true, on: false, reason: 'Bluetooth is still being read for the first time (40 ms so far)' });
+check('tile pending: Checking, no switch, no Settings', t.sub === 'Checking…' && t.live === false && t.open === null && /still being read/.test(t.tip), show(t));
+t = T.tile(null);
+check('tile before any read', t.sub === 'Unknown' && t.live === false && t.open === null, show(t));
+check('no tile state is dead once read: every one switches or opens Settings',
+  [OFF, ON, DIS_PLANE, NONE, { ok: false, reason: 'x' }].every((b) => { const x = T.tile(b); return x.live || !!x.open; }));
+
+// refused: the switch Windows said no to, with its RadioAccessStatus
+check('refused by the system: the sidecar reason stands alone',
+  T.refusedNote('Windows refused to switch Bluetooth on (DeniedBySystem): the system blocked it; Bluetooth settings can try', true) ===
+  'Windows refused to switch Bluetooth on (DeniedBySystem): the system blocked it; Bluetooth settings can try.');
+check('refused by the user setting', /DeniedByUser\): apps are not allowed/.test(
+  T.refusedNote('Windows refused to switch Bluetooth off (DeniedByUser): apps are not allowed to control this PC\'s radios; allow it in Settings > Privacy & security > Radios', false)));
+check('refused with no reason still says so', T.refusedNote(null, true) === 'Bluetooth did not switch on: Windows refused and gave no reason.');
+check('refused by Mantle (no radio) names the direction',
+  T.refusedNote('there is no Bluetooth radio to switch on: Windows lists no Bluetooth radio on this PC', true) ===
+  'Bluetooth did not switch on: There is no Bluetooth radio to switch on: Windows lists no Bluetooth radio on this PC.');
+// after a refusal the tile is the read-back: still Off, still live, so it can be tried again
+t = T.tile(OFF);
+check('tile after a refused switch is still live', t.live === true && t.sub === 'Off', show(t));
+
 // ---- glyphs
 check('battery glyph empty at 0', (T.batteryGlyph(0).match(/<rect/g) || []).length === 2);
 check('battery glyph full at 100', /width="8\.60"/.test(T.batteryGlyph(100)));

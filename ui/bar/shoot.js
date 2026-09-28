@@ -253,6 +253,11 @@ const SHOTS = [
      Show top bar), aside for a full-screen video, resting while a game runs, and a click hiding it. */
   { name: 'tb-shown', w: 1280, h: 640, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'tb-hidden', w: 1280, h: 640, q: '?mode=pill&tb=hidden', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  /* HOT CORNERS (lane corners, 2026-09-27, ui/bar/corners.js): the four corners with the bottom-right's choices open,
+     a corner whose last push failed (its reason in warning ink), and a push a game refused. */
+  { name: 'hc-open', w: 1280, h: 760, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }, '.hccell.hc-br', { wait: 300 }] },
+  { name: 'hc-fail', w: 1280, h: 760, q: '?mode=pill&hc=fail', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
+  { name: 'hc-game', w: 1280, h: 760, q: '?mode=pill&hc=game', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   // PEEK (lane tbpeek): hidden by hand, the watch of the top edge cannot work: its own warning line with the reason
   { name: 'tb-nopeek', w: 1280, h: 640, q: '?mode=pill&tb=nopeek', steps: [{ wait: 900 }, '#network', { wait: 300 }] },
   { name: 'tb-video', w: 1280, h: 640, q: '?mode=pill&tb=video', steps: [{ wait: 900 }, '#network', { wait: 300 }] },

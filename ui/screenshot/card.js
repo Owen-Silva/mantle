@@ -47,6 +47,8 @@
     if (!info) return;
     S.seq = info.seq; S.info = info; S.left = info.lifeMs || LIFE_MS; S.runningSince = performance.now();
     S.gone = false; S.hover = false; S.focus = false;
+    card.classList.toggle('text-card', info.kind === 'text');
+    if (info.kind === 'text') { showText(info); return; }
     var saved = !info.saveError && !!info.path, copied = !!info.copied;
     // info.title / info.note: a card that is not about a capture (Mantle's overlay could not come
     // forward and Windows' Snipping Tool was opened instead) says so in its own words.
@@ -69,6 +71,27 @@
     if (info.url) img.src = info.url; else img.removeAttribute('src');
     card.hidden = false;
     // The next frame, so the slide-in transition has a start to run from.
+    requestAnimationFrame(function () { card.classList.add('in'); });
+    if (!S.raf) S.raf = requestAnimationFrame(tick);
+    send('cardShown', { h: card.offsetHeight, w: card.offsetWidth });
+  }
+
+  /* The Copy text card (ocr lane, 2026-09-27): "Copied 3 lines" and the first ~40 characters, or
+     "No text found in that area" (nothing was copied), or "Text not copied" with the reason. No
+     thumbnail and no file actions: nothing was saved. The text is only ever shown, never logged. */
+  function showText(info) {
+    var t = info.text || {};
+    var copied = !!info.copied && t.lines > 0;
+    $('title').textContent = info.title || (copied ? t.headline : info.textError ? 'Text not copied' : 'No text found in that area');
+    $('name').textContent = copied && t.preview ? '“' + t.preview + '”' : '';
+    $('status').textContent = copied ? 'Plain text on the clipboard' : (info.textError ? '' : 'Nothing was copied');
+    var warn = info.textError ? ['Not copied: ' + info.textError] : [];
+    if (info.copyError) warn.push('Not copied: ' + info.copyError);
+    $('warn').textContent = warn.join(' · ');
+    $('warn').hidden = !warn.length;
+    $('open').disabled = $('title').disabled = $('copy-path').disabled = $('folder').disabled = true;
+    $('thumb').removeAttribute('src');
+    card.hidden = false;
     requestAnimationFrame(function () { card.classList.add('in'); });
     if (!S.raf) S.raf = requestAnimationFrame(tick);
     send('cardShown', { h: card.offsetHeight, w: card.offsetWidth });

@@ -47,8 +47,14 @@ namespace Mantle {
   static class Bluetooth {
     const int WinRtTimeoutMs = 3000;
 
-    /// Whether the machine HAS a Bluetooth radio. Win32, and the only way to
-    /// tell "no radio" from "radio list came back empty".
+    /// Whether Win32's classic radio enumeration finds a Bluetooth radio. A LAST
+    /// RESORT since 2026-09-27, never the answer to "is there a radio": it finds
+    /// a radio that is ON, and on Owen's Realtek adapter a radio switched OFF is
+    /// not enumerated at all, while Windows' radio list still has it (read on
+    /// his machine: GetRadiosAsync "Bluetooth Off", this false). Read() used it
+    /// as the truth, so an off radio read present:false, the tile said "No
+    /// radio", and Set() refused to switch it back on. Now it only cross-checks
+    /// an EMPTY radio list, and stands in when the list cannot be read at all.
     public static bool Present() {
       var p = new Win32.BLUETOOTH_FIND_RADIO_PARAMS();
       p.dwSize = (uint)Marshal.SizeOf(typeof(Win32.BLUETOOTH_FIND_RADIO_PARAMS));
@@ -67,16 +73,30 @@ namespace Mantle {
 
     /// A FRESH read. It blocks for as long as the radio takes to answer, so it
     /// runs on the cache's refresh thread or the slow lane - never on ui.
+    ///
+    /// THE REPLY (2026-09-27):
+    ///   ok         false only when the radio could not be read (reason says why)
+    ///   present    true when Windows' radio list has a Bluetooth radio - OFF or
+    ///              DISABLED included; false only when the list has none
+    ///   on         the radio is on
+    ///   radio      "on" | "off" | "disabled" | "unknown" | "none" | null (unread):
+    ///              Windows' own RadioState. "disabled" = off and locked by a
+    ///              hardware switch, the firmware or airplane mode, which Windows
+    ///              does not let an app switch on
+    ///   canSwitch  whether a switch from Mantle can work: false for no radio, a
+    ///              disabled radio, or radio access denied
+    ///   airplane   airplane mode on / off, or null when it cannot be read
+    ///   access     what Radio.RequestAccessAsync said ("Allowed", ...), or null
+    ///   reason     why it cannot be read, why there is no radio, or why it
+    ///              cannot be switched; null for a plain on / off radio
     public static IDictionary Read() {
-      bool present = Present();
-      string reason = null;
-      bool on = false;
+      string reason = null, access = null;
       string via = "winrt";
+      string state = null;   // "on" | "off" | "disabled" | "unknown" | "none", or null unread
 
-      string state = null;
 #if MANTLE_WINRT || MANTLE_WINMD
       try {
-        state = WinRtState(out reason);
+        state = WinRtState(out reason, out access);
       } catch (Exception ex) {
         state = null;
         reason = "the in-process Bluetooth API failed (" + ex.GetType().Name + ": " + ex.Message + ")";
@@ -87,55 +107,172 @@ namespace Mantle {
         string psReason;
         state = HostState(out psReason);
         if (state == null && psReason != null) reason = (reason == null ? "" : reason + "; ") + psReason;
+        if (state != null) access = _hostAccess;
       }
+      // Win32 only where the radio list cannot answer "is there a radio" alone.
+      bool win32 = (state == null || state == "none") && Present();
+      return Shape(state, reason, access, via, win32, Airplane());
+    }
 
-      if (state != null) {
+    /// The reply from what was read. Pure: no Windows call in here.
+    static IDictionary Shape(string state, string reason, string access, string via, bool win32, object airplane) {
+      bool ok = true, present, on = false, canSwitch = false;
+      bool plane = airplane is bool && (bool)airplane;
+      if (state == "none") {
+        if (win32) {
+          // The list is empty, yet a radio is enumerated: the list is wrong, not the hardware.
+          ok = false; present = true;
+          reason = "Windows' radio list has no Bluetooth radio, yet Windows enumerates one, " +
+                   "so its on/off state cannot be read; Bluetooth settings can still switch it";
+        } else {
+          present = false;
+          reason = "Windows lists no Bluetooth radio on this PC: the adapter is missing or unplugged, " +
+                   "or its driver is turned off in Device Manager";
+        }
+      } else if (state == null) {
+        ok = false;
+        present = win32;   // a guess, and ok:false says so
+        if (reason == null) reason = "the Bluetooth radio's state could not be read";
+      } else {
+        present = true;
         on = state == "on";
-        reason = null;
-      } else if (!present) {
-        reason = "this machine has no Bluetooth radio";
-      } else if (reason == null) {
-        reason = "the Bluetooth radio's state could not be read";
+        if (state == "disabled") {
+          reason = plane
+            ? "Bluetooth is turned off by airplane mode, and Windows does not let an app switch a disabled radio on; turn airplane mode off"
+            : "Bluetooth is turned off by a hardware switch or the PC's firmware (Windows reports the radio Disabled), " +
+              "and Windows does not let an app switch it on";
+        } else if (access != null && access != "Allowed") {
+          reason = "Windows denies Mantle control of the radios (" + access +
+                   "); allow it in Settings > Privacy & security > Radios";
+        } else {
+          reason = null;
+          canSwitch = true;   // "on", "off", and "unknown" (let Windows decide; a refusal says why)
+        }
       }
+      return Json.Obj("ok", ok, "present", present, "on", on, "radio", state, "canSwitch", canSwitch,
+                      "airplane", airplane, "access", access, "via", via, "reason", reason);
+    }
 
-      return Json.Obj("ok", state != null || !present, "present", present, "on", on,
-                      "via", via, "reason", reason);
+    /// Airplane mode from the radio manager's own value (1 = on), or null when
+    /// it cannot be read. Read only.
+    static object Airplane() {
+      try {
+        using (var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                 @"SYSTEM\CurrentControlSet\Control\RadioManagement\SystemRadioState")) {
+          object v = k == null ? null : k.GetValue("");
+          if (v is int) return (int)v != 0;
+          return null;
+        }
+      } catch (Exception) {
+        return null;
+      }
+    }
+
+    /// Why Mantle will not even ask Windows to switch, or null to go ahead. The
+    /// same gate for Set and Plan, so the dry run shows exactly what a real
+    /// click would do. A DISABLED radio is not refused here: Windows decides,
+    /// and its refusal comes back with its RadioAccessStatus (the tile does not
+    /// offer the switch for one; it opens Settings).
+    static string Refusal(IDictionary read, bool want) {
+      string state = read["radio"] as string;
+      if (state == "none" && !(read["present"] is bool && (bool)read["present"]))
+        return "there is no Bluetooth radio to switch " + (want ? "on" : "off") + ": " + read["reason"];
+      string access = read["access"] as string;
+      if (access != null && access != "Allowed")
+        return "Windows denies Mantle control of the radios (" + access +
+               "); allow it in Settings > Privacy & security > Radios";
+      return null;
+    }
+
+    /// A refused SetStateAsync, in words: the RadioAccessStatus and what it means here.
+    static string Refused(string code, bool want, IDictionary before) {
+      string w = "Windows refused to switch Bluetooth " + (want ? "on" : "off") + " (" + code + ")";
+      bool plane = before["airplane"] is bool && (bool)before["airplane"];
+      switch (code) {
+        case "DeniedByUser":
+          return w + ": apps are not allowed to control this PC's radios; allow it in Settings > Privacy & security > Radios";
+        case "DeniedBySystem":
+          if ((before["radio"] as string) == "disabled")
+            return w + ": the radio is disabled by " + (plane ? "airplane mode" : "a hardware switch or the PC's firmware") +
+                   ", and Windows does not let an app switch a disabled radio on";
+          return w + ": the system blocked it" + (plane ? " (airplane mode is on)" : "") + "; Bluetooth settings can try";
+        case "Unspecified":
+          return w + " without saying why; Bluetooth settings can try";
+        default:
+          return w;
+      }
+    }
+
+    static IDictionary Copy(IDictionary d) {
+      var c = Json.Obj();
+      foreach (DictionaryEntry e in d) c[e.Key] = e.Value;
+      return c;
+    }
+
+    /// What a switch to `want` would do, WITHOUT switching: the same read and
+    /// the same gate as Set, stopping short of SetStateAsync. `bluetooth {on,
+    /// dryRun:true}` answers with it, in passive too, because it only reads.
+    public static IDictionary Plan(bool want) {
+      var now = Read();
+      string refuse = Refusal(now, want);
+      now["dryRun"] = true;
+      now["want"] = want ? "on" : "off";
+      now["refusal"] = refuse;
+      now["would"] = refuse != null ? null
+        : "Radio.SetStateAsync(" + (want ? "On" : "Off") + ") on the Bluetooth radio from Radio.GetRadiosAsync" +
+          (want && (now["radio"] as string) == "disabled" ? "; Windows usually refuses a disabled radio (DeniedBySystem)" : "");
+      return now;
     }
 
     /// Switch, then read back. `readBack` is the plain state for the cache;
-    /// the return value is the reply, which also says whether the switch took.
+    /// the return value is the reply, which also says whether the switch took,
+    /// and `refused` names Windows' RadioAccessStatus when it said no.
+    ///
+    /// There was a Present() gate here until 2026-09-27: an OFF radio is not
+    /// enumerated by Win32, so it answered "this machine has no Bluetooth
+    /// radio" and the radio could never be switched back on from Mantle. The
+    /// radio now comes from Radio.GetRadiosAsync, which lists it on or off.
+    /// Switching OFF is Radio.SetStateAsync(Off) as before: the radio's own
+    /// power state, never the PnP device, so the radio stays listed.
     public static IDictionary Set(bool want, out IDictionary readBack) {
-      readBack = null;
-      bool present = Present();
-      if (!present)
-        return Json.Obj("ok", false, "present", false, "on", false, "via", "powershell",
-                        "reason", "this machine has no Bluetooth radio");
+      var before = Read();
+      string refuse = Refusal(before, want);
+      if (refuse != null) {
+        readBack = Copy(before);
+        before["ok"] = false;
+        before["reason"] = refuse;
+        before["refused"] = "Mantle";
+        return before;
+      }
 
-      string reason = null;
+      string reason = null, code = null;
       bool done = false;
       string via = "winrt";
 
 #if MANTLE_WINRT || MANTLE_WINMD
       try {
-        done = WinRtSet(want, out reason);
+        done = WinRtSet(want, out reason, out code);
       } catch (Exception ex) {
         done = false;
         reason = "the in-process Bluetooth API failed (" + ex.GetType().Name + ": " + ex.Message + ")";
       }
 #endif
-      if (!done) {
+      // A refusal is Windows' answer, not a failed route: asking again through
+      // PowerShell would only ask the same Windows the same question.
+      if (!done && code == null) {
         via = "powershell";
         string psReason;
-        done = HostSet(want, out psReason);
+        done = HostSet(want, out psReason, out code);
         if (!done && psReason != null) reason = (reason == null ? "" : reason + "; ") + psReason;
       }
 
       var now = Read();
-      readBack = Json.Obj();
-      foreach (DictionaryEntry e in now) readBack[e.Key] = e.Value;
+      readBack = Copy(now);
       if (!done) {
         now["ok"] = false;
-        now["reason"] = reason ?? "Windows refused to switch the Bluetooth radio";
+        now["reason"] = code != null ? Refused(code, want, before)
+                                     : reason ?? "the Bluetooth radio could not be switched, and no reason came back";
+        now["refused"] = code;
       }
       now["via"] = via;
       return now;
@@ -165,37 +302,51 @@ namespace Mantle {
 #endif
     }
 
-    /// The Bluetooth radio, or null with the reason.
-    static Windows.Devices.Radios.Radio WinRtRadio(out string reason) {
-      Windows.Devices.Radios.RadioAccessStatus access;
-      reason = Wait(Windows.Devices.Radios.Radio.RequestAccessAsync(), "the radio access request", out access);
-      if (reason != null) return null;
-      if (access != Windows.Devices.Radios.RadioAccessStatus.Allowed) {
-        reason = "Windows denied access to the radios (" + access +
-                 "); check Settings > Privacy & security > Radios";
-        return null;
-      }
+    /// The Bluetooth radio from Windows' radio list, which has it whether it is
+    /// on, off or disabled. Null with `none` when the list has no Bluetooth
+    /// radio; null with the reason when the list could not be read. `access`
+    /// is what RequestAccessAsync said: it gates a SWITCH (Refusal), never a
+    /// read - until 2026-09-27 anything but Allowed failed the read too.
+    static Windows.Devices.Radios.Radio WinRtRadio(out string reason, out string access, out bool none) {
+      none = false;
+      access = null;
+      Windows.Devices.Radios.RadioAccessStatus acc;
+      if (Wait(Windows.Devices.Radios.Radio.RequestAccessAsync(), "the radio access request", out acc) == null)
+        access = acc.ToString();
       System.Collections.Generic.IReadOnlyList<Windows.Devices.Radios.Radio> radios;
       reason = Wait(Windows.Devices.Radios.Radio.GetRadiosAsync(), "the radio list", out radios);
       if (reason != null) return null;
       foreach (Windows.Devices.Radios.Radio r in radios) {
         if (r.Kind == Windows.Devices.Radios.RadioKind.Bluetooth) return r;
       }
-      reason = "Windows listed no Bluetooth radio";
+      none = true;
+      reason = "Windows lists no Bluetooth radio";
       return null;
     }
 
-    /// "on" / "off", or null with the reason. Everything is bounded by a
-    /// timeout: a WinRT call that never completes must not take the shell with
-    /// it.
-    static string WinRtState(out string reason) {
-      var r = WinRtRadio(out reason);
-      if (r == null) return null;
-      return r.State == Windows.Devices.Radios.RadioState.On ? "on" : "off";
+    /// "on" / "off" / "disabled" / "unknown" / "none", or null with the reason.
+    /// Everything is bounded by a timeout: a WinRT call that never completes
+    /// must not take the shell with it.
+    static string WinRtState(out string reason, out string access) {
+      bool none;
+      var r = WinRtRadio(out reason, out access, out none);
+      if (r == null) return none ? "none" : null;
+      reason = null;
+      switch (r.State) {
+        case Windows.Devices.Radios.RadioState.On: return "on";
+        case Windows.Devices.Radios.RadioState.Off: return "off";
+        case Windows.Devices.Radios.RadioState.Disabled: return "disabled";
+        default: return "unknown";
+      }
     }
 
-    static bool WinRtSet(bool want, out string reason) {
-      var r = WinRtRadio(out reason);
+    /// True when Windows switched it. `code` is the RadioAccessStatus when
+    /// Windows answered with a refusal, null when it never answered.
+    static bool WinRtSet(bool want, out string reason, out string code) {
+      code = null;
+      string access;
+      bool none;
+      var r = WinRtRadio(out reason, out access, out none);
       if (r == null) return false;
       Windows.Devices.Radios.RadioAccessStatus set;
       reason = Wait(r.SetStateAsync(want ? Windows.Devices.Radios.RadioState.On
@@ -203,7 +354,8 @@ namespace Mantle {
                     "the radio switch", out set);
       if (reason != null) return false;
       if (set != Windows.Devices.Radios.RadioAccessStatus.Allowed) {
-        reason = "Windows refused the switch (" + set + ")";
+        code = set.ToString();
+        reason = "Windows refused the switch (" + code + ")";
         return false;
       }
       return true;
@@ -261,8 +413,10 @@ namespace Mantle {
       string a = HostAsk("read", out reason);
       if (a == null) return null;
       if (a == "state On") return "on";
-      if (a == "state Off" || a == "state Disabled") return "off";
-      if (a == "none") { reason = "Windows listed no Bluetooth radio"; return null; }
+      if (a == "state Off") return "off";
+      if (a == "state Disabled") return "disabled";   // was read as a plain "off" until 2026-09-27
+      if (a == "state Unknown") return "unknown";
+      if (a == "none") { reason = null; return "none"; }
       if (a.StartsWith("error ", StringComparison.Ordinal)) {
         reason = "the Bluetooth helper could not read the radio (" + a.Substring(6) + ")";
         return null;
@@ -271,12 +425,14 @@ namespace Mantle {
       return null;
     }
 
-    static bool HostSet(bool want, out string reason) {
+    static bool HostSet(bool want, out string reason, out string code) {
+      code = null;
       string a = HostAsk(want ? "on" : "off", out reason);
       if (a == null) return false;
       if (a == "set Allowed") return true;
-      if (a == "none") { reason = "Windows listed no Bluetooth radio"; return false; }
+      if (a == "none") { reason = "Windows lists no Bluetooth radio"; return false; }
       if (a.StartsWith("set ", StringComparison.Ordinal)) {
+        code = a.Substring(4);
         reason = "Windows refused the switch (" + a.Substring(4) + ")" +
                  (_hostAccess != null && _hostAccess != "Allowed"
                    ? "; radio access is " + _hostAccess + ", check Settings > Privacy & security > Radios" : "");

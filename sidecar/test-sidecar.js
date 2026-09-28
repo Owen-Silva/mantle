@@ -1807,8 +1807,32 @@ async function main() {
     // "Windows listed no Bluetooth radio". A present radio must now be read.
     check('bluetooth reads the radio when the machine has one',
       d && (d.present === false || d.ok === true), JSON.stringify(d));
-    if (d) quickNotes.push('bluetooth: present=' + d.present + ' on=' + d.on + ' via=' + d.via +
+    // 2026-09-27: an OFF radio read present:false ("No radio") because Win32's enumeration loses
+    // it, and the switch then refused to turn it back on. The radio list is the truth now: any
+    // radio it lists (on, off, disabled) is present, and "no radio" always carries its reason.
+    check('bluetooth: a radio Windows lists is present, whether it is on, off or disabled',
+      d && ['on', 'off', 'disabled', 'unknown', 'none', null].indexOf(d.radio) >= 0 &&
+      (['on', 'off', 'disabled', 'unknown'].indexOf(d.radio) < 0 || d.present === true) &&
+      (d.radio !== 'off' || (d.on === false && d.canSwitch === (d.access === 'Allowed' || d.access === null))),
+      JSON.stringify(d));
+    check('bluetooth: no radio, a disabled radio and an unreadable one each say why',
+      d && (d.present !== false || (typeof d.reason === 'string' && d.reason.length > 0)) &&
+      (d.radio !== 'disabled' || (typeof d.reason === 'string' && d.canSwitch === false)) &&
+      (d.ok !== false || (typeof d.reason === 'string' && d.reason.length > 0)), JSON.stringify(d));
+    if (d) quickNotes.push('bluetooth: present=' + d.present + ' on=' + d.on + ' radio=' + d.radio + ' via=' + d.via +
       (d.reason ? ' reason=' + JSON.stringify(d.reason) : ''));
+    // The ON path, without switching: dryRun takes the switch's own read and gate and stops short
+    // of SetStateAsync, so a passive sidecar answers it. The real radio is never touched here.
+    const dry = await s.send('bluetooth', { on: !(d && d.on), dryRun: true }, 20000);
+    const p = dry.ok ? dry.result : null;
+    check('bluetooth dryRun plans the switch in passive and switches nothing',
+      !!p && p.dryRun === true && p.want === (d && d.on ? 'off' : 'on') &&
+      (p.present === false ? typeof p.refusal === 'string' && p.would === null
+        : p.refusal === null ? /^Radio\.SetStateAsync\((On|Off)\) on the Bluetooth radio from Radio\.GetRadiosAsync/.test(p.would)
+        : typeof p.refusal === 'string' && p.would === null) &&
+      p.on === (d ? d.on : p.on), JSON.stringify(dry).slice(0, 400));
+    const badDry = await s.send('bluetooth', { on: true, dryRun: 'yes' });
+    check('bluetooth dryRun must be true or false', badDry.ok === false && /dryRun/.test(badDry.error || ''), JSON.stringify(badDry));
   } catch (e) { check('bluetooth reads with the full shape', false, e.message); }
 
   try {

@@ -128,8 +128,11 @@ $wm = Join-Path $env:SystemRoot 'System32\WinMetadata'
 $interop = Join-Path (Split-Path -Parent $csc) 'System.Runtime.InteropServices.WindowsRuntime.dll'
 # Windows.UI + Windows.ApplicationModel + Windows.System are for Notifications.cs
 # (UserNotificationListener, the AppInfo on each toast, Launcher.LaunchUriAsync).
+# Windows.Graphics + Windows.Globalization are for Ocr.cs (SoftwareBitmap, and the Language
+# an OcrEngine reports; Windows.Media.Ocr itself is in Windows.Media.winmd).
 $split = @('Windows.Foundation.winmd', 'Windows.Media.winmd', 'Windows.Storage.winmd', 'Windows.Devices.winmd',
-           'Windows.UI.winmd', 'Windows.ApplicationModel.winmd', 'Windows.System.winmd') |
+           'Windows.UI.winmd', 'Windows.ApplicationModel.winmd', 'Windows.System.winmd',
+           'Windows.Graphics.winmd', 'Windows.Globalization.winmd') |
          ForEach-Object { Join-Path $wm $_ }
 $splitOk = $facade -and (Test-Path $interop) -and (@($split | Where-Object { -not (Test-Path $_) }).Count -eq 0)
 

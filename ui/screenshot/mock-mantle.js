@@ -6,7 +6,8 @@
  * does nothing (the launcher's and the switcher's pattern).
  *
  * Query flags:
- *   ?mode=rect|window|full   the starting mode (default rect)
+ *   ?mode=rect|window|full|text   the starting mode (default rect)
+ *   ?ocr=off                 Windows' OCR is unavailable: Copy text is disabled, with the reason
  *   ?monx=-1920&mony=0       this monitor's physical origin (a second monitor left of the primary)
  *   ?cursor=x,y              where the pointer is, in this page's CSS px (guides / hover)
  *   ?problem=1               main could not give this monitor a frame: the failure panel
@@ -93,6 +94,9 @@
       src: q.get('problem') === '1' ? null : paintDesktop(),
       cursor: cur ? { x: MX + Math.floor(cur.x * dpr), y: MY + Math.floor(cur.y * dpr) } : null,
       problem: q.get('problem') === '1' ? 'the sidecar could not grab the screen (BitBlt failed, Win32 error 5)' : null,
+      ocr: q.get('ocr') === 'off'
+        ? { available: false, why: 'no OCR language is installed (Windows Settings > Time & language > Language & region: add a language with its optical character recognition feature)' }
+        : { available: true, lang: 'en-US' },
     };
     emit('screenshot.frame', mock.frame);
   });

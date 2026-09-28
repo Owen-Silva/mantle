@@ -1,0 +1,62 @@
+/* corners.css - the Hot corners row in quick settings (ui/bar/corners.js). One Theme: the panel's
+ * --lg-* vocabulary only, the same tile as the Top bar row (topbarhide.css). The four corners sit
+ * like the screen's (a 2x2 grid, captions pushed to their own corner); a corner set to something is
+ * a plain tile, an Off one is sunk, the one being changed carries the accent ring, and its choices
+ * are a wrap of small chips below with the current one in the accent block. */
+.hcrow { margin: 2px 0 9px; }
+.hcrow .hcsub { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hcgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.hccell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-tile);
+  color: var(--lg-ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+/* the right-hand corners read from the right edge, like the screen's */
+.hccell.hc-tr, .hccell.hc-br { text-align: right; }
+.hccell:hover { background: var(--lg-hover); }
+.hccell:active { background: var(--lg-press); }
+.hccell:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.hccell.open { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.hccell.off { background: var(--lg-sunk); color: var(--lg-ink-2); }
+.hccell.off:hover { background: var(--lg-hover); }
+.hccell.failed .hcact { color: var(--lg-warn); }
+.hccell:disabled { color: var(--lg-ink-3); background: var(--lg-sunk); }
+.hccap { display: block; font-size: 10px; line-height: 13px; color: var(--lg-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hcact { display: block; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hcpick { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.hcpick[hidden] { display: none; }
+.hcchip {
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--lg-r-pill);
+  background: var(--lg-tile);
+  color: var(--lg-ink);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.hcchip:hover { background: var(--lg-hover); }
+.hcchip:active { background: var(--lg-press); }
+.hcchip:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+.hcchip.on, .hcchip.on:hover { background: var(--lg-acc); color: var(--lg-acc-on); }
+.hcchip:disabled { opacity: .6; }
+/* width 0 + min-width 100%: a long reason wraps inside the panel instead of widening it */
+.hcwhy { width: 0; min-width: 100%; margin-top: 5px; color: var(--lg-ink-2); line-height: 1.4; }
+.hcwhy[hidden] { display: none; }
+.hcline + .hcline { margin-top: 3px; }
+.hcline.warn { color: var(--lg-warn); }

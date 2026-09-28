@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle keep on top</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="ontop.css">
+</head>
+<body>
+<!-- The confirmation for "Keep on top" (lib/features/ontop.js): the volume pop-up's pill, in the
+     volume pop-up's place, with a pin glyph. It never takes a click or the focus (main sets
+     setIgnoreMouseEvents and focusable:false). A refusal or failure carries its reason on a
+     second line: nothing Mantle could not do is silent. -->
+<div id="t" class="toast" role="status" aria-live="polite" hidden>
+  <span class="glyph" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16"><path d="M9.6 2.2l4.2 4.2-1.5.4-2.4 2.4.2 2.7-1.1 1.1-2.5-2.5-3 3-.6-.6 3-3-2.5-2.5 1.1-1.1 2.7.2 2.4-2.4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path class="strike" d="M2.5 2.5l11 11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+  </span>
+  <span class="words"><span id="text" class="text"></span><span id="why" class="why"></span></span>
+</div>
+<script src="ontop.js"></script>
+</body>
+</html>

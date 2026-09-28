@@ -169,7 +169,75 @@ async function modes(browser) {
   await ctx.close();
 }
 
+/* 2b. COPY TEXT (ocr lane, 2026-09-27): T and the bar button pick it, a drag commits mode 'text'
+   with the same DPI-exact rect, and an unavailable OCR is disabled WITH its reason (no silent failure). */
+async function copyText(browser) {
+  let { ctx, page, errors } = await open(browser, `${PAGE}?mode=rect&cursor=300,200`, 1280, 720, 1.25);
+  await page.keyboard.press('t');
+  const m = await lastCall(page, 'screenshot.mode');
+  const st = await page.evaluate(() => ({ pressed: document.querySelector('button[data-mode="text"]').getAttribute('aria-pressed'), hint: document.getElementById('hint').textContent, mode: window.__shot.mode }));
+  check('copy text: T picks it, tells main, presses its button, says what a drag does', m && m.mode === 'text' && st.pressed === 'true' && st.mode === 'text' && /Drag over text to copy it/.test(st.hint), JSON.stringify({ m, st }));
+  const mon = await page.evaluate(() => window.__shot.mon);
+  const a = { x: 180.2, y: 150.7 }, b = { x: 620.6, y: 330.1 };
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move(b.x, b.y);
+  const seen = await page.evaluate(() => ({ anchor: window.__shot.anchor, ptr: window.__shot.ptr }));
+  const want = G.cssToPhys(G.normRect(seen.anchor.x, seen.anchor.y, seen.ptr.x, seen.ptr.y), mon, { w: 1280, h: 720 });
+  await page.screenshot({ path: path.join(OUT, 'overlay-text-dragging-1.25x.png') });
+  await page.mouse.up();
+  const c = await lastCall(page, 'screenshot.commit');
+  check('copy text: a drag commits mode "text" with the DPI-exact physical rect', c && c.mode === 'text' && c.rect.x === want.x && c.rect.y === want.y && c.rect.w === want.w && c.rect.h === want.h, JSON.stringify({ got: c, want }));
+  check('copy text: no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+
+  ({ ctx, page, errors } = await open(browser, `${PAGE}?mode=rect`, 1280, 720, 1));
+  await page.click('button[data-mode="text"]');
+  const m2 = await lastCall(page, 'screenshot.mode');
+  check('copy text: the bar button picks it', m2 && m2.mode === 'text');
+  await page.screenshot({ path: path.join(OUT, 'overlay-text-idle-1x.png') });
+  await ctx.close();
+
+  // Unavailable: the button is aria-disabled with the reason as its tooltip; T and a click say it.
+  ({ ctx, page, errors } = await open(browser, `${PAGE}?mode=rect&ocr=off`, 1280, 720, 1.25));
+  const btn = await page.evaluate(() => { const b2 = document.querySelector('button[data-mode="text"]'); return { dis: b2.getAttribute('aria-disabled'), off: b2.classList.contains('off'), title: b2.title }; });
+  check('copy text unavailable: the button shows it, with the reason as its tooltip', btn.dis === 'true' && btn.off && /unavailable: no OCR language is installed/.test(btn.title), JSON.stringify(btn));
+  await page.keyboard.press('t');
+  await page.click('button[data-mode="text"]', { force: true });   // aria-disabled: Playwright will not click it unforced; a real click still lands
+  const after = await page.evaluate(() => ({ mode: window.__shot.mode, hint: document.getElementById('hint').textContent, warn: document.getElementById('hint').classList.contains('warn') }));
+  const told = await page.evaluate(() => window.__mock.calls.filter((x) => x.name === 'screenshot.mode').length);
+  check('copy text unavailable: T and a click say why in the hint, and the mode stays', after.mode === 'rect' && after.warn && /Copy text is unavailable: no OCR language/.test(after.hint) && told === 0, JSON.stringify({ after, told }));
+  await page.screenshot({ path: path.join(OUT, 'overlay-text-unavailable-1.25x.png') });
+  await page.keyboard.press('f');
+  const back = await page.evaluate(() => ({ mode: window.__shot.mode, warn: document.getElementById('hint').classList.contains('warn') }));
+  check('copy text unavailable: another mode clears the warning', back.mode === 'full' && !back.warn, JSON.stringify(back));
+  check('copy text unavailable: no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
 async function cards(browser) {
+  for (const st of ['text', 'notext', 'textfail']) {
+    const { ctx, page, errors } = await open(browser, `${CARD}?state=${st}&life=0`, 420, 190, 1.25);
+    await page.waitForTimeout(700);
+    await page.screenshot({ path: path.join(OUT, `card-${st}.png`) });
+    const t = await page.evaluate(() => ({ title: document.getElementById('title').textContent, name: document.getElementById('name').textContent,
+      status: document.getElementById('status').textContent, warn: document.getElementById('warn').hidden ? '' : document.getElementById('warn').textContent,
+      thumb: getComputedStyle(document.getElementById('open')).display, actions: getComputedStyle(document.querySelector('.actions')).display }));
+    if (st === 'text') check('card text: "Copied 3 lines", the preview, plain text on the clipboard', t.title === 'Copied 3 lines' && /^“Question 7: .*…”$/.test(t.name) && /Plain text/.test(t.status) && !t.warn, JSON.stringify(t));
+    if (st === 'notext') check('card notext: "No text found in that area", nothing copied', t.title === 'No text found in that area' && /Nothing was copied/.test(t.status) && !t.name, JSON.stringify(t));
+    if (st === 'textfail') check('card textfail: says not copied and why', t.title === 'Text not copied' && /Not copied: no OCR language/.test(t.warn), JSON.stringify(t));
+    check(`card ${st}: no thumbnail and no file actions (nothing was saved)`, t.thumb === 'none' && t.actions === 'none', JSON.stringify(t));
+    check(`card ${st}: no page errors`, errors.length === 0, errors.join(' | '));
+    await ctx.close();
+  }
+  // A picture card after a text card: the text-card class must not stick (one card window serves both).
+  {
+    const { ctx, page } = await open(browser, `${CARD}?state=text&life=0`, 420, 190, 1);
+    await page.evaluate(() => window.__cardEmit('screenshot.card', { seq: 4, name: 'Screenshot 2026-09-27 101500.png', path: 'C:\\x.png', w: 800, h: 600, copied: true, lifeMs: 1e9 }));
+    const t = await page.evaluate(() => ({ cls: document.getElementById('card').classList.contains('text-card'), thumb: getComputedStyle(document.getElementById('open')).display, title: document.getElementById('title').textContent, folder: document.getElementById('folder').disabled }));
+    check('card: a picture card after a text card is a picture card again (thumbnail, actions)', !t.cls && t.thumb !== 'none' && t.title === 'Screenshot saved' && !t.folder, JSON.stringify(t));
+    await ctx.close();
+  }
   for (const st of ['ok', 'nosave', 'nocopy', 'neither']) {
     const { ctx, page, errors } = await open(browser, `${CARD}?state=${st}&life=0`, 420, 190, 1.25);
     await page.waitForTimeout(700);
@@ -254,6 +322,7 @@ async function frameFormat(browser) {
     await dpiCase(browser, 1.5, -1920, true);
     await dpiCase(browser, 2, 0, false);
     await modes(browser);
+    await copyText(browser);
     await cards(browser);
     await frameFormat(browser);
   } finally {

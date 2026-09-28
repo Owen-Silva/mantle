@@ -166,6 +166,74 @@
     return '';
   }
 
+  /* THE QUICK-SETTINGS TILE (2026-09-27). Owen: "when i turn blutooth off it just does this and
+     then doesnt let me turn it back on" - the tile read "No radio" and went dead. The sidecar took
+     Win32's radio enumeration as the truth, and his Realtek radio is not enumerated while it is
+     OFF (sidecar/Bluetooth.cs Present). The sidecar now reads Windows' radio list (`radio`, and
+     `present` only false when that list has no Bluetooth radio at all), and this turns ONE part
+     (qs.get's `bluetooth`) into the tile:
+       sub      the small line under "Bluetooth"
+       tip      the tooltip, and the note a click adds when there is nothing to do
+       on       lit
+       live     a click switches the radio
+       open     a click opens this Settings page instead ({target, what}), or null
+       glyph    'rune', or 'none' for the struck-through rune (no radio)
+     Never a dead tile once read: a radio Mantle cannot switch gets Windows' own page. */
+  var BT_SETTINGS = { target: 'ms-settings:bluetooth', what: 'Bluetooth settings' };
+  var PLANE_SETTINGS = { target: 'ms-settings:network-airplanemode', what: 'airplane mode settings' };
+  var RADIO_SETTINGS = { target: 'ms-settings:privacy-radios', what: 'radio privacy settings' };
+
+  function tile(b) {
+    if (!b) return { sub: 'Unknown', tip: 'Bluetooth has not been read yet', on: false, live: false, open: null, glyph: 'rune' };
+    if (b.pending) {
+      return { sub: 'Checking…', tip: said(b.reason || 'Bluetooth is still being read for the first time'),
+               on: false, live: false, open: null, glyph: 'rune' };
+    }
+    var slow = !!(b.via && /powershell/i.test(String(b.via)));
+    var plane = b.airplane === true;
+    var then = function (o) { return '\nClick to open ' + o.what + '.'; };
+    if (b.ok === false) {
+      var why = said(b.reason || 'the shell gave no reason why Bluetooth is unavailable');
+      return { sub: 'Unavailable', tip: 'Bluetooth can’t be read: ' + why + then(BT_SETTINGS),
+               on: false, live: false, open: BT_SETTINGS, glyph: 'rune' };
+    }
+    if (b.present === false) {
+      return { sub: 'No radio', tip: 'No Bluetooth radio: ' + said(b.reason || 'Windows lists no Bluetooth radio on this PC') + then(BT_SETTINGS),
+               on: false, live: false, open: BT_SETTINGS, glyph: 'none' };
+    }
+    if (b.radio === 'disabled') {
+      var o = plane ? PLANE_SETTINGS : BT_SETTINGS;
+      return { sub: plane ? 'Airplane mode' : 'Disabled',
+               tip: said(b.reason || (plane ? 'Bluetooth is turned off by airplane mode' : 'Bluetooth is disabled by a hardware switch or the firmware')) +
+                    '\nMantle can’t switch it on: Windows refuses a disabled radio.' + then(o),
+               on: false, live: false, open: o, glyph: 'rune' };
+    }
+    if (b.canSwitch === false) {
+      // read fine, but Windows will not take a switch from Mantle (radio access denied)
+      var blocked = b.access && b.access !== 'Allowed';
+      var ob = blocked ? RADIO_SETTINGS : BT_SETTINGS;
+      return { sub: (b.on ? 'On' : 'Off') + ' · locked',
+               tip: 'Bluetooth is ' + (b.on ? 'on' : 'off') + ', and Mantle can’t switch it: ' +
+                    said(b.reason || 'Windows does not let Mantle switch this radio') + then(ob),
+               on: !!b.on, live: false, open: ob, glyph: 'rune' };
+    }
+    var sub = b.on ? 'On' : 'Off' + (plane ? ' · airplane mode' : '');
+    var tip = (slow ? 'Switched via PowerShell, so it takes a second or two\n' : '') +
+              'Turn Bluetooth ' + (b.on ? 'off' : 'on') +
+              (!b.on && plane ? '\nAirplane mode is on; Bluetooth can still be switched on by itself' : '');
+    return { sub: sub + (slow ? ' · slow' : ''), tip: tip, on: !!b.on, live: true, open: null, glyph: 'rune' };
+  }
+
+  /* The panel's note for a switch Windows (or Mantle) refused: which way it was going, and the
+     sidecar's reason, which names Windows' RadioAccessStatus (DeniedByUser / DeniedBySystem /
+     Unspecified) and what to do about it. Never silent: no reason still says so. */
+  function refusedNote(reason, want) {
+    var why = said(reason || 'Windows refused and gave no reason');
+    // the sidecar's refusals already say "Windows refused to switch Bluetooth on (...)"
+    if (/switch bluetooth (on|off)/i.test(why)) return why;
+    return 'Bluetooth did not switch ' + (want ? 'on' : 'off') + ': ' + why;
+  }
+
   function ago(ms) {
     var s = Math.round((typeof ms === 'number' && isFinite(ms) ? ms : 0) / 1000);
     return s < 5 ? 'just now' : s < 60 ? s + ' s ago' : Math.round(s / 60) + ' min ago';
@@ -192,6 +260,7 @@
   return {
     KINDS: KINDS, ICONS: ICONS, RUNE: RUNE, NO_BT: NO_BT, PLUS: PLUS,
     batteryGlyph: batteryGlyph, kindOf: kindOf, battery: battery, failShows: failShows, said: said,
-    describe: describe, view: view, radioNote: radioNote, lastNote: lastNote, busyOf: busyOf, ago: ago
+    describe: describe, view: view, radioNote: radioNote, lastNote: lastNote, busyOf: busyOf, ago: ago,
+    tile: tile, refusedNote: refusedNote
   };
 }));

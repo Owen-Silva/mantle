@@ -40,6 +40,8 @@ Chord names: `Win+S` `Win+V` `Win+Tab` `Win+Left` `Win+Right` `Win+Up` `Win+Down
 `Win+Shift+S` `PrintScreen`, and the bare volume keys `VolumeUp` `VolumeDown` `VolumeMute` (any
 modifier held leaves them Windows'). Observed keys (seen, never taken): the same three volume keys;
 one feature may not list a key both as a chord and as observed.
+With a modifier IN the chord: `Win+Alt+T` (top bar hide/show) and `Win+Ctrl+T` (keep on top): Alt /
+Ctrl held is part of those two only, and their keyups get the partner key like Win's.
 A chord may be claimed by ONE feature (the second claim is refused and named, in file order).
 Reserved names (Mantle's own prefixes): features state sys windows bar launcher desktop switcher
 notifs qs wallpaper shell tray media battery volume net apps mantle test.
@@ -58,6 +60,7 @@ notifs qs wallpaper shell tray media battery volume net apps mantle test.
 | `ctx.sidecar.ready` | ADDED. boolean getter: can a call be made right now |
 | `ctx.command(verb, async (args) => result)` | registers `<name>.<verb>` in main's COMMANDS: a page calls `window.mantle.call('<name>.<verb>', args)`; call-log logging applies. Throws on a duplicate. Returns the full name. After stop() it throws "... is stopped" |
 | `ctx.onChord(chord, fn)` / `ctx.onKey(key, fn)` | `fn(chord)` / `fn(key)`. Only for names your module lists (else throws). Return unsubscribe |
+| `ctx.runChord(chord, via, {dryRun})` | Run the feature that owns `chord` as if it was pressed (hot corners open Task view through Win+Tab's handler). No key is taken or sent. Never throws: `{delivered:true, feature}` or `{delivered:false, reason}`; `dryRun` only says whether it could (`{dryRun:true, feature}`) |
 | `ctx.health(ok, reason)` | state piece `features.<name>`. `health(false, 'why')` = your chords go back to Windows at once and the strip + tray show `why`. `health(true)` takes them back. Call it on every change (page crashed, sidecar command missing, ...). Repeats are free |
 | `ctx.enabled()` / `ctx.onEnabled(fn)` | the tray checkbox; `fn(bool)` on each flip. You are installed even while OFF: honour it (no panel, no Windows changes while off) |
 | `ctx.page(file = 'index.html')` | absolute path `ui/<name>/<file>` |
@@ -114,7 +117,7 @@ sidecar's history). Its chords go back to Windows, its commands answer "... is r
 VALORANT runs", and its state piece reads HEALTHY with `resting` set (no strip row). When the last
 game exits, wakeAll() runs your install() again with a fresh ctx: the same path as start-up.
 Resting now: clipboard, osd, screenshot, snap, taskview, topbar, search (Win+S needs the launcher,
-which rests too). Main also closes the launcher (Win key -> Start) and the switcher (Alt+Tab ->
+which rests too), ontop (its pins go off top for the game and back on after, lib/features/ontop.js). Main also closes the launcher (Win key -> Start) and the switcher (Alt+Tab ->
 Windows), and unloads the wallpaper. Kept: the bar, the desktop layer, main, the sidecar.
 
 ## stop()

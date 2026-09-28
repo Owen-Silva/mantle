@@ -59,7 +59,7 @@ namespace Mantle {
     // FEATURE CHORDS (wave 3, 2026-09-24). The chords lib/features/*.js may take from Windows,
     // and the keys they may watch. A chord is its key plus an EXACT modifier set: Win+Left does
     // not match Win+Shift+Left (move to the other monitor), Win+S does not match Win+Shift+S, and
-    // Ctrl held is never any chord, and Alt only where the chord names it (Win+Alt+T). Index = bit
+    // Ctrl and Alt held are never a chord unless the chord names them (Win+Alt+T, Win+Ctrl+T). Index = bit
     // in Chords / Observe. The names are the protocol (main sends them, events carry them):
     // append, never reorder.
     //
@@ -74,15 +74,26 @@ namespace Mantle {
     // its set (ChordAlt): Win+T (Windows' taskbar cycling) and Win+Ctrl+Alt+T stay Windows'. Taken,
     // both Win and Alt get their partner key before their keyup (0xFF), so neither Start nor the
     // focused app's menu bar opens. Windows' own use of it is Game Bar's recording-timer toggle.
+    //
+    // WIN+CTRL+T (lane ontop, 2026-09-27): "Keep on top" for the window in front (PowerToys' key).
+    // The first chord with Ctrl in its set (ChordCtrl), added the way Alt was: only this chord
+    // names Ctrl, so every other chord still refuses a held Ctrl, and Win+Ctrl+Shift+T /
+    // Win+Ctrl+Alt+T stay Windows'. Not a Windows shortcut: RegisterHotKey(MOD_WIN|MOD_CONTROL, 'T')
+    // succeeded on 25H2 (26200) while Win+T, Win+Alt+T and Win+Ctrl+D were refused as taken
+    // (error 1409), the control that the probe sees explorer's keys. Taken, Win gets its partner key
+    // before its keyup (Start stays shut) and so does CTRL (_swallowedInCtrl): with the T eaten, a
+    // Ctrl down/up with nothing between is a "lone Ctrl tap" to whatever watches for one (Windows'
+    // "show the pointer when I press Ctrl", double-Ctrl tools). The Ctrl keyup itself always passes.
     public static readonly string[] ChordNames = {
       "Win+S", "Win+V", "Win+Tab", "Win+Left", "Win+Right", "Win+Up", "Win+Down", "Win+Z",
-      "Win+Shift+S", "PrintScreen", "VolumeUp", "VolumeDown", "VolumeMute", "Win+Alt+T"
+      "Win+Shift+S", "PrintScreen", "VolumeUp", "VolumeDown", "VolumeMute", "Win+Alt+T", "Win+Ctrl+T"
     };
-    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD, 0x54 };
-    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false, true };
-    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false, false };
-    static readonly bool[] ChordAlt = { false, false, false, false, false, false, false, false, false, false, false, false, false, true };
-    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false, false };
+    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD, 0x54, 0x54 };
+    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false, true, true };
+    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false, false, false };
+    static readonly bool[] ChordAlt = { false, false, false, false, false, false, false, false, false, false, false, false, false, true, false };
+    static readonly bool[] ChordCtrl = { false, false, false, false, false, false, false, false, false, false, false, false, false, false, true };
+    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false, false, false };
     /// Observed keys are REPORTED on every keydown (auto-repeat included: a held Volume Up keeps
     /// stepping) and NEVER swallowed: Windows still changes the volume itself. A volume key that
     /// is also a TAKEN chord is the chord's (swallowed, a chord event); untaken, it is observed.
@@ -119,7 +130,7 @@ namespace Mantle {
     public const int VK_TAB = 0x09, VK_ESCAPE = 0x1B, VK_LEFT = 0x25, VK_UP = 0x26,
                      VK_RIGHT = 0x27, VK_DOWN = 0x28, VK_MENU = 0x12, VK_LMENU = 0xA4,
                      VK_RMENU = 0xA5, VK_LWIN = 0x5B, VK_RWIN = 0x5C, VK_A = 0x41, VK_N = 0x4E,
-                     VK_SHIFT = 0x10, VK_CONTROL = 0x11;
+                     VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_LCONTROL = 0xA2, VK_RCONTROL = 0xA3;
 
     // Which features are on. Written by the ui lane (Hotkey.Configure), read by
     // the hook thread: plain bools that only ever flip whole.
@@ -137,6 +148,7 @@ namespace Mantle {
 
     bool _winDown, _otherPressed, _swallowedInWin;   // the solo-Win gesture, as before
     bool _altHeld, _swallowedInAlt;
+    bool _swallowedInCtrl;   // a Ctrl chord (Win+Ctrl+T) ate its key: the Ctrl-up gets the partner key
     bool _tabDown, _tabSwallowed, _escSwallowed;
     int _arrowMask, _letterMask;
     // Per vk, for the chord keys only: this press was TAKEN as a chord (its repeats and keyup are
@@ -153,6 +165,8 @@ namespace Mantle {
 
     public static bool IsAlt(int vk) { return vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU; }
     public static bool IsWin(int vk) { return vk == VK_LWIN || vk == VK_RWIN; }
+    public static bool IsCtrl(int vk) { return vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL; }
+    public bool SwallowedInCtrl { get { return _swallowedInCtrl; } }
 
     /// The keydowns Step needs Shift/Ctrl/Win for. Everything else is decided
     /// from the event alone, so an ordinary keystroke costs no system call.
@@ -171,6 +185,7 @@ namespace Mantle {
       Active = false; Event = EvNone; Arg = 0;
       _winDown = _otherPressed = _swallowedInWin = false;
       _altHeld = _swallowedInAlt = false;
+      _swallowedInCtrl = false;
       _tabDown = _tabSwallowed = _escSwallowed = false;
       _arrowMask = _letterMask = 0;
       Array.Clear(_chordDown, 0, _chordDown.Length);
@@ -212,6 +227,14 @@ namespace Mantle {
         _altHeld = false; _swallowedInAlt = false;
         if (Active) { Active = false; Event = EvCommit; }
         return dummyA ? DummyFirst : Pass;
+      }
+
+      // A CTRL KEYUP IS NEVER SWALLOWED either (rule 1). After a Ctrl chord ate its key it gets the
+      // partner key first, exactly like Alt's (rule 3): nothing then reads it as a lone Ctrl tap.
+      if (!down && IsCtrl(vk)) {
+        bool dummyC = _swallowedInCtrl;
+        _swallowedInCtrl = false;
+        return dummyC ? DummyFirst : Pass;
       }
 
       if (!down) return KeyUp(vk);
@@ -300,7 +323,7 @@ namespace Mantle {
     }
 
     static bool ChordMatches(int c, bool altFlag, bool shift, bool ctrl, bool winHeld) {
-      return altFlag == ChordAlt[c] && !ctrl && winHeld == ChordWin[c] && shift == ChordShift[c];
+      return altFlag == ChordAlt[c] && ctrl == ChordCtrl[c] && winHeld == ChordWin[c] && shift == ChordShift[c];
     }
 
     /// A keydown of a key some chord uses: Swallow, or -1 = not a chord, carry on as before (Tab,
@@ -330,6 +353,8 @@ namespace Mantle {
         if (ChordWin[c]) _swallowedInWin = true;
         // Likewise Alt: an Alt-up with nothing seen since its keydown opens the app's menu bar.
         if (ChordAlt[c]) { _altHeld = true; _swallowedInAlt = true; }
+        // And Ctrl (Win+Ctrl+T): its keyup gets the partner key too.
+        if (ChordCtrl[c]) _swallowedInCtrl = true;
         Event = EvChord; Arg = c;
         return Swallow;
       }
