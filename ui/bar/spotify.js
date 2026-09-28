@@ -378,6 +378,31 @@
     lab.appendChild(mk('span', '', 'Restart Spotify after games'));
     return lab;
   }
+  /* spotgame lane: "Close Spotify while I game" (main's revive view: closeOn), beside the one above. */
+  function gameCloseOpt(st) {
+    var rv = st && st.revive, lab = mk('label', 'spq-opt');
+    var cb = mk('input');
+    cb.type = 'checkbox';
+    cb.checked = !rv || rv.closeOn !== false;
+    cb.addEventListener('change', function () {
+      var on = cb.checked, mine = S;
+      call('gameclose', { on: on }).then(function (r) {
+        if (S !== mine) return;
+        if (!r.ok) { cb.checked = !on; say('Not changed: ' + (r.reason || 'no reason given'), true); return; }
+        loadStatus();
+      }, function (e) { if (S === mine) { cb.checked = !on; say('Not changed: ' + why(e), true); } });
+    });
+    lab.title = 'When a known game starts, Mantle closes its Spotify to save memory, only if no music is playing, and starts it again, hidden and not playing, after the game exits (once per game).';
+    lab.appendChild(cb);
+    lab.appendChild(mk('span', '', 'Close Spotify while I game'));
+    return lab;
+  }
+  function gameOpts(st) {
+    var box = mk('div', 'spq-opts');
+    box.appendChild(gameCloseOpt(st));
+    box.appendChild(reviveOpt(st));
+    return box;
+  }
   function reviveWords(st) { var rv = st && st.revive; return rv && rv.state && rv.state !== 'idle' && rv.text ? rv : null; }
 
   /* The not-connected states: what is wrong, why, and the one thing that fixes it. */
@@ -393,11 +418,11 @@
     }
     if (s === 'notrunning') {
       var rv = reviveWords(st);
-      box.appendChild(stateLine(rv ? rv.text : 'Spotify isn’t running.', rv ? 'bad' : ''));
+      box.appendChild(stateLine(rv ? rv.text : 'Spotify isn’t running.', rv && !rv.mine ? 'bad' : ''));
       if (rv && rv.plan) box.appendChild(mk('div', 'spq-fine', rv.plan));
-      box.appendChild(actBtn(rv && rv.state === 'waiting' && rv.on ? 'Start it now instead' : 'Start Spotify hidden', function () { launch('start'); }));
+      box.appendChild(actBtn(rv && rv.state === 'waiting' && (rv.on || rv.mine) ? 'Start it now instead' : 'Start Spotify hidden', function () { launch('start'); }));
       box.appendChild(mk('div', 'spq-fine', 'It runs with no window: play your library and search from here. Mantle starts it with a local debugging port (127.0.0.1:' + (st.port || 47292) + ').'));
-      box.appendChild(reviveOpt(st));
+      box.appendChild(gameOpts(st));
       return;
     }
     if (s === 'noport') {
@@ -540,7 +565,11 @@
     else if (watching && wv.note) line.appendChild(mk('div', 'spq-fine', cap(wv.note)));
     var rv = S.status && S.status.revive;
     if (rv && rv.state === 'done' && rv.at && Date.now() - rv.at < 20 * 60000 && rv.plan) line.appendChild(mk('div', 'spq-fine', rv.text + ' ' + rv.plan));
-    line.appendChild(reviveOpt(S.status));
+    // spotgame lane: kept open for a game (music was playing), closing, or a close that failed (said, why)
+    else if (rv && (rv.state === 'kept' || rv.state === 'closing' || rv.state === 'closefailed') && rv.text) {
+      line.appendChild(mk('div', 'spq-fine' + (rv.state === 'closefailed' ? ' spq-bad' : ''), rv.text + (rv.plan ? ' ' + rv.plan : '')));
+    }
+    line.appendChild(gameOpts(S.status));
 
     [['queue', 'Up next'], ['lib', 'Library']].forEach(function (t) {
       var c = mk('button', 'spq-chip' + (S.tab === t[0] ? ' on' : ''), t[1]);

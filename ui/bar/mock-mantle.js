@@ -1077,11 +1077,19 @@
     noinstall: 'Mantle starts Spotify from C:\\Users\\user\\AppData\\Roaming\\Spotify\\Spotify.exe, and it is not there (the Microsoft Store Spotify cannot be started with a debugging port)',
     off: 'the Spotify queue is off in Mantle’s tray menu'
   };
+  /* spotgame lane: Mantle closed Spotify for a game (?spq=gameclosed), kept it open because music was
+     playing (?spq=gamekept), or could not close it (?spq=closefail). The words are _spotify-revive.js words(). */
+  var SPQ_REVIVE = {
+    gameclosed: { state: 'waiting', mine: true, on: true, closeOn: true, game: 'VALORANT', text: 'Closed for VALORANT to save memory; it comes back when the game exits.', plan: 'It comes back hidden and not playing: press play then.' },
+    gamekept: { state: 'kept', on: true, closeOn: true, game: 'VALORANT', text: 'Kept open: music was playing when VALORANT started.', plan: '' },
+    closefail: { state: 'closefailed', on: true, closeOn: true, game: 'VALORANT', text: 'Mantle could not close Spotify for VALORANT: it ignored its own quit and a close request.', plan: 'It stays open.' }
+  };
   function spqStatus() {
     if (SPQ === 'checking') return new Promise(function () {});
+    if (SPQ === 'gameclosed') return { ok: false, state: 'notrunning', reason: 'Spotify is not running: Mantle closed it for VALORANT to save memory', port: 47292, revive: SPQ_REVIVE.gameclosed };
     if (SPQ_REASON[SPQ]) return { ok: SPQ === 'off', state: SPQ, reason: SPQ_REASON[SPQ], port: 47292 };
     return { ok: true, state: 'connected', reason: null, port: 47292, via: 'React context -> Registry(PlayerAPI)', version: '1.3.0.277',
-      caps: { skipTo: true, next: true, remove: true, move: true, search: true }, window: spqWin() };
+      caps: { skipTo: true, next: true, remove: true, move: true, search: true }, window: spqWin(), revive: SPQ_REVIVE[SPQ] || null };
   }
   /* spothide lane: the hidden app (?spq=hidefail: the hide did not take) */
   var SPQ_PLAYER = { paused: false, shuffle: true, repeat: 0, canShuffle: true, canRepeat: true, canRepeatTrack: true };
@@ -1111,7 +1119,8 @@
     if (SPQ === 'loading') return new Promise(function () {});
     if (SPQ === 'error') return { ok: false, state: 'error', reason: 'Spotify did not answer within 6 s' };
     if (!spqQ) {
-      var nq = SPQ === 'long' ? 12 : SPQ === 'queue' || SPQ === 'searchbroken' ? 2 : 0, nn = SPQ === 'long' ? 20 : SPQ === 'queue' || SPQ === 'searchbroken' ? 4 : 0, i;
+      var some = SPQ === 'queue' || SPQ === 'searchbroken' || SPQ === 'gamekept' || SPQ === 'closefail';
+      var nq = SPQ === 'long' ? 12 : some ? 2 : 0, nn = SPQ === 'long' ? 20 : some ? 4 : 0, i;
       spqQ = { queued: [], nextUp: [] };
       for (i = 0; i < nq; i++) spqQ.queued.push(spqItem(i, 'queued'));
       for (i = 0; i < nn; i++) spqQ.nextUp.push(spqItem(nq + i, 'next'));

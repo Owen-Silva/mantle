@@ -201,3 +201,6 @@
 .spq-opt:hover { color: var(--lg-ink-2); }
 .spq-opt input { margin: 0; accent-color: var(--lg-acc); }
 .spq-opt input:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: 1px; }
+/* spotgame lane: "Close Spotify while I game" beside "Restart Spotify after games"; wraps when narrow */
+.spq-opts { display: flex; flex-wrap: wrap; column-gap: 2px; }
+.spq-opts .spq-opt + .spq-opt { padding-top: 1px; }

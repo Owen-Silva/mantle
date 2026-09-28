@@ -148,6 +148,9 @@ const SHOTS = [
   { name: 'spq-quitarmed', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-appmain .spq-link:nth-of-type(2)', { wait: 200 }, { probe: SPQ_FIT }] },
   { name: 'spq-hidefail', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=hidefail', steps: ['#mchip', '.spq-head', { wait: 400 }, { probe: SPQ_FIT }] },
   { name: 'spq-notrunning-hd', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=notrunning', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },
+  /* spotgame lane: closed for a game, kept open (music was playing), a close that failed; both toggles */
+  ...['gameclosed', 'gamekept', 'closefail'].map((st) => (
+    { name: 'spq-' + st, w: 1536, h: 864, q: '?mode=pill&media=playing&spq=' + st, steps: ['#mchip', '.spq-head', { wait: 400 }, { probe: SPQ_FIT }] })),
   /* spotapp lane: the per-row tools (hover), a move up, a remove, an add, the armed Restart, and search unavailable */
   { name: 'spq-tools', keepHover: true, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { hover: '.spq-list > :nth-child(3)' }, { probe: SPQ_FIT }] },
   { name: 'spq-moved', keepHover: true, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { hover: '.spq-list > :nth-child(3)' }, '.spq-list > :nth-child(3) .spq-tool[aria-label="Move up"]', { wait: 300 }, { hover: '.spq-list > :nth-child(2)' }, { probe: SPQ_FIT }] },
