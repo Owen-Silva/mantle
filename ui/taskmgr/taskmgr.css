@@ -1,0 +1,144 @@
+/* taskmgr.css — Mantle's task manager (lib/features/taskmgr.js), in the taskbar island's theme
+ * (glass-light.css --lg-* ONLY; one theme for every Mantle surface, Owen 2026-09-21). An app window,
+ * so it sits on --lg-ground (Electron cannot resize a transparent window on Windows) and its panes
+ * are the popover glass (--lg-fill-strong, the white lip, one .10 hairline). Plain hairlines, dark
+ * ink, NO glow: the accent marks the active tab, focus and the one primary button, nothing else. */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body {
+  background: var(--lg-ground);
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px; color: var(--lg-ink); cursor: default; user-select: none;
+}
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
+.grow { flex: 1 1 auto; }
+[hidden] { display: none !important; }
+
+.app { display: flex; flex-direction: column; height: 100%; }
+
+/* ---- header: the drag strip, tabs, window buttons ---- */
+.head {
+  flex: 0 0 auto; height: 40px; display: flex; align-items: center; gap: 6px; padding: 0 0 0 14px;
+  -webkit-app-region: drag; border-bottom: 1px solid var(--lg-edge-out);
+}
+.head button, .head .tabs { -webkit-app-region: no-drag; }
+.brand { font-weight: 600; margin-right: 10px; }
+.tabs { display: flex; gap: 2px; }
+.tab {
+  height: 26px; padding: 0 11px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; color: var(--lg-ink-2); white-space: nowrap;
+}
+.tab:hover { background: var(--lg-hover); }
+.tab.on { background: var(--lg-acc-soft); color: var(--lg-acc); font-weight: 600; }
+.wc { display: flex; flex: 0 0 auto; height: 100%; margin-left: 4px; }
+#wintm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tabs { flex: 0 0 auto; }
+.wc button { width: 44px; height: 100%; border: 0; background: transparent; color: var(--lg-ink-2); display: grid; place-items: center; }
+.wc button:hover { background: var(--lg-hover); }
+.wc .x:hover { background: var(--lg-warn); color: var(--lg-acc-on); }
+
+.btn { height: 28px; padding: 0 12px; border-radius: var(--lg-r-ctl); border: 1px solid var(--lg-edge-out); background: var(--lg-fill-strong); box-shadow: var(--lg-lip-up); white-space: nowrap; }
+.btn:hover { background: var(--lg-hover); }
+.btn:active { background: var(--lg-press); }
+.btn.quiet { border-color: transparent; background: transparent; box-shadow: none; color: var(--lg-ink-2); }
+.btn.quiet:hover { background: var(--lg-hover); }
+.btn.acc { background: var(--lg-acc); border-color: var(--lg-acc); color: var(--lg-acc-on); box-shadow: none; font-weight: 600; }
+.btn.acc:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: .5; }
+
+/* ---- the RAM bar ---- */
+.ram { flex: 0 0 auto; margin: 10px 12px 6px; padding: 9px 12px 10px; background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); box-shadow: var(--lg-lip-up); }
+.ramtop { display: flex; align-items: baseline; gap: 10px; margin-bottom: 7px; }
+.lbl { font-weight: 600; }
+.ramtext { color: var(--lg-ink-2); font-variant-numeric: tabular-nums; }
+.chip { padding: 2px 8px; border-radius: var(--lg-r-pill); background: var(--lg-sunk); color: var(--lg-ink-2); font-variant-numeric: tabular-nums; }
+.bar { height: 8px; border-radius: 4px; background: var(--lg-sunk); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--lg-ink-2); border-radius: 4px; transition: width 400ms var(--lg-ease); }
+.bar.hi i { background: var(--lg-warn); }
+
+.note, .recent { flex: 0 0 auto; margin: 0 12px 6px; padding: 7px 10px; border-radius: var(--lg-r-ctl); font-size: 12px; }
+.note { background: var(--lg-warn-soft); color: var(--lg-warn); }
+.recent { background: var(--lg-sunk); color: var(--lg-ink-2); display: flex; flex-direction: column; gap: 2px; }
+.recent .bad { color: var(--lg-warn); }
+
+/* ---- the list ---- */
+.view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin: 0 12px 12px; background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); box-shadow: var(--lg-lip-up); }
+.cols { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 84px 58px 210px; gap: 8px; padding: 7px 12px 6px 40px; color: var(--lg-ink-3); font-size: 11.5px; border-bottom: 1px solid var(--lg-edge-out); }
+.cols .c-mem, .cols .c-cpu { text-align: right; }
+.list { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: 2px 0 6px; }
+.sect { display: flex; align-items: center; gap: 6px; padding: 9px 12px 3px 14px; color: var(--lg-ink-3); font-size: 11.5px; font-weight: 600; }
+.sect button { border: 0; background: transparent; color: inherit; padding: 0 4px; border-radius: 4px; }
+.sect button:hover { background: var(--lg-hover); }
+
+.row { border-top: 1px solid var(--lg-sunk); }
+.row:first-child { border-top: 0; }
+.rmain { display: grid; grid-template-columns: 20px 20px 1fr 84px 58px 210px; gap: 8px; align-items: center; min-height: 34px; padding: 0 12px 0 8px; }
+.row:hover .rmain { background: var(--lg-hover); }
+.chev { width: 20px; height: 20px; border: 0; background: transparent; border-radius: 4px; color: var(--lg-ink-3); display: grid; place-items: center; padding: 0; }
+.chev:hover { background: var(--lg-press); }
+.chev svg { transition: transform 140ms var(--lg-ease); }
+.row.open .chev svg { transform: rotate(90deg); }
+.ic { width: 18px; height: 18px; border-radius: 4px; }
+.ic.tile { display: grid; place-items: center; background: var(--lg-tile); color: var(--lg-ink-2); font-size: 10.5px; font-weight: 600; }
+.nm { min-width: 0; display: flex; align-items: baseline; gap: 6px; }
+.nm .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nm .k { color: var(--lg-ink-3); flex: 0 0 auto; }
+.tag { flex: 0 0 auto; font-size: 11px; padding: 0 6px; border-radius: var(--lg-r-pill); background: var(--lg-sunk); color: var(--lg-ink-2); }
+.mem, .cpu { text-align: right; font-variant-numeric: tabular-nums; }
+.mem { font-weight: 600; }
+.cpu { color: var(--lg-ink-2); }
+.acts { display: flex; justify-content: flex-end; gap: 4px; }
+.acts button { white-space: nowrap; height: 24px; padding: 0 9px; border: 1px solid transparent; border-radius: var(--lg-r-ctl); background: transparent; color: var(--lg-ink-2); }
+.acts button:hover { background: var(--lg-fill-strong); border-color: var(--lg-edge-out); color: var(--lg-ink); }
+.acts .danger:hover { color: var(--lg-warn); }
+.why { grid-column: 3 / -1; color: var(--lg-ink-3); font-size: 11.5px; padding: 0 0 7px; margin-top: -3px; display: flex; gap: 6px; align-items: center; }
+.why svg { flex: 0 0 auto; }
+.st { margin: 0 12px 7px 56px; padding: 5px 9px; border-radius: var(--lg-r-ctl); font-size: 12px; background: var(--lg-sunk); color: var(--lg-ink-2); display: flex; align-items: center; gap: 8px; }
+.st.bad { background: var(--lg-warn-soft); color: var(--lg-warn); }
+.st.good { background: var(--lg-acc-soft); color: var(--lg-ink); }
+.st .grow { flex: 1 1 auto; }
+.st button { white-space: nowrap; height: 24px; padding: 0 10px; border-radius: var(--lg-r-ctl); border: 1px solid var(--lg-edge-out); background: var(--lg-fill-strong); }
+.st button.go { background: var(--lg-warn); border-color: var(--lg-warn); color: var(--lg-acc-on); font-weight: 600; }
+.members { margin: 0 12px 6px 56px; border-left: 1px solid var(--lg-edge-out); }
+.mrow { display: grid; grid-template-columns: 1fr 84px 58px 210px; gap: 8px; padding: 3px 0 3px 12px; color: var(--lg-ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mrow span:nth-child(2), .mrow span:nth-child(3) { text-align: right; }
+.row.mantle .rmain { background: var(--lg-sunk); }
+
+/* ---- get ready to game ---- */
+.gamehead { flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 12px 14px 10px; border-bottom: 1px solid var(--lg-edge-out); }
+.gtext { flex: 1 1 auto; min-width: 0; }
+.gt { font-weight: 600; font-size: 13.5px; }
+.gs { color: var(--lg-ink-2); margin-top: 2px; }
+.gnum { display: flex; flex-direction: column; align-items: flex-end; }
+.gnum span:first-child { white-space: nowrap; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.gsl { color: var(--lg-ink-3); font-size: 11px; }
+.opt { flex: 0 0 auto; display: flex; gap: 9px; align-items: flex-start; padding: 9px 14px; border-bottom: 1px solid var(--lg-edge-out); color: var(--lg-ink-2); }
+.opt input { margin: 2px 0 0; accent-color: var(--lg-acc); }
+.opt b { color: var(--lg-ink); font-weight: 600; }
+.lastfree { flex: 0 0 auto; margin: 8px 14px 0; padding: 7px 10px; border-radius: var(--lg-r-ctl); background: var(--lg-sunk); color: var(--lg-ink-2); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.lastfree .h { color: var(--lg-ink); font-weight: 600; }
+.lastfree .bad { color: var(--lg-warn); }
+#v-game .cols { grid-template-columns: 22px 1fr 84px 150px; padding-left: 14px; }
+.prow { display: grid; grid-template-columns: 22px 20px 1fr 84px 150px; gap: 8px; align-items: center; min-height: 34px; padding: 0 12px 0 14px; border-top: 1px solid var(--lg-sunk); }
+.prow:hover { background: var(--lg-hover); }
+.prow input { margin: 0; accent-color: var(--lg-acc); }
+.prow .lock { color: var(--lg-ink-3); display: grid; place-items: center; }
+.prow .reo { display: flex; align-items: center; gap: 6px; color: var(--lg-ink-2); font-size: 12px; }
+.prow .pwhy { grid-column: 3 / -1; color: var(--lg-ink-3); font-size: 11.5px; margin-top: -4px; padding-bottom: 6px; }
+.prow .pwhy.bad { color: var(--lg-warn); }
+.prow.off .n { color: var(--lg-ink-2); }
+
+.startup { padding: 22px 20px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.startup .btn { margin-top: 8px; }
+.info { color: var(--lg-warn); background: var(--lg-warn-soft); padding: 6px 9px; border-radius: var(--lg-r-ctl); }
+.empty { padding: 18px 14px; color: var(--lg-ink-3); }
+
+@media (max-width: 640px) {
+  .cols, .mrow { grid-template-columns: 1fr 66px 42px 178px; }
+  .rmain { grid-template-columns: 20px 20px 1fr 66px 42px 178px; gap: 6px; }
+  .acts button { padding: 0 6px; }
+  .tab { padding: 0 8px; }
+  #wintm { padding: 0 8px; }
+  .wc button { width: 38px; }
+  .brand { display: none; }
+}

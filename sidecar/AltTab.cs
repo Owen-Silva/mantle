@@ -90,16 +90,29 @@ namespace Mantle {
     // Not a Windows shortcut: RegisterHotKey(MOD_WIN|MOD_ALT, 'N') succeeded on 25H2 (26200) while
     // the controls Win+Alt+T, Win+Alt+R, Win+Alt+G and Win+Alt+K (Game Bar's) were refused as taken
     // (error 1409). Win+N (notifications), Win+Ctrl+Alt+N and Win+Alt+Shift+N stay Windows'.
+    //
+    // WIN+I (lane settings, 2026-09-28): Mantle Settings, in place of Windows' Settings app. A plain
+    // Win chord like Win+V (VK 0x49, no Shift/Alt/Ctrl in its set), so Win+Shift+I, Win+Ctrl+I and
+    // Win+Alt+I stay Windows' by the exact-modifier rule, and the Win-up gets the partner key.
+    //
+    // CTRL+SHIFT+ESC (lane taskmgr, 2026-09-28): Mantle's task manager, in place of Windows'. The
+    // first chord with NO Win and two modifiers: exactly Ctrl+Shift held (ChordCtrl + ChordShift),
+    // so plain Esc, Ctrl+Esc (Start), Alt+Esc (window cycling), Ctrl+Alt+Esc and Win+Ctrl+Shift+Esc
+    // stay Windows'. Esc is also the switcher's cancel key: this table is asked FIRST (Step), and
+    // any Esc that is not exactly Ctrl+Shift falls through to EscDown unchanged (an open Alt+Tab
+    // has Alt held, so it can never be this chord). Taken, the Ctrl-up gets the partner key
+    // (_swallowedInCtrl, as Win+Ctrl+T) so nothing reads a lone Ctrl tap; no Win is involved.
     public static readonly string[] ChordNames = {
       "Win+S", "Win+V", "Win+Tab", "Win+Left", "Win+Right", "Win+Up", "Win+Down", "Win+Z",
-      "Win+Shift+S", "PrintScreen", "VolumeUp", "VolumeDown", "VolumeMute", "Win+Alt+T", "Win+Ctrl+T", "Win+Alt+N"
+      "Win+Shift+S", "PrintScreen", "VolumeUp", "VolumeDown", "VolumeMute", "Win+Alt+T", "Win+Ctrl+T", "Win+Alt+N", "Win+I",
+      "Ctrl+Shift+Esc"
     };
-    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD, 0x54, 0x54, 0x4E };
-    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false, true, true, true };
-    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false };
-    static readonly bool[] ChordAlt = { false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, true };
-    static readonly bool[] ChordCtrl = { false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false };
-    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false };
+    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD, 0x54, 0x54, 0x4E, 0x49, 0x1B };
+    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false, true, true, true, true, false };
+    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, true };
+    static readonly bool[] ChordAlt = { false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, true, false, false };
+    static readonly bool[] ChordCtrl = { false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true };
+    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false };
     /// Observed keys are REPORTED on every keydown (auto-repeat included: a held Volume Up keeps
     /// stepping) and NEVER swallowed: Windows still changes the volume itself. A volume key that
     /// is also a TAKEN chord is the chord's (swallowed, a chord event); untaken, it is observed.
@@ -519,6 +532,12 @@ namespace Mantle {
       // wave 3 (2026-09-24): every feature page is Mantle's own too, never a window to switch to
       "Mantle task view", "Mantle volume", "Mantle clipboard", "Mantle snap", "Mantle screenshot", "Mantle top bar"
     };
+    // Mantle's APP windows (lane settings, 2026-09-28): a window Owen works in like any app's (Mantle
+    // Settings), so Alt+Tab and the bar's window list (WindowList.Build) show it although it is
+    // Mantle's own process, which every other Mantle window is skipped for. Exact title (the page's
+    // <title>), Chromium's window class, and still never a tool window or an owned one.
+    static readonly HashSet<string> MantleAppTitles = new HashSet<string>(StringComparer.Ordinal) { "Mantle Settings", "Mantle Task Manager" };
+    public static bool IsMantleApp(string cls, string title) { return cls == "Chrome_WidgetWin_1" && title != null && MantleAppTitles.Contains(title); }
 
     public sealed class Item {
       public IntPtr Hwnd;
@@ -603,7 +622,7 @@ namespace Mantle {
           int pid;
           Win32.GetWindowThreadProcessId(hwnd, out pid);
           if (pid == ownPid) return true;
-          if (parentPid > 0 && pid == parentPid) return true;
+          if (parentPid > 0 && pid == parentPid && !IsMantleApp(cls, title)) return true;
           if (cls == "Chrome_WidgetWin_1" && MantleTitles.Contains(title.Trim())) return true;
           var it = new Item();
           it.Hwnd = hwnd; it.Title = title; it.Pid = pid; it.Z = z++;

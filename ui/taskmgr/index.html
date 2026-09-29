@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle Task Manager</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="taskmgr.css">
+</head>
+<body>
+<!-- Mantle's task manager (lib/features/taskmgr.js), RAM first: one row per app, biggest first,
+     Close / Force close / Trim with the outcome ON the row, and "Get ready to game". Everything on
+     screen comes from main's taskmgr.model; the page keeps only what is open, expanded or armed. -->
+<main class="app">
+  <header class="head">
+    <div class="brand">Task manager</div>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button class="tab" data-view="apps" role="tab" type="button">Apps</button>
+      <button class="tab" data-view="game" role="tab" type="button">Get ready to game</button>
+      <button class="tab" data-view="startup" role="tab" type="button">Startup apps</button>
+    </nav>
+    <div class="grow"></div>
+    <button id="wintm" class="btn quiet" type="button" title="Windows' own Task Manager">Open Windows Task Manager</button>
+    <div class="wc">
+      <button data-op="min" type="button" aria-label="Minimize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M1 5h8" stroke="currentColor" stroke-width="1.1"/></svg></button>
+      <button data-op="max" type="button" aria-label="Maximize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.1" fill="none"/></svg></button>
+      <button data-op="close" class="x" type="button" aria-label="Close"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.1"/></svg></button>
+    </div>
+  </header>
+
+  <section class="ram" aria-label="Memory">
+    <div class="ramtop">
+      <span class="lbl">Memory</span>
+      <span id="ramtext" class="ramtext">Reading…</span>
+      <span class="grow"></span>
+      <span id="mantleuse" class="chip" title="Mantle's own processes: its Electron, its pages and its sidecar"></span>
+    </div>
+    <div class="bar" role="img" id="rambar" aria-label="Memory in use"><i id="ramfill"></i></div>
+  </section>
+
+  <div id="note" class="note" hidden></div>
+  <div id="recent" class="recent" hidden></div>
+
+  <section class="view" id="v-apps">
+    <div class="cols"><span class="c-name">Name</span><span class="c-mem">Memory</span><span class="c-cpu">CPU</span><span class="c-act"></span></div>
+    <div class="list" id="list"></div>
+  </section>
+
+  <section class="view" id="v-game" hidden>
+    <div class="gamehead">
+      <div class="gtext">
+        <div class="gt">Close what you do not need while you play</div>
+        <div class="gs">Tick them once; Mantle remembers them by app. Free up RAM asks each to close, like its own close button.</div>
+      </div>
+      <div class="gnum"><span id="gsum">0 MB</span><span class="gsl">ticked</span></div>
+      <button id="free" class="btn acc" type="button">Free up RAM</button>
+    </div>
+    <label class="opt"><input type="checkbox" id="auto"><span><b>Also do it when a game starts</b> (off unless you turn it on). Only ticked apps close; an app that asks to save stays open and says so here.</span></label>
+    <div id="lastfree" class="lastfree" hidden></div>
+    <div class="cols"><span class="c-tick"></span><span class="c-name">App</span><span class="c-mem">Frees</span><span class="c-reopen">After the game</span></div>
+    <div class="list" id="prep"></div>
+  </section>
+
+  <section class="view" id="v-startup" hidden>
+    <div class="startup">
+      <div class="gt">Startup apps live in Mantle Settings</div>
+      <div class="gs">Which apps start with Windows is one list, in one place: Mantle Settings, Startup apps.</div>
+      <button id="opensettings" class="btn acc" type="button">Open Mantle Settings</button>
+      <div id="settingsnote" class="info" hidden></div>
+    </div>
+  </section>
+</main>
+<script src="mock-mantle.js"></script>
+<script src="taskmgr.js"></script>
+</body>
+</html>

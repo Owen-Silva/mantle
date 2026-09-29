@@ -88,7 +88,10 @@
 
   var MANTLE_MENU = [
     { t: 'item', label: 'About Mantle', act: 'about', enabled: true },
-    { t: 'item', label: 'Settings…', act: 'settings', enabled: true },
+    // Mantle Settings (lane settings, 2026-09-28): Win+I's window; the real Settings app stays one
+    // item away (and topbar.settings opens it anyway when Mantle Settings is off or not loaded).
+    { t: 'item', label: 'Mantle Settings…', act: 'settings', key: 'Win+I', enabled: true },
+    { t: 'item', label: 'Windows Settings…', act: 'winSettings', enabled: true },
     // Owen's override for the game rule. Here because the tray has no per-feature items yet
     // (lib/features.js offers one checkbox per feature); `checked` is set from topbar.hello.
     { t: 'item', label: 'Keep the top bar over full-screen games', act: 'overGames', checked: false, enabled: true },

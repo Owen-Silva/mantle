@@ -1985,7 +1985,9 @@ function startFeatures() {
       commands: COMMANDS,
       broadcast,
       host: { openLauncher: openLauncherFor, barRect: () => barRect(), display: featureDisplay, rest: (on, why) => restMantle(on, why),
-        media: () => lastMedia, onMedia: (fn) => { mediaListeners.add(fn); return () => mediaListeners.delete(fn); } },
+        media: () => lastMedia, onMedia: (fn) => { mediaListeners.add(fn); return () => mediaListeners.delete(fn); },
+        // lane settings: Mantle Settings shows and flips the tray's Alt+Tab and Win+N / Win+A switches
+        switcher: { get: () => switcher.settingsView(), set: (patch, who) => { switcher.setSettings(patch, who); return switcher.settingsView(); } } },
     });
     COMMANDS['features.list'] = async () => features.list();
     if (flags.test) {
@@ -2273,8 +2275,13 @@ const MANTLE_AUMID = 'com.owensilva.mantle';
 const MANTLE_TITLES = new Set(['mantle bar', 'mantle desktop', 'mantle launcher', 'mantle wallpapers', 'mantle switcher',
   // wave 3 (2026-09-24): the feature pages (sidecar AltTab.cs MantleTitles has the same list)
   'mantle task view', 'mantle volume', 'mantle clipboard', 'mantle snap', 'mantle screenshot', 'mantle top bar']);
+// Mantle's APP windows (lane settings, 2026-09-28): windows Owen works in like any app's, listed on
+// the bar and in Alt+Tab (the sidecar's Switcher.IsMantleApp lets the same exact titles through).
+const MANTLE_APP_TITLES = new Set(['Mantle Settings', 'Mantle Task Manager']);
 function isMantleWindow(w) {
   if (!w) return false;
+  const exe0 = w.exe ? path.basename(String(w.exe)).toLowerCase() : '';
+  if (exe0 === 'electron.exe' && MANTLE_APP_TITLES.has(String(w.title || ''))) return false;
   if (w.aumid && String(w.aumid).toLowerCase() === MANTLE_AUMID) return true;
   const exe = w.exe ? path.basename(String(w.exe)).toLowerCase() : '';
   return exe === 'electron.exe' && MANTLE_TITLES.has(String(w.title || '').trim().toLowerCase());
@@ -2819,6 +2826,14 @@ let qsWatchVia = null;             // 'push' | 'poll' | null, for qs.watch's rep
 const QS_WATCH_MS = 2000;
 const QS_LEASE_MS = 60000;
 const QS_RENEW_MS = 20000;
+// More than one page can hold the watch (lane settings, 2026-09-28): the bar's quick-settings panel
+// (no `who`: held until it lets go, exactly as before) and Mantle Settings (who:'settings', which must
+// re-assert within QS_HOLD_MS or is dropped, so a window that closed without letting go cannot keep
+// the sidecar watching). It stops only when nobody holds it: one page closing never stops the other's
+// live values.
+const QS_HOLD_MS = 90000;
+const qsHolders = new Map();          // who -> expires at (Infinity for the panel)
+function qsHoldersPrune() { const t = Date.now(); for (const [k, v] of qsHolders) if (v <= t) qsHolders.delete(k); }
 
 /** A full re-read, broadcast to an open panel. */
 function qsPush(why) {
@@ -2858,6 +2873,8 @@ function qsPollStop() {
 /** Start or renew the sidecar's watch (and the network readout's 1 s re-check). */
 function qsLease(why) {
   if (!qsWatching || shuttingDown) return;
+  qsHoldersPrune();
+  if (!qsHolders.size) { qsWatchStop('every page that asked for it has gone'); return; }
   if (qsLeaseTimer) clearTimeout(qsLeaseTimer);
   qsLeaseTimer = setTimeout(() => { qsLeaseTimer = null; qsLease('the lease is renewed'); }, QS_RENEW_MS);
   if (qsLeaseTimer.unref) qsLeaseTimer.unref();
@@ -2886,6 +2903,7 @@ function qsWatchStart() {
 }
 
 function qsWatchStop(why) {
+  qsHolders.clear();                 // main stopped it (bar hiding, shutdown, last holder gone): pages re-assert
   if (!qsWatching && !qsTimer) return false;
   qsWatching = false;
   qsPollStop();
@@ -3908,7 +3926,14 @@ const COMMANDS = {
 
   'qs.watch': async (a) => {
     const on = !!(a && a.on);
+    const who = a && typeof a.who === 'string' && /^[a-z]{1,20}$/.test(a.who) ? a.who : 'panel';
+    qsHoldersPrune();
+    if (!on) {
+      qsHolders.delete(who);
+      if (qsHolders.size && qsWatching) return { ok: true, watching: true, via: qsWatchVia || 'starting', leaseMs: QS_LEASE_MS, reason: `still watching: ${Array.from(qsHolders.keys()).join(' and ')} holds it` };
+    }
     if (on) {
+      qsHolders.set(who, who === 'panel' ? Infinity : Date.now() + QS_HOLD_MS);
       const started = qsWatchStart();
       return { ok: true, watching: true, via: qsWatchVia || 'starting', leaseMs: QS_LEASE_MS, reason: started ? null : 'the quick-settings watch was already running, so nothing was started twice' };
     }

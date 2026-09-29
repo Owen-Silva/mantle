@@ -430,6 +430,22 @@
     if (text) setTimeout(() => { if (S.note === text) { S.note = null; renderStats(); } }, 8000);
   }
 
+  // "Open Task Manager" (the stats pop-up): Mantle's own task manager (lane integrate, 2026-09-28);
+  // when it cannot open (off, resting, not loaded) Windows' opens instead and the note says why.
+  async function openTaskMgr() {
+    let why = null;
+    try {
+      const r = await call('taskmgr.open', { view: 'apps' });
+      if (r && r.ok !== false) return;
+      why = (r && r.reason) || 'it did not say why';
+    } catch (e) { why = (e && e.message) || String(e); }
+    try {
+      const x = await call('topbar.taskmgr');
+      setNote(x && x.ok === false ? `Task Manager: Mantle's did not open (${why}) and Windows' did not either: ${x.reason}`
+        : `Opened Windows' Task Manager: Mantle's did not open (${why})`);
+    } catch (e) { setNote(`Task Manager: Mantle's did not open (${why}) and Windows' did not either: ${e.message}`); }
+  }
+
   /* ---- doing things ------------------------------------------------------------------------ */
   function activate(level, i) {
     const o = S.open;
@@ -459,7 +475,7 @@
     else if (it.act === 'layoutSave') p = call('layouts.save', { name: it.layout, replace: true });
     else if (it.act === 'layoutDelete') p = call('layouts.delete', { name: it.layout });
     else if (it.act === 'power') p = call('topbar.power', { action: it.power, confirmed });
-    else if (it.act === 'about' || it.act === 'settings') p = call('topbar.' + it.act);
+    else if (it.act === 'about' || it.act === 'settings' || it.act === 'winSettings') p = call('topbar.' + it.act);
     else if (it.act === 'overGames') p = call('topbar.overGames', { on: !it.checked }).then((r) => { if (r && r.ok) it.checked = !!r.overGames; return r; });
     else if (it.act === 'hide') p = call('topbar.hidden', { on: true, via: 'the Mantle menu' });
     else if (it.act === 'show') p = call('topbar.hidden', { on: false, via: 'the Mantle menu, while peeking' });
@@ -596,7 +612,7 @@
   menusEl.addEventListener('mouseup', (e) => {
     const r = e.target.closest('.r');
     if (!r) return;
-    if (r.dataset.act === 'taskmgr') { closeAll(false); call('topbar.taskmgr').then((x) => { if (x && x.ok === false) setNote('Task Manager: ' + x.reason); }); return; }
+    if (r.dataset.act === 'taskmgr') { closeAll(false); openTaskMgr(); return; }
     activate(+r.dataset.l, +r.dataset.r);
   });
   document.addEventListener('mousedown', (e) => {
@@ -670,6 +686,11 @@
      kept on every keystroke (a hover re-renders the menu). The result shows in the layouts pop-up;
      a refusal also shows here, as every menu action's does. */
   mantle.on('layouts.state', (st) => { M.layoutMenus(M.MANTLE_MENU, st); });
+  // Mantle Settings can flip "Keep the top bar over full-screen games" too (lane settings): the tick follows.
+  mantle.on('topbar.state', (st) => {
+    const og = M.MANTLE_MENU.find((i) => i.act === 'overGames');
+    if (og && st && typeof st.overGames === 'boolean') og.checked = st.overGames;
+  });
   document.addEventListener('input', (e) => { if (S.edit && e.target && e.target.classList && e.target.classList.contains('lbi')) S.edit.value = e.target.value; });
   function commitEdit() {
     const ed = S.edit;

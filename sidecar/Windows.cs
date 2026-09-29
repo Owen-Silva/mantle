@@ -160,7 +160,8 @@ namespace Mantle {
           int pid;
           Win32.GetWindowThreadProcessId(hwnd, out pid);
           if (pid == ownPid) return true;
-          if (parentPid > 0 && pid == parentPid) return true;   // never list the shell's own UI
+          // never list the shell's own UI, except its app windows (Mantle Settings: Switcher.IsMantleApp)
+          if (parentPid > 0 && pid == parentPid && !Switcher.IsMantleApp(cls, title)) return true;
 
           // The app behind the window. For a UWP app this is NOT the window's
           // own process: ApplicationFrameWindow is an empty shell owned by

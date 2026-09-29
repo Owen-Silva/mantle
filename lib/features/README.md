@@ -37,12 +37,15 @@ module.exports = {
 ```
 
 Chord names: `Win+S` `Win+V` `Win+Tab` `Win+Left` `Win+Right` `Win+Up` `Win+Down` `Win+Z`
-`Win+Shift+S` `PrintScreen`, and the bare volume keys `VolumeUp` `VolumeDown` `VolumeMute` (any
+`Win+Shift+S` `PrintScreen` `Win+I` (Mantle Settings; exactly Win+I, so Win+Shift+I / Win+Ctrl+I / Win+Alt+I stay
+Windows'), and the bare volume keys `VolumeUp` `VolumeDown` `VolumeMute` (any
 modifier held leaves them Windows'). Observed keys (seen, never taken): the same three volume keys;
 one feature may not list a key both as a chord and as observed.
 With a modifier IN the chord: `Win+Alt+T` (top bar hide/show), `Win+Alt+N` (quick notes) and
 `Win+Ctrl+T` (keep on top): Alt / Ctrl held is part of those three only, and their keyups get the
-partner key like Win's.
+partner key like Win's. `Ctrl+Shift+Esc` (Mantle's task manager) is the one chord with no Win:
+exactly Ctrl+Shift held, so plain Esc, Ctrl+Esc and Alt+Esc stay Windows' (and the Alt+Tab
+switcher's Esc is untouched); its Ctrl keyup gets the partner key.
 A chord may be claimed by ONE feature (the second claim is refused and named, in file order).
 Reserved names (Mantle's own prefixes): features state sys windows bar launcher desktop switcher
 notifs qs wallpaper shell tray media battery volume net apps mantle test.
@@ -74,11 +77,37 @@ notifs qs wallpaper shell tray media battery volume net apps mantle test.
 | `ctx.host.display()` | the display under the cursor: `{ id, bounds, workArea, scaleFactor, primary, cursor }` (DIP) |
 | `ctx.host.rest(on, why)` | ADDED (memfix). Game mode's watch only: `rest(true, 'VALORANT runs')` makes Mantle rest, `rest(false, why)` brings it back. `Promise<{ ok, text, closed, before, after }>` |
 | `ctx.settings.get(key, dflt)` / `.set(key, value)` | JSON in `<userData>/features/<name>.json` (live `%APPDATA%\mantle`, test `%TEMP%\mantle-test-<profile>`). Values are copied (JSON round trip). `set` throws in plain words if it cannot write. `.file` = the path |
+| `ctx.onOption(key, fn)` | ADDED (lane settings). `fn(value, key)` when Mantle Settings changes one of the module's `options` (below); `key` `'*'` = any. Only declared keys (else throws). Not needed if you read the setting each time you act |
+| `ctx.host.features` | ADDED (lane settings), for Mantle Settings: `list()` (features.list plus each one's `options` with current values, `keys`, `keysReason`), `setEnabled(name, on)` (the tray's switch, `{ok, reason, feature}`), `setOption(name, key, value)` (`value` null = default; `{ok, reason, option}`), `onChange(fn)`. Writes are logged "by <your label>" |
+| `ctx.host.switcher` | ADDED (lane settings). `{ get(), set(patch) }` for main's Alt+Tab and Win+N / Win+A switches, or null |
 | `ctx.test.fireChord(chord)` / `.fireKey(key)` | TEST ONLY. `ctx.test` is `null` in a live run. Routes exactly like the hook would (so a chord for a feature that is off/unhealthy is NOT delivered). Returns `{ delivered, feature }` / `{ delivered, handlers }` or `{ delivered:false, reason }` |
 
 Handler errors: a throw (or rejected promise) in an onChord / onKey / onEnabled / sidecar.on /
 onReady handler is logged with its stack and sets `health(false, 'its <what> handler failed (...)')`,
 so the chord goes back to Windows. Call `ctx.health(true)` when you have recovered.
+
+## Options: what Mantle Settings shows for you (lane settings, 2026-09-28)
+
+Declare what you keep in your settings file and Mantle Settings (Win+I) draws it in its Mantle section:
+
+```js
+options: [
+  { key: 'auto', label: 'Turn on by itself for games', help: 'one line', type: 'bool', default: true },
+  { key: 'mode', label: 'Start in', type: 'choice', choices: [{ value: 'rect', label: 'Rectangle' }, 'full'], default: 'rect' },
+  { key: 'trimAboveMB', label: 'Trim above', type: 'number', min: 50, max: 2000, unit: 'MB', default: 400 },
+  { key: 'saveDir', label: 'Save to', type: 'folder', default: null, defaultLabel: "Windows' Screenshots folder" },
+],
+```
+
+Types: `bool` `choice` `number` (min/max/step/unit) `text` `folder` (an existing absolute folder;
+`null` = the default, said by `defaultLabel`). validate() refuses a bad list (the feature is down,
+with the reason). Values are read and written through YOUR settings store (the same object as
+`ctx.settings`, one per feature for the life of the process, kept across a rest), so your cache
+never goes stale and nothing is written behind your back; a running feature hears the change
+through `ctx.onOption`. A card or menu that already writes the key keeps working: both roads write
+the same store. Richer settings (the hot corners' four-corner map) keep their own commands, and
+Mantle Settings calls those. Declared now: gamemode (auto, liftSaver), topbar (hidden, overGames),
+screenshot (mode, saveDir), spotify (closeForGames, reviveAfterGames, trimAboveMB).
 
 ## Keys: what the hook does with your chords
 
@@ -118,7 +147,8 @@ sidecar's history). Its chords go back to Windows, its commands answer "... is r
 VALORANT runs", and its state piece reads HEALTHY with `resting` set (no strip row). When the last
 game exits, wakeAll() runs your install() again with a fresh ctx: the same path as start-up.
 Resting now: clipboard, osd, screenshot, snap, taskview, topbar, search (Win+S needs the launcher,
-which rests too), ontop (its pins go off top for the game and back on after, lib/features/ontop.js), notes (its pad closes). Main also closes the launcher (Win key -> Start) and the switcher (Alt+Tab ->
+which rests too), ontop (its pins go off top for the game and back on after, lib/features/ontop.js), notes (its pad closes),
+settings (the Mantle Settings window is destroyed; Win+I opens Windows' Settings until the game exits). Main also closes the launcher (Win key -> Start) and the switcher (Alt+Tab ->
 Windows), and unloads the wallpaper. Kept: the bar, the desktop layer, main, the sidecar.
 The timer deliberately does NOT rest (a countdown must survive a game): it learns of the rest from
 lib/features/_tools-hub.js (topbar sets it) and holds its done pop-up, beeping once, until the game ends.

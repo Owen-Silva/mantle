@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle Settings</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="settings.css">
+</head>
+<body>
+<!-- Mantle Settings (lib/features/settings.js, Win+I): Mantle's own face for the Windows Settings it
+     can drive natively (brightness, sound, Bluetooth, Wi-Fi, power, startup apps) plus every Mantle
+     feature and option, and a deep link into the real Settings app for everything else. The window
+     is frameless and opaque, so the header strip below is its title bar. Everything that cannot act
+     says so in words next to the control (settings.js); this page never logs. -->
+<header class="head">
+  <div class="head-title">Mantle Settings<span id="testchip" class="testchip" hidden>Test run</span></div>
+  <div class="winbtns">
+    <button class="winbtn" type="button" data-act="win-op" data-op="minimize" title="Minimise" aria-label="Minimise">
+      <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M1 5.5h8" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+    </button>
+    <button class="winbtn" id="maxbtn" type="button" data-act="win-op" data-op="maximize" title="Maximise" aria-label="Maximise">
+      <svg class="g-max" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+      <svg class="g-restore" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="1.5" y="3" width="5.5" height="5.5" rx="1" stroke="currentColor" stroke-width="1" fill="none"/><path d="M3.2 1.5h4.3a1 1 0 0 1 1 1v4.3" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+    </button>
+    <button class="winbtn close" type="button" data-act="win-op" data-op="close" title="Close" aria-label="Close">
+      <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+    </button>
+  </div>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Settings sections">
+    <div class="find">
+      <svg class="find-ico" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="4.6" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M10.4 10.4l3.6 3.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      <input id="find" type="search" placeholder="Find a setting" autocomplete="off" spellcheck="false" aria-label="Find a setting (Ctrl+F)" role="combobox" aria-controls="page" aria-expanded="false">
+    </div>
+    <div id="nav" class="nav" role="list"></div>
+    <button class="allwin" type="button" data-act="win" data-uri="ms-settings:">
+      <span>All Windows settings</span>
+      <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M4 2.5h5.5V8M9.2 2.8L2.8 9.2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </nav>
+  <main id="scroller" class="scroller">
+    <div id="banner" class="banner" role="alert" hidden></div>
+    <div id="page" class="page"></div>
+  </main>
+</div>
+<script src="model.js"></script>
+<script src="mock-mantle.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>

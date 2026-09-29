@@ -215,7 +215,7 @@
       if (S !== mine) return;
       if (r.dryRun) say('Test instance: ' + r.reason);
       else if (!r.ok) say((verb === 'restart' ? 'Not restarted: ' : 'Not started: ') + (r.reason || 'no reason given'), true);
-      else if (r.loading) say(r.note || 'Spotify is still loading; Mantle connects once it has loaded.');
+      else if (r.loading) say(r.note || 'Spotify is still loading; Mantle connects once it has loaded.', !!r.forced);
       else if (r.note) say(r.note, true);
       else say(verb === 'restart' ? 'Spotify restarted. Press play to carry on.' : 'Spotify started.');
       loadStatus();
@@ -285,7 +285,8 @@
     act('quit', 'quit', {}, function (r) {
       if (r.dryRun) say('Test instance: ' + r.reason);
       else if (!r.ok) say('Spotify did not quit: ' + (r.reason || 'no reason given'), true);
-      else { S.info = null; S.lib = null; say('Spotify quit.'); }
+      /* spotpid lane: a close it ignored was forced (by its main pid only); the card says so */
+      else { S.info = null; S.lib = null; say(r.note || 'Spotify quit.', !!r.forced); }
       loadStatus();
     });
   }
