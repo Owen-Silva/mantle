@@ -8,7 +8,8 @@
  *
  * It replaces the built-in Display, Sound, Notifications and Power sections: their row ids
  * (display.brightness, sound.output, power.mode, notifications.dnd, ...) are drawn here so old deep
- * links still land. Display is drawn natively since lane sysdisp2 (renderDisplay, over SysDisplay.cs).
+ * links still land. Display is drawn natively since lane sysdisp2 (renderDisplay, over SysDisplay.cs), Sound
+ * since lane syssnd (renderSound, over SysSound.cs).
  */
 (function () {
   'use strict';
@@ -816,6 +817,241 @@
     return update().then(() => ({ update, dispose() {} }));
   }
 
+  /* ---------------------------------------------------------------- Sound (SysSound.cs, lane syssnd) */
+  const SSTATE = { active: 'Ready', disabled: 'Disabled', unplugged: 'Not plugged in', notpresent: 'Not connected', unknown: 'Unknown' };
+  const rowKey = (k) => String(k).replace(/[^A-Za-z0-9_.+-]/g, '-');
+  const roText = (why) => `Read only here: ${why}`;
+
+  function renderSound(el, kit) {
+    const S = { d: null, out: null, in: null, sel: null, mic: false, bal: '', apps: new Map() };
+    const h = kit.h;
+    const noDev = (what) => ({ ok: false, reason: `No ${what} device is working, so there is nothing to change` });
+    const later = (r) => { if (r && r.ok && !r.dryRun) setTimeout(update, 50); return r; };
+
+    /* -- output and input (the defaults) */
+    const out = kit.choice({ row: 'sound.output', label: 'Choose where to play sound', icon: 'sound', style: 'dropdown', options: [], help: 'The default for every app',
+      onChange: (v) => W(kit, 'soundDefault', { device: v, role: 'default' }, (r) => r.device).then(later) });
+    const vol = kit.slider({ row: 'sound.volume', label: 'Volume', icon: 'sound', min: 0, max: 100, step: 1, unit: '%',
+      onChange: (v) => (S.out ? W(kit, 'soundLevel', { device: S.out.device, level: v }, (r) => r.level) : noDev('output')) });
+    const mute = kit.toggle({ row: 'system.sound.mute', label: 'Mute', icon: 'mute', help: 'Silences the output device',
+      onChange: (on) => (S.out ? W(kit, 'soundLevel', { device: S.out.device, muted: on }, (r) => r.muted) : noDev('output')) });
+    const outComm = kit.choice({ row: 'system.sound.output.comms', label: 'Communications device', help: 'Where calls play', style: 'dropdown', options: [],
+      onChange: (v) => W(kit, 'soundDefault', { device: v, role: 'communications' }, (r) => r.device).then(later) });
+    const inp = kit.choice({ row: 'sound.input', label: 'Choose a device for speaking or recording', icon: 'mic', style: 'dropdown', options: [],
+      onChange: (v) => W(kit, 'soundDefault', { device: v, role: 'default' }, (r) => r.device).then(later) });
+    const inVol = kit.slider({ row: 'system.sound.input.volume', label: 'Input volume', icon: 'mic', min: 0, max: 100, step: 1, unit: '%',
+      onChange: (v) => (S.in ? W(kit, 'soundLevel', { device: S.in.device, level: v }, (r) => r.level) : noDev('input')) });
+    const inComm = kit.choice({ row: 'system.sound.input.comms', label: 'Communications microphone', help: 'What calls listen to', style: 'dropdown', options: [],
+      onChange: (v) => W(kit, 'soundDefault', { device: v, role: 'communications' }, (r) => r.device).then(later) });
+    const micBtn = kit.button({ row: 'system.sound.input.test', label: 'Test your microphone', help: 'Listens for 6 seconds and shows the level; nothing is recorded or kept', text: 'Start test', onClick: micTest });
+    const micLvl = kit.status({ row: 'system.sound.input.level', label: 'Input level', value: 'Not listening', tone: 'info' });
+
+    /* -- one device's properties */
+    const pick = kit.choice({ row: 'system.sound.props', label: 'Device properties for', style: 'dropdown', options: [],
+      onChange: (v) => { S.sel = v; fillProps(); return { ok: true, value: v }; } });
+    const pName = kit.text({ row: 'system.sound.props.name', label: 'Name', placeholder: 'Speakers', onChange: (s) => prop('name', String(s || '').trim(), (r) => r.value) });
+    const pState = kit.button({ row: 'system.sound.props.enable', label: 'Status', text: 'Disable', onClick: () => {
+      const x = cur(); if (!x) return noDev('sound');
+      return W(kit, 'soundEnable', { device: x.device, on: x.state === 'disabled' }).then(later);
+    } });
+    const pFmt = kit.choice({ row: 'system.sound.props.format', label: 'Format', help: 'Sample rate and bit depth Windows mixes to', style: 'dropdown', options: [],
+      onChange: (v) => prop('format', v, (r) => (r.format ? r.format.value : v)) });
+    const pEnh = kit.toggle({ row: 'system.sound.props.enhancements', label: 'Audio enhancements', help: 'The driver\'s own effects (Device Default Effects)', onChange: (on) => prop('enhancements', on, (r) => r.value) });
+    const pSpat = kit.choice({ row: 'system.sound.props.spatial', label: 'Spatial sound', help: 'Sound that seems to come from around you', style: 'dropdown', options: [],
+      onChange: (v) => prop('spatial', v, (r) => (r.current != null ? r.current : v)) });
+    const pExcl = kit.toggle({ row: 'system.sound.props.exclusive', label: 'Let apps take exclusive control of this device', onChange: (on) => prop('exclusive', on, (r) => r.value) });
+    const pExclP = kit.toggle({ row: 'system.sound.props.exclusivePriority', label: 'Give exclusive mode apps priority', onChange: (on) => prop('exclusivePriority', on, (r) => r.value) });
+    const pTest = kit.button({ row: 'system.sound.props.test', label: 'Test sound', help: 'Plays a short tone on this device', text: 'Test', onClick: () => {
+      const x = cur(); if (!x) return noDev('output');
+      return W(kit, 'tone', { device: x.device }).then((r) => (r && r.ok && !r.dryRun ? { ok: true, info: 'Playing a short tone…' } : r));
+    } });
+    const pListen = kit.status({ row: 'system.sound.props.listen', label: 'Listen to this device', value: 'Read only', tone: 'info' });
+    const balGroup = kit.group('Balance', { row: 'system.sound.props.balance', aside: 'Each channel\'s own level' });
+    const balBox = h('div', {});
+    const devs = kit.list({ row: 'system.sound.devices', items: [], empty: 'Reading the sound devices…', onAction: devAction });
+
+    /* -- more sound settings */
+    const mono = kit.toggle({ row: 'system.sound.mono', label: 'Mono audio', help: 'Combine the left and right channels into one', onChange: (on) => W(kit, 'soundSetting', { key: 'mono', value: on }, (r) => r.value) });
+    const duck = kit.choice({ row: 'system.sound.ducking', label: 'When Windows detects communications activity', style: 'dropdown', options: [],
+      onChange: (v) => W(kit, 'soundSetting', { key: 'ducking', value: Number(v) }, (r) => r.value) });
+
+    /* -- volume mixer */
+    const mixBox = h('div', {});
+    const reset = kit.button({ row: 'system.sound.mixer.reset', label: 'Reset sound devices and volumes for all apps', help: 'Every app back to the default devices, at full volume', text: 'Reset',
+      onClick: () => W(kit, 'resetApps', {}).then(later) });
+
+    const errBox = h('div', {});
+    el.append(errBox,
+      kit.group('Output'), kit.card(out, vol, mute, outComm),
+      kit.group('Input'), kit.card(inp, inVol, inComm, micBtn, micLvl),
+      kit.group('Volume mixer', { row: 'sound.mixer' }), mixBox, kit.card(reset),
+      kit.group('Sound devices', { row: 'system.sound.devices.all', aside: 'Every output and input Windows knows' }), kit.card(devs),
+      kit.group('Properties'), kit.card(pick, pName, pState, pFmt, pEnh, pSpat, pExcl, pExclP, pTest, pListen),
+      balGroup, balBox,
+      kit.group('More sound settings'), kit.card(mono, duck));
+
+    function cur() { return S.d ? S.d.all.find((x) => x.device === S.sel) || null : null; }
+    async function prop(name, value, pick2) {
+      const x = cur(); if (!x) return noDev('sound');
+      const r = await W(kit, 'soundProps', { device: x.device, prop: name, value }, pick2);
+      if (r && r.ok === false && r.needsAdmin && r.elevate === 'syssound.deviceProp') {
+        const a = await A(kit, 'syssound.deviceProp', r.args || { device: x.device, prop: name, value });
+        return later(a && a.ok && !a.dryRun ? { ok: true, value: pick2(a), note: a.note } : a);
+      }
+      return later(r);
+    }
+    const optsFor = (list) => list.filter((x) => x.state === 'active').map((x) => ({ value: x.device, label: x.name }));
+    function fillFlow(list, defDev, commDev, ch, level, muteCtl, comm, what) {
+      const act = list.filter((x) => x.state === 'active');
+      const d = list.find((x) => x.device === defDev) || null;
+      const none = act.length ? null : `No ${what} device is working: connect one, or enable one under Sound devices`;
+      ch.set({ options: optsFor(list), value: d ? d.device : null, disabled: !act.length, reason: none });
+      comm.set({ options: optsFor(list), value: commDev, disabled: !act.length, reason: none });
+      const v = d && d.volume;
+      if (!d || !v || v.level == null) level.set({ value: null, disabled: true, reason: none || (v && v.reason) || `The ${what} device has no volume Windows can change` });
+      else level.set({ value: v.level, disabled: false, reason: null, info: v.muted && !muteCtl ? 'Muted' : null });
+      if (muteCtl) muteCtl.set({ value: !!(v && v.muted), disabled: !v || v.level == null, reason: null });
+      return d;
+    }
+    function fillDevices(d) {
+      if (!d || !d.ok) {
+        const why = fail('The sound devices', d);
+        [out, vol, mute, outComm, inp, inVol, inComm, micBtn, pick, pName, pState, pFmt, pEnh, pSpat, pExcl, pExclP, pTest, mono, duck].forEach((c) => c.set({ disabled: true, reason: why }));
+        devs.set({ items: [], empty: why }); balBox.replaceChildren();
+        return;
+      }
+      const outs = (d.output && d.output.devices) || [], ins = (d.input && d.input.devices) || [];
+      S.d = { raw: d, all: outs.concat(ins) };
+      S.out = fillFlow(outs, d.output.defaultDevice, d.output.defaultComms, out, vol, mute, outComm, 'output');
+      S.in = fillFlow(ins, d.input.defaultDevice, d.input.defaultComms, inp, inVol, null, inComm, 'input');
+      if (!S.mic) micBtn.set({ disabled: !S.in, reason: S.in ? null : 'No microphone is working, so there is nothing to test' });
+      devs.set({ empty: d.output.reason || d.input.reason || 'Windows reported no sound devices', items: S.d.all.map((x, i) => ({
+        key: `d${i}`, device: x.device, label: x.name, icon: x.flow === 'output' ? 'sound' : 'mic', value: SSTATE[x.state] || x.state,
+        help: [x.flow === 'output' ? 'Output' : 'Input', x.isDefault ? 'Default' : null, x.isDefaultComms ? 'Default for calls' : null].filter(Boolean).join(' · '),
+        actions: [
+          ...(x.state === 'active' && !x.isDefault ? [{ id: 'default', text: 'Make default' }] : []),
+          ...(x.state === 'active' && !x.isDefaultComms ? [{ id: 'comms', text: 'Use for calls' }] : []),
+          { id: x.state === 'disabled' ? 'enable' : 'disable', text: x.state === 'disabled' ? 'Enable' : 'Disable', disabled: x.state === 'notpresent', reason: x.state === 'notpresent' ? 'The device is not connected' : undefined },
+          { id: 'props', text: 'Properties' }] })) });
+      if (!S.d.all.some((x) => x.device === S.sel)) S.sel = S.out ? S.out.device : S.d.all.length ? S.d.all[0].device : null;
+      pick.set({ options: S.d.all.map((x) => ({ value: x.device, label: `${x.flow === 'output' ? 'Output' : 'Input'}: ${x.name}` })), value: S.sel, disabled: !S.d.all.length, reason: S.d.all.length ? null : 'Windows reported no sound devices' });
+      const adminWords = d.propsWritable === false ? 'change a sound device\'s properties' : undefined;
+      [pName, pEnh, pExcl, pExclP].forEach((c) => c.set({ admin: adminWords }));
+      mono.set({ value: !!(d.mono && d.mono.on), disabled: false, reason: null, info: d.mono && d.mono.note });
+      const dk = d.ducking || {};
+      duck.set({ options: (dk.options || []).map((o) => ({ value: o.value, label: o.label })), value: dk.value, disabled: !dk.options, reason: dk.options ? null : 'Windows did not report this setting', info: dk.set ? null : 'Not set: Windows\' default applies' });
+      fillProps();
+    }
+    function fillProps() {
+      const x = cur();
+      const all = [pName, pState, pFmt, pEnh, pSpat, pExcl, pExclP, pTest, pListen];
+      if (!x) { all.forEach((c) => c.set({ disabled: true, reason: 'Pick a device above' })); balBox.replaceChildren(); return; }
+      const outDev = x.flow === 'output', active = x.state === 'active';
+      pSpat.el.style.display = outDev ? '' : 'none'; pTest.el.style.display = outDev ? '' : 'none'; pListen.el.style.display = outDev ? 'none' : '';
+      pName.set({ value: x.label || x.name, help: x.adapter ? `On ${x.adapter}` : null, disabled: false, reason: null });
+      pState.set({ text: x.state === 'disabled' ? 'Enable' : 'Disable', help: SSTATE[x.state] || x.state, disabled: x.state === 'notpresent',
+        reason: x.state === 'notpresent' ? 'The device is not connected' : null, info: x.isDefault && x.state === 'active' ? 'This is the default device: disabling it makes Windows pick another' : null });
+      const fl = (x.formats || []).map((f) => ({ value: f.value, label: f.text }));
+      if (x.format && !fl.some((f) => f.value === x.format.value)) fl.unshift({ value: x.format.value, label: x.format.text });
+      pFmt.set({ options: fl, value: x.format ? x.format.value : null, disabled: !(x.formats || []).length,
+        reason: (x.formats || []).length ? null : roText(x.formatsReason || x.formatReason || 'Windows did not list this device\'s formats'), info: x.format && x.format.float ? 'Floating point' : null });
+      const en = x.enhancements || {};
+      pEnh.set({ value: en.on !== false, disabled: false, reason: null, info: en.note || null });
+      const sp = x.spatial || {};
+      if (outDev) {
+        const so = [{ value: '', label: 'Off' }].concat((sp.formats || []).map((f) => ({ value: f.subtype, label: f.name })));
+        pSpat.set({ options: so, value: sp.current || '', disabled: !sp.writable, reason: sp.writable ? null : roText(sp.why || (active ? 'Windows did not report spatial sound for this device' : 'the device is not working right now')) });
+        pTest.set({ disabled: !active, reason: active ? null : `The device is ${(SSTATE[x.state] || x.state).toLowerCase()}, so it cannot play` });
+      }
+      const ex = x.exclusive || {};
+      pExcl.set({ value: ex.allow !== false, disabled: false, reason: null }); pExclP.set({ value: ex.priority !== false, disabled: !(ex.allow !== false), reason: ex.allow !== false ? null : 'Only matters while apps may take exclusive control' });
+      const ls = (S.d.raw && S.d.raw.listen) || {};
+      pListen.set({ value: 'Read only', reason: roText(ls.why || 'Windows keeps this where Mantle cannot write it') });
+      const chs = (x.volume && x.volume.channels) || [];
+      const sig = `${x.device}|${chs.length}`;
+      if (sig !== S.bal) {
+        S.bal = sig;
+        S.balCtl = chs.map((c, i) => kit.slider({ row: `system.sound.props.balance.${i}`, label: c.name, min: 0, max: 100, step: 1, unit: '%',
+          onChange: (v) => W(kit, 'soundLevel', { device: x.device, channel: i, level: v }, (r) => (Array.isArray(r.channels) ? r.channels[i] : v)) }));
+        balBox.replaceChildren(kit.card(...(S.balCtl.length ? S.balCtl : [kit.reason(active ? 'Windows reported no channels for this device' : `The device is ${(SSTATE[x.state] || x.state).toLowerCase()}, so it has no levels right now`)])));
+      }
+      (S.balCtl || []).forEach((c, i) => c.set({ value: chs[i] ? chs[i].level : null, disabled: !active }));
+    }
+    function devAction(k, act, it) {
+      const key = it && it.device;
+      if (!key) return { ok: false, reason: 'That device is not in the list any more' };
+      if (act === 'props') { S.sel = key; pick.set({ value: key }); fillProps(); kit.highlight('system.sound.props'); return { ok: true }; }
+      if (act === 'default' || act === 'comms') return W(kit, 'soundDefault', { device: key, role: act === 'comms' ? 'communications' : 'default' }).then(later);
+      return W(kit, 'soundEnable', { device: key, on: act === 'enable' }).then(later);
+    }
+    function micTest() {
+      if (S.mic) return R(kit, 'micStop').then((r) => (r && r.ok ? { ok: true } : r));
+      if (!S.in) return noDev('input');
+      return W(kit, 'micTest', { device: S.in.device, ms: 6000 }).then((r) => {
+        if (r && r.ok && !r.dryRun) { S.mic = true; micBtn.set({ text: 'Stop' }); micLvl.set({ value: 'Listening…', tone: 'info', reason: null, info: r.note || null }); }
+        return r;
+      });
+    }
+    kit.watch('settings.system.sound', (ev) => {
+      if (!ev || typeof ev !== 'object') return;
+      if (ev.what === 'mic') micLvl.set({ value: `${ev.peak}%`, tone: ev.peak > 4 ? 'ok' : 'info' });
+      else if (ev.what === 'micDone') {
+        S.mic = false; micBtn.set({ text: 'Start test' });
+        micLvl.set({ value: ev.ok ? `Loudest ${ev.peakMax}%` : 'Test failed', tone: ev.ok && ev.peakMax > 4 ? 'ok' : 'warn', reason: ev.ok ? null : (ev.reason || 'the test ended without a reason'),
+          info: ev.ok ? (ev.peakMax > 4 ? 'The microphone is picking up sound' : 'Nothing was heard: check the microphone is the right one and not muted') : null });
+      } else if (ev.what === 'tone') pTest.set({ reason: ev.ok ? null : (ev.reason || 'the tone did not play, and no reason came back'), info: ev.ok ? 'Played' : null });
+    });
+
+    /* ---- the mixer */
+    function mkApp(a) {
+      const k = rowKey(a.app), C = {};
+      C.level = kit.slider({ row: `sound.mixer.${k}`, label: a.name, min: 0, max: 100, step: 1, unit: '%', icon: 'sound',
+        onChange: (v) => W(kit, 'appSet', { app: C.a.app, level: v }, (r) => r.level) });
+      C.mute = kit.toggle({ row: `sound.mixer.${k}.mute`, label: 'Mute', onChange: (on) => W(kit, 'appSet', { app: C.a.app, muted: on }, (r) => r.muted) });
+      C.out = kit.choice({ row: `sound.mixer.${k}.out`, label: 'Output device', style: 'dropdown', options: [],
+        onChange: (v) => W(kit, 'appDevice', { app: C.a.app, flow: 'output', device: v }, (r) => r.device) });
+      C.in = kit.choice({ row: `sound.mixer.${k}.in`, label: 'Input device', style: 'dropdown', options: [],
+        onChange: (v) => W(kit, 'appDevice', { app: C.a.app, flow: 'input', device: v }, (r) => r.device) });
+      C.card = kit.card(C.level, C.mute, C.out, C.in);
+      return C;
+    }
+    function fillApps(a) {
+      if (!a || !a.ok) { mixBox.replaceChildren(kit.card(kit.reason(fail('The volume mixer', a)))); S.apps.clear(); return; }
+      const list = Array.isArray(a.apps) ? a.apps : [];
+      if (!list.length) { mixBox.replaceChildren(kit.card(kit.reason('No app is playing sound right now: apps show up here while they have sound open', { info: true }))); S.apps.clear(); return; }
+      const outs = S.d ? S.d.all.filter((x) => x.flow === 'output') : [], ins = S.d ? S.d.all.filter((x) => x.flow === 'input') : [];
+      const devOpts = (l, def) => [{ value: '', label: `Default${def ? ` (${def.name})` : ''}` }].concat(optsFor(l));
+      const seen = new Set();
+      for (const x of list) {
+        let C = S.apps.get(x.app);
+        if (!C) { C = mkApp(x); S.apps.set(x.app, C); }
+        C.a = x; seen.add(x.app);
+        C.level.set({ label: x.name, value: x.level, help: [x.active ? 'Playing' : 'Not playing right now', x.muted ? 'Muted' : null].filter(Boolean).join(' · '), disabled: false, reason: null });
+        C.mute.set({ value: !!x.muted });
+        const ro = x.deviceWritable ? null : roText(x.deviceWhy || 'Windows did not say which device this app uses');
+        C.out.set({ options: devOpts(outs, S.out), value: x.output == null ? '' : x.output, disabled: !x.deviceWritable, reason: ro });
+        C.in.set({ options: devOpts(ins, S.in), value: x.input == null ? '' : x.input, disabled: !x.deviceWritable, reason: x.system ? null : ro });
+        C.in.el.style.display = x.system ? 'none' : '';
+      }
+      for (const key of [...S.apps.keys()]) if (!seen.has(key)) S.apps.delete(key);
+      mixBox.replaceChildren(...list.map((x) => S.apps.get(x.app).card));
+    }
+
+    let seq = 0;
+    async function update() {
+      const my = ++seq;
+      const [d, a] = await Promise.all([R(kit, 'sound'), R(kit, 'apps')]);
+      if (kit.disposed || my !== seq) return;
+      const bad = [];
+      for (const [name, fn] of [['devices', () => fillDevices(d)], ['mixer', () => fillApps(a)]]) {
+        try { fn(); } catch (e) { bad.push(`${name} (${(e && e.message) || e})`); }
+      }
+      errBox.replaceChildren(...(bad.length ? [kit.card(kit.reason(`Part of this page could not be drawn: ${bad.join('; ')}`))] : []));
+    }
+    kit.every(5000, update);
+    return update().then(() => ({ update, dispose() { if (S.mic) R(kit, 'micStop'); } }));
+  }
+
   /* ---------------------------------------------------------------- Storage (backend pending) */
   function renderPending(what) {
     return function (el, kit) {
@@ -859,7 +1095,34 @@
           { row: 'system.display.gpu.autoHdr', label: 'Auto HDR', keywords: 'auto hdr games' },
         ],
         render: renderDisplay },
-      { id: 'sound' },
+      { id: 'sound', title: 'Sound', icon: 'sound', help: 'Volume, output and input devices, mixer, spatial sound',
+        search: [
+          { row: 'sound.output', label: 'Output device', keywords: 'speakers headphones playback default device audio output choose where to play sound', uri: 'ms-settings:sound' },
+          { row: 'sound.volume', label: 'Volume', keywords: 'sound level loudness speaker master volume' },
+          { row: 'system.sound.mute', label: 'Mute', keywords: 'mute silence sound off' },
+          { row: 'system.sound.output.comms', label: 'Communications device', keywords: 'calls teams discord headset default communication device' },
+          { row: 'sound.input', label: 'Input device', keywords: 'microphone mic recording input speaking', uri: 'ms-settings:sound-defaultinputproperties' },
+          { row: 'system.sound.input.volume', label: 'Input volume', keywords: 'microphone volume mic level gain' },
+          { row: 'system.sound.input.comms', label: 'Communications microphone', keywords: 'calls microphone default communication' },
+          { row: 'system.sound.input.test', label: 'Test your microphone', keywords: 'mic test check microphone level listen' },
+          { row: 'sound.mixer', label: 'Volume mixer', keywords: 'app volume per app mixer apps sound output device per app', uri: 'ms-settings:apps-volume' },
+          { row: 'system.sound.mixer.reset', label: 'Reset sound devices and volumes for all apps', keywords: 'reset mixer app volume default' },
+          { row: 'system.sound.devices', label: 'All sound devices', keywords: 'sound devices enable disable audio devices list', uri: 'ms-settings:sound-devices' },
+          { row: 'system.sound.props', label: 'Sound device properties', keywords: 'properties speaker properties device settings', uri: 'ms-settings:sound-defaultoutputproperties' },
+          { row: 'system.sound.props.name', label: 'Rename a sound device', keywords: 'rename name device' },
+          { row: 'system.sound.props.enable', label: 'Enable or disable a sound device', keywords: 'disable enable device allow' },
+          { row: 'system.sound.props.format', label: 'Audio format', keywords: 'sample rate bit depth 44100 48000 96000 24 bit hz quality' },
+          { row: 'system.sound.props.enhancements', label: 'Audio enhancements', keywords: 'enhancements effects sysfx loudness equalizer apo' },
+          { row: 'system.sound.props.spatial', label: 'Spatial sound', keywords: 'spatial windows sonic dolby atmos dts headphone 3d surround' },
+          { row: 'system.sound.props.balance', label: 'Balance', keywords: 'left right channel balance' },
+          { row: 'system.sound.props.exclusive', label: 'Exclusive mode', keywords: 'exclusive control mode apps' },
+          { row: 'system.sound.props.exclusivePriority', label: 'Give exclusive mode apps priority', keywords: 'exclusive priority' },
+          { row: 'system.sound.props.test', label: 'Test sound', keywords: 'test tone play speaker check' },
+          { row: 'system.sound.props.listen', label: 'Listen to this device', keywords: 'listen monitor playback microphone through speakers' },
+          { row: 'system.sound.mono', label: 'Mono audio', keywords: 'mono combine channels one ear accessibility' },
+          { row: 'system.sound.ducking', label: 'Communications activity', keywords: 'ducking reduce volume other sounds calls communications' },
+        ],
+        render: renderSound },
       { id: 'notifications', title: 'Notifications', icon: 'notifications', help: 'Alerts from apps and system, Do not disturb, Focus',
         search: [
           { row: 'notifications.dnd', label: 'Do not disturb', keywords: 'quiet hours focus assist silence', uri: 'ms-settings:quiethours' },
