@@ -131,6 +131,7 @@ namespace Mantle {
     public static List<object> Build() {
       var found = new List<object>();
       var seen = new Dictionary<string, Apps.WinApp>(StringComparer.Ordinal);
+      var ownSeen = new Dictionary<string, OwnIconEntry>(StringComparer.Ordinal);   // OwnIcon's, rebuilt the same way
       int ownPid = Program.OwnPid;
       int parentPid = Program.ParentPid;
 
@@ -175,10 +176,21 @@ namespace Mantle {
           string exe = app.Exe;
           // A packaged app's icon comes from its PACKAGE, not from its exe
           // (which usually has none), and is cached by AUMID.
-          string icon = null;
-          if (app.Aumid != null && (app.Host == "frame" || Apps.IsPackagedPath(exe)))
+          string icon = null, iconFrom = null;
+          // Mantle's own APP windows (Mantle Settings, Mantle Task Manager) are electron.exe,
+          // whose exe icon is Electron's: their OWN icon is the right one (OwnIcon below).
+          if (Switcher.IsMantleApp(cls, title)) {
+            icon = OwnIcon(hwnd, key, ownSeen);
+            if (icon != null) iconFrom = "window";
+          }
+          if (icon == null && app.Aumid != null && (app.Host == "frame" || Apps.IsPackagedPath(exe))) {
             icon = Apps.IconFor(app.Aumid);
-          if (icon == null && exe.Length > 0) icon = Icons.ForPath(exe);
+            if (icon != null) iconFrom = "package";
+          }
+          if (icon == null && exe.Length > 0) {
+            icon = Icons.ForPath(exe);
+            if (icon != null) iconFrom = "exe";
+          }
 
           found.Add(Json.Obj(
             "hwnd", hwnd.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -192,7 +204,10 @@ namespace Mantle {
             "host", app.Host,
             "minimized", Win32.IsIconic(hwnd),
             "foreground", hwnd == Win32.GetForegroundWindow(),
-            "icon", icon));
+            "icon", icon,
+            // where the icon came from: "window" (its own, Mantle's app windows only),
+            // "package" (a Store app), "exe", or null (none)
+            "iconFrom", iconFrom));
         } catch (Exception ex2) {
           // One bad window must never truncate the list.
           Program.EmitLog("warn", "skipped a window while listing: " + ex2.Message);
@@ -202,7 +217,48 @@ namespace Mantle {
       Win32.EnumWindows(cb, IntPtr.Zero);
       GC.KeepAlive(cb);   // the delegate must outlive the unmanaged call
       _appCache = seen;   // windows that have closed drop out of the cache here
+      _ownIcons = ownSeen;
       return found;
+    }
+
+    // ------------------------------------------------------ a window's OWN icon
+    //
+    // Icons lane, 2026-09-28. Owen: "they need to have there own icons that replace windows
+    // icons not just be electron". Mantle Settings and Mantle Task Manager are electron.exe
+    // windows; BrowserWindow's `icon` gives each its own (Electron sends WM_SETICON), which is
+    // what Windows' own taskbar and Alt+Tab draw. So for THESE windows (Switcher.IsMantleApp:
+    // Chromium's class + the exact title) ask the window, not the exe:
+    //   WM_GETICON ICON_BIG, then ICON_SMALL2. NOT the class icon (GCLP_HICON): Chromium's
+    //   window class carries electron.exe's own icon, the very thing this replaces.
+    // Only these two windows: a WM_GETICON to every app on every rebuild would be a cross-process
+    // call per window per tick, and the list must never wait on another app's thread. The ask is
+    // SendMessageTimeout with SMTO_ABORTIFHUNG and 100 ms, cached per window once found; a window
+    // that has no icon yet is asked again at most every 2 s. The handle belongs to the window:
+    // never destroyed here (Icons.FromHIcon does not own it).
+    struct OwnIconEntry { public string Url; public int MissAt; }
+    static Dictionary<string, OwnIconEntry> _ownIcons = new Dictionary<string, OwnIconEntry>(StringComparer.Ordinal);
+
+    static string OwnIcon(IntPtr hwnd, string key, Dictionary<string, OwnIconEntry> seenNow) {
+      OwnIconEntry e;
+      int now = Environment.TickCount;
+      if (_ownIcons.TryGetValue(key, out e) && (e.Url != null || unchecked(now - e.MissAt) < 2000)) {
+        seenNow[key] = e;
+        return e.Url;
+      }
+      string url = null;
+      try {
+        const uint WM_GETICON = 0x007F, SMTO_ABORTIFHUNG = 0x0002;
+        IntPtr h = IntPtr.Zero, res;
+        if (Win32.SendMessageTimeoutW(hwnd, WM_GETICON, new IntPtr(1) /* ICON_BIG */, IntPtr.Zero, SMTO_ABORTIFHUNG, 100, out res) != IntPtr.Zero) h = res;
+        if (h == IntPtr.Zero && Win32.SendMessageTimeoutW(hwnd, WM_GETICON, new IntPtr(2) /* ICON_SMALL2 */, IntPtr.Zero, SMTO_ABORTIFHUNG, 100, out res) != IntPtr.Zero) h = res;
+        if (h != IntPtr.Zero) url = Icons.FromHIcon(h);
+      } catch (Exception) {
+        url = null;
+      }
+      e.Url = url;
+      e.MissAt = now;
+      seenNow[key] = e;
+      return url;
     }
 
     /// Cheap fingerprint of the things the bar renders. Icons are excluded

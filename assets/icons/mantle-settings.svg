@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Mantle Settings (Win+I). The master drawing, used for 32 px and up; 16-24 px use
+       mantle-settings-small.svg (the same drawing fitted to a 16 px grid). tools/make-icons.js
+       renders both into the .png / .ico files beside this one. Colours: the one theme,
+       ui/shared/glass-light.css (--lg-acc #4436E8 plate, --lg-acc-on white glyph, --lg-ink edge). -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5245EE"/>
+      <stop offset="1" stop-color="#3A2DD8"/>
+    </linearGradient>
+    <mask id="hole">
+      <rect width="256" height="256" fill="#fff"/>
+      <circle cx="128" cy="128" r="25" fill="#000"/>
+    </mask>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="54" fill="url(#plate)"/>
+  <rect x="16.75" y="16.75" width="222.5" height="222.5" rx="53.25" fill="none" stroke="#0B0E1A" stroke-opacity=".14" stroke-width="1.5"/>
+  <g fill="#FFFFFF" mask="url(#hole)">
+    <circle cx="128" cy="128" r="58"/>
+    <rect x="112" y="44" width="32" height="44" rx="8"/>
+    <rect x="112" y="44" width="32" height="44" rx="8" transform="rotate(45 128 128)"/>
+    <rect x="112" y="44" width="32" height="44" rx="8" transform="rotate(90 128 128)"/>
+    <rect x="112" y="44" width="32" height="44" rx="8" transform="rotate(135 128 128)"/>
+    <rect x="112" y="44" width="32" height="44" rx="8" transform="rotate(180 128 128)"/>
+    <rect x="112" y="44" width="32" height="44" rx="8" transform="rotate(225 128 128)"/>
+    <rect x="112" y="44" width="32" height="44" rx="8" transform="rotate(270 128 128)"/>
+    <rect x="112" y="44" width="32" height="44" rx="8" transform="rotate(315 128 128)"/>
+  </g>
+</svg>

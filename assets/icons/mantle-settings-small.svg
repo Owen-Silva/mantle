@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Mantle Settings, HINTED for 16-24 px (tools/make-icons.js): the master's plate and gear
+       drawn on a 16 px grid. Fewer, wider teeth and a bigger hole, so the gear still reads as a
+       gear at 16 px instead of a blurred disc. -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5245EE"/>
+      <stop offset="1" stop-color="#3A2DD8"/>
+    </linearGradient>
+    <mask id="hole">
+      <rect width="16" height="16" fill="#fff"/>
+      <circle cx="8" cy="8" r="1.6" fill="#000"/>
+    </mask>
+  </defs>
+  <rect x="1" y="1" width="14" height="14" rx="3.25" fill="url(#plate)"/>
+  <g fill="#FFFFFF" mask="url(#hole)">
+    <circle cx="8" cy="8" r="3.6"/>
+    <rect x="6.9" y="2.5" width="2.2" height="3" rx="0.5"/>
+    <rect x="6.9" y="2.5" width="2.2" height="3" rx="0.5" transform="rotate(60 8 8)"/>
+    <rect x="6.9" y="2.5" width="2.2" height="3" rx="0.5" transform="rotate(120 8 8)"/>
+    <rect x="6.9" y="2.5" width="2.2" height="3" rx="0.5" transform="rotate(180 8 8)"/>
+    <rect x="6.9" y="2.5" width="2.2" height="3" rx="0.5" transform="rotate(240 8 8)"/>
+    <rect x="6.9" y="2.5" width="2.2" height="3" rx="0.5" transform="rotate(300 8 8)"/>
+  </g>
+</svg>

@@ -190,6 +190,13 @@
     foot.appendChild(row(item.name || 'App', iconBox(item.icon, null, (item.name || '?').charAt(0).toUpperCase()), function () {
       run('Starting ' + item.name, api.openFresh(item, cur.app));
     }, 'app'));
+    // 2b. Mantle Settings / Task Manager (and a pin of Windows' own they stand in for): Windows' own
+    // version stays one click away (icons lane, 2026-09-28; main's bar.open {windows:true})
+    if (item.mantleApp && item.standsInFor) {
+      foot.appendChild(row(item.standsInFor, iconBox(null, GLYPH.task), function () {
+        run('Opening ' + item.standsInFor, api.callR('bar.open', { id: item.id, windows: true }));
+      }, 'windows-own'));
+    }
     // 3. Mantle's own pinned list
     var pinned = item.kind === 'pinned';
     foot.appendChild(row(pinned ? 'Unpin from taskbar' : 'Pin to taskbar', iconBox(null, pinned ? GLYPH.unpin : GLYPH.pin), function () {

@@ -1375,6 +1375,13 @@ async function main() {
       !('icon' in w) || (w.icon !== null && typeof w.icon !== 'string'));
     check('every window entry has the full shape', bad.length === 0,
       bad.length ? JSON.stringify(bad[0]).slice(0, 200) : '');
+    // icons lane (2026-09-28): where each icon came from. "window" (its OWN, WM_GETICON) is only
+    // ever asked of Mantle's app windows (Switcher.IsMantleApp), never of anyone else's.
+    const badFrom = list.filter((w) => !('iconFrom' in w) ||
+      ![null, 'window', 'package', 'exe'].includes(w.iconFrom) || (w.icon === null) !== (w.iconFrom === null) ||
+      (w.iconFrom === 'window' && !/^Mantle (Settings|Task Manager|Files)$/.test(w.title)));
+    check('every window says where its icon came from (window = Mantle app windows only)', badFrom.length === 0,
+      badFrom.length ? 'iconFrom ' + badFrom[0].iconFrom + ' on an entry with ' + (badFrom[0].icon ? 'an' : 'no') + ' icon' : '');
 
     // exe + pid are what the launcher groups by and what `lnk` targets are
     // matched against, so they are checked by name and not only as part of the

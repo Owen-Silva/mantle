@@ -410,6 +410,10 @@
     /* An icon that is missing must say WHY on the item itself: a blank tile with no explanation is
        the silent failure this shell refuses. */
     if (!it.icon) tip += '\n(no icon: ' + (it.iconReason || 'the sidecar gave no reason') + ')';
+    /* Mantle's own app (Mantle Settings / Task Manager), and a pin of Windows' own that it stands in
+       for (icons lane, 2026-09-28): say so, where Windows' own is, and why a click would open Windows'. */
+    if (it.mantleApp && it.standsInFor) tip += '\n(' + (it.kind === 'pinned' ? 'Mantle\'s, in place of ' + it.standsInFor + '; ' : '') + 'right-click: ' + it.standsInFor + ')';
+    if (it.standInReason) tip += '\n(' + it.standInReason + ')';
     if (wins.length > 1) tip += '\n(right-click: the window list)';
     if (it.kind === 'pinned') tip += '\n(middle-click: new window)';
     /* While this icon's window flyout is up the tooltip is held back (b._fly): Chromium's tooltip
@@ -1160,6 +1164,7 @@
     }
     act('bar.open', { id: b.dataset.id }, 'open').then(function (r) {
       if (r && r.action === 'list') openAppPop(b, b._item);
+      fellBack(r);
     });
   });
 
@@ -1172,8 +1177,18 @@
     if (!b) return;
     ev.preventDefault();
     closePop();
-    act('bar.open', { id: b.dataset.id, fresh: true }, 'open');
+    act('bar.open', { id: b.dataset.id, fresh: true }, 'open').then(fellBack);
   });
+
+  /* Mantle Settings / Task Manager could not open (off, resting for a game): main opened WINDOWS'
+     own instead and says why (r.fellBack). Said on the strip for a few seconds, never swallowed. */
+  var fellBackTimer = 0;
+  function fellBack(r) {
+    if (!r || !r.fellBack) return;
+    fail('fellback', String(r.reason || 'opened Windows\' own').split(':')[0], String(r.fellBack), '');
+    clearTimeout(fellBackTimer);
+    fellBackTimer = setTimeout(function () { clearFail('fellback'); }, 8000);
+  }
 
   /* RIGHT CLICK = Windows 11's taskbar menu (lane jumplist, 2026-09-24; Owen: "right click the apps
      on the taskbar and have the same options regular windows shows"): the app's jump list, the app
@@ -1196,7 +1211,8 @@
         refreshPinned: refreshPinned,
         // pinned: the pin's own shortcut, like a middle-click; running only: the shortcut Windows would use
         openFresh: function (item, app) {
-          return item.kind === 'pinned' ? callR('bar.open', { id: item.id, fresh: true })
+          // (Mantle's own apps open through main too: a running-only one has no shortcut to start)
+          return item.kind === 'pinned' || item.mantleApp ? callR('bar.open', { id: item.id, fresh: true })
             : callR('jumplist.open', { app: app, item: 'app' });
         },
       });

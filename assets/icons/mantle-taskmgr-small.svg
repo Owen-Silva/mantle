@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Mantle Task Manager, HINTED for 16-24 px (tools/make-icons.js): the master's plate and
+       pulse drawn on a 16 px grid, the flat runs on a pixel row and the stroke 1.5 px, so the
+       line stays one crisp mark at 16 px. -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5245EE"/>
+      <stop offset="1" stop-color="#3A2DD8"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="14" height="14" rx="3.25" fill="url(#plate)"/>
+  <polyline points="3.25,8.5 5.1,8.5 6.5,4.5 9,12.25 10.4,7 11.25,8.5 12.75,8.5"
+    fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

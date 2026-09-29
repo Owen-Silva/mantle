@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Mantle Task Manager (Ctrl+Shift+Esc). The master drawing, used for 32 px and up; 16-24 px
+       use mantle-taskmgr-small.svg (the same drawing fitted to a 16 px grid). tools/make-icons.js
+       renders both into the .png / .ico files beside this one. The same plate as Mantle Settings
+       (--lg-acc #4436E8, white glyph): one family, told apart by the glyph, an activity pulse. -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5245EE"/>
+      <stop offset="1" stop-color="#3A2DD8"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="54" fill="url(#plate)"/>
+  <rect x="16.75" y="16.75" width="222.5" height="222.5" rx="53.25" fill="none" stroke="#0B0E1A" stroke-opacity=".14" stroke-width="1.5"/>
+  <polyline points="52,136 90,136 110,84 142,180 164,112 178,136 204,136"
+    fill="none" stroke="#FFFFFF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

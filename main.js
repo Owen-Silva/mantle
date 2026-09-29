@@ -2277,7 +2277,7 @@ const MANTLE_TITLES = new Set(['mantle bar', 'mantle desktop', 'mantle launcher'
   'mantle task view', 'mantle volume', 'mantle clipboard', 'mantle snap', 'mantle screenshot', 'mantle top bar']);
 // Mantle's APP windows (lane settings, 2026-09-28): windows Owen works in like any app's, listed on
 // the bar and in Alt+Tab (the sidecar's Switcher.IsMantleApp lets the same exact titles through).
-const MANTLE_APP_TITLES = new Set(['Mantle Settings', 'Mantle Task Manager']);
+const MANTLE_APP_TITLES = new Set(['Mantle Settings', 'Mantle Task Manager', 'Mantle Files']);
 function isMantleWindow(w) {
   if (!w) return false;
   const exe0 = w.exe ? path.basename(String(w.exe)).toLowerCase() : '';
@@ -2286,8 +2286,38 @@ function isMantleWindow(w) {
   const exe = w.exe ? path.basename(String(w.exe)).toLowerCase() : '';
   return exe === 'electron.exe' && MANTLE_TITLES.has(String(w.title || '').trim().toLowerCase());
 }
+/*
+ * MANTLE'S APP WINDOWS AS APPS (icons lane, 2026-09-28). Owen: "they need to have there own icons
+ * that replace windows icons not just be electron". Mantle Settings and Mantle Task Manager are
+ * electron.exe windows, so they came in with electron.exe's icon and, with no AUMID, grouped under
+ * one electron.exe key (with each other, and with any other Electron app that has none).
+ * lib/mantle-apps.js knows them; here each one gets, where the list comes IN:
+ *   - an AUMID: its own per-window one (setAppDetails 'Mantle.Settings' / 'Mantle.TaskManager',
+ *     read by the sidecar), else that same id filled in from the exact title, so groupRunning keys
+ *     each app on its own and the two never merge with each other or with electron.exe;
+ *   - its icon: the window's OWN (the sidecar asks the window, iconFrom 'window'), else Mantle's
+ *     file from assets/icons, never electron.exe's (iconFrom 'exe');
+ *   - mantleApp: 'settings' | 'taskmgr', which buildPinned, launchItem and the bar key on.
+ */
+let mantleApps = null;
+try { mantleApps = require('./lib/mantle-apps'); } catch (err) { process.stderr.write(`mantle: lib/mantle-apps.js did not load (${err.message}): Mantle Settings / Task Manager show as Electron\n`); }
+function markMantleApp(w) {
+  const key = mantleApps && w ? mantleApps.forWindow(w) : null;
+  if (!key) return w;
+  const a = mantleApps.APPS[key];
+  const own = w.icon && w.iconFrom === 'window';
+  const file = own ? null : mantleApps.iconOf(key, 32);
+  return Object.assign({}, w, {
+    aumid: w.aumid || a.aumid,
+    mantleApp: key,
+    // a missing file is NO icon with its reason (the bar says it), never electron.exe's quietly
+    icon: own ? w.icon : (file.icon || null),
+    iconFrom: own ? 'window' : (file.icon ? 'mantle' : null),
+    iconReason: own || file.icon ? null : file.reason,
+  });
+}
 function withoutMantle(list) {
-  return Array.isArray(list) ? list.filter((w) => !isMantleWindow(w)) : [];
+  return Array.isArray(list) ? list.filter((w) => !isMantleWindow(w)).map(markMantleApp) : [];
 }
 
 /** The running windows, grouped one bucket per exe, in the sidecar's order. */
@@ -2312,6 +2342,7 @@ function groupRunning(list) {
     let g = groups.get(key);
     if (!g) {
       g = { key, aumid, exe, exeRaw: w.exe || null, host: w.host || null, icon: w.icon || null, title: w.title || '', windows: [] };
+      if (w.mantleApp) { g.mantleApp = w.mantleApp; g.iconReason = w.iconReason || null; }
       groups.set(key, g);
     }
     if (!g.icon && w.icon) g.icon = w.icon;
@@ -2409,8 +2440,41 @@ async function buildPinned() {
   const claimExe = (v) => { if (v) claimed.add('e:' + v); };
   const isClaimed = (g) => !!((g.aumid && claimed.has('a:' + g.aumid)) || (g.exe && claimed.has('e:' + g.exe)));
 
+  /* A pin of WINDOWS' Settings or Task Manager (icons lane, 2026-09-28): Mantle's version stands in
+     for it, the way Win+I and Ctrl+Shift+Esc already open Mantle's. The pin keeps its place and its
+     shortcut (nothing about which pins exist changes, and Windows' pin data is never written); it
+     shows Mantle's icon and name, gathers Mantle's windows, opens Mantle's (launchItem), and its
+     right-click menu keeps "Windows Settings" / "Windows Task Manager" (ui/bar/jumplist.js). */
+  const featureList = (() => { try { return features ? features.list() : []; } catch (_) { return []; } })();
   for (const pin of pins) {
     if (!pin) continue;
+    const stand = mantleApps ? mantleApps.standInFor(pin) : null;
+    if (stand) {
+      const a = mantleApps.APPS[stand];
+      const mine = a.aumid.toLowerCase();
+      if (claimed.has('a:' + mine)) continue;
+      claimAumid(mine);
+      const g = byAumid.get(mine) || null;
+      const ico = mantleApps.iconOf(stand, 32);
+      const avail = mantleApps.availability(stand, featureList);
+      const id = String(pin.id || pin.lnkPath || pin.name || `pin:${items.length}`);
+      pinById.set(id, pin);
+      items.push({
+        id,
+        name: a.title,
+        kind: 'pinned',
+        exe: pin.exe ? String(pin.exe).toLowerCase() : null,
+        aumid: mine,
+        icon: ico.icon || (g && g.icon) || null,
+        iconReason: ico.icon ? null : ico.reason,
+        mantleApp: stand,
+        standsInFor: a.windowsName,
+        // said on the icon while Mantle's cannot open (off, resting for a game): a click opens Windows'
+        standInReason: avail.ok ? null : `${avail.reason}, so this opens ${a.windowsName}`,
+        windows: g ? g.windows : [],
+      });
+      continue;
+    }
     const pinAumid = pin.aumid ? String(pin.aumid).toLowerCase() : null;
     const exe = pin.exe ? String(pin.exe).toLowerCase() : null;
     // one Item per app, first pin wins
@@ -2450,17 +2514,19 @@ async function buildPinned() {
   // 3. Everything running that no pin claimed, in the order Windows enumerated it.
   for (const [key, g] of groups) {
     if (isClaimed(g)) continue;
-    const ico = g.icon ? { icon: g.icon, reason: null } : await iconFor([g.exeRaw]);
-    items.push({
+    // Mantle's app windows (markMantleApp): never electron.exe's icon, and named as themselves
+    const ico = g.icon ? { icon: g.icon, reason: null }
+      : g.mantleApp ? { icon: null, reason: g.iconReason || 'Mantle\'s icon file is missing' } : await iconFor([g.exeRaw]);
+    items.push(Object.assign({
       id: `running:${key}`,
-      name: nameForExe(g.exeRaw, g.title),
+      name: g.mantleApp ? mantleApps.APPS[g.mantleApp].title : nameForExe(g.exeRaw, g.title),
       kind: 'running',
       exe: g.exe,
       aumid: g.aumid || null,
       icon: ico.icon,
       iconReason: ico.icon ? null : ico.reason,
       windows: g.windows,
-    });
+    }, g.mantleApp ? { mantleApp: g.mantleApp, standsInFor: mantleApps.APPS[g.mantleApp].windowsName } : {}));
   }
 
   /* TEST ONLY: --test-dock-extra=N adds N filler cells (2026-09-22). The dock's squeeze -- the
@@ -2540,7 +2606,67 @@ function spotifyQueueOn() {
   }
 }
 
+/*
+ * Mantle Settings / Mantle Task Manager from the bar (icons lane, 2026-09-28): a stand-in pin for
+ * Windows' app, or Mantle's running entry. Opened the way the launcher opens them (lib/launcher-
+ * index.js): Settings through app 'mantle-open' with a reply object that lib/features/settings.js
+ * fills in, the task manager on its own 'mantle-open:taskmgr' event, which it listens to only
+ * while on and awake. Not opened (off, resting for a game, not loaded) = WINDOWS' own opens, and
+ * the answer carries fellBack, the reason, which the bar shows. --test only says what it would do.
+ */
+async function openMantleApp(item, via) {
+  const key = item.mantleApp;
+  const a = mantleApps.APPS[key];
+  const avail = mantleApps.availability(key, (() => { try { return features ? features.list() : []; } catch (_) { return []; } })());
+  if (flags.test) {
+    const reason = `dry run: would open ${a.title}${avail.ok ? '' : ` -- but ${avail.reason}, so ${a.windowsName} would open`}`;
+    process.stdout.write(`mantle: launch dry run (--test): ${reason}\n`);
+    return { ok: true, reason, action: 'dry-run', dryRun: true, fellBack: avail.ok ? null : avail.reason };
+  }
+  let why = null;
+  if (key === 'settings') {
+    const reply = { handled: false, ok: false, reason: null };
+    app.emit('mantle-open', 'settings', { section: null, row: null, uri: 'ms-settings:', via, reply });
+    if (reply.handled && reply.ok) return { ok: true, reason: null, action: 'launched', mantleApp: key };
+    why = reply.handled ? (reply.reason || `${a.title} did not open and did not say why`) : (avail.ok ? `${a.title} is not running` : avail.reason);
+  } else {
+    // the task manager (and any later app window) listens on its OWN event only while on and awake
+    const ev = `mantle-open:${key}`;
+    if (app.listenerCount(ev) > 0) {
+      app.emit(ev, key === 'taskmgr' ? 'apps' : { via });
+      return { ok: true, reason: null, action: 'launched', mantleApp: key };
+    }
+    why = avail.ok ? `${a.title} is off or resting while a game runs` : avail.reason;
+  }
+  const r = await openWindowsOwn(item);
+  if (!r.ok) return { ok: false, reason: `${why}, and ${a.windowsName} did not open either: ${r.reason}` };
+  process.stdout.write(`mantle: ${a.title} could not open (${why}): opened ${a.windowsName}\n`);
+  return Object.assign(r, { reason: `opened ${a.windowsName}: ${why}`, fellBack: why });
+}
+
+/** Windows' own Settings / Task Manager for a Mantle app item: the stand-in pin's own shortcut, else Windows' target. */
+async function openWindowsOwn(item) {
+  const a = mantleApps.APPS[item.mantleApp];
+  const pin = pinById.get(item.id);
+  const target = (pin && (pin.lnkPath || pin.target)) || a.windowsTarget;
+  if (flags.test) {
+    process.stdout.write(`mantle: launch dry run (--test): would open ${a.windowsName} (${target})\n`);
+    return { ok: true, reason: `dry run: would open ${a.windowsName} (${target})`, action: 'dry-run', dryRun: true };
+  }
+  try {
+    if (/^ms-settings:/i.test(target)) await shell.openExternal(target);
+    else {
+      const err = await shell.openPath(String(target));
+      if (err) return { ok: false, reason: `Windows would not open ${target}: ${err}` };
+    }
+    return { ok: true, reason: null, action: 'launched', path: String(target) };
+  } catch (err) {
+    return { ok: false, reason: `Windows would not open ${target}: ${err.message}` };
+  }
+}
+
 async function launchItem(item, fresh) {
+  if (item && item.mantleApp && mantleApps) return openMantleApp(item, item.kind === 'pinned' ? 'the pinned icon' : 'the bar');
   const pin = pinById.get(item.id);
   const lnk = pin && (pin.lnkPath || pin.target || pin.exe);
   const aumid = (pin && pin.aumid) || item.aumid || null;
@@ -3596,6 +3722,11 @@ const COMMANDS = {
      *                                 with the windows and touches no window at
      *                                 all; the bar opens its own window list.
      */
+    // "Windows Settings" / "Windows Task Manager" on a Mantle app's right-click menu (ui/bar/jumplist.js)
+    if (a && a.windows) {
+      if (!item.mantleApp || !mantleApps) return { ok: false, reason: `${item.name} is not one of Mantle's apps, so it has no Windows version to open` };
+      return openWindowsOwn(item);
+    }
     const fresh = !!(a && a.fresh);
     const wins = Array.isArray(item.windows) ? item.windows : [];
     // One line per click, so a click that "did nothing" can be read back from the log.
