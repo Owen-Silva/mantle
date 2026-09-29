@@ -361,6 +361,7 @@
 
   var cells = Object.create(null);     // id -> cell element, so updates reuse the DOM
   var items = [];                      // the last items[] as given, for the per-window popover
+  var dragQuiet = false;               // no tooltip or flyout while an icon is dragged (DRAG TO REORDER)
   var divEl = document.createElement('span');
   divEl.className = 'div';
   divEl.setAttribute('aria-hidden', 'true');
@@ -381,6 +382,7 @@
     b.type = 'button';
     b.className = 'cell';
     b.dataset.key = key;
+    if (dragQuiet) b._fly = true;      // born during a drag's quiet: its tooltip waits too (dragQuietOn)
     var ico = document.createElement('span'); ico.className = 'ico';
     var ind = document.createElement('span'); ind.className = 'ind';   // the running line, see bar.css
     b.appendChild(ico); b.appendChild(ind);
@@ -419,7 +421,7 @@
     /* While this icon's window flyout is up the tooltip is held back (b._fly): Chromium's tooltip
        is a window of its own and would open on top of the live previews. It comes back on close. */
     b._tip = tip;
-    var shown = b._fly ? '' : tip;
+    var shown = (b._fly || dragQuiet) ? '' : tip;   // and while an icon is dragged (DRAG TO REORDER)
     if (b.title !== shown) { b.title = shown; b.setAttribute('aria-label', name); }
 
     var ico = b.firstChild;
@@ -460,6 +462,8 @@
   }
 
   function renderDock(res) {
+    // mid-drag the DOM order is the drag's: the reply waits for the drop (dragCommit renders it)
+    if (dragBusy()) { dragPending = res; return; }
     if (!res || typeof res !== 'object') {
       fail('pinned', 'apps off', 'bar.pinned replied ' + (res === null ? 'null' : typeof res) + ' instead of {ok, reason, items}', 'warn');
       return;
@@ -483,7 +487,7 @@
     } else {
       clearFail('pinned');
     }
-    items = res.items;
+    items = orderKept(res.items);      // a just-dropped order stays until main's replies carry it
 
     var seen = Object.create(null), prev = null, divPlaced = false;
     items.forEach(function (it, i) {
@@ -809,6 +813,7 @@
   }
 
   function flyCellEnter(b) {
+    if (dragQuiet || dragBusy()) return;    // nothing opens during a drag or on the icon just dropped
     flyHover = b;
     flyCancelLeave();
     if (flyDwell) { clearTimeout(flyDwell); flyDwell = 0; }
@@ -1231,6 +1236,253 @@
     if (fly && popKey === popKeyOf(b)) { fly.by = 'click'; return; }
     openAppPop(b, b._item);
   });
+
+  /* ================================================================= drag to reorder
+
+     Owen, 2026-09-29: "i also need to be able to drag apps on the taskbar to move then into a
+     differetn order". Windows 11's way: press an icon and move it; past DRAG_PX it lifts and
+     follows the pointer along the strip while the others slide aside (transforms only, so a frame
+     is a composite, never a layout: every rectangle is read ONCE, at the lift), and letting go puts
+     it there. Leaving the bar, Esc (when the bar has the keyboard, which it rarely does: it is
+     focusable:false) or the pointer being taken away cancels, and it springs back. A press that
+     never passes DRAG_PX is the click it always was; a drag never ends in one (its click is
+     swallowed, so a drop never opens the app).
+     An icon moves within its own group: pinned among the pins, running-only among the running
+     (a running app dropped among the pins would need a pin to remember its place by).
+     Pinned order: jumplist.order saves it in Mantle's OWN pin list (never Windows' pins) and
+     main.js buildPinned applies it, so it survives a restart. Running-only order: main keeps it
+     for this session. A save that fails springs back and says why on the strip.
+     While lifted, and until the pointer leaves the icon it let go on, no tooltip or flyout opens
+     and a right-click opens no jump list. */
+  var DRAG_PX = 5;              // a press that moves less is a click
+  var DRAG_OUT = 24;            // px past the bar's edge that cancels
+  var SETTLE_MS = 150;          // the dropped icon's glide into its slot (matches bar.css .settle)
+  var ORDER_HOLD_MS = 4000;     // how long a dropped order outranks replies built before its save
+  var drag = null;              // the press, then the lift (dragLift), until the button comes up
+  var dragSettle = 0;           // the glide is running: renders wait for dragCommit
+  var dragPending = null;       // a bar.pinned reply that arrived mid-drag
+  var dragSwallow = 0;          // until then, the click that ends a drag is swallowed
+  var dragQuietCell = null;     // the quiet lasts until the pointer leaves this icon
+  var orderWant = null;         // { kind, ids, until }: the order just dropped
+  var orderFailTimer = 0;
+
+  function dragBusy() { return !!((drag && drag.lifted && !drag.ended) || dragSettle); }
+  function kindOf(it) { return it && it.kind === 'running' ? 'running' : 'pinned'; }
+  /* The icons of one group, in the order they stand on the strip. */
+  function groupCells(kind) {
+    var out = [];
+    for (var n = el.dock.firstChild; n; n = n.nextSibling) {
+      if (n._item && n.classList.contains('cell') && kindOf(n._item) === kind) out.push(n);
+    }
+    return out;
+  }
+
+  /* A reply built before the drop's save landed still has the old order: the dropped one is kept
+     over it for ORDER_HOLD_MS (or until a failed save gives it up), so an icon never hops back and
+     forth. Items the dropped order does not name keep their own places, after it. */
+  function orderKept(list) {
+    var w = orderWant;
+    if (!w || !Array.isArray(list)) return list;
+    if (Date.now() > w.until) { orderWant = null; return list; }
+    var rank = Object.create(null);
+    w.ids.forEach(function (id, i) { rank[id] = i; });
+    var mine = list.filter(function (it) { return it && kindOf(it) === w.kind; });
+    var sorted = mine.map(function (it, i) {
+      var id = String(it.id);
+      return { it: it, r: id in rank ? rank[id] : w.ids.length + i };
+    }).sort(function (a, b) { return a.r - b.r; }).map(function (x) { return x.it; });
+    var same = true;
+    for (var i = 0; i < sorted.length; i++) if (sorted[i] !== mine[i]) { same = false; break; }
+    if (same) return list;
+    var k = 0;
+    return list.map(function (it) { return it && kindOf(it) === w.kind ? sorted[k++] : it; });
+  }
+
+  /* The tooltips are held back the way an open flyout holds its icon's back: b._fly, which
+     ontop.js's repaint honours too (it would otherwise write the title straight back). The drag
+     closes any flyout first, so no cell's _fly means "flyout" while the quiet lasts. */
+  function dragQuietOn() {
+    dragQuiet = true;
+    Object.keys(cells).forEach(function (k) { cells[k]._fly = true; if (cells[k].title) cells[k].title = ''; });
+  }
+  function dragQuietOff() {
+    if (!dragQuiet) return;
+    dragQuiet = false;
+    dragQuietCell = null;
+    Object.keys(cells).forEach(function (k) {
+      var c = cells[k];
+      if (fly && fly.cell === c) return;          // a flyout opened since (a click): it keeps its hold
+      c._fly = false;
+      updateCell(c, c._item);                     // the title back, with ontop.js's line if it has one
+    });
+  }
+
+  function dragLift() {
+    var d = drag, b = d.b;
+    d.lifted = true;
+    d.kind = kindOf(b._item);
+    d.list = groupCells(d.kind);
+    d.from = d.to = d.list.indexOf(b);
+    // the one layout read of the whole drag
+    d.slots = d.list.map(function (c) { return c.getBoundingClientRect().left; });
+    d.pitch = d.slots.length > 1 ? (d.slots[1] - d.slots[0]) || (CELL + GAP) : CELL + GAP;
+    var dock = el.dock.getBoundingClientRect();
+    // within its group, and never under the dock's clipped edge
+    d.min = Math.max(d.slots[0], dock.left) - d.slots[d.from];
+    d.max = Math.min(d.slots[d.slots.length - 1], dock.right - CELL) - d.slots[d.from];
+    if (d.max < d.min) d.max = d.min = 0;
+    d.bar = el.bar.getBoundingClientRect();
+    // nothing opens on top of a drag, and what was open closes
+    if (flyDwell) { clearTimeout(flyDwell); flyDwell = 0; }
+    if (popKey) closePop();
+    dragQuietOn();
+    try { b.setPointerCapture(d.pid); } catch (_) { /* a pointer that is already gone: the window listeners still follow it */ }
+    el.dock.classList.add('dragging');
+    b.classList.add('lifted');
+  }
+
+  /* Pointer moves are coalesced to one write per frame: the lifted icon's translate, and the
+     neighbours' shift only when the slot it would land in changes. */
+  function dragFrame() {
+    var d = drag;
+    if (d.raf) return;
+    d.raf = requestAnimationFrame(function () {
+      d.raf = 0;
+      if (d.ended) return;
+      var dx = Math.max(d.min, Math.min(d.max, d.x - d.x0));
+      d.b.style.transform = 'translateX(' + dx + 'px)';
+      var to = Math.max(0, Math.min(d.list.length - 1, d.from + Math.round(dx / d.pitch)));
+      if (to !== d.to) { d.to = to; dragShift(d); }
+    });
+  }
+  function dragShift(d) {
+    d.list.forEach(function (c, i) {
+      if (i === d.from) return;
+      var s = (d.to > d.from && i > d.from && i <= d.to) ? -d.pitch
+        : (d.to < d.from && i >= d.to && i < d.from) ? d.pitch : 0;
+      if ((c._shift || 0) === s) return;
+      c._shift = s;
+      c.style.transform = s ? 'translateX(' + s + 'px)' : '';
+    });
+  }
+
+  /* Let go (or cancel): glide into the slot, then put the icon there in the DOM in one frame with
+     no transition, so what is on screen does not move when the transforms come off. */
+  function dragDrop(cancel) {
+    var d = drag;
+    if (!d || d.ended) return;
+    d.ended = true;
+    if (d.raf) { cancelAnimationFrame(d.raf); d.raf = 0; }
+    if (!d.lifted) return;
+    try { if (d.b.hasPointerCapture && d.b.hasPointerCapture(d.pid)) d.b.releasePointerCapture(d.pid); } catch (_) { /* already released */ }
+    if (cancel) { d.to = d.from; dragShift(d); }
+    d.b.classList.add('settle');
+    d.b.style.transform = 'translateX(' + (d.slots[d.to] - d.slots[d.from]) + 'px)';
+    dragSettle = setTimeout(function () { dragCommit(d); }, SETTLE_MS);
+  }
+
+  function dragCommit(d) {
+    dragSettle = 0;
+    el.dock.classList.add('no-anim');
+    if (d.to !== d.from) {
+      var ref = d.list[d.to];
+      el.dock.insertBefore(d.b, d.to > d.from ? ref.nextSibling : ref);
+    }
+    d.list.forEach(function (c) { c._shift = 0; c.style.transform = ''; });
+    d.b.classList.remove('lifted', 'settle');
+    el.dock.classList.remove('dragging');
+    // transitions come back once a frame has been drawn without them
+    requestAnimationFrame(function () { requestAnimationFrame(function () { el.dock.classList.remove('no-anim'); }); });
+    // quiet until the pointer leaves the icon it is on now; that icon opens no flyout until then
+    var under = document.elementFromPoint(d.x, d.y);
+    dragQuietCell = under && under.closest ? under.closest('.cell') : null;
+    if (dragQuietCell) dragQuietCell._noFly = true;
+    if (d.to !== d.from) orderSave(d.kind, d.from, d.to);
+    if (dragPending) { var p = dragPending; dragPending = null; renderDock(p); }
+  }
+
+  function orderSave(kind, from, to) {
+    var ids = groupCells(kind).map(function (c) { return c.dataset.id; });
+    orderWant = { kind: kind, ids: ids, until: Date.now() + ORDER_HOLD_MS };
+    callR('jumplist.order', { group: kind, ids: ids, from: from, to: to }).then(function () {
+      clearFail('order');
+      orderRefresh();
+    }, function (e) {
+      // spring back to the order main has, and say why (no app name: this line reaches the log too)
+      orderWant = null;
+      fail('order', 'order not saved', 'The ' + (kind === 'running' ? 'running' : 'pinned') + ' apps\' new order was not saved, so they went back: ' + msg(e), 'warn');
+      clearTimeout(orderFailTimer);
+      orderFailTimer = setTimeout(function () { clearFail('order'); }, 20000);
+      orderRefresh();
+    });
+  }
+  function orderRefresh() { if (pinInFlight) setTimeout(orderRefresh, 120); else refreshPinned(); }
+
+  el.dock.addEventListener('pointerdown', function (ev) {
+    // a press or a finished drag whose button-up never came is over now; a stuck lift springs back
+    if (drag && (drag.ended || !drag.lifted)) drag = null;
+    if (drag) { dragDrop(true); drag = null; }
+    if (dragSettle || ev.button !== 0 || !ev.isPrimary) return;
+    var b = cellOf(ev);
+    if (!b || !b._item) return;
+    drag = { b: b, pid: ev.pointerId, x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY, lifted: false, ended: false, raf: 0 };
+  });
+  window.addEventListener('pointermove', function (ev) {
+    var d = drag;
+    if (!d || d.ended || ev.pointerId !== d.pid) return;
+    if (ev.pointerType === 'mouse' && !(ev.buttons & 1)) {   // the button came up where this page never heard it
+      if (d.lifted) dragDrop(true);
+      drag = null;
+      return;
+    }
+    d.x = ev.clientX; d.y = ev.clientY;
+    if (!d.lifted) {
+      if (Math.abs(d.x - d.x0) < DRAG_PX && Math.abs(d.y - d.y0) < DRAG_PX) return;
+      dragLift();
+    }
+    var r = d.bar;
+    if (d.x < r.left - DRAG_OUT || d.x > r.right + DRAG_OUT || d.y < r.top - DRAG_OUT || d.y > r.bottom + DRAG_OUT) {
+      dragDrop(true);                               // dragged out of the bar: back it goes
+      return;
+    }
+    dragFrame();
+  });
+  function dragUp(ev) {
+    var d = drag;
+    if (!d || ev.pointerId !== d.pid) return;
+    if (d.lifted) {
+      if (!d.ended) dragDrop(ev.type !== 'pointerup');
+      dragSwallow = Date.now() + 400;
+    }
+    drag = null;
+  }
+  window.addEventListener('pointerup', dragUp, true);
+  window.addEventListener('pointercancel', dragUp, true);
+  el.dock.addEventListener('lostpointercapture', function (ev) {
+    if (drag && drag.lifted && !drag.ended && ev.pointerId === drag.pid) dragDrop(true);
+  });
+  window.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Escape' || !dragBusy() || !drag || drag.ended) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    dragDrop(true);
+  }, true);
+  // the click that ends a drag, and a right-click in the middle of one, do nothing
+  el.dock.addEventListener('click', function (ev) {
+    if (Date.now() >= dragSwallow) return;
+    dragSwallow = 0;
+    ev.stopImmediatePropagation();
+    ev.preventDefault();
+  }, true);
+  el.dock.addEventListener('contextmenu', function (ev) {
+    if (!dragBusy()) return;
+    ev.stopImmediatePropagation();
+    ev.preventDefault();
+  }, true);
+  el.dock.addEventListener('pointerover', function (ev) {
+    if (dragQuiet && !dragBusy() && cellOf(ev) !== dragQuietCell) dragQuietOff();
+  });
+  el.bar.addEventListener('mouseleave', function () { if (dragQuiet && !dragBusy()) dragQuietOff(); });
 
   /* TEST HOOK (--test only: main sends this only in test mode). Opens the flyout of the first
      running app whose name or exe contains `match`, through the same openFly the hover dwell uses,

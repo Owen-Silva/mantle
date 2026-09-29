@@ -2436,6 +2436,7 @@ async function buildPinned() {
   // 1. The running apps. lastWindows is pushed by the sidecar; if nothing has
   //    arrived yet, ask once rather than render an empty bar on first paint.
   let running = lastWindows;
+  let runningRead = true;   // false = the list below is not the truth, so the dragged order keeps every app in it
   if (!running.length) {
     try {
       const listed = await sidecar.call('windows', {}, 4000);
@@ -2444,6 +2445,7 @@ async function buildPinned() {
     } catch (err) {
       problems.push(`the running apps could not be read: ${err.message}`);
       running = [];
+      runningRead = false;
     }
   }
   const groups = groupRunning(running);
@@ -2613,7 +2615,8 @@ async function buildPinned() {
   return {
     ok: !problems.length,
     reason: said.length ? said.join('; ') : null,
-    items,
+    // the running-only apps in the order they were dragged to this session (lane bardrag, jumplist.order)
+    items: require('./lib/features/_jumplist-pins').orderRunning(items, { prune: runningRead }),
   };
 }
 

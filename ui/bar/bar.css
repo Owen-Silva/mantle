@@ -370,6 +370,26 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
 .cell.run .ind { visibility: visible; }
 .cell.act .ind { width: 16px; background: var(--lg-acc); }
 
+/* DRAG TO REORDER (lane bardrag, 2026-09-29; bar.js "drag to reorder"). Transforms only, so a
+   frame of a drag is a composite and never a layout. The neighbours slide aside on the theme's
+   ease; the lifted icon follows the pointer with no transition, sits on the popover surface with
+   the theme's hairline, and its glyph grows a touch (the only lift cue: no glow, no big shadow).
+   `settle` is the glide into its slot on the drop (SETTLE_MS in bar.js); `no-anim` is the one
+   frame the DOM order is committed in, so nothing visibly moves when the transforms come off.
+   touch-action: a finger or pen drags the icon instead of panning the page. */
+.dock .cell { touch-action: none; }
+.dock.dragging .cell { transition: transform 160ms var(--lg-ease), background-color 150ms steps(2); }
+.dock .cell.lifted {
+  z-index: 2;
+  transition: none;
+  will-change: transform;
+  background: var(--lg-fill-strong);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+}
+.dock .cell.lifted .ico { transform: scale(1.1); transition: none; }
+.dock .cell.lifted.settle { transition: transform 150ms var(--lg-ease); }
+.dock.no-anim .cell, .dock.no-anim .cell .ico { transition: none; }
+
 /* the hairline between pinned apps and apps that are merely running */
 .dock .div {
   flex: 0 0 1px;
