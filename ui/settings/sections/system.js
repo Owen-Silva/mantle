@@ -8,7 +8,7 @@
  *
  * It replaces the built-in Display, Sound, Notifications and Power sections: their row ids
  * (display.brightness, sound.output, power.mode, notifications.dnd, ...) are drawn here so old deep
- * links still land.
+ * links still land. Display is drawn natively since lane sysdisp2 (renderDisplay, over SysDisplay.cs).
  */
 (function () {
   'use strict';
@@ -402,6 +402,420 @@
     return { update, dispose() {} };
   }
 
+  /* ---------------------------------------------------------------- Display
+     Brightness and night light on/off are the bar's own (qs.get / qs.set, Display.cs); everything else
+     is SysDisplay.cs through settings.system.*. A resolution, refresh, orientation, layout, main-display
+     or arrangement change is KEPT OR PUT BACK BY THE SIDECAR's own timer (the screen may be black, the
+     page hidden): this page only shows the countdown and the two buttons, from the change's answer, the
+     `settings.system.display` events and sysdisplay.get's `pending`. */
+  const ORIENT = [{ value: 'landscape', label: 'Landscape' }, { value: 'portrait', label: 'Portrait' },
+    { value: 'landscape-flipped', label: 'Landscape (flipped)' }, { value: 'portrait-flipped', label: 'Portrait (flipped)' }];
+  const TOPO = { extend: 'Extend these displays', clone: 'Duplicate these displays', internal: 'Show only on the built-in display', external: 'Show only on the external display', custom: 'A custom layout' };
+  const PREF = ['Let Windows decide', 'Power saving', 'High performance'];
+  const GLOBAL = [
+    ['SwapEffectUpgradeEnable', 'windowed', 'Optimizations for windowed games', 'Lower latency, and VRR and Auto HDR in windowed DirectX 10 and 11 games'],
+    ['VRROptimizeEnable', 'vrr', 'Variable refresh rate', 'Games that do not support VRR use it anyway, on displays that have it'],
+    ['AutoHDREnable', 'autoHdr', 'Auto HDR', 'DirectX 11 and 12 games are shown in HDR on an HDR display'],
+  ];
+  const POS = [{ value: 'right', label: 'Right of the main display' }, { value: 'left', label: 'Left of the main display' },
+    { value: 'above', label: 'Above the main display' }, { value: 'below', label: 'Below the main display' }];
+  const KIND = { mode: 'resolution, refresh rate and orientation', topology: 'display layout', primary: 'main display', arrange: 'display arrangement' };
+  const ENDED = { timeout: 'It was not kept in time, so the previous settings are back', asked: 'You chose Revert', exit:'Mantle closed before it was kept, so the previous settings are back' };
+  const hzText = (hz) => `${Math.round(hz * 100) / 100} Hz`;
+  const sfx = (i) => (i === 0 ? '' : `.${i + 1}`);
+  const hh = (h) => `${String(h).padStart(2, '0')}:00`;
+  /* 01:00-23:00 only: minutes and midnight are a layout of the night light settings not measured on
+     this PC (SysDisplay.cs PlanNight refuses them), so they are not offered. */
+  const hourOpts = (cur) => {
+    const l = Array.from({ length: 23 }, (_, i) => ({ value: hh(i + 1), label: hh(i + 1) }));
+    if (cur && !l.some((x) => x.value === cur)) l.unshift({ value: cur, label: `${cur} (set outside Mantle)` });
+    return l;
+  };
+  const appLabel = (app) => { const s = String(app || ''); const b = s.split(/[\\/]/).pop(); return s.includes('!') && !/[\\/]/.test(s) ? s.split('_')[0].split('.').pop() || s : b || s; };
+  /** Where display `d` sits next to the main display `p` (bounds are physical pixels). */
+  function relPos(d, p) {
+    const a = d.bounds, b = p.bounds;
+    if (!a || !b) return null;
+    if (a.x === b.x + b.width && a.y === b.y) return 'right';
+    if (a.x + a.width === b.x && a.y === b.y) return 'left';
+    if (a.y + a.height === b.y && a.x === b.x) return 'above';
+    if (a.y === b.y + b.height && a.x === b.x) return 'below';
+    return 'custom';
+  }
+  function place(where, a, b) {
+    if (where === 'right') return { x: b.x + b.width, y: b.y };
+    if (where === 'left') return { x: b.x - a.width, y: b.y };
+    if (where === 'above') return { x: b.x, y: b.y - a.height };
+    return { x: b.x, y: b.y + b.height };
+  }
+
+  function renderDisplay(el, kit) {
+    const S = { pending: null, list: [], cards: [], shownLeft: null };
+    const h = kit.h;
+
+    /* -- keep or revert (hidden until a change waits) */
+    const cd = kit.status({ row: 'system.display.keep', label: 'Keep these display settings?', value: '', tone: 'warn', icon: 'display' });
+    const keepB = kit.button({ row: 'system.display.keep.yes', label: 'Keep the new settings', text: 'Keep changes', tone: 'acc', onClick: () => keepOrRevert(true) });
+    const revB = kit.button({ row: 'system.display.keep.no', label: 'Go back to the previous settings now', text: 'Revert', onClick: () => keepOrRevert(false) });
+    const keepWrap = h('div', {}, kit.group('Display change'), kit.card(cd, keepB, revB));
+    keepWrap.style.display = 'none';
+
+    /* -- brightness and colour */
+    const bright = kit.slider({ row: 'display.brightness', label: 'Brightness', icon: 'brightness', min: 0, max: 100, step: 1, unit: '%',
+      help: 'The built-in screen\'s backlight', onInput: (v) => { if (!kit.test) live(v); }, onChange: (v) => setQs('brightness', v, (s) => s.level) });
+    const night = kit.toggle({ row: 'display.nightlight', label: 'Night light', icon: 'moon', help: 'Warmer colours to help you sleep',
+      onChange: (on) => setQs('nightlight', on, (s) => !!s.on) });
+    const nSched = kit.choice({ row: 'system.display.nightlight.schedule', label: 'Schedule night light', style: 'segmented',
+      options: [{ value: 'off', label: 'Off' }, { value: 'sunset', label: 'Sunset to sunrise' }, { value: 'hours', label: 'Set hours' }],
+      onChange: (v) => W(kit, 'nightlightSet', { schedule: v }, (r) => (r.after && r.after.schedule ? r.after.schedule.value : v)) });
+    const nFrom = kit.choice({ row: 'system.display.nightlight.from', label: 'Turn on', style: 'dropdown', options: hourOpts(null), help: 'Whole hours, 01:00 to 23:00',
+      onChange: (v) => W(kit, 'nightlightSet', { from: v }, (r) => (r.after && r.after.from ? r.after.from.text : v)) });
+    const nTo = kit.choice({ row: 'system.display.nightlight.to', label: 'Turn off', style: 'dropdown', options: hourOpts(null), help: 'Whole hours, 01:00 to 23:00',
+      onChange: (v) => W(kit, 'nightlightSet', { to: v }, (r) => (r.after && r.after.to ? r.after.to.text : v)) });
+    const nStr = kit.slider({ row: 'system.display.nightlight.strength', label: 'Strength', min: 0, max: 100, step: 1, unit: '%',
+      onChange: (v) => W(kit, 'nightlightSet', { strength: v }, (r) => (r.after && r.after.strength ? r.after.strength.percent : v)) });
+
+    /* -- the displays */
+    const topo = kit.choice({ row: 'system.display.topology', label: 'Multiple displays', help: 'What Win+P switches between', style: 'dropdown', options: [],
+      onChange: (m) => pend(W(kit, 'topology', { mode: m }), 'topology') });
+    const monGroup = kit.group('Displays', { row: 'display.monitors' });
+    const monBox = h('div', {});
+    const mapRow = h('div', { class: 'row' });
+    const arrGroup = kit.group('Arrangement', { row: 'system.display.arrange', aside: 'The main display sits at the top left' });
+    const arrCard = kit.card(mapRow);
+    const custom = kit.status({ row: 'system.display.customScale', label: 'Custom scaling', value: 'Reading…', tone: 'info' });
+
+    /* -- graphics */
+    const G = {};
+    for (const [key, id, label, help] of GLOBAL) {
+      G[key] = kit.toggle({ row: `system.display.gpu.${id}`, label, help,
+        onChange: (on) => W(kit, 'gpuGlobalSet', { key, on }, (r) => ('on' in r ? r.on : on)) });
+    }
+    const hags = kit.toggle({ row: 'system.display.gpu.scheduling', label: 'Hardware-accelerated GPU scheduling', help: 'The graphics card schedules its own work; takes effect after a restart',
+      onChange: async (on) => {
+        const r = await W(kit, 'gpuSchedulingSet', { on });
+        if (r && r.ok === false && r.needsAdmin && r.elevate === 'sysdisplay.gpuScheduling') {
+          const a = await A(kit, 'sysdisplay.gpuScheduling', { on });
+          return a && a.ok && !a.dryRun ? { ok: true, value: 'on' in a ? a.on : on, note: a.note } : a;
+        }
+        return r && r.ok && !r.dryRun ? { ok: true, value: 'on' in r ? r.on : on, note: r.note } : r;
+      } });
+    const apps = kit.list({ row: 'system.display.gpu.apps', items: [], empty: 'Reading the apps with their own graphics setting…',
+      onAction: (key, act, it) => W(kit, 'gpuPrefSet', { app: it.app, pref: Number(act) }).then((r) => { if (r && r.ok && !r.dryRun) readGpu(); return r; }) });
+    const addApp = kit.text({ row: 'system.display.gpu.add', label: 'Add an app', help: 'The full path of its .exe; it starts on "Let Windows decide"', placeholder: 'C:\\Games\\game.exe',
+      onChange: (s) => {
+        const app = String(s || '').trim();
+        if (!app) return { ok: true, value: '' };
+        return W(kit, 'gpuPrefSet', { app, pref: 0 }).then((r) => { if (r && r.ok && !r.dryRun) { readGpu(); return { ok: true, value: '' }; } return r; });
+      } });
+    const gpus = kit.list({ row: 'system.display.gpu.adapters', items: [], empty: 'Reading the graphics adapters…' });
+
+    const errBox = h('div', {});
+    el.append(
+      errBox, keepWrap,
+      kit.group('Brightness & colour'), kit.card(bright, night),
+      kit.group('Night light schedule', { row: 'system.display.nightlight' }), kit.card(nSched, nFrom, nTo, nStr),
+      monGroup, kit.card(topo, custom), monBox,
+      arrGroup, arrCard,
+      kit.group('Graphics', { row: 'system.display.gpu' }), kit.card(hags, ...GLOBAL.map(([k]) => G[k])),
+      kit.group('Custom options for apps'), kit.card(apps, addApp),
+      kit.group('Graphics adapters'), kit.card(gpus));
+
+    /* ---- brightness / night light through the bar's own backend */
+    function setQs(part, value, pick) {
+      if (kit.test) return { ok: true, dryRun: true, reason: `test run: ${part === 'brightness' ? `the brightness was not changed (would set ${value}%)` : `night light was not turned ${value ? 'on' : 'off'}`}` };
+      return kit.call('qs.set', { part, value }).then((r) => (r.ok === false ? r : { ok: true, value: r.state && typeof r.state === 'object' ? pick(r.state) : value }));
+    }
+    const L = { want: null, busy: false };
+    function live(v) {       // a dragged slider: one set at a time, the newest value waits for the reply
+      L.want = v;
+      if (L.busy) return;
+      const go = () => { const w = L.want; L.want = null; L.busy = true; kit.call('qs.set', { part: 'brightness', value: w }).then(() => { L.busy = false; if (L.want !== null && !kit.disposed) go(); }); };
+      go();
+    }
+    function fillQs(q) {
+      if (!q || typeof q !== 'object') return;
+      const b = q.brightness, n = q.nightlight;
+      if (q.ok === false && !b) { bright.set({ disabled: true, reason: fail('The brightness', q) }); night.set({ disabled: true, reason: fail('Night light', q) }); return; }
+      if (b) {
+        if (b.ok === false) bright.set({ disabled: true, reason: b.reason || 'The brightness could not be read' });
+        else if (b.present === false) bright.set({ value: null, disabled: true, reason: b.reason || 'This display does not expose its brightness to Windows' });
+        else bright.set({ value: b.level, disabled: false, reason: null });
+      }
+      if (n) {
+        if (n.ok === false) night.set({ disabled: true, reason: n.reason || 'Night light could not be read' });
+        else if (n.present === false) night.set({ value: false, disabled: true, reason: n.reason || 'Night light is not set up on this PC' });
+        else night.set({ value: !!n.on, disabled: false, reason: null });
+      }
+    }
+
+    /* ---- night light schedule and strength (SysDisplay.cs, the settings blob) */
+    function fillNight(n) {
+      const rows = [nSched, nFrom, nTo, nStr];
+      if (!n || !n.ok) { rows.forEach((c) => c.set({ disabled: true, reason: fail('The night light schedule', n) })); return; }
+      if (n.present === false) { rows.forEach((c) => c.set({ disabled: true, reason: n.reason || 'Windows has no night light settings yet' })); return; }
+      const w = n.writable || {};
+      const ro = (ok, own) => (ok ? null : `Read only here: ${own || w.why || n.reason || 'Mantle cannot write this safely'}`);
+      const sch = n.schedule && n.schedule.value;
+      const sun = n.sunset && n.sunset.text && n.sunrise && n.sunrise.text ? `Sunset ${n.sunset.text}, sunrise ${n.sunrise.text}` : null;
+      // the layout measured on this PC (w.hours): say per row what is missing, not the whole rule twice
+      const measured = !!w.hours;
+      nSched.set({ value: sch || 'off', disabled: !w.schedule,
+        reason: ro(w.schedule, measured ? 'switching the schedule adds or removes a field this PC\'s night light settings have never held, and Mantle only writes the layout it measured' : null),
+        info: sch === 'sunset' ? (sun || 'Windows works the times out from your location') : null });
+      const hoursInfo = sch === 'hours' ? null : 'Used when the schedule is "Set hours"';
+      const from = n.from && n.from.text, to = n.to && n.to.text;
+      nFrom.set({ value: from, options: hourOpts(from), disabled: !w.hours, reason: ro(w.hours), info: from ? hoursInfo : 'Not set in Windows\' night light settings' });
+      nTo.set({ value: to, options: hourOpts(to), disabled: !w.hours, reason: ro(w.hours), info: to ? hoursInfo : 'Not set in Windows\' night light settings' });
+      const st = n.strength || {};
+      const noStr = measured && st.percent == null;
+      nStr.set({ value: st.percent == null ? null : st.percent, disabled: !w.strength,
+        reason: ro(w.strength, noStr ? 'Windows has not stored a strength on this PC yet (it uses its default), and adding one is a layout Mantle has not measured' : null),
+        info: noStr ? null : st.reason || null });
+    }
+
+    /* ---- the displays */
+    function mkCard(i) {
+      const s = sfx(i);
+      const C = { i };
+      C.head = kit.status({ row: `display.monitor.${i}`, label: `Display ${i + 1}`, value: 'Reading…', icon: 'display' });
+      C.res = kit.choice({ row: `system.display.resolution${s}`, label: 'Display resolution', style: 'dropdown', options: [],
+        onChange: (v) => { const [w, hgt] = String(v).split('x').map(Number); return pend(W(kit, 'displayMode', { display: C.d.display, width: w, height: hgt }), 'mode'); } });
+      C.hz = kit.choice({ row: `system.display.refresh${s}`, label: 'Refresh rate', help: 'A higher rate is smoother but uses more power', style: 'dropdown', options: [],
+        onChange: (v) => pend(W(kit, 'displayMode', { display: C.d.display, width: C.d.resolution.width, height: C.d.resolution.height, hz: v }), 'mode') });
+      C.orient = kit.choice({ row: `system.display.orientation${s}`, label: 'Display orientation', style: 'dropdown', options: ORIENT,
+        onChange: (v) => { const a = { display: C.d.display, width: C.d.resolution.width, height: C.d.resolution.height, orientation: v }; if (C.curHz) a.hz = C.curHz; return pend(W(kit, 'displayMode', a), 'mode'); } });
+      C.scale = kit.choice({ row: `system.display.scale${s}`, label: 'Scale', help: 'The size of text, apps and other items', style: 'dropdown', options: [],
+        onChange: (v) => W(kit, 'scale', { display: C.d.display, percent: v }, (r) => ('percent' in r ? r.percent : v)) });
+      C.hdr = kit.toggle({ row: `system.display.hdr${s}`, label: 'Use HDR', help: 'Brighter, more vivid picture in HDR games and videos',
+        onChange: (on) => W(kit, 'hdr', { display: C.d.display, on }, (r) => ('on' in r ? r.on : on)) });
+      C.primary = kit.button({ row: `system.display.primary${s}`, label: 'Make this my main display', text: 'Make main',
+        onClick: () => pend(W(kit, 'primary', { display: C.d.display }), 'primary') });
+      C.pos = kit.choice({ row: `system.display.position${s}`, label: 'Position', style: 'dropdown', options: POS,
+        onChange: (v) => { const p = C.main; if (!p || !p.bounds) return { ok: false, reason: 'The main display\'s position is not known yet' }; const at = place(v, C.d.bounds, p.bounds); return pend(W(kit, 'arrange', { positions: [{ display: C.d.display, x: at.x, y: at.y }] }), 'arrange'); } });
+      C.card = kit.card(C.head, C.res, C.hz, C.orient, C.scale, C.hdr, C.primary, C.pos);
+      return C;
+    }
+    function ensureCards(n) {
+      while (S.cards.length < Math.max(1, n)) { const C = mkCard(S.cards.length); S.cards.push(C); monBox.append(C.card); }
+      while (S.cards.length > Math.max(1, n)) S.cards.pop().card.remove();
+    }
+    ensureCards(1);
+
+    function fillCard(C, d, main, count) {
+      C.d = d; C.main = main;
+      const on = !!(d.active && d.resolution);
+      const off = on ? null : (d.reason || 'This display is connected but not in use');
+      C.head.set({ label: d.name || `Display ${C.i + 1}`,
+        help: [d.primary ? 'Main display' : null, d.kind === 'internal' ? 'Built-in' : 'External', d.kind === 'internal' ? null : d.connector].filter(Boolean).join(' · '),
+        value: on ? `${d.resolution.width} × ${d.resolution.height}${d.refreshHz ? ` · ${hzText(d.refreshHz)}` : ''}` : 'Not in use', tone: on ? 'ok' : 'info',
+        info: d.nameReason || null, reason: on ? null : off });
+      const modes = Array.isArray(d.modes) ? d.modes : [];
+      const nat = d.native || null;
+      const isNat = (m) => m.native || (nat && m.width === nat.width && m.height === nat.height);
+      // resolutions: one entry per size, largest first; the native one is Windows' "Recommended"
+      const sizes = [];
+      for (const m of modes) if (!sizes.some((x) => x.width === m.width && x.height === m.height)) sizes.push(m);
+      sizes.sort((a, b) => b.width * b.height - a.width * a.height || b.width - a.width);
+      const curKey = on ? `${d.resolution.width}x${d.resolution.height}` : null;
+      const resOpts = sizes.map((m) => ({ value: `${m.width}x${m.height}`, label: `${m.width} × ${m.height}${isNat(m) ? ' (Recommended)' : ''}` }));
+      if (curKey && !resOpts.some((x) => x.value === curKey)) resOpts.unshift({ value: curKey, label: `${d.resolution.width} × ${d.resolution.height} (not in Windows' list)` });
+      const noModes = on && !modes.length ? (d.modesReason || 'Windows listed no modes for this display') : null;
+      C.res.set({ options: resOpts, value: curKey, disabled: !on || !!noModes, reason: off || noModes, info: nat || !on ? null : (d.nativeReason || null) });
+      // refresh rates at the current size, highest first
+      const rates = on ? [...new Set(modes.filter((m) => m.width === d.resolution.width && m.height === d.resolution.height).map((m) => m.hz))].sort((a, b) => b - a) : [];
+      const cur = on && d.refreshHz ? rates.reduce((best, r) => (best == null || Math.abs(r - d.refreshHz) < Math.abs(best - d.refreshHz) ? r : best), null) : null;
+      C.curHz = cur != null && Math.abs(cur - d.refreshHz) < 1 ? cur : null;
+      const hzOpts = rates.map((r) => ({ value: r, label: hzText(r) }));
+      if (on && d.refreshHz && C.curHz == null) hzOpts.unshift({ value: d.refreshHz, label: `${hzText(d.refreshHz)} (not in Windows' list)` });
+      C.hz.set({ options: hzOpts, value: C.curHz != null ? C.curHz : on ? d.refreshHz : null, disabled: !on || rates.length < 1 || !!noModes,
+        reason: off || noModes, info: on && rates.length === 1 ? 'This is the only rate Windows offers at this resolution' : null });
+      C.orient.set({ value: d.orientation || 'landscape', disabled: !on, reason: off });
+      const sc = d.scale || {};
+      const allowed = Array.isArray(sc.allowed) ? sc.allowed : [];
+      const scOpts = allowed.map((p) => ({ value: p, label: `${p}%${p === sc.recommended ? ' (Recommended)' : ''}` }));
+      if (sc.percent != null && !allowed.includes(sc.percent)) scOpts.unshift({ value: sc.percent, label: `${sc.percent}%` });
+      C.scale.set({ options: scOpts, value: sc.percent, disabled: !on || sc.percent == null || !allowed.length, reason: off || sc.reason || (sc.percent == null ? 'Windows did not report this display\'s scale' : null) });
+      const hd = d.hdr || {};
+      const hdrWhy = hd.reason || (hd.supported === false ? 'this display does not report HDR support to Windows' : hd.supported == null ? 'Windows did not say whether this display supports HDR' : null);
+      C.hdr.set({ value: !!hd.enabled, disabled: !on || !hd.writable, reason: off || (hd.writable ? (hd.limitedByPolicy ? hdrWhy : null) : `Read only here: ${hdrWhy || 'Windows will not switch HDR on this display'}`),
+        info: on && hd.writable && hd.enabled && hd.sdrWhiteNits ? `SDR content brightness: ${hd.sdrWhiteNits} nits` : null });
+      C.primary.set({ disabled: !on || !!d.primary, text: d.primary ? 'Main display' : 'Make main', reason: off,
+        info: d.primary ? (count > 1 ? 'This is your main display: the taskbar and new windows open here' : 'The only display in use is always the main one') : null });
+      const showPos = on && !d.primary && main && main.bounds;
+      C.pos.el.style.display = showPos ? '' : 'none';
+      if (showPos) {
+        const where = relPos(d, main);
+        const opts = POS.slice();
+        if (where === 'custom') opts.unshift({ value: 'custom', label: `Where it is now (${d.bounds.x}, ${d.bounds.y})` });
+        C.pos.set({ options: opts, value: where, disabled: false, reason: null });
+      }
+    }
+
+    function drawMap(list) {
+      const act = list.filter((d) => d.active && d.bounds);
+      if (act.length < 2) {
+        mapRow.replaceChildren(kit.reason(act.length ? 'Only one display is in use, so there is nothing to arrange' : 'Windows did not report where the displays are', { info: !!act.length }));
+        return;
+      }
+      const minX = Math.min(...act.map((d) => d.bounds.x)), minY = Math.min(...act.map((d) => d.bounds.y));
+      const maxX = Math.max(...act.map((d) => d.bounds.x + d.bounds.width)), maxY = Math.max(...act.map((d) => d.bounds.y + d.bounds.height));
+      const W0 = 360, H0 = 120, k = Math.min(W0 / (maxX - minX), H0 / (maxY - minY));
+      const box = h('div', {});
+      Object.assign(box.style, { position: 'relative', width: `${Math.round((maxX - minX) * k)}px`, height: `${Math.round((maxY - minY) * k)}px`, margin: '6px auto' });
+      list.forEach((d, i) => {
+        if (!d.active || !d.bounds) return;
+        const b = h('div', { title: d.name || `Display ${i + 1}` }, String(i + 1));
+        Object.assign(b.style, { position: 'absolute', boxSizing: 'border-box', left: `${Math.round((d.bounds.x - minX) * k) + 2}px`, top: `${Math.round((d.bounds.y - minY) * k) + 2}px`,
+          width: `${Math.round(d.bounds.width * k) - 4}px`, height: `${Math.round(d.bounds.height * k) - 4}px`, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          borderRadius: 'var(--lg-r-ctl)', border: '1px solid var(--lg-edge-out)', background: d.primary ? 'var(--lg-acc-soft)' : 'var(--lg-fill-strong)',
+          color: 'var(--lg-ink)', font: '600 15px/1 inherit' });
+        box.append(b);
+      });
+      mapRow.replaceChildren(box);
+    }
+
+    function fillDisplays(r, t0) {
+      if (!r || !r.ok) {
+        const why = fail('The displays', r);
+        ensureCards(1);
+        S.cards[0].head.set({ value: 'Not read', tone: 'warn', reason: why });
+        for (const k of ['res', 'hz', 'orient', 'scale', 'hdr', 'primary', 'pos']) S.cards[0][k].set({ disabled: true, reason: why });
+        topo.set({ disabled: true, reason: why });
+        custom.set({ value: 'Not read', tone: 'warn', reason: why });
+        mapRow.replaceChildren(kit.reason(why));
+        return;
+      }
+      const list = (Array.isArray(r.displays) ? r.displays : []).slice().sort((a, b) => (+!!b.primary - +!!a.primary) || (+!!b.active - +!!a.active));
+      S.list = list;
+      const main = list.find((d) => d.primary && d.active) || null;
+      ensureCards(list.length);
+      list.forEach((d, i) => fillCard(S.cards[i], d, main, list.filter((x) => x.active).length));
+      if (!list.length) S.cards[0].head.set({ value: 'None', tone: 'warn', reason: 'Windows reported no displays' });
+      monGroup.replaceChildren('Displays', h('span', { class: 'aside' }, `${list.length} display${list.length === 1 ? '' : 's'}`));
+      // extend / duplicate / only one: the layouts Windows validated just now (SDC_VALIDATE changes nothing)
+      const t = r.topology || {};
+      const avail = Array.isArray(t.available) ? t.available : [];
+      const opts = avail.map((m) => ({ value: m, label: TOPO[m] || m }));
+      if (t.current && !avail.includes(t.current)) opts.unshift({ value: t.current, label: TOPO[t.current] || t.current });
+      const no = Object.entries(t.unavailable || {}).map(([m, why]) => `${TOPO[m] || m}: ${why}`);
+      const single = list.filter((d) => d.active || d.available !== false).length < 2;
+      topo.set({ options: opts, value: t.current, disabled: opts.length < 2 || !t.current,
+        reason: t.reason || (opts.length < 2 ? `Read only here: ${single ? 'only one display is connected, so there is no other layout' : 'Windows validated no other layout'}${no.length ? ` (${no.join('; ')})` : ''}` : null),
+        info: r.inactiveReason || null });
+      const cs = r.customScale || {};
+      custom.set(cs.on == null && cs.reason ? { value: 'Not read', tone: 'warn', reason: cs.reason }
+        : { value: cs.on ? `On: ${cs.percent}%` : 'Off', tone: cs.on ? 'warn' : 'info', reason: null, info: cs.writable === false ? `Read only here: ${cs.why || 'Mantle does not set it'}` : null });
+      drawMap(list);
+      // a change waiting to be kept, as the sidecar holds it (the page may have been closed meanwhile)
+      if (r.pending && r.pending.token) { if (!S.pending || S.pending.token !== r.pending.token) setPending(r.pending.token, r.pending.kind, r.pending.revertsInMs); }
+      else if (S.pending && S.pending.at < t0) finish('ended', { why: 'gone' });
+    }
+
+    /* ---- keep or revert */
+    /** A layout/mode change's answer: a real one starts the countdown (the kit keeps the new value). */
+    function pend(p, kind) {
+      return Promise.resolve(p).then((r) => {
+        if (r && r.ok && !r.dryRun) {
+          if (r.pending && r.token) setPending(r.token, kind, r.keepWithinMs);
+          setTimeout(update, 50);
+          return { ok: true };
+        }
+        return r;
+      });
+    }
+    function setPending(token, kind, ms) {
+      S.pending = { token, kind, until: Date.now() + (typeof ms === 'number' ? ms : 15000), at: Date.now() };
+      S.shownLeft = null;
+      keepWrap.style.display = '';
+      keepB.el.style.display = ''; revB.el.style.display = '';
+      keepB.set({ disabled: false }); revB.set({ disabled: false });
+      cd.set({ label: 'Keep these display settings?', tone: 'warn', reason: null, info: null });
+      tick();
+    }
+    function tick() {
+      const p = S.pending;
+      if (!p) return;
+      const left = Math.max(0, Math.ceil((p.until - Date.now()) / 1000));
+      if (left === S.shownLeft) return;
+      S.shownLeft = left;
+      cd.set({ value: left > 0 ? `Going back in ${left} s` : 'Going back…', help: `The new ${KIND[p.kind] || 'display settings'} go back by themselves unless you keep them` });
+    }
+    function finish(what, ev) {
+      S.pending = null;
+      keepB.el.style.display = 'none'; revB.el.style.display = 'none';
+      keepWrap.style.display = '';
+      const failed = ev && ev.ok === false;
+      const kind = KIND[ev && ev.kind] || 'display settings';
+      if (what === 'kept') cd.set({ label: 'Display change', value: failed ? 'Not saved' : 'Kept', tone: failed ? 'warn' : 'ok', help: `The new ${kind} stay`, reason: failed ? (ev.reason || 'saving it failed, and no reason came back') : null, info: null });
+      else if (what === 'reverted') cd.set({ label: 'Display change', value: failed ? 'Not put back' : 'Put back', tone: failed ? 'warn' : 'info', help: `The previous ${kind}`,
+        reason: failed ? (ev.reason || 'putting it back failed, and no reason came back') : null, info: failed ? null : (ENDED[ev && ev.why] || `Put back (${(ev && ev.why) || 'no reason came back'})`) });
+      else cd.set({ label: 'Display change', value: 'No longer waiting', tone: 'info', help: null, reason: null, info: 'Windows reports no change waiting any more: it was kept or put back while this page was not listening. The values below are what Windows has now' });
+      setTimeout(update, 50);
+    }
+    function keepOrRevert(keep) {
+      const p = S.pending;
+      if (!p) return { ok: false, reason: 'No display change is waiting any more' };
+      return W(kit, keep ? 'displayKeep' : 'displayRevert', { token: p.token }).then((r) => {
+        if (r && r.ok && !r.dryRun && S.pending && S.pending.token === p.token) finish(keep ? 'kept' : 'reverted', { why: 'asked', ok: true, kind: p.kind });
+        return r;
+      });
+    }
+    kit.watch('settings.system.display', (ev) => {
+      if (!ev || typeof ev !== 'object') return;
+      if (ev.what === 'pending' && ev.token) { if (!S.pending || S.pending.token !== ev.token) setPending(ev.token, ev.kind, ev.keepWithinMs); return; }
+      if ((ev.what === 'kept' || ev.what === 'reverted') && (!S.pending || S.pending.token === ev.token)) finish(ev.what, ev);
+    });
+    kit.every(250, tick);
+
+    /* ---- graphics */
+    function fillGpu(g) {
+      if (!g || !g.ok) {
+        const why = fail('The graphics settings', g);
+        [hags, ...Object.values(G)].forEach((c) => c.set({ disabled: true, reason: why }));
+        apps.set({ items: [], empty: why }); gpus.set({ items: [], empty: why }); addApp.set({ disabled: true, reason: why });
+        return;
+      }
+      const gl = g.global || {};
+      for (const [key] of GLOBAL) {
+        const x = gl[key] || {};
+        G[key].set({ value: !!x.on, disabled: false, reason: x.on == null && x.reason && !/^not set/.test(x.reason) ? x.reason : null, info: x.on == null ? 'Not set: Windows\' default applies' : null });
+      }
+      const s = g.gpuScheduling || {};
+      const canTurnOff = s.on === true;         // turning it off is always allowed (SysDisplay.cs HagsSetCmd)
+      hags.set({ value: !!s.on, disabled: !s.writable && !canTurnOff, admin: s.writable || canTurnOff ? 'turn hardware-accelerated GPU scheduling on or off' : undefined,
+        reason: s.writable ? null : `${canTurnOff ? 'It is on in the registry, but ' : 'Read only here: '}${s.reason || 'Windows did not say whether the graphics driver supports it'}`,
+        info: s.restartPending ? 'Changed, but it takes effect after a restart' : s.registryReason || null });
+      apps.set({ empty: g.appsReason || 'No app has its own graphics setting', items: (Array.isArray(g.apps) ? g.apps : []).map((a, i) => ({
+        key: `a${i}`, app: a.app, label: appLabel(a.app), help: a.app, mono: true, value: a.pref != null ? PREF[a.pref] : 'Unknown', reason: a.reason || null,
+        actions: [0, 1, 2].filter((p) => p !== a.pref).map((p) => ({ id: String(p), text: PREF[p] })) })) });
+      addApp.set({ disabled: false, reason: null });
+      gpus.set({ empty: g.gpusReason || 'Windows reported no graphics adapters', items: (Array.isArray(g.gpus) ? g.gpus : []).map((x, i) => {
+        const hs = x.gpuScheduling || {};
+        return { key: `g${i}`, label: x.name || 'Graphics adapter', icon: 'display',
+          help: [x.software ? 'Software (no hardware)' : x.hybrid === 'discrete' ? 'Discrete: high performance' : x.hybrid === 'integrated' ? 'Integrated: power saving' : null, x.displaySupported === false ? 'Renders only' : null].filter(Boolean).join(' · ') || null,
+          value: hs.supported == null ? 'GPU scheduling: unknown' : hs.supported ? `GPU scheduling ${hs.enabled ? 'on' : 'off'}` : 'No GPU scheduling', reason: hs.supported == null ? (hs.reason || null) : null };
+      }) });
+    }
+    async function readGpu() { const g = await R(kit, 'gpu'); if (!kit.disposed) fillGpu(g); }
+
+    let seq = 0;
+    async function update() {
+      const my = ++seq, t0 = Date.now();
+      const [d, n, g, q] = await Promise.all([R(kit, 'display'), R(kit, 'nightlight'), R(kit, 'gpu'), kit.call('qs.get')]);
+      if (kit.disposed || my !== seq) return;
+      // one part that cannot be drawn must not take the rest of the page with it, and says so
+      const bad = [];
+      for (const [name, fn] of [['brightness', () => fillQs(q)], ['night light', () => fillNight(n)], ['displays', () => fillDisplays(d, t0)], ['graphics', () => fillGpu(g)]]) {
+        try { fn(); } catch (e) { bad.push(`${name} (${(e && e.message) || e})`); }
+      }
+      errBox.replaceChildren(...(bad.length ? [kit.card(kit.reason(`Part of this page could not be drawn: ${bad.join('; ')}`))] : []));
+    }
+    kit.watch('qs', (q) => { try { fillQs(q); } catch (_) { /* the next full read reports it */ } });
+    kit.every(15000, update);
+    return update().then(() => ({ update, dispose() {} }));
+  }
+
   /* ---------------------------------------------------------------- Storage (backend pending) */
   function renderPending(what) {
     return function (el, kit) {
@@ -421,7 +835,30 @@
     keywords: 'pc computer system settings',
     replaces: ['display', 'sound', 'notifications', 'power'],
     pages: [
-      { id: 'display' },
+      { id: 'display', title: 'Display', icon: 'display', help: 'Monitors, brightness, night light, scale, graphics',
+        search: [
+          { row: 'display.brightness', label: 'Brightness', keywords: 'screen brightness dim bright backlight' },
+          { row: 'display.nightlight', label: 'Night light', keywords: 'blue light warm evening night mode colour color temperature', uri: 'ms-settings:nightlight' },
+          { row: 'system.display.nightlight.schedule', label: 'Schedule night light', keywords: 'night light schedule sunset sunrise set hours turn on off' },
+          { row: 'system.display.nightlight.strength', label: 'Night light strength', keywords: 'warmth warm colour temperature kelvin' },
+          { row: 'display.monitors', label: 'Displays', keywords: 'monitor screen second display external', uri: 'ms-settings:display' },
+          { row: 'system.display.topology', label: 'Multiple displays', keywords: 'extend duplicate mirror clone second screen projector win+p' },
+          { row: 'system.display.resolution', label: 'Display resolution', keywords: 'resolution screen size pixels 1080p 1440p 4k' },
+          { row: 'system.display.refresh', label: 'Refresh rate', keywords: 'hz refresh rate 60 120 144 165 fps smooth' },
+          { row: 'system.display.orientation', label: 'Display orientation', keywords: 'rotate rotation portrait landscape flipped' },
+          { row: 'system.display.scale', label: 'Scale', keywords: 'scaling dpi text size zoom 100 125 150' },
+          { row: 'system.display.customScale', label: 'Custom scaling', keywords: 'custom scale dpi logpixels' },
+          { row: 'system.display.hdr', label: 'Use HDR', keywords: 'hdr high dynamic range', uri: 'ms-settings:display-hdr' },
+          { row: 'system.display.primary', label: 'Make this my main display', keywords: 'primary main display' },
+          { row: 'system.display.arrange', label: 'Arrange displays', keywords: 'arrange position left right above below layout' },
+          { row: 'system.display.gpu', label: 'Graphics', keywords: 'gpu graphics card video card', uri: 'ms-settings:display-advancedgraphics' },
+          { row: 'system.display.gpu.apps', label: 'Graphics performance preference', keywords: 'gpu per app high performance power saving discrete integrated' },
+          { row: 'system.display.gpu.scheduling', label: 'Hardware-accelerated GPU scheduling', keywords: 'hags gpu scheduling latency' },
+          { row: 'system.display.gpu.windowed', label: 'Optimizations for windowed games', keywords: 'windowed games flip model latency' },
+          { row: 'system.display.gpu.vrr', label: 'Variable refresh rate', keywords: 'vrr freesync g-sync adaptive sync' },
+          { row: 'system.display.gpu.autoHdr', label: 'Auto HDR', keywords: 'auto hdr games' },
+        ],
+        render: renderDisplay },
       { id: 'sound' },
       { id: 'notifications', title: 'Notifications', icon: 'notifications', help: 'Alerts from apps and system, Do not disturb, Focus',
         search: [
