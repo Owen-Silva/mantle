@@ -95,6 +95,58 @@ const SHOTS = [
     if (r.cards || r.still || r.refreshing) throw new Error('events that came before the reply were lost: ' + JSON.stringify(r));
   }],
   ['24-narrow-preview', HOME + '\\Pictures', 760, 620, async (page) => { await page.evaluate(() => { MF.app.list.selectKeys(['Harbor at dusk.jpg']); MF.app.runCmd('preview'); }); await page.waitForTimeout(500); }],
+  // lane files2 (2026-09-29): filters, search inside files, rename many, checksum, check boxes, OneDrive status
+  ['30-search-contents', HOME + '\\Documents', W, H, async (page) => {
+    await page.evaluate(() => MF.app.setContents(true));
+    await page.waitForTimeout(100);
+    await page.evaluate(() => MF.app.startSearch('garden'));
+    await page.waitForFunction(() => MF.app.cur().search && MF.app.cur().search.done, null, { timeout: 5000 });
+    await page.waitForTimeout(300);
+  }],
+  ['31-filter-menu', HOME + '\\Documents', W, H, async (page) => {
+    await page.evaluate(() => MF.app.setFilter({ kind: ['document', 'picture'], date: 'month', size: null }));
+    await page.waitForTimeout(150);
+    const r = await page.evaluate(() => { const b = [...document.querySelectorAll('#cmdbar .cmd')].find((x) => /Filter/.test(x.textContent)); const q = b.getBoundingClientRect(); return { x: q.left + 10, y: q.top + 10 }; });
+    await page.mouse.click(r.x, r.y);
+    await page.waitForTimeout(150);
+    const k = await page.evaluate(() => { const b = [...document.querySelectorAll('.menu .mi')].find((x) => x.textContent.startsWith('Kind')); const q = b.getBoundingClientRect(); return { x: q.left + 40, y: q.top + 10 }; });
+    await page.mouse.move(k.x, k.y);
+    await page.waitForTimeout(600);
+  }],
+  ['32-rename-many', HOME + '\\Documents', W, H, async (page) => {
+    await page.evaluate(() => { MF.app.list.selectKeys(['Reading list.txt', 'Notes 2.txt', 'Notes 10.txt', 'Plan.docx']); MF.app.runCmd('rename'); });
+    await page.waitForSelector('.dlg .rn-base', { timeout: 3000 });
+    await page.fill('.dlg .rn-base', 'Autumn');
+    await page.waitForTimeout(150);
+  }],
+  ['33-rename-many-replace-clash', HOME + '\\Documents', W, H, async (page) => {
+    await page.evaluate(() => { MF.app.list.selectKeys(['Notes 2.txt', 'Notes 10.txt', 'Reading list.txt']); MF.app.runCmd('rename'); });
+    await page.waitForSelector('.dlg .rn-base', { timeout: 3000 });
+    await page.click('.dlg .segb[data-mode="replace"]');
+    await page.fill('.dlg .rn-find', 'Notes 10');
+    await page.fill('.dlg .rn-repl', 'Notes 2');
+    await page.waitForTimeout(150);
+  }],
+  ['34-checksum', HOME + '\\Documents', W, H, async (page) => {
+    await page.evaluate(() => { MF.app.list.selectKeys(['Plan.docx']); MF.app.runCmd('props'); });
+    await page.waitForSelector('.hash-go', { timeout: 3000 });
+    await page.click('.hash-go');
+    await page.waitForFunction(() => !/Reading|Not computed/.test((document.querySelector('.hash-out') || {}).textContent || 'x'), null, { timeout: 3000 });
+    await page.waitForTimeout(150);
+  }],
+  ['35-checkboxes-compact', HOME + '\\Documents', W, H, async (page) => {
+    await page.evaluate(() => MF.app.runCmd('checkboxes'));
+    await page.waitForTimeout(100);
+    await page.evaluate(() => MF.app.runCmd('compact'));
+    await page.waitForTimeout(150);
+    await page.evaluate(() => MF.app.list.selectKeys(['Plan.docx', 'Invoice 0042.pdf', 'Budget 2026']));
+    await page.waitForTimeout(150);
+  }],
+  ['36-onedrive-status', HOME + '\\OneDrive', W, H, null],
+  ['37-background-menu-terminal', HOME + '\\Documents', W, H, async (page) => {
+    await page.evaluate(() => { const r = MF.app.list.sc.getBoundingClientRect(); MF.app.backgroundMenu(r.left + 500, r.top + 420); });
+    await page.waitForTimeout(300);
+  }],
 ];
 
 async function perf(browser, errors) {

@@ -330,6 +330,18 @@ const now = () => process.hrtime.bigint();
     t.check('move back (plain path)', r.done && r.done.ok && fs.existsSync(path.join(W, 'moved.log')));
     r = await op({ op: 'rename', items: [path.join(W, 'moved.log')], name: 'renamed.log' });
     t.check('rename', r.done && r.done.ok && fs.existsSync(path.join(W, 'renamed.log')) && !fs.existsSync(path.join(W, 'moved.log')));
+    // rename many (lane files2): items [{src, name}] in ONE job, results per item, and back again (the undo shape)
+    fs.writeFileSync(path.join(W, 'm1.txt'), 'one');
+    fs.writeFileSync(path.join(W, 'm2.txt'), 'two');
+    r = await op({ op: 'rename', items: [{ src: path.join(W, 'm1.txt'), name: 'Trip (1).txt' }, { src: path.join(W, 'm2.txt'), name: 'Trip (2).txt' }] });
+    t.check('rename many: both in one job', r.done && r.done.ok && r.done.results.length === 2 && fs.readFileSync(path.join(W, 'Trip (2).txt'), 'utf8') === 'two'
+      && !fs.existsSync(path.join(W, 'm1.txt')) && r.done.results.every((x) => x.ok !== false && /Trip \(\d\)\.txt$/.test(x.dst)), JSON.stringify(r.done && r.done.results));
+    r = await op({ op: 'rename', items: [{ src: path.join(W, 'Trip (1).txt'), name: 'm1.txt' }, { src: path.join(W, 'Trip (2).txt'), name: 'm2.txt' }] });
+    t.check('rename many: back again', r.done && r.done.ok && fs.existsSync(path.join(W, 'm1.txt')) && fs.existsSync(path.join(W, 'm2.txt')));
+    r = await op({ op: 'rename', items: [{ src: path.join(W, 'm1.txt'), name: 'fine.txt' }, { src: path.join(W, 'm2.txt'), name: '..\\..\\..\\outside\\probe.txt' }] });
+    t.check('rename many: one smuggled path refuses the lot', r.reply && !r.reply.ok && fs.existsSync(path.join(W, 'm1.txt')) && !fs.existsSync(path.join(W, 'fine.txt')));
+    r = await op({ op: 'rename', items: [{ src: path.join(W, 'm1.txt') }] });
+    t.check('rename many: an item without a name is refused', r.reply && !r.reply.ok && fs.existsSync(path.join(W, 'm1.txt')));
     r = await op({ op: 'copy', items: [path.join(W, 'a.txt')], dest: path.join(W, 'dest'), conflict: 'skip' });
     t.check('copy conflict:skip leaves the clash alone', r.done && r.done.ok && r.done.skipped === 1 && fs.readFileSync(path.join(W, 'dest', 'a.txt'), 'utf8').startsWith('older'));
     r = await op({ op: 'copy', items: [path.join(W, 'a.txt')], dest: path.join(W, 'dest'), conflict: 'keepboth' });

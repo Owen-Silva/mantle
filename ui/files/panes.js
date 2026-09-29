@@ -256,7 +256,10 @@
   MF.dialog = dialog;
   dialog.isOpen = () => !$('modal').hidden;
   /** buttons: [{label, value, kind:'acc'|'danger', focus}] ; Esc answers null. */
-  dialog.show = function (build, buttons) {
+  /** build(d, ctl) may return a function run once the buttons exist; ctl.btn(value) is that button.
+   *  opts.enter: the value Enter answers while typing in one of the dialog's inputs (when enabled). */
+  dialog.show = function (build, buttons, opts) {
+    const op = opts || {};
     return new Promise((resolve) => {
       const modal = $('modal');
       modal.textContent = '';
@@ -264,7 +267,9 @@
       d.setAttribute('role', 'dialog');
       d.setAttribute('aria-modal', 'true');
       d.tabIndex = -1;
-      build(d);
+      const btns = new Map();
+      const ctl = { btn: (v) => btns.get(v) || null };
+      const after = build(d, ctl);
       const bar = el('div', 'btns');
       let focusBtn = null;
       const done = (v) => {
@@ -278,16 +283,25 @@
         btn.type = 'button';
         if (b.title) btn.title = b.title;
         btn.addEventListener('click', () => done(b.value));
+        btns.set(b.value, btn);
         bar.appendChild(btn);
         if (b.focus) focusBtn = btn;
       }
       d.appendChild(bar);
+      if (typeof after === 'function') after();
       modal.appendChild(d);
       modal.hidden = false;
       const key = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); return; }
+        const inField = e.target && e.target.closest && e.target.closest('.dlg') && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
+        if (e.key === 'Enter' && inField && op.enter !== undefined) {
+          const b = btns.get(op.enter);
+          e.preventDefault(); e.stopPropagation();
+          if (b && !b.disabled) done(op.enter);
+          return;
+        }
         if (e.key === 'Tab') {
-          const bs = [...bar.querySelectorAll('button')];
+          const bs = [...d.querySelectorAll('button:not(:disabled), input, select')];
           const i = bs.indexOf(document.activeElement);
           e.preventDefault();
           bs[(i + (e.shiftKey ? -1 : 1) + bs.length) % bs.length].focus();
@@ -295,7 +309,8 @@
         e.stopPropagation();
       };
       document.addEventListener('keydown', key, true);
-      (focusBtn || bar.lastChild).focus();
+      const first = op.focus ? d.querySelector(op.focus) : null;
+      if (first) { first.focus(); if (first.select) first.select(); } else (focusBtn || bar.lastChild).focus();
     });
   };
   /** A plain yes/no. danger: the OK button is warn-coloured and Cancel has the focus. */
@@ -339,6 +354,82 @@
       { label: 'Cancel', value: null, focus: true },
     ]);
   };
+
+  /**
+   * Rename many: number them ("Trip (1)", "Trip (2)"...) or find and replace (plain or a regular
+   * expression), extensions kept / lower / upper, a live preview of every new name with the reason
+   * beside any that cannot be used. o = { items:[{n, d}], taken:[names in the folder], showExt }.
+   * -> [{ index, name }] (only the ones that change) or null.
+   */
+  dialog.renameMany = function (o) {
+    const items = o.items || [];
+    const first = items[0] || { n: '', d: 0 };
+    const spec = { mode: 'number', base: first.n.slice(0, M.stemLength(first.n, first.d)), start: 1, find: '', replace: '', regex: false, matchCase: false, ext: 'keep' };
+    let plan = null;
+    return dialog.show((d, ctl) => {
+      d.classList.add('wide');
+      d.appendChild(el('h2', null, `Rename ${M.plural(items.length, 'item')}`));
+      const seg = el('div', 'seg');
+      const modes = [['number', 'Number them'], ['replace', 'Find and replace']];
+      const segBtns = modes.map(([m, label]) => { const b = el('button', 'segb', label); b.type = 'button'; b.dataset.mode = m; seg.appendChild(b); return b; });
+      d.appendChild(seg);
+      const field = (label, input) => { const f = el('label', 'fld'); f.appendChild(el('span', 'fl', label)); f.appendChild(input); return f; };
+      const inp = (cls, v, type) => { const i = el('input', cls); i.type = type || 'text'; i.spellcheck = false; i.value = v; return i; };
+      const base = inp('fi rn-base', spec.base);
+      const start = inp('fi rn-start', '1', 'number'); start.min = '0';
+      const find = inp('fi rn-find', '');
+      const repl = inp('fi rn-repl', '');
+      const chk = (label) => { const w = el('label', 'fck'); const c = el('input'); c.type = 'checkbox'; w.appendChild(c); w.appendChild(el('span', null, label)); return { w, c }; };
+      const mc = chk('Match case');
+      const rx = chk('Regular expression (the whole name)');
+      const ext = el('select', 'fi rn-ext');
+      for (const [v, label] of [['keep', 'Keep extensions as they are'], ['lower', 'Extensions in lower case'], ['upper', 'Extensions in UPPER CASE']]) { const op = el('option', null, label); op.value = v; ext.appendChild(op); }
+      const numBox = el('div', 'frow');
+      numBox.append(field('Base name', base), field('Start at', start));
+      const repBox = el('div', 'frow');
+      repBox.append(field('Find', find), field('Replace with', repl));
+      const opts = el('div', 'frow opts');
+      opts.append(mc.w, rx.w);
+      d.append(numBox, repBox, opts, field('Extensions', ext));
+      const sum = el('div', 'rn-sum');
+      const ul = el('ul', 'clist rn-list');
+      d.append(sum, ul);
+      const draw = () => {
+        spec.base = base.value; spec.start = start.value; spec.find = find.value; spec.replace = repl.value;
+        spec.matchCase = mc.c.checked; spec.regex = rx.c.checked; spec.ext = ext.value;
+        for (const b of segBtns) b.classList.toggle('on', b.dataset.mode === spec.mode);
+        numBox.hidden = spec.mode !== 'number';
+        repBox.hidden = opts.hidden = spec.mode !== 'replace';
+        plan = M.renamePlan(items, spec, o.taken || []);
+        ul.textContent = '';
+        for (const r of plan.rows.slice(0, 300)) {
+          const li = el('li', 'rn-row' + (r.why ? ' bad' : r.to === r.from ? ' same' : ''));
+          li.appendChild(el('span', 'rn-from', r.from));
+          li.appendChild(el('span', 'rn-arrow', '→'));
+          li.appendChild(el('span', 'rn-to', r.to));
+          if (r.why) li.appendChild(el('span', 'rn-why', r.why));
+          ul.appendChild(li);
+        }
+        if (plan.rows.length > 300) ul.appendChild(el('li', 'cmore', `and ${plan.rows.length - 300} more`));
+        sum.textContent = plan.ok ? `${M.plural(plan.changed, 'item')} will be renamed. Ctrl+Z puts every one back.` : cap1(plan.why || 'nothing would change');
+        sum.classList.toggle('bad', !plan.ok);
+        const b = ctl.btn('go');
+        if (b) b.disabled = !plan.ok;
+      };
+      for (const b of segBtns) b.addEventListener('click', () => { spec.mode = b.dataset.mode; draw(); (spec.mode === 'number' ? base : find).focus(); });
+      for (const i of [base, start, find, repl, ext, mc.c, rx.c]) i.addEventListener(i.tagName === 'SELECT' || i.type === 'checkbox' ? 'change' : 'input', draw);
+      return draw;
+    }, [
+      { label: 'Rename', value: 'go', kind: 'acc' },
+      { label: 'Cancel', value: null, focus: true },
+    ], { enter: 'go', focus: '.rn-base' }).then((v) => {
+      if (v !== 'go' || !plan || !plan.ok) return null;
+      const out = [];
+      plan.rows.forEach((r, i) => { if (r.to !== r.from) out.push({ index: i, name: r.to }); });
+      return out;
+    });
+  };
+  const cap1 = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 
   /* ---- side pane: preview / properties ------------------------------------------------------------ */
   const side = { mode: null, host: null, token: 0, sizeJob: null };
@@ -483,7 +574,7 @@
         ['Target', r.target || null],
       ];
       const dds = side.dl(body, rows);
-      if (!r.d) return;
+      if (!r.d) { side.checksum(body, p, token); return; }
       const sizeDd = dds.Size;
       const containsDd = dds.Contains;
       h.api('files.size', { w: h.w, path: p }).then((s) => {
@@ -493,6 +584,36 @@
         side.sizeOut = { job: s.job, sizeDd, containsDd, token };
       });
     }, (e) => { if (token === side.token) { wait.remove(); side.dl(body, [['Problem', e.message]]); } });
+  };
+  /** Properties > Checksum: pick the algorithm, press Compute (a big file takes a moment; nothing is
+   *  read until asked). The answer can be copied like any text in the pane. */
+  side.checksum = function (body, p, token) {
+    const h = side.host;
+    const box = el('div', 'hash');
+    const head = el('div', 'hash-h');
+    head.appendChild(el('span', 'hash-t', 'Checksum'));
+    const pick = el('select', 'fi hash-algo');
+    for (const [v, label] of [['sha256', 'SHA-256'], ['sha1', 'SHA-1'], ['sha512', 'SHA-512'], ['md5', 'MD5']]) { const o = el('option', null, label); o.value = v; pick.appendChild(o); }
+    const go = el('button', 'btn sm hash-go', 'Compute');
+    go.type = 'button';
+    head.append(pick, go);
+    const out = el('div', 'hash-out muted', 'Not computed yet');
+    box.append(head, out);
+    body.appendChild(box);
+    go.addEventListener('click', () => {
+      const algo = pick.value;
+      go.disabled = true;
+      out.className = 'hash-out muted';
+      out.textContent = 'Reading the file…';
+      h.api('files.hash', { w: h.w, path: p, algo }).then((r) => {
+        if (token !== side.token) return;
+        go.disabled = false;
+        if (!r || r.ok === false) { if (r && r.cancelled) return; out.className = 'hash-out bad'; out.textContent = `Not computed: ${(r && r.reason) || 'no answer'}`; return; }
+        out.className = 'hash-out';
+        out.textContent = r.hex;
+        out.title = `${pick.options[pick.selectedIndex].text} of ${M.fmtBytes(r.bytes || 0)} in ${r.ms} ms`;
+      }, (e) => { if (token === side.token) { go.disabled = false; out.className = 'hash-out bad'; out.textContent = `Not computed: ${e.message}`; } });
+    });
   };
   /** 'files.size' events (every ~250 ms while a folder is counted). */
   side.onSize = function (ev) {

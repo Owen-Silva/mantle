@@ -42,6 +42,9 @@
   const put = (p, items) => FS.set(p.toLowerCase(), items);
   put(HOME, [dir('Desktop', 1), dir('Documents', 0.2), dir('Downloads', 0.1), dir('Music', 30), dir('Pictures', 2), dir('Videos', 12), dir('OneDrive', 5),
     dir('Big folder', 3), dir('AppData', 1, 16 | 2), f('NTUSER.DAT', 3 * MB, 0.1, 2 | 4 | 32), f('.gitconfig', 120, 90)]);
+  // lane files2: a OneDrive folder with placeholder states (online only / on this device / always kept)
+  put(HOME + '\\OneDrive', [dir('Shared with Alex', 2), dir('Scans', 30, 16 | 0x400000), f('Thesis final.docx', 380 * KB, 1, 32 | 0x80000), f('Budget.xlsx', 64 * KB, 4),
+    f('Holiday video.mp4', 820 * MB, 60, 32 | 0x400000 | 0x1000), f('Receipts 2025.pdf', 2.2 * MB, 200, 32 | 0x400000), f('Notes.txt', 2 * KB, 0.2)]);
   put(HOME + '\\Documents', [
     dir('Budget 2026', 3), dir('Recipes', 44), dir('Taxes', 1), dir('Trip plans', 16), dir('Old projects', 400),
     f('Reading list.txt', 2.1 * KB, 0.05), f('Notes 2.txt', 900, 6), f('Notes 10.txt', 1.4 * KB, 6), f('Plan.docx', 48 * KB, 1), f('Invoice 0042.pdf', 210 * KB, 3),
@@ -108,7 +111,7 @@
     { key: '$RP7Q8R9.mp4', n: 'Screen recording.mp4', orig: HOME + '\\Videos', del: NOW - 60 * DAY, s: 312 * MB, d: 0 },
   ];
   const views = new Map();
-  const options = { showHidden: false, showExtensions: true, defaultView: 'details', startIn: 'last', replaceExplorer: false };
+  const options = { showHidden: false, showExtensions: true, defaultView: 'details', startIn: 'last', replaceExplorer: false, searchContents: false, compact: false, checkboxes: false };
   let clip = { paths: [], cut: false };
   const undo = [];
 
@@ -217,15 +220,17 @@
     } else if (op === 'empty') {
       bin = [];
     } else {
-      for (const src of spec.items) {
+      for (const one of spec.items) {
+        const src = typeof one === 'string' ? one : one.src;                 // rename many: {src, name}
+        const newName = typeof one === 'string' ? spec.name : one.name;
         const name = M.baseName(src);
         if (/locked/i.test(name)) { results.push({ src, ok: false, hr: -2147024864, why: 'The file is open in another program (Made-up Writer), so Windows cannot touch it. Close it and try again.' }); continue; }
         if (op === 'rename') {
           const it = itemAt(src);
           if (!it) { results.push({ src, ok: false, why: 'it is not there any more' }); continue; }
-          it.n = spec.name;
+          it.n = newName;
           delete it._k;
-          results.push({ src, dst: M.joinPath(M.parentOf(src), spec.name), ok: true });
+          results.push({ src, dst: M.joinPath(M.parentOf(src), newName), ok: true });
           dirs.add(M.parentOf(src));
         } else if (op === 'recycle' || op === 'delete') {
           const it = removeFrom(src);
@@ -309,7 +314,8 @@
       const hits = [];
       const walk = (d, depth) => {
         for (const it of folder(d)) {
-          if (it.n.toLowerCase().includes(needle)) hits.push(Object.assign({}, it, { p: M.joinPath(d, it.n) }));
+          if (it.n.toLowerCase().includes(needle)) hits.push(Object.assign({}, it, { p: M.joinPath(d, it.n) }, a.contents ? { hit: 'name' } : {}));
+          else if (a.contents && !it.d && /.(txt|md|docx)$/i.test(it.n)) hits.push(Object.assign({}, it, { p: M.joinPath(d, it.n), hit: 'content', snip: '…the made-up text around the word ' + String(a.query) + ', as it sits in the file…' }));
           if (it.d && depth < 2 && !(it.a & 2)) walk(M.joinPath(d, it.n), depth + 1);
         }
       };
@@ -318,6 +324,8 @@
       return { ok: true, job };
     },
     cancel: (a) => { cancelled.add(a.job); return { ok: true, cancelled: true }; },
+    terminal: () => ({ ok: true, dryRun: true, app: 'Windows Terminal', reason: 'test mode: would open Windows Terminal in this folder' }),
+    hash: (a) => later({ ok: true, algo: a.algo || 'sha256', hex: (a.algo === 'md5' ? '9e107d9d372bb6826bd81d3542a419d6' : 'd7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592'), bytes: 48213, ms: 3 }),
     icons: (a) => { const icons = {}; for (const e of a.exts || []) icons[e] = iconSvg(e); return later({ ok: true, icons }, 15); },
     types: (a) => { const types = {}; for (const e of a.exts || []) if (TYPES[e]) types[e] = TYPES[e]; return { ok: true, types }; },
     thumbs: (a) => later({ results: (a.items || []).map((it) => {

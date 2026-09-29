@@ -103,10 +103,21 @@ namespace Mantle {
           }
           break;
         case "rename": {
-          if (rawItems == null) return "files.op rename needs items:[one path]";
-          foreach (object o in rawItems) { var it = new OpItem(); it.Src = o as string; it.Name = name; oj.Items.Add(it); }
-          if (oj.Items.Count != 1 || oj.Items[0].Src == null) return "files.op rename takes exactly one path";
-          if (!FilesGuard.PlainName(name)) return "files.op rename: name is not a plain file name";
+          // items:[one path] + name, or rename many: items:[{src, name}, ...] (one job, one undo)
+          if (rawItems == null) return "files.op rename needs items:[one path] or items:[{src, name}]";
+          bool many = false;
+          foreach (object o in rawItems) {
+            var it = new OpItem();
+            var d = o as Dictionary<string, object>;
+            if (d != null) { it.Src = Json.GetString(d, "src"); it.Name = Json.GetString(d, "name"); many = true; }
+            else { it.Src = o as string; it.Name = name; }
+            oj.Items.Add(it);
+          }
+          if (!many && oj.Items.Count != 1) return "files.op rename takes exactly one path (or items:[{src, name}])";
+          foreach (OpItem it in oj.Items) {
+            if (it.Src == null) return "files.op rename: every item needs its path";
+            if (!FilesGuard.PlainName(it.Name)) return "files.op rename: a name is not a plain file name";
+          }
           break;
         }
         case "newfolder": case "newfile": {

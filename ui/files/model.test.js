@@ -177,5 +177,59 @@ for (const k of ['name', 'date', 'type', 'size']) {
   eq(`sort 10k by ${k} under 250 ms (${ms.toFixed(1)} ms)`, ms < 250, true);
 }
 
+/* filters (lane files2) */
+{
+  const now = new Date(2026, 8, 29, 15, 0, 0).getTime();
+  const day = 864e5;
+  const xs = [it('Photos', { d: 1, a: 16, m: now - 2 * day }), it('a.jpg', { s: 2e6, m: now - 60 * 1000 }), it('b.PNG', { s: 0, m: now - 3 * day }),
+    it('c.mp4', { s: 2e9, m: now - 400 * day }), it('d.docx', { s: 20000, m: now - 20 * day }), it('e.xyz', { s: 5, m: now - 100 * day }),
+    it('f.ts', { s: 300, m: now }), it('g', { s: 1, m: now })];
+  eq('kindOf', xs.map(M.kindOf), ['folder', 'picture', 'picture', 'video', 'document', 'other', 'code', 'other']);
+  eq('filter: none keeps all', M.filterItems(xs, null, now).length, 8);
+  eq('filter: kind pictures', names(M.filterItems(xs, { kind: ['picture'] }, now)), ['a.jpg', 'b.PNG']);
+  eq('filter: kind folder + other', names(M.filterItems(xs, { kind: ['folder', 'other'] }, now)), ['Photos', 'e.xyz', 'g']);
+  eq('filter: today', names(M.filterItems(xs, { date: 'today' }, now)), ['a.jpg', 'f.ts', 'g']);
+  eq('filter: last 7 days', names(M.filterItems(xs, { date: 'week' }, now)), ['Photos', 'a.jpg', 'b.PNG', 'f.ts', 'g']);
+  eq('filter: older than a year', names(M.filterItems(xs, { date: 'older' }, now)), ['c.mp4']);
+  eq('filter: size empty drops folders', names(M.filterItems(xs, { size: 'empty' }, now)), ['b.PNG']);
+  eq('filter: size huge', names(M.filterItems(xs, { size: 'huge' }, now)), ['c.mp4']);
+  eq('filter: tiny', names(M.filterItems(xs, { size: 'tiny' }, now)), ['e.xyz', 'f.ts', 'g']);
+  eq('filter: combined', names(M.filterItems(xs, { kind: ['picture', 'document'], date: 'month', size: 'small' }, now)), ['d.docx']);
+  eq('filter words', M.filterWords({ kind: ['picture', 'video'], date: 'week', size: 'large' }), 'Pictures, Videos · Last 7 days · Large');
+  eq('filter words: empty', M.filterWords({ kind: [], date: null }), '');
+  eq('arrange applies the filter', names(M.arrange(xs, { filter: { kind: ['code'] }, now }).shown), ['f.ts']);
+}
+/* OneDrive status */
+eq('sync: pinned', M.syncState(it('x', { a: 0x80000 | 32 })).key, 'pinned');
+eq('sync: online only (recall on access)', M.syncState(it('x', { a: 0x400000 | 32 })).key, 'cloud');
+eq('sync: plain file outside a cloud folder', M.syncState(it('x')), null);
+eq('sync: plain file inside one', M.syncState(it('x', { cloud: true })).label, 'On this device');
+eq('sort by status', names(M.sortItems([it('a', { a: 0x400000 }), it('b', { a: 0x80000 }), it('c', { cloud: true })], { sort: 'status' })), ['b', 'c', 'a']);
+/* rename many */
+{
+  const sel = [it('IMG_001.JPG'), it('IMG_002.JPG'), it('notes', { d: 1 })];
+  const taken = ['IMG_001.JPG', 'IMG_002.JPG', 'notes', 'Trip (2).JPG', 'other.txt'];
+  const n = M.renamePlan(sel, { mode: 'number', base: 'Trip', start: 1 }, taken);
+  eq('number: names', n.rows.map((r) => r.to), ['Trip (1).JPG', 'Trip (2).JPG', 'Trip (3)']);
+  eq('number: a clash with an unselected item is caught', n.rows.map((r) => r.why), [null, 'another item already has this name', null]);
+  eq('number: not ok while a row clashes', [n.ok, n.why], [false, '1 name cannot be used']);
+  const n2 = M.renamePlan(sel, { mode: 'number', base: 'Trip', start: 5, ext: 'lower' }, taken);
+  eq('number: start 5, lower-case extensions', [n2.rows.map((r) => r.to), n2.ok, n2.changed], [['Trip (5).jpg', 'Trip (6).jpg', 'Trip (7)'], true, 3]);
+  const r = M.renamePlan(sel, { mode: 'replace', find: 'img_', replace: 'Holiday ' }, taken);
+  eq('replace: stem only, case-insensitive', r.rows.map((x) => x.to), ['Holiday 001.JPG', 'Holiday 002.JPG', 'notes']);
+  eq('replace: ok, 2 changed', [r.ok, r.changed], [true, 2]);
+  const rc = M.renamePlan(sel, { mode: 'replace', find: 'img_', replace: 'x', matchCase: true }, taken);
+  eq('replace: match case finds nothing', [rc.ok, rc.why], [false, 'nothing would change']);
+  const rx = M.renamePlan(sel, { mode: 'replace', find: '^IMG_0*(\\d+)', replace: 'Shot $1', regex: true }, taken);
+  eq('replace: regex with a group', rx.rows.map((x) => x.to), ['Shot 1.JPG', 'Shot 2.JPG', 'notes']);
+  const bad = M.renamePlan(sel, { mode: 'replace', find: '0', replace: ':' }, taken);
+  eq('replace: an invalid character is caught per row', bad.rows[0].why, 'a name cannot contain \\ / : * ? " < > |');
+  const dup = M.renamePlan(sel, { mode: 'replace', find: '00\\d', replace: 'x', regex: true }, taken);
+  eq('replace: two rows landing on one name', dup.rows.map((x) => x.why), [null, 'two items would get this name', null]);
+  const swap = M.renamePlan([it('a.txt'), it('b.txt')], { mode: 'replace', find: 'a', replace: 'b' }, ['a.txt', 'b.txt']);
+  eq('replace: onto another selected item\'s current name is refused (no order games)', swap.rows[0].why, 'another selected item has this name now');
+  eq('replace: a bad regex says why', /not valid/.test(M.renamePlan(sel, { mode: 'replace', find: '(', regex: true }, taken).why), true);
+}
+
 console.log(`FILES MODEL TEST: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

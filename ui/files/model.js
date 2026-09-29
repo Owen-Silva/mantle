@@ -233,7 +233,7 @@
   };
 
   /* ---- sorting ------------------------------------------------------------------------------------ */
-  M.SORTS = ['name', 'date', 'type', 'size', 'created', 'deleted', 'location'];
+  M.SORTS = ['name', 'date', 'type', 'size', 'created', 'deleted', 'location', 'status', 'match'];
   /** A new array, folders first in either direction, ties by name. spec = { sort, dir, types }. */
   M.sortItems = function (items, spec) {
     const sp = spec || {};
@@ -255,6 +255,8 @@
         return v;
       };
     } else if (key === 'location') prim = (it) => String(it.loc || '').toLowerCase();
+    else if (key === 'status') prim = (it) => (M.syncState(it) || { rank: 9 }).rank;
+    else if (key === 'match') prim = (it) => (it.hit === 'content' ? 1 : 0);
     if (prim) {
       // decorate once: a comparator that calls prim() 260,000 times costs more than the sort itself
       const dec = new Array(arr.length);
@@ -327,7 +329,7 @@
    */
   M.arrange = function (items, spec) {
     const sp = spec || {};
-    const visible = M.filterHidden(items, !!sp.showHidden);
+    const visible = M.filterItems(M.filterHidden(items, !!sp.showHidden), sp.filter, sp.now);
     const sorted = M.sortItems(visible, sp);
     const sectioned = sorted.length && sorted[0]._grp !== undefined;
     const by = sectioned ? 'section' : M.GROUPS.includes(sp.group) ? sp.group : 'none';
@@ -390,11 +392,15 @@
     created: { label: 'Date created', sort: 'created', w: 160, min: 70 },
     location: { label: 'Location', sort: 'location', w: 280, min: 80 },
     deleted: { label: 'Date deleted', sort: 'deleted', w: 160, min: 70 },
+    status: { label: 'Status', sort: 'status', w: 150, min: 60 },
+    match: { label: 'Match', sort: 'match', w: 340, min: 90 },
   };
   /** Which columns each kind of place offers, and its defaults. */
   M.COLSETS = {
-    folder: { all: ['name', 'date', 'type', 'size', 'created'], def: ['name', 'date', 'type', 'size'] },
+    folder: { all: ['name', 'date', 'type', 'size', 'created', 'status'], def: ['name', 'date', 'type', 'size'] },
+    cloud: { all: ['name', 'status', 'date', 'type', 'size', 'created'], def: ['name', 'status', 'date', 'type', 'size'] },
     search: { all: ['name', 'location', 'date', 'type', 'size', 'created'], def: ['name', 'location', 'date', 'size'] },
+    searchc: { all: ['name', 'match', 'location', 'date', 'type', 'size'], def: ['name', 'match', 'location', 'date'] },
     recycle: { all: ['name', 'location', 'deleted', 'size', 'type', 'date'], def: ['name', 'location', 'deleted', 'size', 'type'] },
     home: { all: ['name', 'location', 'date'], def: ['name', 'location', 'date'] },
   };
@@ -416,6 +422,110 @@
     return out;
   };
   M.encodeCols = (cols) => cols.map((c) => `${c.id}:${Math.round(c.w)}`);
+
+  /* ---- filters: kind, date modified, size (search options, and any folder) ------------------------- */
+  const KIND_EXTS = {
+    document: '.txt .md .rtf .doc .docx .docm .odt .pdf .xls .xlsx .xlsm .ods .csv .tsv .ppt .pptx .odp .pages .numbers .key .epub .one .xps .log .tex',
+    picture: '.png .jpg .jpeg .gif .bmp .webp .heic .heif .tif .tiff .ico .svg .psd .raw .cr2 .nef .dng .avif .jfif',
+    video: '.mp4 .mkv .mov .avi .wmv .webm .m4v .mpg .mpeg .flv .3gp .ts',
+    music: '.mp3 .wav .flac .aac .m4a .ogg .opus .wma .aiff .mid .midi',
+    archive: '.zip .7z .rar .gz .tgz .bz2 .xz .zst .tar .cab .iso',
+    program: '.exe .msi .bat .cmd .ps1 .lnk .appx .msix .com .scr .vbs',
+    code: '.js .mjs .cjs .ts .tsx .jsx .json .py .cs .c .h .cpp .hpp .java .go .rs .rb .php .html .htm .css .scss .xml .yml .yaml .toml .ini .sh .sql .lua .kt .swift',
+  };
+  const EXT_KIND = new Map();
+  for (const k of Object.keys(KIND_EXTS)) for (const e of KIND_EXTS[k].split(' ')) EXT_KIND.set(e, k);
+  M.KINDS = [['folder', 'Folders'], ['document', 'Documents'], ['picture', 'Pictures'], ['video', 'Videos'], ['music', 'Music'],
+    ['archive', 'Archives'], ['program', 'Programs'], ['code', 'Code'], ['other', 'Everything else']];
+  M.kindOf = (it) => (it.d ? 'folder' : EXT_KIND.get(M.extOf(it.n, false)) || 'other');
+  M.DATE_FILTERS = [['today', 'Today'], ['week', 'Last 7 days'], ['month', 'Last 30 days'], ['year', 'Last 12 months'], ['older', 'Older than a year']];
+  M.SIZE_FILTERS = [['empty', 'Empty (0 KB)'], ['tiny', 'Tiny (under 16 KB)'], ['small', 'Small (16 KB to 1 MB)'], ['medium', 'Medium (1 to 128 MB)'],
+    ['large', 'Large (128 MB to 1 GB)'], ['huge', 'Huge (over 1 GB)']];
+  const SIZE_RANGE = { empty: [0, 0], tiny: [1, 16 * 1024 - 1], small: [16 * 1024, 1048576 - 1], medium: [1048576, 128 * 1048576 - 1],
+    large: [128 * 1048576, 1073741824 - 1], huge: [1073741824, Infinity] };
+  M.filterActive = (f) => !!(f && ((f.kind && f.kind.length) || f.date || f.size));
+  /** Keep what passes every set filter. f = { kind:[keys]|null, date:key|null, size:key|null }. A size
+   *  filter drops folders (a folder has no size here), as Explorer's does. */
+  M.filterItems = function (items, f, now) {
+    if (!M.filterActive(f)) return items;
+    const kinds = f.kind && f.kind.length ? new Set(f.kind) : null;
+    const t = now || Date.now();
+    const day0 = new Date(t); day0.setHours(0, 0, 0, 0);
+    const since = { today: day0.getTime(), week: t - 7 * 864e5, month: t - 30 * 864e5, year: t - 365 * 864e5 }[f.date];
+    const range = f.size ? SIZE_RANGE[f.size] : null;
+    return items.filter((it) => {
+      if (kinds && !kinds.has(M.kindOf(it))) return false;
+      if (f.date === 'older') { if ((it.m || 0) >= t - 365 * 864e5) return false; } else if (since !== undefined && (it.m || 0) < since) return false;
+      if (range) { if (it.d) return false; const s = it.s || 0; if (s < range[0] || s > range[1]) return false; }
+      return true;
+    });
+  };
+  /** 'Pictures, Videos · Last 7 days · Large' for the filter bar; '' when nothing is set. */
+  M.filterWords = function (f) {
+    if (!M.filterActive(f)) return '';
+    const lab = (list, k) => (list.find((x) => x[0] === k) || [k, k])[1];
+    const out = [];
+    if (f.kind && f.kind.length) out.push(f.kind.map((k) => lab(M.KINDS, k)).join(', '));
+    if (f.date) out.push(lab(M.DATE_FILTERS, f.date));
+    if (f.size) out.push(lab(M.SIZE_FILTERS, f.size).replace(/ \(.*\)$/, ''));
+    return out.join(' · ');
+  };
+
+  /* ---- OneDrive (any cloud files provider) status, from the item's attributes --------------------- */
+  const A_OFFLINE = 0x1000, A_PINNED = 0x80000, A_UNPINNED = 0x100000, A_RECALL_OPEN = 0x40000, A_RECALL_ACCESS = 0x400000;
+  /** null outside a cloud folder's placeholder world; else { key, label, rank }. */
+  M.syncState = function (it) {
+    const a = it.a || 0;
+    if (a & A_PINNED) return { key: 'pinned', label: 'Always on this device', rank: 0 };
+    if (a & (A_RECALL_ACCESS | A_RECALL_OPEN | A_OFFLINE)) return { key: 'cloud', label: 'Online only', rank: 2 };
+    if (a & A_UNPINNED) return { key: 'cloud', label: 'Online only', rank: 2 };
+    return it.cloud ? { key: 'local', label: 'On this device', rank: 1 } : null;
+  };
+
+  /* ---- rename many ---------------------------------------------------------------------------------- */
+  /**
+   * items: [{n, d}] in display order; spec: { mode:'number'|'replace', base, start, find, replace,
+   * regex, matchCase, ext:'keep'|'lower'|'upper' }; taken: every name in the folder (to catch clashes).
+   * -> { rows: [{ from, to, why }], ok: bool, changed: n, why } . Numbering is Explorer's "Base (1)",
+   * "Base (2)"...; replace changes the stem only unless the find text spans the dot.
+   */
+  M.renamePlan = function (items, spec, taken) {
+    const sp = spec || {};
+    const rows = [];
+    let re = null;
+    if (sp.mode === 'replace') {
+      if (!sp.find) return { rows: items.map((it) => ({ from: it.n, to: it.n, why: null })), ok: false, changed: 0, why: 'type what to find' };
+      try {
+        re = new RegExp(sp.regex ? sp.find : sp.find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), sp.matchCase ? 'g' : 'gi');
+      } catch (e) { return { rows: [], ok: false, changed: 0, why: `that pattern is not valid (${e.message})` }; }
+    }
+    const start = Number.isFinite(Number(sp.start)) ? Math.max(0, Math.floor(Number(sp.start))) : 1;
+    items.forEach((it, i) => {
+      const ext = it.d ? '' : M.extOf(it.n, false) ? it.n.slice(M.stemLength(it.n, false)) : '';
+      const stem = it.n.slice(0, it.n.length - ext.length);
+      let to;
+      if (sp.mode === 'number') to = `${String(sp.base || '').trim() || stem} (${start + i})${ext}`;
+      else to = sp.regex ? it.n.replace(re, sp.replace || '') : stem.replace(re, sp.replace || '') + ext;
+      if (sp.ext === 'lower' && !it.d) to = to.slice(0, to.length - ext.length) + ext.toLowerCase();
+      else if (sp.ext === 'upper' && !it.d) to = to.slice(0, to.length - ext.length) + ext.toUpperCase();
+      rows.push({ from: it.n, to, why: null });
+    });
+    const mine = new Set(items.map((it) => it.n.toLowerCase()));
+    const others = new Set([...(taken || [])].map((n) => String(n).toLowerCase()).filter((n) => !mine.has(n)));
+    const seen = new Map();
+    for (const r of rows) {
+      const k = r.to.toLowerCase();
+      if (r.to === r.from) continue;
+      r.why = M.validName(r.to);
+      if (!r.why && others.has(k)) r.why = 'another item already has this name';
+      if (!r.why && mine.has(k) && k !== r.from.toLowerCase()) r.why = 'another selected item has this name now';
+      if (!r.why && seen.has(k)) r.why = 'two items would get this name';
+      seen.set(k, true);
+    }
+    const changed = rows.filter((r) => r.to !== r.from).length;
+    const bad = rows.filter((r) => r.why).length;
+    return { rows, ok: changed > 0 && bad === 0, changed, why: bad ? `${M.plural(bad, 'name')} cannot be used` : changed ? null : 'nothing would change' };
+  };
 
   /* ---- odds and ends ------------------------------------------------------------------------------- */
   /** Type-ahead: the next item (from `from`, wrapping) whose shown name starts with text. */

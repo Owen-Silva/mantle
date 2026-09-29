@@ -18,7 +18,7 @@
 
   const GRID = { small: { cw: 96, ch: 104, ic: 48, px: 48 }, medium: { cw: 132, ch: 150, ic: 96, px: 96 }, large: { cw: 200, ch: 222, ic: 172, px: 256 } };
   const ROW_H = 28;
-  const LI_H = 28;
+  const ROW_H_COMPACT = 22;
   const LI_W = 250;
   const HEAD_H = 36;
   const PAD = 8;
@@ -52,6 +52,8 @@
       this.sc.addEventListener('mousedown', (e) => this.onDown(e));
       this.sc.addEventListener('mouseup', (e) => this.onUp(e));
       this.sc.addEventListener('dblclick', (e) => this.onDbl(e));
+      // Ctrl+wheel: bigger / smaller view (details, list, small, medium, large icons), like Explorer
+      this.sc.addEventListener('wheel', (e) => { if (!e.ctrlKey || !this.host.zoom) return; e.preventDefault(); this.host.zoom(e.deltaY < 0 ? 1 : -1); }, { passive: false });
       this.sc.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
       this.sc.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -101,7 +103,7 @@
       if (mode === 'details') {
         const sum = cols.reduce((a, c) => a + c.w, 0);
         rowW = Math.max(sum, W - 2 * PAD);
-        cw = rowW; ch = ROW_H; per = 1;
+        cw = rowW; ch = this.rowH(); per = 1;
         const grid = cols.map((c) => c.w + 'px').join(' ') + ' 1fr';
         this.layer.style.setProperty('--grid', grid);
         this.head.style.setProperty('--grid', grid);
@@ -110,13 +112,15 @@
         this.renderHead(cols);
       } else {
         const g = GRID[t.view.size] || GRID.medium;
-        if (mode === 'list') { per = Math.max(1, Math.floor((W - 2 * PAD) / LI_W)); cw = Math.floor((W - 2 * PAD) / per); ch = LI_H; }
+        if (mode === 'list') { per = Math.max(1, Math.floor((W - 2 * PAD) / LI_W)); cw = Math.floor((W - 2 * PAD) / per); ch = this.rowH(); }
         else { per = Math.max(1, Math.floor((W - 2 * PAD) / g.cw)); cw = g.cw; ch = g.ch; }
         this.layer.style.setProperty('--ic', g.ic + 'px');
         const key = mode + '|' + (mode === 'grid' ? t.view.size : '');
         if (key !== this.colKey) { this.clearCells(); this.colKey = key; }
       }
       this.head.hidden = mode !== 'details' || t.kind === 'place';
+      this.layer.classList.toggle('checks', !!(this.host.opt && this.host.opt('checkboxes')));
+      this.layer.classList.toggle('compact', !!(this.host.opt && this.host.opt('compact')));
       this.layer.style.setProperty('--cw', cw + 'px');
       this.layer.style.setProperty('--ch', ch + 'px');
       this.layer.style.setProperty('--roww', rowW + 'px');
@@ -294,6 +298,7 @@
         el.draggable = true;
         const name = document.createElement('span');
         name.className = 'c-name';
+        name.appendChild(this.makeCk());
         el._ic = document.createElement('img');
         el._ic.className = 'ic';
         el._ic.alt = '';
@@ -312,6 +317,7 @@
       } else if (kind === 'li') {
         el.className = 'cell li';
         el.draggable = true;
+        el.appendChild(this.makeCk());
         el._ic = document.createElement('img');
         el._ic.className = 'ic';
         el._ic.alt = '';
@@ -326,6 +332,7 @@
         el._ic = document.createElement('img');
         el._ic.alt = '';
         tb.appendChild(el._ic);
+        tb.appendChild(this.makeCk());
         el._nm = document.createElement('div');
         el._nm.className = 'nm';
         el.append(tb, el._nm);
@@ -333,6 +340,15 @@
       this.layer.appendChild(el);
       return el;
     }
+    /** The select check box (shown when the 'Item check boxes' option is on): a click toggles that one item. */
+    makeCk() {
+      const ck = document.createElement('span');
+      ck.className = 'ck';
+      ck.setAttribute('aria-hidden', 'true');
+      return ck;
+    }
+    /** Row height: 28, or 22 in compact mode (details and list). */
+    rowH() { return this.host.opt && this.host.opt('compact') ? ROW_H_COMPACT : ROW_H; }
     place(el, x, y) {
       if (el._x === x && el._y === y) return;
       el._x = x; el._y = y;
@@ -411,7 +427,7 @@
       if (!g || !g.L) return out;
       for (let l = this.lineAtY(y0); l < g.L && g.top[l] < y1; l++) {
         if (g.count[l] < 0) continue;
-        const h = g.mode === 'details' ? ROW_H : g.ch;
+        const h = g.mode === 'details' ? this.rowH() : g.ch;
         if (g.top[l] + h <= y0) continue;
         if (g.mode === 'details') {
           if (x1 >= PAD && x0 <= PAD + g.rowW) out.push(g.start[l]);
@@ -447,6 +463,14 @@
       const t = this.tab;
       t.sel = new Set();
       if (i >= 0 && i < t.shown.length) { const k = MF.keyOf(t.shown[i]); t.sel.add(k); t.anchorKey = k; t.focusKey = k; }
+      this.changed();
+    }
+    /** Invert: every shown item not selected becomes selected, and the other way round. */
+    invert() {
+      const t = this.tab;
+      const next = new Set();
+      for (const it of t.shown) { const k = MF.keyOf(it); if (!t.sel.has(k)) next.add(k); }
+      t.sel = next;
       this.changed();
     }
     toggle(i) {
@@ -522,6 +546,7 @@
       if (i >= 0) {
         const k = MF.keyOf(t.shown[i]);
         this.pendingOnly = -1;
+        if (e.button === 0 && e.target.classList && e.target.classList.contains('ck')) { this.toggle(i); return; }   // the check box
         if (e.button === 0) {
           if (e.shiftKey) this.range(this.anchorIndex(), i, e.ctrlKey);
           else if (e.ctrlKey) this.toggle(i);
@@ -546,7 +571,7 @@
     }
     onDbl(e) {
       const i = this.indexAt(e.target);
-      if (i >= 0 && e.button === 0 && !this.renaming) this.host.open(i);
+      if (i >= 0 && e.button === 0 && !this.renaming && !(e.target.classList && e.target.classList.contains('ck'))) this.host.open(i);
     }
 
     /* ---- rubber band: pure geometry against the layout, no DOM queries ------------------------------ */

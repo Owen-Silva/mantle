@@ -65,6 +65,8 @@
     selectall: sv('<rect x="2" y="2" width="12" height="12" rx="1.5" stroke-dasharray="2 2"/><path d="M5 8l2 2 4-4"/>'),
     openwith: sv('<rect x="2" y="2" width="12" height="12" rx="2"/><path d="M6 8h4M8 6v4"/>'),
     hidden: sv('<path d="M1.8 8s2.3-4.3 6.2-4.3S14.2 8 14.2 8 11.9 12.3 8 12.3 1.8 8 1.8 8z"/><circle cx="8" cy="8" r="1.8"/>'),
+    terminal: sv('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.2"/><path d="M4.5 6.5L6.8 8.5 4.5 10.5M8.5 10.5h3"/>'),
+    filter: sv('<path d="M2 3h12l-4.6 5.4v4.4l-2.8 1.4V8.4z"/>'),
   };
   const KNOWN = [['desktop', 'Desktop'], ['downloads', 'Downloads'], ['documents', 'Documents'], ['pictures', 'Pictures'], ['music', 'Music'], ['videos', 'Videos'], ['onedrive', 'OneDrive']];
   const VIRTUAL_LABEL = { 'mantle:home': 'Home', 'mantle:thispc': 'This PC', 'mantle:recycle': 'Recycle Bin', 'mantle:network': 'Network' };
@@ -208,6 +210,8 @@
     if (id === 'created') return M.fmtDate(it.c);
     if (id === 'location') return it.loc || '';
     if (id === 'deleted') return M.fmtDate(it.del);
+    if (id === 'status') { const st = M.syncState(it); return st ? st.label : cur() && cur().cloud ? 'On this device' : ''; }
+    if (id === 'match') return it.hit === 'content' ? it.snip || 'in the text' : it.hit === 'name' ? 'Name' : '';
     return '';
   }
   function labelOf(p) {
@@ -309,6 +313,14 @@
     t.refresh = null;
   }
   /** Open a path in a tab. how: { push (history, default true), select: [keys] } */
+  /** Inside the OneDrive folder (placeholders: the Status column shows what is on this device). */
+  function isCloud(p) {
+    const od = S.known && S.known.onedrive;
+    if (!od || !p) return false;
+    const a = String(p).toLowerCase();
+    const b = String(od).toLowerCase().replace(/\\+$/, '');
+    return a === b || a.startsWith(b + '\\');
+  }
   async function go(tab, path, how) {
     const o = how || {};
     const p = M.normPath(path);
@@ -320,8 +332,10 @@
     Object.assign(tab, {
       path: p, kind: kindOf(p), items: [], shown: [], groups: null, index: new Map(), sel: new Set(), focusKey: o.focus || null, anchorKey: null,
       scroll: o.scroll || 0, error: null, watchWhy: null, place: null, loading: true, painted: false, t0: performance.now(), wantSel: o.select ? { keys: o.select, until: Date.now() + 8000 } : null,
+      filter: null,
     });
-    tab.colset = tab.kind === 'home' ? 'home' : tab.kind === 'recycle' ? 'recycle' : 'folder';
+    tab.cloud = tab.kind === 'folder' && isCloud(p);
+    tab.colset = tab.kind === 'home' ? 'home' : tab.kind === 'recycle' ? 'recycle' : tab.cloud ? 'cloud' : 'folder';
     tab.crumbs = M.crumbs(p, S.names);
     tab.parent = M.parentOf(p);
     tab.view = defaultView(tab.kind);
@@ -467,7 +481,7 @@
     if (tab.arrTimer) { clearTimeout(tab.arrTimer); tab.arrTimer = null; }
     const t0 = performance.now();
     const src = tab.search ? tab.search.items : tab.items;
-    const r = M.arrange(src, { sort: tab.view.sort, dir: tab.view.dir, group: tab.view.group, showHidden: S.options.showHidden, types: S.types, now: Date.now(), dateField: tab.kind === 'recycle' ? 'del' : 'm' });
+    const r = M.arrange(src, { filter: tab.filter, sort: tab.view.sort, dir: tab.view.dir, group: tab.view.group, showHidden: S.options.showHidden, types: S.types, now: Date.now(), dateField: tab.kind === 'recycle' ? 'del' : 'm' });
     tab.shown = r.shown;
     tab.groups = r.groups;
     const idx = new Map();
@@ -540,9 +554,10 @@
     if (tab.kind !== 'folder') { toast('Search works inside a folder: open one first', { kind: 'quiet' }); return; }
     if (tab.search && tab.search.job) api('files.cancel', { job: tab.search.job });
     if (!tab.search) { tab.folderView = tab.view; tab.folderScroll = tab.scroll; }
-    tab.search = { query, job: null, items: [], done: false, count: 0, capped: false, denied: 0, t0: performance.now() };
+    const contents = !!S.options.searchContents && !/[*?]/.test(query);
+    tab.search = { query, contents, job: null, items: [], done: false, count: 0, capped: false, denied: 0, t0: performance.now() };
     tab.view = { view: tab.folderView.view === 'grid' ? 'grid' : 'details', sort: 'name', dir: 'asc', group: 'none', cols: null, size: tab.folderView.size };
-    tab.colset = 'search';
+    tab.colset = contents ? 'searchc' : 'search';
     tab.sel = new Set();
     tab.focusKey = null;
     tab.scroll = 0;
@@ -550,7 +565,7 @@
     list.setTab(tab, false);
     showTab();
     const s = tab.search;
-    const r = await api('files.search', { tab: tab.id, path: tab.path, query });
+    const r = await api('files.search', { tab: tab.id, path: tab.path, query, contents });
     if (tab.search !== s) { if (r && r.job) api('files.cancel', { job: r.job }); return; }
     if (!r || r.ok === false) { s.done = true; s.error = (r && r.reason) || 'no answer'; showTab(); return; }
     s.job = r.job;
@@ -565,7 +580,7 @@
     for (const it of ev.items || []) { it.loc = M.parentOf(it.p) || ''; s.items.push(it); }
     wantTypes(ev.items || []);
     if (ev.done) {
-      Object.assign(s, { done: true, count: ev.count, capped: !!ev.capped, denied: ev.denied || 0, ms: ev.ms, error: ev.error || null, job: null });
+      Object.assign(s, { done: true, count: ev.count, capped: !!ev.capped, denied: ev.denied || 0, skipped: ev.skipped || 0, ms: ev.ms, error: ev.error || null, job: null });
       arrange(tab);
       if (tab === cur()) showTab();
     } else if (s.items.length === (ev.items || []).length) arrange(tab);
@@ -577,7 +592,7 @@
     if (t.search.job) api('files.cancel', { job: t.search.job });
     t.search = null;
     t.view = t.folderView || defaultView(t.kind);
-    t.colset = 'folder';
+    t.colset = t.cloud ? 'cloud' : 'folder';
     t.sel = new Set();
     t.scroll = t.folderScroll || 0;
     if (t === cur()) $('search').value = '';
@@ -714,10 +729,29 @@
   function renameSel() {
     const t = cur();
     const items = selItems();
-    if (items.length !== 1 || t.kind === 'recycle' || t.kind === 'place') return;
+    if (!items.length || t.kind === 'recycle' || t.kind === 'place') return;
+    if (items.length > 1) { renameMany(items); return; }
     const it = items[0];
     if (it.pin || !pathOf(it)) return;
     list.beginRename(t.index.get(MF.keyOf(it)), commitRename);
+  }
+  /** F2 with several selected: Mantle's rename-many dialog, then ONE job (one Ctrl+Z puts all back). */
+  async function renameMany(sel) {
+    const t = cur();
+    const items = sel.filter((it) => !it.pin && pathOf(it));
+    if (!items.length) return;
+    const taken = (t.search ? [] : t.items.map((x) => x.n));
+    const plan = await MF.dialog.renameMany({ items, taken });
+    if (!plan || !plan.length || cur() !== t) return;
+    const spec = plan.map((x) => ({ src: pathOf(items[x.index]), name: x.name }));
+    startOp({ op: 'rename', items: spec }, {
+      label: `Renaming ${M.plural(spec.length, 'item')}`,
+      after: (ev) => {
+        if (cur() !== t) return;
+        const keys = (ev.results || []).filter((x) => x && x.ok !== false && x.dst).map((x) => M.baseName(x.dst));
+        if (keys.length && !t.search) t.wantSel = { keys, until: Date.now() + 6000 };
+      },
+    });
   }
   function commitRename(it, name) {
     const why = M.validName(name);
@@ -920,7 +954,7 @@
     cut: { label: 'Cut', key: 'Ctrl+X', icon: I.cut, ok: () => anyReal(), run: () => clip('cut') },
     copy: { label: 'Copy', key: 'Ctrl+C', icon: I.copy, ok: () => selPaths().length > 0, run: () => clip('copy') },
     paste: { label: 'Paste', key: 'Ctrl+V', icon: I.paste, ok: canWriteHere, run: () => paste() },
-    rename: { label: 'Rename', key: 'F2', icon: I.rename, ok: () => one() && anyReal() && cur().kind !== 'recycle', run: renameSel },
+    rename: { label: 'Rename', key: 'F2', icon: I.rename, ok: () => anyReal() && cur().kind !== 'recycle' && (one() || !cur().search), run: renameSel },
     del: { label: 'Delete', key: 'Delete', icon: I.del, ok: () => (cur().kind === 'recycle' ? selItems().length > 0 : anyReal()), run: recycleSel },
     purge: { label: 'Delete permanently', key: 'Shift+Delete', icon: I.del, ok: () => anyReal(), run: deleteForGood },
     undo: { label: 'Undo', key: 'Ctrl+Z', icon: I.undo, ok: () => !!S.undoLabel, run: undo },
@@ -936,9 +970,94 @@
     empty: { label: 'Empty Recycle Bin', icon: I.bin, ok: () => cur().kind !== 'recycle' || cur().items.length > 0, run: emptyBin },
     purgebin: { label: 'Delete permanently', icon: I.del, ok: () => selItems().length > 0, run: purgeBin },
     hidden: { label: 'Show hidden items', icon: I.hidden, ok: () => true, run: () => setOpt('showHidden', !S.options.showHidden) },
+    invert: { label: 'Invert selection', icon: I.selectall, ok: () => cur().shown.length > 0, run: () => list.invert() },
+    selectnone: { label: 'Select none', icon: I.x, ok: () => cur().sel.size > 0, run: () => list.clear() },
+    terminal: { label: 'Open in Terminal', icon: I.terminal, ok: () => termPath() !== null, run: () => openTerminal(termPath()) },
+    compact: { label: 'Compact view', icon: I.details, ok: () => true, run: () => setOpt('compact', !S.options.compact) },
+    checkboxes: { label: 'Item check boxes', icon: I.selectall, ok: () => true, run: () => setOpt('checkboxes', !S.options.checkboxes) },
+    clearfilter: { label: 'Clear filters', icon: I.x, ok: () => M.filterActive(cur().filter), run: () => setFilter(null) },
     exts: { label: 'Show file name extensions', icon: I.documents, ok: () => true, run: () => setOpt('showExtensions', !S.options.showExtensions) },
   };
   function runCmd(id) { const c = CMD[id]; if (c && c.ok()) c.run(); }
+  /** Where 'Open in Terminal' opens: the one selected folder, else the folder on screen. */
+  function termPath() {
+    const t = cur();
+    if (!t || t.kind !== 'folder') return null;
+    const sel = selItems();
+    if (sel.length === 1 && sel[0].d && pathOf(sel[0])) return pathOf(sel[0]);
+    return t.search ? null : t.path;
+  }
+  function openTerminal(p) {
+    if (!p) return;
+    api('files.terminal', { path: p }).then((r) => report(r, 'The terminal did not open'));
+  }
+  /* ---- filters (kind / date modified / size), per tab; a new folder starts unfiltered ----------- */
+  function setFilter(f) {
+    const t = cur();
+    if (!t || t.kind === 'place') return;
+    t.filter = M.filterActive(f) ? f : null;
+    arrange(t);
+    renderCmdbar();
+    renderFbar();
+    renderStatus();
+  }
+  function filterItems() {
+    const t = cur();
+    const f = t.filter || { kind: [], date: null, size: null };
+    const kinds = f.kind || [];
+    const kindSub = M.KINDS.map(([k, label]) => ({ label, check: kinds.includes(k), act: () => setFilter(Object.assign({}, f, { kind: kinds.includes(k) ? kinds.filter((x) => x !== k) : kinds.concat([k]) })) }));
+    const one = (list, key) => [{ label: 'Any', check: !f[key], act: () => setFilter(Object.assign({}, f, { [key]: null })) }, { sep: true }]
+      .concat(list.map(([k, label]) => ({ label, check: f[key] === k, act: () => setFilter(Object.assign({}, f, { [key]: k })) })));
+    return [
+      { label: 'Kind', icon: I.documents, sub: kindSub },
+      { label: 'Date modified', icon: I.sort, sub: one(M.DATE_FILTERS, 'date') },
+      { label: 'Size', icon: I.drive, sub: one(M.SIZE_FILTERS, 'size') },
+      { sep: true },
+      { label: 'Search file contents too', check: !!S.options.searchContents, act: () => setContents(!S.options.searchContents) },
+      { sep: true },
+      menuCmd('clearfilter'),
+    ];
+  }
+  async function setContents(on) {
+    await setOpt('searchContents', !!on);
+    const t = cur();
+    if (t && t.search) startSearch(t.search.query);
+    else renderFbar();
+  }
+  /** The strip under the command bar: while searching, where it looks; with a filter, what it hides. */
+  function renderFbar() {
+    const bar = $('fbar');
+    const t = cur();
+    if (!bar) return;
+    bar.textContent = '';
+    const on = t && t.kind !== 'place' && (t.search || M.filterActive(t.filter));
+    bar.hidden = !on;
+    if (!on) return;
+    if (t.search) {
+      bar.appendChild(el('span', 'fl', 'Search in'));
+      const seg = el('div', 'seg sm');
+      for (const [v, label] of [[false, 'File names'], [true, 'Names and contents']]) {
+        const b = el('button', 'segb' + (!!S.options.searchContents === v ? ' on' : ''), label);
+        b.type = 'button';
+        b.addEventListener('click', () => { if (!!S.options.searchContents !== v) setContents(v); });
+        seg.appendChild(b);
+      }
+      bar.appendChild(seg);
+      if (t.search.contents) bar.appendChild(el('span', 'fnote', 'Reads text files, Word, Excel, PowerPoint and OpenDocument files itself: no Windows index needed.'));
+      else if (S.options.searchContents && /[*?]/.test(t.search.query)) bar.appendChild(el('span', 'fnote', 'A * or ? search matches names only.'));
+    }
+    if (M.filterActive(t.filter)) {
+      const chip = el('button', 'fchip');
+      chip.type = 'button';
+      chip.title = 'Clear the filter';
+      chip.appendChild(el('span', null, M.filterWords(t.filter)));
+      const x = el('span', 'fx');
+      x.innerHTML = I.x;
+      chip.appendChild(x);
+      chip.addEventListener('click', () => setFilter(null));
+      bar.appendChild(chip);
+    }
+  }
   function refresh() {
     const t = cur();
     if (t.search) { startSearch(t.search.query); return; }
@@ -956,7 +1075,9 @@
     S.options = Object.assign({}, S.options, o);
     if (had.showHidden !== S.options.showHidden) for (const t of S.tabs) arrange(t);
     if (had.showExtensions !== S.options.showExtensions) list.repaint();
+    if (had.compact !== S.options.compact || had.checkboxes !== S.options.checkboxes) { const t = cur(); if (t && t.kind !== 'place') list.setTab(t, true); }
     renderCmdbar();
+    renderFbar();
   }
 
   /* ---- the command bar ------------------------------------------------------------------------ */
@@ -1009,8 +1130,12 @@
     }
     if (t.kind !== 'place') {
       bar.appendChild(dropBtn('Sort', I.sort, () => sortItems().concat([{ sep: true }, { label: 'Group by', icon: I.group, sub: groupItems() }])));
-      bar.appendChild(dropBtn('View', I.view, () => viewItems().concat([{ sep: true }, { label: 'Show hidden items', check: S.options.showHidden, act: () => runCmd('hidden') },
+      bar.appendChild(dropBtn('View', I.view, () => viewItems().concat([{ sep: true }, { label: 'Compact view', check: !!S.options.compact, act: () => runCmd('compact') },
+        { label: 'Item check boxes', check: !!S.options.checkboxes, act: () => runCmd('checkboxes') }, { sep: true }, { label: 'Show hidden items', check: S.options.showHidden, act: () => runCmd('hidden') },
         { label: 'Show file name extensions', check: S.options.showExtensions, act: () => runCmd('exts') }])));
+      const fb = dropBtn(M.filterActive(t.filter) ? 'Filtered' : 'Filter', I.filter, filterItems);
+      if (M.filterActive(t.filter)) fb.classList.add('on');
+      bar.appendChild(fb);
       sep();
       const more = el('button', 'cmd');
       more.type = 'button';
@@ -1020,8 +1145,8 @@
       more.addEventListener('click', () => {
         const r = more.getBoundingClientRect();
         const items = [];
-        if (t.kind !== 'recycle') items.push(menuCmd('undo', S.undoLabel ? { label: `Undo: ${S.undoLabel}` } : null), { sep: true }, menuCmd('selectall'), menuCmd('copypath'), menuCmd('zip'), menuCmd('unzip'), { sep: true }, menuCmd('purge', { warn: true }));
-        else items.push(menuCmd('selectall'));
+        if (t.kind !== 'recycle') items.push(menuCmd('undo', S.undoLabel ? { label: `Undo: ${S.undoLabel}` } : null), { sep: true }, menuCmd('selectall'), menuCmd('invert'), menuCmd('selectnone'), { sep: true }, menuCmd('copypath'), menuCmd('zip'), menuCmd('unzip'), menuCmd('terminal'), { sep: true }, menuCmd('purge', { warn: true }));
+        else items.push(menuCmd('selectall'), menuCmd('invert'), menuCmd('selectnone'));
         items.push({ sep: true }, menuCmd('refresh'));
         MF.menu.open(items, r.left, r.bottom + 2);
       });
@@ -1085,6 +1210,7 @@
     out.push({ label: 'Open', key: 'Enter', icon: it.d ? I.folder : I.openwith, act: () => openSel() });
     if (it.d && single) {
       out.push({ label: 'Open in new tab', icon: I.newtab, act: () => openItem(it, 'tab') }, { label: 'Open in new window', icon: I.newwin, act: () => openItem(it, 'window') });
+      if (p) out.push({ label: 'Open in Terminal', icon: I.terminal, act: () => openTerminal(p) });
     }
     if (!it.d && single && p) out.push({ label: 'Open with', icon: I.openwith, sub: openWith(p) });
     if (t.search || t.kind === 'home') out.push({ label: 'Open file location', icon: I.folder, act: () => { const loc = M.parentOf(p); if (loc) go(t, loc, { select: [it.n] }); } });
@@ -1116,7 +1242,8 @@
       out.push({ label: 'Show hidden items', check: S.options.showHidden, act: () => runCmd('hidden') }, { label: 'Show file name extensions', check: S.options.showExtensions, act: () => runCmd('exts') });
       if (!M.isVirtual(t.path)) {
         const pinned = S.pins.some((p) => M.samePath(p.path, t.path));
-        out.push({ sep: true }, { label: pinned ? 'Unpin from Home' : 'Pin to Home', icon: I.pin, act: () => pin(t.path, !pinned) }, { label: 'Copy path', icon: I.link, act: () => copyPath([t.path]) });
+        out.push({ sep: true }, { label: 'Open in Terminal', icon: I.terminal, disabled: !!t.search, act: () => openTerminal(t.path) });
+        out.push({ label: pinned ? 'Unpin from Home' : 'Pin to Home', icon: I.pin, act: () => pin(t.path, !pinned) }, { label: 'Copy path', icon: I.link, act: () => copyPath([t.path]) });
         out.push({ label: 'Properties', icon: I.props, key: 'Alt+Enter', act: () => { list.clear(); S.folderProps = true; if (MF.side.mode !== 'props') MF.side.toggle('props'); else MF.side.update(); renderCmdbar(); } });
       }
     }
@@ -1140,6 +1267,16 @@
     S.roots = r;
     S.known = {};
     for (const k of r.known || []) S.known[k.key] = k.path;
+    // the known folders can land after the first listing: a tab already inside OneDrive gets its Status column now
+    for (const t of S.tabs) {
+      if (t.kind !== 'folder' || t.search) continue;
+      const c = isCloud(t.path);
+      if (c === !!t.cloud) continue;
+      t.cloud = c;
+      t.colset = c ? 'cloud' : 'folder';
+      if (t.view) delete t.view.colsParsed;
+      if (t === cur()) list.setTab(t, true);
+    }
     for (const d of r.drives || []) { const k = d.path.toLowerCase(); if (!S.names[k]) S.names[k] = `${d.label || (d.type === 'removable' ? 'USB drive' : 'Local Disk')} (${d.path.slice(0, 2)})`; }
     for (const [k, label] of KNOWN) if (S.known[k] && !S.names[S.known[k].toLowerCase()]) S.names[S.known[k].toLowerCase()] = label;
     if (r.pins) S.pins = r.pins;
@@ -1372,7 +1509,8 @@
     else {
       count = M.plural(t.shown.length, 'item');
       const hid = src.length - t.shown.length;
-      if (hid > 0) count += ` (${M.fmtCount(hid)} hidden)`;
+      if (hid > 0) count += M.filterActive(t.filter) ? ` (${M.fmtCount(hid)} filtered out)` : ` (${M.fmtCount(hid)} hidden)`;
+      if (t.search && t.search.contents && t.search.done && t.search.skipped) count += ` · ${M.plural(t.search.skipped, 'file')} not read (binary or over 8 MB)`;
       if (t.kind === 'recycle' && t.binBytes) count += ` · ${M.fmtSize(t.binBytes)}`;
     }
     $('stcount').textContent = count;
@@ -1406,6 +1544,7 @@
     renderBanner();
     renderEmpty();
     renderCmdbar();
+    renderFbar();
     renderStatus();
     markNav();
     if (MF.side.mode) MF.side.update();
@@ -1417,6 +1556,15 @@
     nameOf, iconOf, thumbOf, colText, sortBy, columnMenu,
     isCut: (it) => { if (!S.cut.size) return false; const p = pathOf(it); return !!p && S.cut.has(p.toLowerCase()); },
     showExt: () => S.options.showExtensions,
+    opt: (k) => !!S.options[k],
+    zoom: (d) => {
+      const t = cur();
+      if (!t || t.kind === 'place') return;
+      const steps = [{ view: 'details' }, { view: 'list' }, { view: 'grid', size: 'small' }, { view: 'grid', size: 'medium' }, { view: 'grid', size: 'large' }];
+      const at = steps.findIndex((x) => x.view === t.view.view && (!x.size || x.size === t.view.size));
+      const next = steps[Math.max(0, Math.min(steps.length - 1, (at < 0 ? 0 : at) + d))];
+      if (next.view !== t.view.view || next.size !== (t.view.view === 'grid' ? t.view.size : undefined)) setView(next);
+    },
     colsChanged: (cols) => { const t = cur(); t.view.cols = M.encodeCols(cols); saveView(t); },
     contextMenu: (x, y, onItem) => { if (onItem) itemMenu(x, y); else backgroundMenu(x, y); },
     open: (i) => { const t = cur(); const it = t.shown[i]; if (it) openItem(it); },
@@ -1478,6 +1626,7 @@
       if (k === 'ArrowRight') { stop(); forward(); return; }
       if (k === 'ArrowUp') { stop(); up(); return; }
       if (low === 'd') { stop(); editAddress(); return; }
+      if (low === 'p' && e.shiftKey) { stop(); runCmd('props'); return; }
       if (low === 'p') { stop(); runCmd('preview'); return; }
       if (k === 'Enter') { stop(); runCmd('props'); return; }
     }
@@ -1661,6 +1810,6 @@
     document.documentElement.dataset.ready = '1';
   }
 
-  MF.app = { S, cur, go, newTab, closeTab, activate, list, arrange, setView, sortBy, startSearch, endSearch, relist, itemMenu, backgroundMenu, runCmd, api, editAddress, selItems, back, up };
+  MF.app = { S, cur, go, newTab, closeTab, activate, list, arrange, setView, sortBy, startSearch, endSearch, relist, itemMenu, backgroundMenu, runCmd, api, editAddress, selItems, back, up, setFilter, setContents, filterItems };
   boot();
 }());
