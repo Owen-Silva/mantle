@@ -65,6 +65,19 @@ namespace Mantle {
     public const uint MSG_CONFIG = 0x8000 + 25;     // a feature was switched
     public const uint MSG_QUIT = 0x8000 + 26;
     public const uint MSG_REHOOK = 0x8000 + 27;
+    public const uint MSG_LATE = 0x8000 + 28;       // wParam = vk, lParam = ms the key waited for the hook
+
+    // LATE KEYS (lane shotfix, 2026-09-28). Windows waits at most LowLevelHooksTimeout for this hook
+    // (HKCU\Control Panel\Desktop; 1000 ms on Owen's machine, which is also the most Windows 10 1709+
+    // waits), then passes the key on as if nothing had swallowed it. So a key we SWALLOW that reaches
+    // the hook later than that reached Windows too: Win+Shift+S opens Windows' snip as well as
+    // Mantle's, a Win+S also opens Search. Nothing else can see that happen, so the hook proc
+    // measures it (KBDLLHOOKSTRUCT.time is the tick the key was made at) and this thread says it:
+    // a "keyboard hook:" warning in mantle.log and a `keylate` event for the features.
+    static int _limitMs = 1000;
+    static string _limitWhy = "not read yet";
+    static int _late;                          // swallowed keys that arrived past the limit, this run
+    static volatile int _slowest;              // the longest a swallowed key waited for the hook, ms
 
     /// The one machine. The hook thread is the only thread that calls Step;
     /// the ui lane only flips its three feature bools.
@@ -156,12 +169,14 @@ namespace Mantle {
     }
 
     public static IDictionary Status() {
+      if (_limitWhy == "not read yet") ReadLimit();   // no hook thread yet (passive, or off): read it here
       return Json.Obj("installed", Installed, "winTap", Machine.WinTap, "altTab", Machine.AltTab,
                       "winKeys", Machine.WinKeys,
                       "chords", KeyMachine.NamesOf(Machine.Chords, KeyMachine.ChordNames),
                       "observe", KeyMachine.NamesOf(Machine.Observe, KeyMachine.KeyNames),
                       "tracking", Switcher.Tracking,
                       "session", Machine.Active, "seq", Switcher.Seq, "rehooks", _rehooks,
+                      "lateKeys", _late, "slowestMs", _slowest, "limitMs", _limitMs, "limitWhy", _limitWhy,
                       "reason", _lastReason);
     }
 
@@ -239,6 +254,7 @@ namespace Mantle {
         // Any USER call creates the thread's message queue; PostThreadMessage
         // to a thread without one fails, so this goes before anything is posted.
         KeysNative.PeekMessageW(out msg, IntPtr.Zero, 0, 0, KeysNative.PM_NOREMOVE);
+        ReadLimit();   // registry I/O: here, never in the hook proc
         _tid = Win32.GetCurrentThreadId();
         _proc = HookProc;
         // hMod must be a real module handle for WH_KEYBOARD_LL on some builds;
@@ -265,6 +281,7 @@ namespace Mantle {
           if (msg.hwnd == IntPtr.Zero) {
             if (msg.message == MSG_QUIT) break;
             if (msg.message == MSG_REHOOK) { RehookHere("the switcher asked for it"); continue; }
+            if (msg.message == MSG_LATE) { ReportLate((int)msg.wParam.ToInt64(), (int)msg.lParam.ToInt64()); continue; }
             try {
               Switcher.OnThreadMessage(msg.message, msg.wParam, msg.lParam);
             } catch (Exception ex) {
@@ -315,6 +332,67 @@ namespace Mantle {
                             (_rehooks == 1 ? " time" : " times") + " this run)");
     }
 
+    // ------------------------------------------------------------ late keys
+
+    /// PURE: how long a key made at tick `made` waited until tick `now` (wrap-safe), or
+    /// uint.MaxValue for a stamp that makes no sense (a minute or more: a zero or odd stamp).
+    public static uint Waited(uint now, uint made) {
+      uint w = unchecked(now - made);
+      return w < 60000u ? w : uint.MaxValue;
+    }
+
+    static uint TickArg(Dictionary<string, object> req, string key) {
+      object v;
+      return Json.TryGet(req, key, out v) && v is double ? unchecked((uint)(long)(double)v) : 0u;
+    }
+
+    /// LowLevelHooksTimeout, as Windows reads it (a DWORD or a string of digits). Unset = 1000 ms,
+    /// the most Windows 10 1709+ ever waits, so "late" is never claimed for a key Windows still waited for.
+    static void ReadLimit() {
+      try {
+        using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop")) {
+          object v = k == null ? null : k.GetValue("LowLevelHooksTimeout");
+          int ms;
+          if (v is int) ms = (int)v;
+          else if (v != null && int.TryParse(v.ToString(), out ms)) { }
+          else { _limitMs = 1000; _limitWhy = "LowLevelHooksTimeout is not set; 1000 ms assumed (the most Windows waits)"; return; }
+          if (ms <= 0 || ms > 1000) { _limitMs = 1000; _limitWhy = "LowLevelHooksTimeout is " + ms + " ms; Windows waits at most 1000"; return; }
+          _limitMs = ms;
+          _limitWhy = "LowLevelHooksTimeout is " + ms + " ms";
+        }
+      } catch (Exception e) {
+        _limitMs = 1000;
+        _limitWhy = "LowLevelHooksTimeout could not be read (" + e.Message + "); 1000 ms assumed";
+      }
+    }
+
+    static string KeyName(int vk) {
+      if ((vk >= 0x30 && vk <= 0x39) || (vk >= 0x41 && vk <= 0x5A)) return ((char)vk).ToString();
+      switch (vk) {
+        case 0x2C: return "PrintScreen";
+        case 0x09: return "Tab";
+        case 0x1B: return "Esc";
+        case 0x25: return "Left"; case 0x26: return "Up"; case 0x27: return "Right"; case 0x28: return "Down";
+        case 0xAD: return "VolumeMute"; case 0xAE: return "VolumeDown"; case 0xAF: return "VolumeUp";
+      }
+      return "VK 0x" + vk.ToString("X2");
+    }
+
+    public static string LateWords(int vk, int ms, int limitMs, int count) {
+      return "a key Mantle takes (" + KeyName(vk) + ") reached the keyboard hook " + ms + " ms after it was pressed, " +
+             "past Windows' " + limitMs + " ms limit, so Windows had already passed it on: it reached Windows TOO " +
+             "(the hook thread did not run in time: the machine or the thread was busy; " + count + (count == 1 ? " key" : " keys") + " this run)";
+    }
+
+    /// On the hook thread, from MSG_LATE: allocating is fine here, the key has long gone.
+    static void ReportLate(int vk, int ms) {
+      _late++;
+      string words = LateWords(vk, ms, _limitMs, _late);
+      KeyEvents.Log("warn", "keyboard hook: " + words);
+      KeyEvents.Enqueue(Json.Obj("ev", "keylate", "vk", vk, "key", KeyName(vk), "ms", ms, "limitMs", _limitMs,
+                                 "count", _late, "words", words));
+    }
+
     // ------------------------------------------------------------ the hook
 
     static IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam) {
@@ -358,7 +436,15 @@ namespace Mantle {
                 if (ev == KeyMachine.EvOpen) LastOpenTs = Stopwatch.GetTimestamp();
                 KeysNative.PostThreadMessageW(_tid, MSG_KEYEVENT, new IntPtr(ev), new IntPtr(m.Arg));
               }
-              if ((r & KeyMachine.Swallow) != 0) return new IntPtr(1);
+              if ((r & KeyMachine.Swallow) != 0) {
+                // How long this key waited for us (see LATE KEYS): two reads and a subtraction.
+                uint waited = Waited(unchecked((uint)Environment.TickCount), unchecked((uint)Marshal.ReadInt32(lParam, 12)));
+                if (waited != uint.MaxValue) {
+                  if ((int)waited > _slowest) _slowest = (int)waited;
+                  if (waited >= (uint)_limitMs) KeysNative.PostThreadMessageW(_tid, MSG_LATE, new IntPtr(vk), new IntPtr((int)waited));
+                }
+                return new IntPtr(1);
+              }
             }
           }
         } catch (Exception) {
@@ -416,6 +502,17 @@ namespace Mantle {
           case "order": return Switcher.OrderFake(req, out result);
           case "list": result = Switcher.ListNow(); return null;
           case "status": result = Status(); return null;
+          case "late": {
+            // PURE, for tests (passive too): the LATE KEYS verdict for made-up ticks. Emits nothing.
+            uint now = TickArg(req, "now");
+            uint made = TickArg(req, "made");
+            int limit = Json.GetInt(req, "limitMs", _limitMs);
+            uint w = Waited(now, made);
+            bool leaked = w != uint.MaxValue && w >= (uint)limit;
+            result = Json.Obj("waited", w == uint.MaxValue ? -1 : (long)w, "leaked", leaked,
+                              "words", leaked ? LateWords(Json.GetInt(req, "vk", 0), (int)w, limit, 1) : null);
+            return null;
+          }
           case "pick":
           case "cancel":
           case "grid": {

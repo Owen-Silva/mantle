@@ -32,6 +32,10 @@
 // PASSIVE (--passive, the test sidecar): a grab only reads the screen and writes to temp, so it
 // runs. `shot.save` writes a file, so in passive it only writes under %TEMP% and refuses anywhere
 // else - a test can never put a file in his Pictures folder, even by mistake.
+//
+// `shot.owner` (lane shotfix, 2026-09-28) names the PROCESS behind a window found in front of the
+// overlay, so screenshot.js can tell Windows' own shell UI (Start, Search, the notification centre,
+// Windows' snip: all "Windows.UI.Core.CoreWindow") from a real failure. File name and class only.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -53,6 +57,7 @@ namespace Mantle {
       t.Add("shot.release", Lanes.Capture, Release);
       t.Add("shot.folder", Lanes.Slow, Folder);
       t.Add("shot.ocr", Lanes.Capture, OcrCmd);     // "Copy text": Ocr.cs reads the same frozen frame
+      t.Add("shot.owner", Lanes.Capture, Owner);    // which process owns a window in front of the overlay
     }
 
     /// The frame names start with this, and only files that do are ever deleted from `dir`.
@@ -729,6 +734,39 @@ namespace Mantle {
       string pics = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
       if (string.IsNullOrEmpty(pics)) return "shot.folder: neither the Screenshots folder nor Pictures could be found (" + why + ")";
       result = Json.Obj("ok", true, "path", Path.Combine(pics, "Screenshots"), "source", "Pictures\\Screenshots", "reason", why);
+      return null;
+    }
+
+    /* ---- shot.owner --------------------------------------------------------------------------- */
+
+    /// {windows:[hwnd,...]} -> {owners:[{window, exists, pid, exe, cls, why?}]}: the process behind
+    /// each window measured in front of the overlay. `exe` is the file name only (ScreenClippingHost.exe,
+    /// StartMenuExperienceHost.exe, ...), `cls` the window class; never a title. Read-only, so it runs
+    /// in passive too. At most 16 windows (screenshot.js asks for one or two).
+    static string Owner(Dictionary<string, object> req, ref object result) {
+      object w;
+      if (!Json.TryGet(req, "windows", out w) || !(w is List<object>)) return "shot.owner: windows must be a list of window handles";
+      var list = (List<object>)w;
+      if (list.Count > 16) return "shot.owner: at most 16 windows at a time (got " + list.Count + ")";
+      var rows = new List<object>();
+      foreach (object o in list) {
+        long n = 0;
+        if (o is double) n = (long)(double)o;
+        else if (o is string) long.TryParse((string)o, out n);
+        IntPtr h = new IntPtr(n);
+        if (n == 0 || !Win32.IsWindow(h)) { rows.Add(Json.Obj("window", n.ToString(), "exists", false)); continue; }
+        int pid;
+        Win32.GetWindowThreadProcessId(h, out pid);
+        string p = Win32.GetProcessPath(pid);
+        string cls = Win32.GetClassName(h) ?? "";
+        if (string.IsNullOrEmpty(p)) {
+          rows.Add(Json.Obj("window", n.ToString(), "exists", true, "pid", pid, "exe", "", "cls", cls,
+                            "why", "its process (pid " + pid + ") could not be opened to read its name"));
+        } else {
+          rows.Add(Json.Obj("window", n.ToString(), "exists", true, "pid", pid, "exe", Path.GetFileName(p), "cls", cls));
+        }
+      }
+      result = Json.Obj("ok", true, "owners", rows);
       return null;
     }
 

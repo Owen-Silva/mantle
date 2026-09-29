@@ -289,6 +289,40 @@ async function main() {
     check('shot.folder names a Screenshots folder', fo.ok && /Screenshots$/i.test(fo.result.path), fo.error || fo.result.source);
     console.log(`  screenshots folder source: ${fo.result && fo.result.source}`);
 
+    // --- shot.owner (lane shotfix): the process behind a window in front of the overlay --------------
+    // Read-only, and only ever on the shell's own desktop window here (explorer.exe's Progman).
+    let shellWin = 0;
+    try { shellWin = Number(require('koffi').load('user32.dll').func('intptr_t __stdcall GetShellWindow()')()); } catch (_) { /* below */ }
+    if (shellWin) {
+      const ow = await s.send('shot.owner', { windows: [String(shellWin)] });
+      const row = ow.ok && ow.result.owners[0];
+      check('shot.owner names the process behind a window: file name and class', !!row && row.exists === true && /^explorer\.exe$/i.test(row.exe) && row.cls === 'Progman' && row.pid > 0,
+        JSON.stringify(ow.result || ow.error));
+      check('shot.owner never returns a title or a path', !!row && !('title' in row) && !/[\\/]/.test(row.exe));
+    } else check('koffi found the shell window for the shot.owner test', false);
+    const noWin = await s.send('shot.owner', { windows: ['0', 1] });
+    check('shot.owner: no such window -> exists false, not an error', noWin.ok && noWin.result.owners.length === 2 && noWin.result.owners.every((o) => o.exists === false), JSON.stringify(noWin.result || noWin.error));
+    const bad = await s.send('shot.owner', {});
+    check('shot.owner: no list -> an error in words', bad.ok === false && /windows must be a list/.test(bad.error), bad.error);
+    const many = await s.send('shot.owner', { windows: Array.from({ length: 17 }, (_, i) => String(i + 1)) });
+    check('shot.owner: more than 16 -> refused in words', many.ok === false && /at most 16/.test(many.error), many.error);
+
+    // --- hotkey LATE KEYS (Hotkey.cs, lane shotfix): made-up ticks, no real input ---------------------
+    const late = await s.send('hotkey', { op: 'late', now: 5000, made: 3800, limitMs: 1000, vk: 0x53 });
+    check('late key: 1200 ms past a 1000 ms limit -> it reached Windows too, said in words',
+      late.ok && late.result.waited === 1200 && late.result.leaked === true &&
+      /a key Mantle takes \(S\) reached the keyboard hook 1200 ms after it was pressed, past Windows' 1000 ms limit, so Windows had already passed it on: it reached Windows TOO/.test(late.result.words),
+      JSON.stringify(late.result || late.error));
+    const inTime = await s.send('hotkey', { op: 'late', now: 5000, made: 4500, limitMs: 1000, vk: 0x2C });
+    check('late key: 500 ms is in time (not leaked, no words)', inTime.ok && inTime.result.waited === 500 && inTime.result.leaked === false && inTime.result.words === null, JSON.stringify(inTime.result));
+    const wrap = await s.send('hotkey', { op: 'late', now: 100, made: 4294967000, limitMs: 300, vk: 0x2C });
+    check('late key: the tick counter wrapping is handled (396 ms, past a 300 ms limit)', wrap.ok && wrap.result.waited === 396 && wrap.result.leaked === true && /\(PrintScreen\)/.test(wrap.result.words), JSON.stringify(wrap.result));
+    const odd = await s.send('hotkey', { op: 'late', now: 100000, made: 0, vk: 0x53 });
+    check('late key: a nonsense stamp (a minute or more) is never called late', odd.ok && odd.result.waited === -1 && odd.result.leaked === false, JSON.stringify(odd.result));
+    const hs = await s.send('hotkey', { op: 'status' });
+    check('hotkey status: says Windows\' hook limit and counts late keys', hs.ok && hs.result.limitMs > 0 && hs.result.limitMs <= 1000 && hs.result.lateKeys === 0 &&
+      /LowLevelHooksTimeout/.test(hs.result.limitWhy), JSON.stringify(hs.result && { limitMs: hs.result.limitMs, limitWhy: hs.result.limitWhy, lateKeys: hs.result.lateKeys }));
+
     // --- the REAL grab: timings and dimensions only; frames deleted at once --------------------------
     const times = [];
     let real = null;
