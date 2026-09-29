@@ -13,6 +13,7 @@ const { stats } = require('./lib/sys-stats');
 const MediaPick = require('./lib/media-pick');
 const { trayImage } = require('./lib/tray-icon');
 const { openTarget } = require('./lib/open-target');
+const { openRouted } = require('./lib/open-route');
 const spotifyLaunch = require('./lib/spotify-launch');
 const { probe } = require('./lib/net-probe');
 const { createCallLog, createSetLog } = require('./lib/call-log');
@@ -2507,7 +2508,13 @@ async function buildPinned() {
   const featureList = (() => { try { return features ? features.list() : []; } catch (_) { return []; } })();
   for (const pin of pins) {
     if (!pin) continue;
-    const stand = mantleApps ? mantleApps.standInFor(pin) : null;
+    /* A pin OF a Mantle app (lane barfiles, 2026-09-29; Owen: "mantle files it isnt letting me pin
+       it to taskbar"): "Pin to taskbar" on a Mantle Files window stores electron.exe + 'mantle.files'.
+       Treated as a plain pin it drew electron.exe's icon, borrowed ANY electron.exe window by exe once
+       its own were closed (Mantle Settings' preview on hover), and a click started bare electron.exe.
+       It is that Mantle app: its icon, its own windows only, and a click opens it. */
+    const self = mantleApps && typeof mantleApps.forPin === 'function' ? mantleApps.forPin(pin) : null;
+    const stand = self || (mantleApps ? mantleApps.standInFor(pin) : null);
     if (stand) {
       const a = mantleApps.APPS[stand];
       const mine = a.aumid.toLowerCase();
@@ -2517,7 +2524,8 @@ async function buildPinned() {
       const ico = mantleApps.iconOf(stand, 32);
       const avail = mantleApps.availability(stand, featureList);
       const id = String(pin.id || pin.lnkPath || pin.name || `pin:${items.length}`);
-      pinById.set(id, pin);
+      // a Mantle app's own pin has no Windows shortcut (its target is electron.exe): Windows' own = windowsTarget
+      if (!self) pinById.set(id, pin);
       items.push({
         id,
         name: a.title,
@@ -2528,6 +2536,7 @@ async function buildPinned() {
         iconReason: ico.icon ? null : ico.reason,
         mantleApp: stand,
         standsInFor: a.windowsName,
+        selfPin: !!self,            // Mantle's own pin of it, not a Windows pin it stands in for
         // said on the icon while Mantle's cannot open (off, resting for a game): a click opens Windows'
         standInReason: avail.ok ? null : `${avail.reason}, so this opens ${a.windowsName}`,
         windows: g ? g.windows : [],
@@ -2677,7 +2686,9 @@ async function openMantleApp(item, via) {
   const key = item.mantleApp;
   const a = mantleApps.APPS[key];
   const avail = mantleApps.availability(key, (() => { try { return features ? features.list() : []; } catch (_) { return []; } })());
-  if (flags.test) {
+  // Mantle Files opens for real in --test: its test windows are made OFF SCREEN and never shown
+  // (lib/features/files.js), so a test bar's click can be timed end to end (lane barfiles)
+  if (flags.test && !(key === 'files' && avail.ok)) {
     const reason = `dry run: would open ${a.title}${avail.ok ? '' : ` -- but ${avail.reason}, so ${a.windowsName} would open`}`;
     process.stdout.write(`mantle: launch dry run (--test): ${reason}\n`);
     return { ok: true, reason, action: 'dry-run', dryRun: true, fellBack: avail.ok ? null : avail.reason };
@@ -2692,7 +2703,11 @@ async function openMantleApp(item, via) {
     // the task manager (and any later app window) listens on its OWN event only while on and awake
     const ev = `mantle-open:${key}`;
     if (app.listenerCount(ev) > 0) {
-      app.emit(ev, key === 'taskmgr' ? 'apps' : { via });
+      // Mantle Files: the same openWindow Win+E runs (lib/features/files.js 'mantle-open:files'), no explorer.exe
+      // (files fills `reply` with openWindow's own answer; the task manager takes a view name and has none)
+      const reply = { handled: false, ok: false, reason: null };
+      try { app.emit(ev, key === 'taskmgr' ? 'apps' : { via, reply }); } catch (err) { return { ok: false, reason: `${a.title} did not open: ${err.message}` }; }
+      if (reply.handled && !reply.ok) return { ok: false, reason: `${a.title} did not open: ${reply.reason || 'it did not say why'}` };
       return { ok: true, reason: null, action: 'launched', mantleApp: key };
     }
     why = avail.ok ? `${a.title} is off or resting while a game runs` : avail.reason;
@@ -4216,7 +4231,8 @@ const COMMANDS = {
   // The Wi-Fi password field's keyboard: see qsKeyboard for why the bar must ask.
   'qs.keyboard': async (a) => qsKeyboard(!!(a && a.on)),
 
-  'open': async (a) => openTarget(a && a.target),
+  // ms-settings: links from the bar open MANTLE Settings (lib/open-route.js; lane barfiles, 2026-09-29)
+  'open': async (a) => openRouted(a && a.target, { launch: (item, o) => require('./lib/launcher-index').launch(item, o), openTarget, dryRun: !!flags.test }),
 
   'shell.restore': async () => {
     await restoreShell('a window asked for it');

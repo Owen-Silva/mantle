@@ -412,7 +412,7 @@
     if (!it.icon) tip += '\n(no icon: ' + (it.iconReason || 'the sidecar gave no reason') + ')';
     /* Mantle's own app (Mantle Settings / Task Manager), and a pin of Windows' own that it stands in
        for (icons lane, 2026-09-28): say so, where Windows' own is, and why a click would open Windows'. */
-    if (it.mantleApp && it.standsInFor) tip += '\n(' + (it.kind === 'pinned' ? 'Mantle\'s, in place of ' + it.standsInFor + '; ' : '') + 'right-click: ' + it.standsInFor + ')';
+    if (it.mantleApp && it.standsInFor) tip += '\n(' + (it.kind === 'pinned' && !it.selfPin ? 'Mantle\'s, in place of ' + it.standsInFor + '; ' : '') + 'right-click: ' + it.standsInFor + ')';
     if (it.standInReason) tip += '\n(' + it.standInReason + ')';
     if (wins.length > 1) tip += '\n(right-click: the window list)';
     if (it.kind === 'pinned') tip += '\n(middle-click: new window)';
@@ -1180,8 +1180,8 @@
     act('bar.open', { id: b.dataset.id, fresh: true }, 'open').then(fellBack);
   });
 
-  /* Mantle Settings / Task Manager could not open (off, resting for a game): main opened WINDOWS'
-     own instead and says why (r.fellBack). Said on the strip for a few seconds, never swallowed. */
+  /* Mantle Settings / Task Manager / Files could not open (off, resting for a game): main opened WINDOWS'
+     own instead and says why (r.fellBack); the Settings links (gear, Energy saver, tiles, Quick Settings) too. Said on the strip for a few seconds, never swallowed. */
   var fellBackTimer = 0;
   function fellBack(r) {
     if (!r || !r.fellBack) return;
@@ -1870,7 +1870,7 @@
        says so. bt.js tile() decides which. */
     tiles.bluetooth.b.addEventListener('click', function () {
       var p = qsPart('bluetooth'), t = btTile(p);
-      if (!t.live && t.open) { closePop(); act('open', { target: t.open.target }, t.open.what); return; }
+      if (!t.live && t.open) { closePop(); act('open', { target: t.open.target }, t.open.what).then(fellBack); return; }
       if (p && !t.live && !qsBusy.bluetooth) { qsNote.bluetooth = t.tip.split('\n')[0]; paint(); return; }
       toggle('bluetooth')();
     });
@@ -1880,7 +1880,7 @@
        used to be a dead tile that did nothing at all when clicked. */
     tiles.saver.b.addEventListener('click', function () {
       closePop();
-      act('open', { target: 'ms-settings:batterysaver' }, 'energy saver settings');
+      act('open', { target: 'ms-settings:batterysaver' }, 'energy saver settings').then(fellBack);
     });
 
     function slider(key, label, part, setPart) {
@@ -1973,7 +1973,8 @@
     gear.type = 'button'; gear.className = 'qsgear';
     gear.title = 'Open Windows Settings';
     gear.innerHTML = svg('<path d="M8 5.6A2.4 2.4 0 1 0 8 10.4 2.4 2.4 0 0 0 8 5.6z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 1.6l1 1.7 2-.3.5 1.9 1.8.9-.9 1.8.9 1.8-1.8.9-.5 1.9-2-.3-1 1.7-1-1.7-2 .3-.5-1.9-1.8-.9.9-1.8-.9-1.8 1.8-.9.5-1.9 2 .3z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>');
-    gear.addEventListener('click', function () { closePop(); act('open', { target: 'ms-settings:' }, 'settings'); });
+    // Mantle Settings Home (main.js 'open' -> lib/open-route.js); Windows' only when Mantle's is off, said via fellBack
+    gear.addEventListener('click', function () { closePop(); act('open', { target: 'ms-settings:' }, 'settings').then(fellBack); });
     acts.appendChild(toWin); acts.appendChild(gear);
     foot.appendChild(power); foot.appendChild(acts);
     pop.appendChild(foot);
@@ -3000,7 +3001,7 @@
      buttons, and says why. on: the Bluetooth view's pushes ('btdevices'). */
   if (window.MantleQsMore) {
     MantleQsMore.init({
-      call: call, callR: callR, on: on, msg: msg, fail: fail, closePop: closePop,
+      call: call, callR: callR, on: on, msg: msg, fail: fail, closePop: closePop, fellBack: fellBack,
       svg: svg, wifiGlyph: wifiGlyph, volumeSvg: volumeSvg, popNeed: popNeed
     });
   } else {

@@ -113,7 +113,8 @@
   /* ---- one jump list item, and its own actions (right-click / Right arrow) */
   function itemRow(it, sec) {
     var b = row(it.title, iconBox(it.icon, GLYPH.task), function () {
-      run('Opening ' + it.title, api.callR('jumplist.open', { app: cur.app, item: it.item, title: it.title }));
+      // tip = the item's own path: a folder in Mantle Files' (File Explorer's) list opens in Mantle Files
+      run('Opening ' + it.title, api.callR('jumplist.open', { app: cur.app, item: it.item, title: it.title, tip: it.tip || null }));
     });
     b.title = it.tip || it.title;
     b.dataset.jlItem = it.item;

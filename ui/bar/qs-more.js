@@ -315,7 +315,8 @@
      was tried. */
   function openOut(target, what, fallback, firstWhy) {
     B.call('open', { target: target }).then(function (r) {
-      if (r && r.ok !== false) { B.closePop(); return; }
+      // Mantle Settings off / resting: main opened Windows' page instead and says why (r.fellBack) on the strip
+      if (r && r.ok !== false) { B.closePop(); if (r.fellBack && B.fellBack) B.fellBack(r); return; }
       var why = (r && r.reason) || 'no reason given';
       if (fallback) { openOut(fallback, what, null, why); return; }
       viewNote('open', what + ' did not open: ' + (firstWhy ? firstWhy + '; then ' : '') + why);
