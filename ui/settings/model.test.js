@@ -142,6 +142,26 @@ t('health counts a feature whose keys went back to Windows', () => {
   const h = M.health([{ name: 'ontop', label: 'On top', enabled: true, ok: true, keys: false, keysReason: 'another app has Win+Ctrl+T' }]);
   eq(h.bad.length, 1); ok(/another app has Win\+Ctrl\+T/.test(h.bad[0].reason), h.bad[0].reason);
 });
+t('health: a keys fault carries its cause WITHOUT its own chords, so Home can say a shared cause once', () => {
+  const why = (c) => c + ': Windows\' own (Mantle has not taken the shell yet)';
+  const h = M.health([
+    { name: 'v', label: 'Clipboard', enabled: true, ok: true, chords: ['Win+V'], keys: false, keysReason: why('Win+V') },
+    { name: 's', label: 'Shots', enabled: true, ok: true, chords: ['Win+Shift+S', 'PrintScreen'], keys: false, keysReason: why('Win+Shift+S, PrintScreen') },
+    { name: 'x', label: 'Odd', enabled: true, ok: true, chords: ['Win+X'], keys: false, keysReason: 'no prefix here' },
+    { name: 'b', label: 'Broken', enabled: true, ok: false, chords: ['Win+B'], keys: false, reason: 'it threw' }]);
+  eq(h.bad.length, 4);
+  eq(h.bad[0].cause, 'Windows\' own (Mantle has not taken the shell yet)'); eq(h.bad[1].cause, h.bad[0].cause);
+  eq(h.bad[0].keys, 'Win+V'); eq(h.bad[1].keys, 'Win+Shift+S, PrintScreen');
+  ok(/^its keys are Windows' right now: Win\+V: /.test(h.bad[0].reason), h.bad[0].reason);   // the full reason stays
+  eq(h.bad[2].cause, null);                                  // not in the "<chords>: " shape: no cause
+  eq(h.bad[3].cause, null); eq(h.bad[3].keys, null); eq(h.bad[3].reason, 'it threw');   // not a keys fault
+});
+t('health: a resting feature (keys handed back on purpose) is resting, not a fault; a resting AND broken one is a fault', () => {
+  const h = M.health([
+    { name: 'r', label: 'Rests', enabled: true, ok: true, chords: ['Win+V'], keys: false, keysReason: 'Win+V: Windows\' own while Mantle rests (a game runs)', resting: 'a game runs' },
+    { name: 'rb', label: 'Rests broken', enabled: true, ok: false, reason: 'it threw', chords: ['Win+B'], keys: false, resting: 'a game runs' }]);
+  eq(h.bad.map((b) => b.name).join(), 'rb'); eq(h.resting.map((b) => b.name).join(), 'r');
+});
 t('fuzzy ignores loose subsequences ("night" is not in "Snap right")', () => {
   eq(M.fuzzy('night', M.norm('Snap right')), 0);
   eq(M.fuzzy('night', M.norm('Volume and brightness pop-up')), 0);

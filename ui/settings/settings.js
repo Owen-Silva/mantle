@@ -571,7 +571,9 @@
   function head(title, summary) {
     return [h('h1', { 'data-k': 'h1' }, S.crumb ? crumbTo(S.crumb.section, S.crumb.label) : null, title), h('p', { class: 'summary', 'data-k': 'summary' }, summary)];
   }
-  function sumParts(parts) { const out = []; parts.filter(Boolean).forEach((p, i) => { if (i) out.push(' · '); out.push(typeof p === 'string' ? p : h('span', { class: 'w' }, p.warn)); }); return out; }
+  /* the line under a title: each reading its own unbreakable item (settings.css draws the dot between
+     them), and anything that needs a look its own item behind the warn glyph (lane setlook) */
+  function sumParts(parts) { return parts.filter(Boolean).map((p) => (typeof p === 'string' ? h('span', { class: 'sp' }, p) : h('span', { class: 'sp w' }, icon('warn', 12), p.warn))); }
   /* The related pages at the foot of a built-in section. A page a section module claims now is
      Mantle's: it goes there (a "Related settings" card, in-window); only the rest still open Windows
      Settings (lane wire, 2026-09-29). Row ids keep their index in MORE, so a note stays on its row. */
@@ -696,12 +698,15 @@
     const net = slot('net'), bat = slot('battery'), pm = slot('pm'), mn = slot('mantle'), au = slot('audio');
     const outName = au.v && Array.isArray(au.v.devices) ? (au.v.devices.find((d) => d.isDefault) || {}).name : null;
     const tiles = [];
-    let cant = 0;
-    function T(key, section, ico, k, v, s, warn) {
-      if (s && warn) cant++;
-      tiles.push(keep('tile-' + key, [section, ico, k, v, s || null, !!warn], () => h('button', { class: 'tileb', type: 'button', 'data-k': 'tile-' + key, 'data-act': 'nav', 'data-section': section },
+    const cant = [];
+    // tip: the tile's full words when s is only a count (the Mantle tile: its reasons are the card below)
+    function T(key, section, ico, k, v, s, warn, tip) {
+      if (s && warn) cant.push(k);
+      // a number keeps its unit on its line ("3 hr 4 min left" never breaks as "3 / hr")
+      if (s && !warn) s = String(s).replace(/(\d) (?=[A-Za-z%])/g, '$1 ');
+      tiles.push(keep('tile-' + key, [section, ico, k, v, s || null, !!warn, tip || null], () => h('button', { class: 'tileb', type: 'button', 'data-k': 'tile-' + key, 'data-act': 'nav', 'data-section': section },
         h('span', { class: 't-k' }, icon(ico), k), h('span', { class: 't-v' }, v),
-        s ? h('span', { class: 't-s' + (warn ? ' warn' : ''), title: cap(s) }, cap(s)) : null)));
+        s ? h('span', { class: 't-s' + (warn ? ' warn' : ''), title: cap(tip || s) }, warn ? icon('warn', 12) : null, cap(s)) : null)));
     }
     // sound
     if (!vol) T('sound', 'sound', 'sound', 'Sound', '…', 'Reading the volume');
@@ -737,35 +742,60 @@
     else if (!mn.v) T('mantle', 'mantle', 'mantle', 'Mantle', '…', 'Reading Mantle\'s features');
     else {
       const hh = M.health(mn.v.features);
+      // the tile only COUNTS what needs a look: each one, with its reason, is a line of the card below
       T('mantle', 'mantle', 'mantle', 'Mantle', hh.on + ' of ' + hh.total + ' features on',
-        hh.bad.length ? hh.bad.map((b) => b.label + ': ' + b.reason).join('; ') : hh.resting.length ? 'Resting: ' + hh.resting.map((r) => r.label).join(', ') : 'All healthy', hh.bad.length > 0);
+        hh.bad.length ? M.plural(hh.bad.length, 'feature') + ' ' + (hh.bad.length === 1 ? 'needs' : 'need') + ' a look' : hh.resting.length ? 'Resting: ' + hh.resting.map((r) => r.label).join(', ') : 'All healthy', hh.bad.length > 0,
+        hh.bad.length ? hh.bad.map((b) => b.label + ': ' + b.reason).join('; ') : null);
     }
-    // the summary carries the good readings; what cannot be read is counted here and said on its tile
-    const out = head('Home', sumParts([
-      vol && partOk(vol) ? 'Volume ' + (vol.muted ? 'muted' : M.pct(vol.level)) : null,
-      net.v && net.v.ok !== false && !nw.warn ? nw.text : null,
-      bat.v && bat.v.ok !== false && !bw.none ? bw.text : null,
-      cant ? { warn: M.plural(cant, 'tile') + ' below ' + (cant === 1 ? 'needs' : 'need') + ' a look, and ' + (cant === 1 ? 'says' : 'say') + ' why' } : null,
-    ]));
+    // The tiles ARE the readings, so the line under the title only names what needs a look (lane setlook:
+    // it used to repeat every tile's reading and ran on into a warning sentence)
+    const out = head('Home', sumParts([cant.length ? { warn: 'Needs a look: ' + cant.join(', ') } : null]));
     out.push(h('div', { class: 'tiles', 'data-k': 'tiles' }, tiles));
     if (mn.v) {
       const hh = M.health(mn.v.features);
       // Settings' own problems (its icon file missing, ...) from settings.mantle, then the features
       const own = Array.isArray(mn.v.problems) ? mn.v.problems : [];
       if (hh.bad.length || hh.resting.length || own.length) {
-        out.push(groupT('Mantle needs a look', 'home-attn'));
-        out.push(keep('home-attn', [own, hh.bad.map((b) => [b.name, b.label, b.reason]), hh.resting.map((b) => [b.name, b.label, b.reason])], () => card('home-attn', own.map((p, i) => h('div', { class: 'row', 'data-k': 'own-' + i },
-          tile(icon('warn')), h('div', { class: 'row-l' }, h('div', { class: 'row-t' }, 'Mantle Settings'), why(p)))), hh.bad.concat(hh.resting).map((b) => {
-          const bad = hh.bad.indexOf(b) >= 0;
-          return h('button', { class: 'row clickable', type: 'button', 'data-k': 'attn-' + b.name, 'data-act': 'nav', 'data-row': M.featureRow(b.name), 'data-section': 'mantle' },
-            tile(M.letter(b.label)), h('div', { class: 'row-l' }, h('div', { class: 'row-t' }, b.label),
-              bad ? why(b.reason) : h('div', { class: 'row-h' }, 'Resting while ' + String(b.reason).replace(/^while\s+/i, ''))),
-            h('span', { class: 'arr' }, icon('chev', 14)));
-        }))));
+        out.push(groupT(hh.bad.length || own.length ? 'Mantle needs a look' : 'Mantle is resting', 'home-attn'));
+        out.push(keep('home-attn', [own, hh.bad.map((b) => [b.name, b.label, b.reason]), hh.resting.map((b) => [b.name, b.label, b.reason])], () => {
+          const c = card('home-attn', own.map((p, i) => h('div', { class: 'row', 'data-k': 'own-' + i },
+            h('div', { class: 'row-l' }, h('div', { class: 'row-t' }, 'Mantle Settings'), why(p)))), attnLines(hh.bad), hh.resting.map((b) => attnRow(b, 'rest',
+            h('div', { class: 'row-h' }, 'Resting while ' + String(b.reason).replace(/^while\s+/i, '')))));
+          c.classList.add('attn');
+          return c;
+        }));
       }
     }
     return out.concat(moreCard('home'));
   };
+  /* Home's "needs a look" card: ONE line per feature, and each reason said ONCE. Features that share a
+     reason sit under it: a sidecar restart takes several down with the same words, and one keys cause
+     (Mantle has not taken the shell, a test run) reaches every feature with only its chords differing,
+     so keys faults group by M.health's cause and each line keeps its own chords. A feature alone
+     carries its whole reason beside its name. Every line opens the feature's row on the Mantle page. */
+  function attnRow(b, cls, words) {
+    return h('button', { class: 'row clickable' + (cls ? ' ' + cls : ''), type: 'button', 'data-k': 'attn-' + b.name, 'data-act': 'nav', 'data-row': M.featureRow(b.name), 'data-section': 'mantle' },
+      h('div', { class: 'row-l' }, h('div', { class: 'row-t' }, b.label), words || null),
+      h('span', { class: 'arr' }, icon('chev', 14)));
+  }
+  function attnLines(bad) {
+    const by = new Map();
+    bad.forEach((b) => { const k = b.cause ? 'k:' + b.cause : 'r:' + cap(b.reason); if (!by.has(k)) by.set(k, []); by.get(k).push(b); });
+    const out = [];
+    // does the label already name the chords ("Search (Win+S)")? then a line need not repeat them
+    const named = (b) => /Win\+/.test(b.label) || b.keys.split(', ').some((c) => b.label.indexOf(c) >= 0);
+    by.forEach((list) => {
+      const b0 = list[0];
+      if (list.length === 1) {
+        out.push(attnRow(b0, null, why(!b0.cause ? b0.reason : named(b0) ? 'Its keys are ' + b0.cause : 'Its keys (' + b0.keys + ') are ' + b0.cause)));
+        return;
+      }
+      out.push(h('div', { class: 'attn-why', 'data-k': 'why-' + b0.name }, icon('warn', 12), h('span', null, b0.cause ? 'Their keys are ' + b0.cause : cap(b0.reason))));
+      // under a keys cause, a line names its own chords unless its label already does
+      list.forEach((b) => out.push(attnRow(b, 'under', b.cause && b.keys && !named(b) ? h('div', { class: 'row-h' }, b.keys) : null)));
+    });
+    return out;
+  }
 
   V.display = function () {
     const br = qp('brightness'), nl = qp('nightlight');
@@ -1388,7 +1418,7 @@
   }
   function renderBanner() {
     const lines = Object.keys(S.problems).map((k) => S.problems[k]);
-    const kids = lines.map((l, i) => h('div', { 'data-k': 'p' + i }, l));
+    const kids = lines.map((l, i) => h('div', { 'data-k': 'p' + i }, icon('warn', 14), h('span', null, l)));
     if (S.toast) kids.push(h('div', { 'data-k': 'toast', class: S.toast.tone === 'info' ? 'info' : '' }, S.toast.text, ' ', h('button', { class: 'btn quiet', type: 'button', 'data-act': 'dismiss' }, 'Dismiss')));
     const tmp = h('div', { id: 'banner', class: 'banner', role: 'alert' }, kids);
     if (!kids.length) tmp.setAttribute('hidden', '');

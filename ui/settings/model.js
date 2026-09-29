@@ -580,9 +580,20 @@
   function health(features) {
     var fs = Array.isArray(features) ? features : [];
     var on = fs.filter(function (f) { return f && f.enabled; });
-    var bad = on.filter(function (f) { return f.ok === false || f.stopped || (f.keys === false && !chordless(f)); }).map(function (f) {
+    /* a RESTING feature hands its keys back on purpose (lib/features.js: "Windows' own while Mantle
+       rests"): that is a rest, not a fault, so it is only in resting (it was in both, which put every
+       resting feature on Home's "needs a look" twice and lit the sidebar dot during a game) */
+    var bad = on.filter(function (f) { return f.ok === false || (!f.resting && (f.stopped || (f.keys === false && !chordless(f)))); }).map(function (f) {
       var keys = f.ok !== false && !f.stopped;
-      return { name: f.name, label: f.label || f.name, reason: keys ? 'its keys are Windows\' right now: ' + (f.keysReason || 'no reason came back') : f.reason || 'no reason came back' };
+      /* cause: a keys fault's reason WITHOUT its own chord list. lib/features.js writes every keysReason
+         as "<chords>: <cause>", so one cause (Mantle has not taken the shell, the sidecar is down, a test
+         run) reads different on every feature; Home groups the features by the cause and says it once
+         (lane setlook). null when the reason is not in that shape. */
+      var list = keys && Array.isArray(f.chords) ? f.chords.join(', ') : '';
+      var kr = String(f.keysReason || '');
+      var cause = list && kr.indexOf(list + ': ') === 0 && kr.length > list.length + 2 ? kr.slice(list.length + 2) : null;
+      return { name: f.name, label: f.label || f.name, reason: keys ? 'its keys are Windows\' right now: ' + (f.keysReason || 'no reason came back') : f.reason || 'no reason came back',
+        cause: cause, keys: keys ? list || null : null };
     });
     var resting = on.filter(function (f) { return f.resting && f.ok !== false; }).map(function (f) { return { name: f.name, label: f.label || f.name, reason: f.resting }; });
     return { total: fs.length, on: on.length, off: fs.length - on.length, bad: bad, resting: resting };

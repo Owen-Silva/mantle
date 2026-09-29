@@ -8,6 +8,14 @@
  * glow except the focus ring. The controls are the bar's shapes: --lg-sunk chips, the accent block
  * only for an ON switch, --lg-warn words for anything that cannot act. Motion is Northwind's curve
  * (--lg-ease); this window is opaque and small, so a short transition costs nothing here.
+ *
+ * THE CALM PASS (lane setlook, 2026-09-29; Owen on the live Home: "this does not look very good"). What
+ * he saw: acrylic over his dark terminal read as mid-grey (139,139,139 measured) with white cards on it,
+ * the sidebar a separate lighter slab with its own corner, and a wall of tan warning pills. So:
+ *  - ONE window: the sidebar has no fill, border or corner of its own; the whole window is one light
+ *    tint (html.glass below) and the cards are the only layer on it, drawn by a hairline.
+ *  - Warnings are words, not pills: a small warn glyph and one line in --lg-warn, no fill.
+ *  - Icons in rows are plain glyphs; only a LETTER (an app with no icon) keeps its tile.
  */
 html, body { height: 100%; margin: 0; }
 body {
@@ -33,7 +41,7 @@ svg { display: block; }
   -webkit-app-region: drag;
 }
 .head-title { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--lg-ink-3); }
-.testchip { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: var(--lg-r-ctl); color: var(--lg-warn); background: var(--lg-warn-soft); }
+.testchip { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: var(--lg-r-ctl); color: var(--lg-ink-2); background: var(--lg-sunk); }
 .winbtns { margin-left: auto; display: flex; height: 100%; -webkit-app-region: no-drag; }
 .winbtn {
   width: 46px; height: 40px; padding: 0; border: 0;
@@ -50,24 +58,19 @@ body.maxed .winbtn .g-max { display: none; }
 
 /* ---------------------------------------------------------------- the two columns */
 .shell { position: absolute; top: 40px; left: 0; right: 0; bottom: 0; display: flex; }
+/* the sidebar is part of the window, not a pane on it: no fill, border or corner of its own */
 .side {
-  flex: 0 0 232px; width: 232px; box-sizing: border-box;
+  flex: 0 0 244px; width: 244px; box-sizing: border-box;
   display: flex; flex-direction: column;
-  padding: 6px 10px 10px;
-  background: var(--lg-fill);
-  border-top: 1px solid var(--lg-edge-out);
-  border-right: 1px solid var(--lg-edge-out);
-  border-top-right-radius: var(--lg-r);
-  box-shadow: inset 0 1px 0 var(--lg-edge-in);
+  padding: 2px 8px 10px 12px;
 }
-.find { position: relative; margin: 6px 0 4px; }
-.find-ico { position: absolute; left: 10px; top: 9px; color: var(--lg-ink-3); pointer-events: none; }
+.find { position: relative; margin: 4px 0 6px; }
+.find-ico { position: absolute; left: 11px; top: 10px; color: var(--lg-ink-3); pointer-events: none; }
 .find input {
-  width: 100%; height: 32px; box-sizing: border-box;
-  padding: 0 10px 0 31px;
+  width: 100%; height: 34px; box-sizing: border-box;
+  padding: 0 10px 0 33px;
   border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl);
   background: var(--lg-fill-strong);
-  box-shadow: inset 0 1px 0 var(--lg-edge-in);
   color: var(--lg-ink);
   user-select: text;
 }
@@ -75,78 +78,96 @@ body.maxed .winbtn .g-max { display: none; }
 .find input::-webkit-search-cancel-button { -webkit-appearance: none; }
 .find input:focus { outline: none; border-color: var(--lg-acc); box-shadow: 0 0 0 1px var(--lg-acc); }
 
-.nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 6px -4px 0; padding: 0 4px; }
-.nav-g { margin: 14px 10px 4px; font-size: 11px; font-weight: 600; color: var(--lg-ink-3); letter-spacing: .03em; text-transform: uppercase; }
+.nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 4px -4px 0; padding: 0 4px; }
+/* a short window scrolls the sidebar: a thin thumb that shows only while the pointer is over it, never
+   Chromium's arrowed grey gutter (the live --test window, 704 px tall, drew one) */
+.nav::-webkit-scrollbar { width: 6px; }
+.nav::-webkit-scrollbar-button { display: none; height: 0; }
+.nav::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+.nav:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); }
+.scroller::-webkit-scrollbar-button { display: none; height: 0; }
+.nav-g { margin: 16px 12px 4px; font-size: 11px; font-weight: 600; color: var(--lg-ink-3); letter-spacing: .04em; text-transform: uppercase; }
 .nav-i {
   position: relative;
-  display: flex; align-items: center; gap: 11px;
-  width: 100%; height: 34px; box-sizing: border-box;
-  margin: 1px 0; padding: 0 10px;
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; height: 36px; box-sizing: border-box;
+  margin: 2px 0; padding: 0 12px;
   border: 0; border-radius: var(--lg-r-ctl);
-  background: transparent; color: var(--lg-ink-2);
+  background: transparent; color: var(--lg-ink);
   text-align: left;
   transition: background-color 120ms var(--lg-ease);
 }
-.nav-i svg { flex: 0 0 16px; }
-.nav-i:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.nav-i svg { flex: 0 0 16px; color: var(--lg-ink-2); }
+.nav-i:hover { background: var(--lg-sunk); }
 .nav-i:active { background: var(--lg-press); }
-.nav-i[aria-current="page"] { background: var(--lg-acc-soft); color: var(--lg-ink); font-weight: 600; }
+/* the current page: Windows 11's shape, a quiet ink wash and the accent tick, never a coloured block */
+.nav-i[aria-current="page"] { background: var(--lg-hover); }
 .nav-i[aria-current="page"] svg { color: var(--lg-acc); }
 .nav-i[aria-current="page"]::before {
-  content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
+  content: ''; position: absolute; left: 0; top: 11px; bottom: 11px; width: 3px;
   border-radius: 2px; background: var(--lg-acc);
 }
+/* a section that is DOWN, or Mantle with a feature that is really not healthy (settings.js renderNav) */
 .nav-i .ndot { margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: var(--lg-warn); }
 
 .allwin {
   display: flex; align-items: center; justify-content: space-between;
-  height: 34px; margin-top: 8px; padding: 0 10px;
+  height: 36px; margin-top: 8px; padding: 0 12px;
   border: 0; border-radius: var(--lg-r-ctl);
   background: transparent; color: var(--lg-ink-2);
-  box-shadow: 0 -1px 0 var(--lg-edge-out);
+  box-shadow: 0 -1px 0 var(--lg-sunk);
 }
-.allwin:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.allwin:hover { background: var(--lg-sunk); color: var(--lg-ink); }
 .allwin:active { background: var(--lg-press); }
 
 /* ---------------------------------------------------------------- the content */
 .scroller { flex: 1 1 auto; min-width: 0; overflow-y: auto; overflow-x: hidden; }
 .scroller::-webkit-scrollbar { width: 8px; }
 .scroller::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box; }
-.banner { max-width: 780px; margin: 14px auto 0; padding: 0 28px; box-sizing: content-box; font-size: 12.5px; }
+/* a page-level problem or a toast: a hairline card with the words in warn ink, never a filled bar */
+.banner { max-width: 780px; margin: 12px auto 0; padding: 0 32px; box-sizing: content-box; font-size: 12.5px; }
 .banner > div {
   display: flex; align-items: center; gap: 10px;
   margin-bottom: 6px; padding: 8px 12px; border-radius: var(--lg-r);
-  color: var(--lg-warn); background: var(--lg-warn-soft);
+  color: var(--lg-warn); background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out);
   user-select: text; overflow-wrap: anywhere;
 }
-.banner > div.info { color: var(--lg-ink-2); background: var(--lg-sunk); }
+.banner > div > svg { flex: 0 0 auto; }
+.banner > div.info { color: var(--lg-ink-2); }
 .banner .btn { margin-left: auto; height: 24px; }
-.page { max-width: 780px; margin: 0 auto; padding: 14px 28px 40px; box-sizing: content-box; }
-h1 { margin: 4px 0 2px; font: 600 20px/1.3 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif; color: var(--lg-ink); }
-.summary { margin: 0 0 18px; font-size: 12.5px; color: var(--lg-ink-3); user-select: text; }
-.summary .w { color: var(--lg-warn); }
-.group-t { margin: 20px 2px 7px; font-size: 13px; font-weight: 600; color: var(--lg-ink); display: flex; align-items: center; gap: 10px; }
-.group-t:first-of-type { margin-top: 4px; }
+.page { max-width: 780px; margin: 0 auto; padding: 10px 32px 44px; box-sizing: content-box; }
+h1 { margin: 6px 0 16px; font: 600 26px/1.25 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif; color: var(--lg-ink); }
+/* the line under a title: a few short readings, each kept whole, a quiet dot between them; anything that
+   needs a look is its own item with the warn glyph (settings.js sumParts) */
+.summary { margin: -10px 0 20px; font-size: 12.5px; color: var(--lg-ink-3); user-select: text; }
+.summary:empty { display: none; }
+.summary .sp { white-space: nowrap; }
+.summary .sp + .sp::before { content: '\00B7'; margin: 0 7px; color: var(--lg-ink-3); }
+.summary .w { color: var(--lg-warn); white-space: normal; }
+.summary .w svg { display: inline-block; vertical-align: -1px; margin-right: 5px; }
+.group-t { margin: 24px 2px 8px; font-size: 14px; font-weight: 600; color: var(--lg-ink); display: flex; align-items: center; gap: 10px; }
+/* only the FIRST group on a page sits up under the title; a group a module nests in its own box keeps its air */
+.page > .group-t:first-of-type, .modroot > .group-t:first-child { margin-top: 4px; }
 .group-t .aside { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--lg-ink-3); }
 
+/* a card: a gentle fill on the window's tint, carried by ONE plain hairline (no lip, no shadow) */
 .card {
   margin: 0 0 8px;
   background: var(--lg-fill-strong);
   border: 1px solid var(--lg-edge-out);
-  border-radius: 12px;
-  box-shadow: inset 0 1px 0 var(--lg-edge-in);
+  border-radius: var(--lg-r);
 }
 .row {
   position: relative;
   display: flex; align-items: center; gap: 14px;
-  min-height: 52px; box-sizing: border-box;
-  padding: 8px 16px;
-  border-top: 1px solid var(--lg-edge-out);
+  min-height: 54px; box-sizing: border-box;
+  padding: 9px 16px;
+  border-top: 1px solid var(--lg-sunk);
   transition: background-color 200ms var(--lg-ease);
 }
-.card > .row:first-child { border-top: 0; border-top-left-radius: 11px; border-top-right-radius: 11px; }
-.card > .row:last-child { border-bottom-left-radius: 11px; border-bottom-right-radius: 11px; }
-.row.sub { padding-left: 62px; }
+.card > .row:first-child { border-top: 0; border-top-left-radius: 7px; border-top-right-radius: 7px; }
+.card > .row:last-child { border-bottom-left-radius: 7px; border-bottom-right-radius: 7px; }
+.row.sub { padding-left: 50px; }
 .row.dim .row-t { color: var(--lg-ink-2); }
 .row-l { flex: 1 1 auto; min-width: 0; }
 .row-t { color: var(--lg-ink); overflow-wrap: anywhere; }
@@ -164,28 +185,29 @@ button.row { width: 100%; border-left: 0; border-right: 0; border-bottom: 0; bac
 .card > button.row:first-child { border-top: 0; }
 button.row:focus-visible { outline-offset: -2px; }
 
-/* a letter tile or an app's icon at the head of a row */
+/* the head of a row: a plain glyph (Windows 11's rows), an app's own icon, or a LETTER on a quiet tile
+   for an app that has no icon (the only case that keeps a tile, so a list of apps still lines up) */
 .tile {
-  flex: 0 0 32px; width: 32px; height: 32px;
+  flex: 0 0 20px; width: 20px; height: 32px;
   display: grid; place-items: center;
-  border-radius: var(--lg-r-ctl);
-  background: var(--lg-tile); color: var(--lg-ink-2);
-  font-weight: 600; font-size: 13px;
+  color: var(--lg-ink-2);
+  font-weight: 600; font-size: 12.5px;
 }
+.tile:not(:has(svg, img)) { flex-basis: 28px; width: 28px; height: 28px; margin: 0 -4px; border-radius: var(--lg-r-ctl); background: var(--lg-sunk); }
 .tile img { width: 20px; height: 20px; }
-.tile.acc { background: var(--lg-acc-soft); color: var(--lg-acc); }
+.tile.acc { color: var(--lg-acc); }
 
-/* the words beside a control that cannot act, and a set's outcome */
+/* the words beside a control that cannot act, and a set's outcome: a small glyph and the words in warn
+   ink, one line per reason, no fill (No Silent Failures: it is ON the row, it just does not shout) */
 .why {
-  display: inline-flex; align-items: flex-start; gap: 6px;
-  margin-top: 5px; padding: 3px 8px;
-  border-radius: var(--lg-r-ctl);
+  display: flex; align-items: flex-start; gap: 6px;
+  margin-top: 3px;
   font-size: 12px; line-height: 1.4;
-  color: var(--lg-warn); background: var(--lg-warn-soft);
+  color: var(--lg-warn);
   user-select: text; overflow-wrap: anywhere;
 }
 .why svg { flex: 0 0 12px; margin-top: 2px; }
-.why.info { color: var(--lg-ink-2); background: var(--lg-sunk); }
+.why.info { color: var(--lg-ink-3); }
 .state { font-size: 12px; color: var(--lg-ink-3); }
 .state.ok { color: var(--lg-ink-2); }
 .state.warn { color: var(--lg-warn); }
@@ -222,7 +244,8 @@ button.row:focus-visible { outline-offset: -2px; }
   transition: background-color 120ms var(--lg-ease);
 }
 .seg button:hover { background: var(--lg-hover); color: var(--lg-ink); }
-.seg button[aria-checked="true"] { background: var(--lg-acc-soft); color: var(--lg-acc); font-weight: 600; }
+/* the chosen segment is RAISED out of the recess (a card-white face and its hairline), not tinted */
+.seg button[aria-checked="true"] { background: var(--lg-fill-strong); box-shadow: 0 0 0 1px var(--lg-edge-out); color: var(--lg-ink); font-weight: 600; }
 .seg button:disabled { opacity: .5; }
 .seg.pending { opacity: .6; }
 
@@ -288,23 +311,45 @@ select:disabled, .inp:disabled { opacity: .5; }
 }
 
 /* ---------------------------------------------------------------- home */
-.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 8px; }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
 .tileb {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
-  min-height: 104px; box-sizing: border-box; padding: 13px 15px;
-  border: 1px solid var(--lg-edge-out); border-radius: 12px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  min-height: 100px; box-sizing: border-box; padding: 14px 16px;
+  border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r);
   background: var(--lg-fill-strong);
-  box-shadow: inset 0 1px 0 var(--lg-edge-in);
   text-align: left; color: var(--lg-ink);
+  transition: background-color 120ms var(--lg-ease);
 }
-.tileb:hover { background-image: linear-gradient(var(--lg-hover), var(--lg-hover)); }
-.tileb:active { background-image: linear-gradient(var(--lg-press), var(--lg-press)); }
-.tileb .t-k { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--lg-ink-3); }
+.tileb:hover { background-image: linear-gradient(var(--lg-sunk), var(--lg-sunk)); }
+.tileb:active { background-image: linear-gradient(var(--lg-hover), var(--lg-hover)); }
+.tileb .t-k { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--lg-ink-3); }
 .tileb .t-k svg { color: var(--lg-ink-2); }
-.tileb .t-v { margin-top: 4px; font: 600 17px/1.3 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif; color: var(--lg-ink); }
+.tileb .t-v { margin-top: 6px; font: 600 20px/1.25 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif; color: var(--lg-ink); }
 .tileb .t-s { font-size: 12px; color: var(--lg-ink-3); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+/* a tile that cannot read its thing: its reason, in warn ink behind the glyph (the tile opens the page
+   that says it in full; the Mantle tile only counts, its list is the card below the tiles) */
 .tileb .t-s.warn { color: var(--lg-warn); -webkit-line-clamp: 3; }
+.tileb .t-s.warn svg { display: inline-block; vertical-align: -1px; margin-right: 5px; }
 .tileb.wide { grid-column: span 3; min-height: 0; }
+
+/* Home's "needs a look": ONE card, one line per feature, each reason said once. Features that share a
+   reason sit under it; a feature alone carries its reason on its own line (settings.js V.home). */
+.attn .attn-why {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 16px 4px;
+  font-size: 12px; line-height: 1.4; color: var(--lg-warn);
+  border-top: 1px solid var(--lg-sunk);
+  user-select: text; overflow-wrap: anywhere;
+}
+.attn .attn-why:first-child { border-top: 0; }
+.attn .attn-why svg { flex: 0 0 12px; margin-top: 2px; }
+.attn .row { min-height: 40px; padding-top: 7px; padding-bottom: 7px; }
+.attn .attn-why + .row { border-top: 0; }
+.attn .row.under { padding-left: 36px; min-height: 34px; }
+.attn .row.rest .row-t { color: var(--lg-ink-2); }
+.attn .row .row-h { margin-top: 0; }
+.attn .row-l { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: 10px; }
+.attn .row-l .why { margin-top: 0; flex: 1 1 260px; min-width: 0; }
 
 /* ---------------------------------------------------------------- lists */
 .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px 16px; padding: 10px 16px 12px; border-top: 1px solid var(--lg-edge-out); }
@@ -362,8 +407,8 @@ h1 .crumb-sep { color: var(--lg-ink-3); }
 }
 .btn svg + svg, .btn > svg:last-child:not(:first-child) { margin-left: 2px; }
 .row-w:empty { display: none; }
-.card > .klist:first-child > .row:first-child { border-top: 0; border-top-left-radius: 11px; border-top-right-radius: 11px; }
-.card > .klist:last-child > .row:last-child { border-bottom-left-radius: 11px; border-bottom-right-radius: 11px; }
+.card > .klist:first-child > .row:first-child { border-top: 0; border-top-left-radius: 7px; border-top-right-radius: 7px; }
+.card > .klist:last-child > .row:last-child { border-bottom-left-radius: 7px; border-bottom-right-radius: 7px; }
 .k-empty { min-height: 44px; }
 .row.k-toggle .row-c, .row.k-status .row-c { min-width: 0; }
 
@@ -377,11 +422,20 @@ h1 .crumb-sep { color: var(--lg-ink-3); }
 
 /* ---------------------------------------------------------------- glass (lane settingsfx2) */
 /* html.glass: DWM's acrylic is behind the window (lib/features/settings.js asks for it, sets a light
-   frame and reads both back), so the big surfaces let it through: the page itself is clear, the sidebar
-   keeps its --lg-fill wash and every card its --lg-fill-strong, which is what keeps rows readable over
-   any desktop. The blur is DWM's and costs the page nothing: NO backdrop-filter here (on the bar a CSS
-   blur cost a quarter of a core).
+   frame and reads both back), so the page lets it through under its own tint (below; until setlook the
+   page was fully clear and the sidebar a separate --lg-fill wash). The blur is DWM's and costs the page
+   nothing: NO backdrop-filter here (on the bar a CSS blur cost a quarter of a core).
    html.glass.inactive: DWM draws the backdrop only behind the ACTIVE window, so a window in the
    background stands on the opaque ground, the way Windows' own apps turn solid when inactive. */
-html.glass, html.glass body { background: transparent; }
+/* THE TINT (lane setlook, 2026-09-29). A clear page let DWM's light acrylic through as it is, and over a
+   dark window that is mid-grey: Owen's live Home measured 139,139,139 behind the cards. So the window
+   now carries its own light tint: the card fill twice (html and body, --lg-fill-strong .72 each = ~.92
+   white) and the chip recess over it (--lg-sunk, ink .05). The white lifts a dark window behind; the
+   ink wash keeps a WHITE window behind from turning the page paper-white, so the cards still stand off
+   it. Measured on the mock acrylic: ~234 over a dark terminal, ~242 over a white page (Windows 11's own
+   Settings over Mica is ~243), cards ~250 on both; the acrylic still shows the colour behind as a
+   breath. The sidebar and the content stand on the SAME tint, so the window is one piece; the cards
+   (--lg-fill-strong + a hairline) are the only layer on it. No backdrop-filter: DWM does the blur. */
+html.glass { background: var(--lg-fill-strong); }
+html.glass body { background: linear-gradient(var(--lg-sunk), var(--lg-sunk)) var(--lg-fill-strong); }
 html.glass.inactive, html.glass.inactive body { background: var(--lg-ground); }
