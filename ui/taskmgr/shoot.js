@@ -26,7 +26,7 @@ function findChrome() {
   return null;
 }
 
-const OUT = process.env.TASKMGR_SHOTS || 'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/taskmgr-shots';
+const OUT = process.env.TASKMGR_SHOTS || 'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/taskmgrfx-shots';
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const SHOTS = [
   ['1-apps', 'apps', 780, 640],
@@ -37,6 +37,9 @@ const SHOTS = [
   ['6-force-confirm', 'confirm', 780, 640],
   ['7-startup-tab', 'startup', 780, 480],
   ['8-min-size', 'failed', 560, 420],
+  // the glass (lane taskmgrfx): the mock's stand-in for Windows' acrylic, active / inactive / dark-frame fallback
+  ['9-glass-inactive', 'apps&glass=inactive', 780, 640],
+  ['10-glass-dark-frame-fallback', 'apps&glass=dark', 780, 640],
 ];
 
 (async () => {

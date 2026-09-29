@@ -1,12 +1,15 @@
 /* taskmgr.css — Mantle's task manager (lib/features/taskmgr.js), in the taskbar island's theme
- * (glass-light.css --lg-* ONLY; one theme for every Mantle surface, Owen 2026-09-21). An app window,
- * so it sits on --lg-ground (Electron cannot resize a transparent window on Windows) and its panes
- * are the popover glass (--lg-fill-strong, the white lip, one .10 hairline). Plain hairlines, dark
+ * (glass-light.css --lg-* ONLY; one theme for every Mantle surface, Owen 2026-09-21). GLASS (lane
+ * taskmgrfx): the window asks Windows for its acrylic system backdrop (lib/features/taskmgr.js), so
+ * the page paints NO ground: the whole window is the island's --lg-fill wash over the acrylic, and the
+ * panes are the popover glass (--lg-fill-strong, the white lip, one .10 hairline) for readable rows.
+ * No CSS backdrop-filter (a large one measured 27% of a core). If the light frame could not be set
+ * (data-frame=dark: Windows' dark backdrop under a light page reads grey) the ground comes back. Plain hairlines, dark
  * ink, NO glow: the accent marks the active tab, focus and the one primary button, nothing else. */
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
 body {
-  background: var(--lg-ground);
+  background: transparent;
   font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   font-size: 12.5px; color: var(--lg-ink); cursor: default; user-select: none;
 }
@@ -15,7 +18,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--lg-acc); ou
 .grow { flex: 1 1 auto; }
 [hidden] { display: none !important; }
 
-.app { display: flex; flex-direction: column; height: 100%; }
+.app { display: flex; flex-direction: column; height: 100%; background: var(--lg-fill); }
+:root[data-frame="dark"] .app { background: var(--lg-ground); }
 
 /* ---- header: the drag strip, tabs, window buttons ---- */
 .head {
@@ -53,7 +57,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--lg-acc); ou
 .ramtext { color: var(--lg-ink-2); font-variant-numeric: tabular-nums; }
 .chip { padding: 2px 8px; border-radius: var(--lg-r-pill); background: var(--lg-sunk); color: var(--lg-ink-2); font-variant-numeric: tabular-nums; }
 .bar { height: 8px; border-radius: 4px; background: var(--lg-sunk); overflow: hidden; }
-.bar i { display: block; height: 100%; width: 0; background: var(--lg-ink-2); border-radius: 4px; transition: width 400ms var(--lg-ease); }
+.bar i { display: block; height: 100%; width: 100%; background: var(--lg-ink-2); transform: scaleX(0); transform-origin: left center; transition: transform 400ms var(--lg-ease); }
 .bar.hi i { background: var(--lg-warn); }
 
 .note, .recent { flex: 0 0 auto; margin: 0 12px 6px; padding: 7px 10px; border-radius: var(--lg-r-ctl); font-size: 12px; }
@@ -70,7 +74,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--lg-acc); ou
 .sect button { border: 0; background: transparent; color: inherit; padding: 0 4px; border-radius: 4px; }
 .sect button:hover { background: var(--lg-hover); }
 
-.row { border-top: 1px solid var(--lg-sunk); }
+/* off-screen rows skip style, layout and paint (a long list was ~40 ms of layout a tick) */
+.row { border-top: 1px solid var(--lg-sunk); content-visibility: auto; contain-intrinsic-size: auto 35px; }
 .row:first-child { border-top: 0; }
 .rmain { display: grid; grid-template-columns: 20px 20px 1fr 84px 58px 210px; gap: 8px; align-items: center; min-height: 34px; padding: 0 12px 0 8px; }
 .row:hover .rmain { background: var(--lg-hover); }

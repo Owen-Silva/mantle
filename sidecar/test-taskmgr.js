@@ -69,8 +69,20 @@ const pick = (snap, pid) => snap.procs.find((p) => p.pid === pid);
     const r6 = await s.send('taskmgr.close', { procs: [], dryRun: true }, 4000);
     t.check('close: no procs is a plain-words error', r6.ok === false && /needs procs/.test(r6.error), JSON.stringify(r6));
 
+    // taskmgr.frame (lane taskmgrfx): only ever Mantle's OWN window. Asked READ-ONLY here (no
+    // `light`), so even a broken guard could not change anybody's window.
+    const f0 = await s.send('taskmgr.frame', { hwnd: 0 }, 4000);
+    t.check('frame: no hwnd is a plain-words error', f0.ok === false && /needs the window's hwnd/.test(f0.error), JSON.stringify(f0));
+    const wl = await s.send('windows', {}, 6000);
+    const list = wl.ok && wl.result ? (Array.isArray(wl.result) ? wl.result : wl.result.windows || []) : [];
+    const foreign = list.map((w) => Number(w && w.hwnd)).find((h) => h > 0);
+    if (foreign) {
+      const f1 = await s.send('taskmgr.frame', { hwnd: foreign }, 4000);
+      t.check('frame: a window that is not Mantle\'s own is refused (this test\'s parent has none)', f1.ok === false && /not a window of Mantle's own Electron/.test(f1.error), JSON.stringify(f1));
+    } else t.check('frame: a foreign window to be refused was found', false, `windows answered ${JSON.stringify(wl).slice(0, 120)}`);
+
     if (orphan) {
-      const d1 = await s.call('taskmgr.close', { procs: [{ pid: orphan.pid, created: orphan.created }], root: orphan.pid, dryRun: true }, 4000);
+      const d1 =await s.call('taskmgr.close', { procs: [{ pid: orphan.pid, created: orphan.created }], root: orphan.pid, dryRun: true }, 4000);
       t.check('dry close: a windowless process -> taskkill /PID n /T without /F', d1.done && d1.how === 'taskkill' && d1.command === `taskkill /PID ${orphan.pid} /T` && d1.dryRun, JSON.stringify(d1));
       const d2 = await s.call('taskmgr.close', { procs: [{ pid: orphan.pid, created: orphan.created }], root: orphan.pid, force: true, dryRun: true }, 4000);
       t.check('dry force: taskkill /F', d2.how === 'taskkill_force' && / \/F$/.test(d2.command), JSON.stringify(d2));

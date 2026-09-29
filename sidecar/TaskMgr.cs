@@ -102,6 +102,39 @@ namespace Mantle {
       t.Add("taskmgr.trim", Lanes.Slow, Trim);             // {procs:[{pid,created}], dryRun?} -> before/after per pid
       t.Add("taskmgr.cmdline", Lanes.Slow, CmdLine);       // {pid, created} -> the exe path and command line (reopen)
       t.Add("taskmgr.verify", Lanes.Slow, Verify);         // {pids:[...]} -> EX2 PrivateWorkingSetSize per pid, read only
+      t.Add("taskmgr.frame", Lanes.Slow, Frame);           // {hwnd, light?} -> Mantle's OWN window: light frame, read back
+    }
+
+    // ------------------------------------------------------------------ the window's frame
+    //
+    // The task manager window asks Windows for its acrylic system backdrop (Electron's
+    // backgroundMaterial). Electron follows Windows' app mode, and in dark mode DWM tints that
+    // backdrop, and its inactive fallback, dark under Mantle's light page (it reads grey).
+    // DWMWA_USE_IMMERSIVE_DARK_MODE = 0 on that ONE window makes it the light acrylic. Only a window
+    // of Mantle's own Electron (this sidecar's parent) is touched, so passive (test) mode allows it,
+    // like Glass.cs; any other hwnd is refused. Without `light` it only reads.
+    const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20, DWMWA_SYSTEMBACKDROP_TYPE = 38;
+
+    static string Frame(Dictionary<string, object> req, ref object result) {
+      object v;
+      double hv = req.TryGetValue("hwnd", out v) && v is double ? (double)v : 0;
+      if (hv <= 0) return "frame needs the window's hwnd";
+      IntPtr hwnd = new IntPtr((long)hv);
+      if (!Win32.IsWindow(hwnd)) return "that window does not exist";
+      int pid;
+      Win32.GetWindowThreadProcessId(hwnd, out pid);
+      if (Program.ParentPid <= 0 || pid != Program.ParentPid) return "refused: not a window of Mantle's own Electron";
+      bool set = req.ContainsKey("light");
+      if (set) {
+        int dark = Json.GetBool(req, "light", true) ? 0 : 1;
+        int hr = Win32.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
+        if (hr != 0) return "Windows refused the frame colour (HRESULT 0x" + hr.ToString("X8") + ")";
+      }
+      int d, b;
+      if (Win32.DwmGetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, out d, sizeof(int)) != 0) d = -1;
+      if (Win32.DwmGetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, out b, sizeof(int)) != 0) b = -1;
+      result = Json.Obj("dark", d, "backdrop", b, "set", set);
+      return null;
     }
 
     // ------------------------------------------------------------------ the snapshot

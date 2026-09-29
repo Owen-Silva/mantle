@@ -10,6 +10,13 @@
   if (window.mantle) return;
   const q = new URLSearchParams(location.search);
   const mode = q.get('mock') || 'apps';
+  /* The window's glass is Windows' acrylic, which no page can draw. The mock stands in for it: a soft
+     blurred-wallpaper wash (active), Windows' light solid fallback (inactive), or the dark frame the
+     page falls back from (dark). Shots only; the real page paints nothing behind its panes. */
+  const glass = q.get('glass') || 'active';
+  const GLASS_BG = { active: 'linear-gradient(125deg, #c9d6ea 0%, #e6dcef 38%, #f1e3d6 62%, #cfe3dc 100%)', inactive: '#EEEEEE', dark: '#202020' };
+  document.documentElement.style.background = GLASS_BG[glass] || GLASS_BG.active;
+  const MANTLE_ICON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect x="2" y="2" width="28" height="28" rx="8" fill="#72ADCA"/></svg>');
   if (mode === 'nobridge') return;
   const MB = 1048576;
   let n = 0;
@@ -40,7 +47,7 @@
     grp('Windows Explorer', 'explorer.exe', 164 * MB, 0.4, { windows: 1, kind: 'windows', protected: "Windows' shell (Explorer): closing it takes the desktop and file windows with it", actions: LOCKED }),
     grp('Service Host: Diagnostic Policy', 'svchost.exe', 24 * MB, 0, { windows: 0, kind: 'windows', protected: 'A Windows service: Windows needs it running', actions: LOCKED }),
   ];
-  const mantleRow = grp('Mantle', 'electron.exe', 273 * MB, 0.6, { count: 9, windows: 0, kind: 'mantle', protected: 'Mantle itself: close Mantle from its tray menu', actions: LOCKED });
+  const mantleRow = grp('Mantle', 'electron.exe', 273 * MB, 0.6, { count: 9, windows: 0, kind: 'mantle', protected: 'Mantle itself: close Mantle from its tray menu', actions: LOCKED, icon: 'mantle:self', iconWhy: null });
   if (mode === 'failed') {
     apps[1].state = { state: 'still-running', why: 'Its window closed but it kept running in the background (probably in the tray). Force close ends it.' };
     apps[3].state = { state: 'failed', why: 'Not closed: access denied: it runs as administrator or is protected' };
@@ -63,6 +70,7 @@
       prep: { rows: prep, absent: mode === 'game' ? [{ identity: 'c:\\apps\\obs64.exe', name: 'OBS Studio', reopen: false }] : [], auto,
         lastFree: null, lastAuto: mode === 'game' ? { at: new Date(2026, 8, 27, 20, 5).getTime(), game: 'VALORANT', freed: 1260 * MB, results: [{ name: 'Google Chrome', state: 'closed' }, { name: 'Discord', state: 'still-running', why: 'Its window closed but it kept running in the background (probably in the tray). Force close ends it.' }], reopened: { results: [{ name: 'Discord', ok: true }] } } : null },
       loaded: true,
+      look: { material: 'acrylic', icon: true, iconWhy: null, light: glass !== 'dark', lightWhy: glass === 'dark' ? "the glass is Windows' dark backdrop: the light frame was not set (mock)" : null },
     };
   }
   const handlers = {};
@@ -87,6 +95,7 @@
     },
   };
   window.addEventListener('load', () => {
+    window.mantle.emit('taskmgr.icons', { 'mantle:self': MANTLE_ICON });
     setTimeout(() => {
       const click = (sel) => { const el = document.querySelector(sel); if (el) el.dispatchEvent(new MouseEvent('click', { bubbles: true })); };
       if (mode === 'expanded') click(`[data-key="${apps[0].key}"] [data-act="expand"]`);

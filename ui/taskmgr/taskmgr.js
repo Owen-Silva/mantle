@@ -12,16 +12,20 @@
   const call = (name, args) => (window.mantle ? window.mantle.call(name, args) : Promise.reject(new Error('no bridge to Mantle')));
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const MB = 1048576;
-  const mb = (b) => (b >= 0 ? Math.round(b / MB).toLocaleString('en-US') + ' MB' : '—');
+  // thousands by hand: toLocaleString (ICU) was the page's top cost, ~37 ms a tick over ~200 rows
+  const commas = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const mb = (b) => (b >= 0 ? commas(Math.round(b / MB)) + ' MB' : '—');
   const gb = (b) => (b / 1073741824).toFixed(1) + ' GB';
   const pct = (x) => (x >= 0 ? (x < 10 ? x.toFixed(1) : Math.round(x)) + '%' : '');
   const LOCK = '<svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><rect x="2.5" y="5.5" width="7" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>';
   const CHEV = '<svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true"><path d="M3.5 2l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
 
-  const P = { m: null, view: 'apps', open: new Set(), confirm: null, collapsed: new Set(['windows']), note: null };
+  const P = { m: null, view: 'apps', open: new Set(), confirm: null, collapsed: new Set(['windows']), note: null, icons: new Map(), hover: false };
 
+  /* g.icon is a REFERENCE (the app's identity); the pictures arrive once each on taskmgr.icons. */
   function icon(g) {
-    return g.icon ? `<img class="ic" src="${esc(g.icon)}" alt="">` : `<span class="ic tile" title="${esc(g.iconWhy || 'no icon yet')}">${esc((g.name || '?').slice(0, 1).toUpperCase())}</span>`;
+    const url = g.icon ? P.icons.get(g.icon) : null;
+    return url ? `<img class="ic" src="${esc(url)}" alt="" decoding="async">` : `<span class="ic tile" title="${esc(g.iconWhy || 'no icon yet')}">${esc((g.name || '?').slice(0, 1).toUpperCase())}</span>`;
   }
   function stateLine(g) {
     if (P.confirm === g.key) {
@@ -61,13 +65,20 @@
       `</div><div class="stw"></div><div class="mw"></div>`;
   }
   function membersHtml(g) {
-    if (!P.open.has(g.key)) return '';
+    if (!P.open.has(g.key) || !g.members) return '';
     return '<div class="members">' + g.members.map((m) => `<div class="mrow"><span>${esc(m.file)} · pid ${m.pid}${m.windows ? ' · window' : ''}</span><span>${mb(m.mem)}</span><span>${pct(m.cpu)}</span><span></span></div>`).join('') + '</div>';
   }
 
-  /* Keyed patching: one element per row key, rebuilt only when its static part changes. */
+  /* Keyed patching: one element per row key, rebuilt only when its static part changes.
+     While the pointer is over the list the ORDER holds (rows already there keep their places, new
+     ones go to the end): a row never slides out from under the cursor between hover and click, and
+     no row is moved at all. Leaving the list re-sorts it. */
   function patchList(host, rows, build, sig) {
     const have = new Map(Array.from(host.children).filter((e) => e.dataset.key).map((e) => [e.dataset.key, e]));
+    if (P.hover && have.size) {
+      const pos = new Map(Array.from(have.keys()).map((k, i) => [k, i]));
+      rows = rows.slice().sort((a, b) => (pos.has(a.key) ? pos.get(a.key) : 1e9) - (pos.has(b.key) ? pos.get(b.key) : 1e9));
+    }
     let prev = null;
     for (const r of rows) {
       let el = have.get(r.key);
@@ -82,14 +93,20 @@
   }
   function buildRow(el, g) {
     const s = staticHtml(g);
-    if (el._s !== s) { el.innerHTML = s; el._s = s; }
-    el.className = 'row' + (P.open.has(g.key) ? ' open' : '') + (g.kind === 'mantle' ? ' mantle' : '');
-    el.querySelector('.mem').textContent = mb(g.mem);
-    el.querySelector('.cpu').textContent = pct(g.cpu);
+    if (el._s !== s) {
+      el.innerHTML = s; el._s = s;
+      el._mem = el.querySelector('.mem'); el._cpu = el.querySelector('.cpu'); el._sw = el.querySelector('.stw'); el._mm = el.querySelector('.mw');
+    }
+    // Only what CHANGED is written: an equal textContent write still replaces the text node and
+    // dirties layout, and ~200 rows of that was most of a tick's cost.
+    const cls = 'row' + (P.open.has(g.key) ? ' open' : '') + (g.kind === 'mantle' ? ' mantle' : '');
+    if (el.className !== cls) el.className = cls;
+    const mt = mb(g.mem), ct = pct(g.cpu);
+    if (el._mem._t !== mt) { el._mem.textContent = mt; el._mem._t = mt; }
+    if (el._cpu._t !== ct) { el._cpu.textContent = ct; el._cpu._t = ct; }
     const st = stateLine(g), mw = membersHtml(g);
-    const sw = el.querySelector('.stw'), mm = el.querySelector('.mw');
-    if (sw._h !== st) { sw.innerHTML = st; sw._h = st; }
-    if (mm._h !== mw) { mm.innerHTML = mw; mm._h = mw; }
+    if (el._sw._h !== st) { el._sw.innerHTML = st; el._sw._h = st; }
+    if (el._mm._h !== mw) { el._mm.innerHTML = mw; el._mm._h = mw; }
   }
   function section(host, id, title, rows) {
     let head = host.querySelector(`.sect[data-s="${id}"]`), box = host.querySelector(`.sbox[data-s="${id}"]`);
@@ -151,6 +168,9 @@
     });
   }
 
+  // writes that would not change anything are skipped: each one dirties style or layout
+  const setText = (el, t) => { if (el._t !== t) { el.textContent = t; el._t = t; } };
+  const setHtml = (el, h) => { if (el._h !== h) { el.innerHTML = h; el._h = h; } };
   function render() {
     const m = P.m;
     if (!m) return;
@@ -159,19 +179,24 @@
     $('v-game').hidden = P.view !== 'game';
     $('v-startup').hidden = P.view !== 'startup';
     if (m.mem && m.mem.total) {
-      $('ramtext').textContent = `${gb(m.mem.used)} in use of ${gb(m.mem.total)} · ${gb(m.mem.avail)} available`;
+      setText($('ramtext'), `${gb(m.mem.used)} in use of ${gb(m.mem.total)} · ${gb(m.mem.avail)} available`);
       const f = Math.max(0, Math.min(1, m.mem.used / m.mem.total));
-      $('ramfill').style.width = (f * 100).toFixed(1) + '%';
+      $('ramfill').style.transform = 'scaleX(' + f.toFixed(3) + ')';   // the compositor moves it: no layout per tick
       $('rambar').classList.toggle('hi', f > 0.85);
       $('rambar').setAttribute('aria-label', `Memory ${Math.round(f * 100)}% in use`);
-    } else $('ramtext').textContent = m.mem && m.mem.reason ? m.mem.reason : m.loaded ? 'Windows did not report memory' : 'Reading…';
-    $('mantleuse').textContent = m.mantle ? `Mantle: ${mb(m.mantle.mem)}` : 'Mantle: —';
-    const notes = [m.error, P.note, m.test ? 'Test Mantle: every Close, Force close and Trim is a dry run.' : null].filter(Boolean);
+    } else setText($('ramtext'), m.mem && m.mem.reason ? m.mem.reason : m.loaded ? 'Windows did not report memory' : 'Reading…');
+    setText($('mantleuse'), m.mantle ? `Mantle: ${mb(m.mantle.mem)}` : 'Mantle: —');
+    const look = m.look || {};
+    // the glass: Windows' dark backdrop under this light page reads grey, so without the light frame the page keeps its solid ground
+    const frame = look.light === false ? 'dark' : 'light';
+    if (document.documentElement.dataset.frame !== frame) document.documentElement.dataset.frame = frame;
+    const notes = [m.error, P.note, look.iconWhy ? `This window's own icon: ${look.iconWhy}.` : null, look.lightWhy ? `Glass: ${look.lightWhy}; the window stays solid.` : null,
+      m.test ? 'Test Mantle: every Close, Force close and Trim is a dry run.' : null].filter(Boolean);
     $('note').hidden = !notes.length;
-    $('note').textContent = notes.join(' · ');
+    setText($('note'), notes.join(' · '));
     const rec = (m.recent || []).slice(0, 3);
     $('recent').hidden = !rec.length;
-    $('recent').innerHTML = rec.map((r) => `<span class="${r.ok ? '' : 'bad'}">${esc(r.name)}: ${esc(r.text)}</span>`).join('');
+    setHtml($('recent'), rec.map((r) => `<span class="${r.ok ? '' : 'bad'}">${esc(r.name)}: ${esc(r.text)}</span>`).join(''));
     if (P.view === 'apps') renderApps(m);
     if (P.view === 'game') renderGame(m);
     document.documentElement.dataset.ready = '1';
@@ -198,7 +223,14 @@
     const key = row && row.dataset.key;
     switch (b.dataset.act) {
       case 'section': { const id = b.closest('.sect').dataset.s; if (P.collapsed.has(id)) P.collapsed.delete(id); else P.collapsed.add(id); render(); return; }
-      case 'expand': if (P.open.has(key)) P.open.delete(key); else P.open.add(key); render(); return;
+      case 'expand': {
+        // its processes travel only while it is open (main's compact model): ask, then draw
+        const open = !P.open.has(key);
+        if (open) P.open.add(key); else P.open.delete(key);
+        render();
+        call('taskmgr.expand', { key, open }).catch((err) => { P.note = `Its processes did not load: ${err.message}`; render(); });
+        return;
+      }
       case 'close': case 'trim': P.confirm = null; act(b.dataset.act, key); return;
       case 'force': P.confirm = key; render(); return;
       case 'force-no': P.confirm = null; render(); return;
@@ -239,7 +271,22 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && P.confirm) { P.confirm = null; render(); } });
 
   if (!window.mantle) { P.note = 'This page is not connected to Mantle (no bridge): nothing here can act.'; P.m = { loaded: false }; render(); return; }
-  window.mantle.on('taskmgr.model', (m) => { P.m = m; if (m && m.view && !P.seenView) { P.view = m.view; P.seenView = true; } render(); });
+  // pictures first, so the replayed model finds them
+  window.mantle.on('taskmgr.icons', (o) => { let n = 0; for (const k of Object.keys(o || {})) { if (P.icons.get(k) !== o[k]) { P.icons.set(k, o[k]); n++; } } if (n && P.m) render(); });
+  const list = $('list');
+  list.addEventListener('pointerenter', () => { P.hover = true; });
+  list.addEventListener('pointerleave', () => { P.hover = false; render(); });
+  // What a tick costs this page (script + DOM, not the layout after it), read by the lane's CDP bench:
+  // two performance.now() calls a tick.
+  const PERF = window.__taskmgrPerf = { ticks: 0, ms: 0, max: 0 };
+  window.mantle.on('taskmgr.model', (m) => {
+    const t = performance.now();
+    P.m = m;
+    if (m && m.view && !P.seenView) { P.view = m.view; P.seenView = true; }
+    render();
+    const dt = performance.now() - t;
+    PERF.ticks++; PERF.ms += dt; if (dt > PERF.max) PERF.max = dt;
+  });
   window.mantle.on('taskmgr.view', (v) => { if (v && v.view) { P.view = v.view; render(); } });
   call('taskmgr.state').then((m) => { if (!P.m) { P.m = m; P.view = m.view || P.view; P.seenView = true; render(); } }).catch((e) => { P.note = `Mantle did not answer: ${e.message}`; P.m = { loaded: false }; render(); });
 }());
