@@ -140,6 +140,11 @@ namespace Mantle {
       // clears the taskbar region it may have left. Nothing below runs for it.
       foreach (string a in args)
         if (a.StartsWith("--taskbar-guard=", StringComparison.Ordinal)) return TaskbarHide.RunGuard(args);
+      // --elevated <request>: this exe as the administrator step (Elevate.cs), started through a
+      // UAC prompt by elevate.run. It runs ONE whitelisted action, writes its answer and exits;
+      // no protocol, no window, nothing below.
+      foreach (string a in args)
+        if (a == "--elevated") return Elevate.RunElevated(args);
 
       foreach (string a in args) {
         if (a == "--passive") Passive = true;

@@ -111,13 +111,173 @@
   }
   function rowById(id) { for (var i = 0; i < ROWS.length; i++) if (ROWS[i].id === id) return ROWS[i]; return null; }
 
+  /* ---- section modules (ui/settings/SECTIONS.md): ui/settings/sections/<id>.js each register one
+     section; the category lanes build Windows' categories that way. Everything below is the PURE
+     half: whether a definition is usable, and what the sidebar, deep links and search become once
+     the modules are in. The page (settings.js / kit.js) loads, renders and disposes them. ---- */
+  var REPLACEABLE = ['display', 'sound', 'bluetooth', 'network', 'power', 'notifications', 'apps'];
+  /* The sidebar order. Built-ins sit where Windows 11 has them (Display, Sound, Notifications and
+     Power are System's pages there), so a category module's `order` from the SECTIONS.md table lands
+     next to the built-in it will absorb. */
+  var ORDER = { home: 0, display: 10, sound: 11, notifications: 12, power: 13, bluetooth: 20, network: 30, apps: 50, mantle: 1000, shortcuts: 1010, about: 1020 };
+  var SECTION_ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
+  var ROW_ID_RE = /^[A-Za-z0-9_.+-]{1,80}$/;          // = lib/features/settings.js ROW_RE (settings.open validates rows with it)
+  var URI_RE = /^ms-settings:[a-z0-9-]*$/i;
+  function builtinLabel(id) { var s = SECTIONS.filter(function (x) { return x.id === id; })[0]; return s ? s.label : id; }
+  function checkSearch(list, where, seen) {
+    if (list === undefined) return null;
+    if (!Array.isArray(list)) return where + ' search must be a list of { row, label, keywords }';
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (!e || typeof e !== 'object') return where + ' search entry ' + i + ' is not an object';
+      if (typeof e.row !== 'string' || !ROW_ID_RE.test(e.row)) return where + ' search entry ' + i + ' has no usable row id (letters, digits and _ . + - only, up to 80)';
+      if (typeof e.label !== 'string' || !e.label.trim()) return where + ' search entry "' + e.row + '" has no label';
+      if (e.keywords !== undefined && typeof e.keywords !== 'string') return where + ' search entry "' + e.row + '": keywords must be one string';
+      if (e.uri !== undefined && !(typeof e.uri === 'string' && URI_RE.test(e.uri))) return where + ' search entry "' + e.row + '": uri must be an ms-settings: page';
+      if (seen[e.row]) return 'the row id "' + e.row + '" is used twice';
+      seen[e.row] = 1;
+    }
+    return null;
+  }
+  /**
+   * Why a registered section definition cannot be used, or null. `file` is the id its file name
+   * gives (sections/<file>.js). Checks the SHAPE only; render() is not called here.
+   */
+  function checkSection(def, file) {
+    if (!def || typeof def !== 'object') return 'it registered nothing usable (MantleSettings.section needs an object)';
+    if (def.id !== file) return 'its id ' + JSON.stringify(def.id) + ' is not its file name "' + file + '"';
+    if (!SECTION_ID_RE.test(def.id)) return 'its id must be lower-case letters, digits and -, starting with a letter';
+    if (isSection(def.id)) return '"' + def.id + '" is a built-in section\'s id; take it over with replaces: \'' + def.id + '\' under a new id';
+    if (typeof def.title !== 'string' || !def.title.trim()) return 'it has no title';
+    if (def.group !== 'windows' && def.group !== 'mantle') return 'group must be "windows" or "mantle"';
+    if (def.order !== undefined && !(typeof def.order === 'number' && isFinite(def.order))) return 'order must be a number';
+    if (def.icon !== undefined && typeof def.icon !== 'string') return 'icon must be a built-in icon name or 16x16 SVG markup';
+    var reps = def.replaces === undefined ? [] : [].concat(def.replaces);
+    for (var i = 0; i < reps.length; i++) {
+      if (REPLACEABLE.indexOf(reps[i]) < 0) return 'replaces ' + JSON.stringify(reps[i]) + ', which is not one of ' + REPLACEABLE.join(', ');
+      if (reps.indexOf(reps[i]) !== i) return 'it replaces "' + reps[i] + '" twice';
+    }
+    var seen = Object.create(null), why = checkSearch(def.search, 'its', seen);
+    if (why) return why;
+    if (def.pages === undefined) return typeof def.render === 'function' ? null : 'it has no pages and no render(el, kit)';
+    if (!Array.isArray(def.pages) || !def.pages.length) return 'pages must be a non-empty list (or left out for a one-page section)';
+    var ids = Object.create(null);
+    for (var j = 0; j < def.pages.length; j++) {
+      var p = def.pages[j];
+      if (!p || typeof p !== 'object' || typeof p.id !== 'string' || !SECTION_ID_RE.test(p.id)) return 'page ' + j + ' has no usable id (lower-case letters, digits and -)';
+      if (ids[p.id]) return 'the page id "' + p.id + '" is used twice';
+      ids[p.id] = 1;
+      var placeholder = reps.indexOf(p.id) >= 0 && p.render === undefined;
+      if (!placeholder && typeof p.render !== 'function') return 'page "' + p.id + '" has no render(el, kit)' + (isSection(p.id) ? ' (to show the built-in ' + builtinLabel(p.id) + ' page here, replace it and leave render out)' : '');
+      if (!placeholder && (typeof p.title !== 'string' || !p.title.trim())) return 'page "' + p.id + '" has no title';
+      if (p.icon !== undefined && typeof p.icon !== 'string') return 'page "' + p.id + '": icon must be a built-in icon name or 16x16 SVG markup';
+      why = checkSearch(p.search, 'page "' + p.id + '"', seen);
+      if (why) return why;
+    }
+    return null;
+  }
+
+  /**
+   * The sidebar, deep links and search with the modules in. `mods` = the registered definitions in
+   * file-name order, or { id, title?, group?, down: 'why' } for one that is DOWN. Rules (SECTIONS.md):
+   *  - a DOWN module is listed with its reason and replaces nothing;
+   *  - replaces: the built-in leaves the sidebar and its slot, deep links and search go to the
+   *    module. With pages, each replaced built-in becomes a page drawn by the built-in (a placeholder
+   *    page { id: '<built-in>' } puts it where the module wants it, else the replaced built-ins come
+   *    first); a module page with the built-in's id replaces its content too. Without pages, the
+   *    module's render() supersedes the built-in whole;
+   *  - two modules replacing one built-in: the first by file name wins, the second is DOWN.
+   * -> { nav: [...], owner: { builtIn: { section, page, drawn } }, pages: { id: [...] | null },
+   *      rows: { rowId: { section, page } }, mods: { id: entry } }
+   */
+  function sectionModel(mods) {
+    var M = { nav: [], owner: Object.create(null), pages: Object.create(null), rows: Object.create(null), mods: Object.create(null) };
+    var taken = Object.create(null);
+    var list = [];
+    (Array.isArray(mods) ? mods : []).forEach(function (m) {
+      if (!m || typeof m.id !== 'string' || M.mods[m.id]) return;
+      var down = m.down || null, reps = [];
+      if (!down) {
+        reps = m.replaces === undefined ? [] : [].concat(m.replaces);
+        for (var i = 0; i < reps.length && !down; i++) if (taken[reps[i]]) down = 'it replaces ' + builtinLabel(reps[i]) + ', which the ' + taken[reps[i]] + ' section already replaces (the first file by name wins)';
+        if (down) reps = [];
+      }
+      var e = { id: m.id, label: typeof m.title === 'string' && m.title.trim() ? m.title : m.id, group: m.group === 'mantle' ? 'mantle' : 'windows',
+        icon: typeof m.icon === 'string' ? m.icon : null, help: typeof m.help === 'string' ? m.help : '', keywords: typeof m.keywords === 'string' ? m.keywords : '',
+        order: typeof m.order === 'number' && isFinite(m.order) ? m.order : null, module: true, down: down, replaces: reps,
+        search: !down && Array.isArray(m.search) ? m.search : [] };
+      if (e.order === null) e.order = reps.length ? Math.min.apply(null, reps.map(function (r) { return ORDER[r]; })) : 500;
+      M.mods[m.id] = e;
+      list.push(e);
+      if (down) { M.pages[m.id] = null; return; }
+      reps.forEach(function (r) { taken[r] = e.label; });
+      (m.search || []).forEach(function (s) { M.rows[s.row] = { section: m.id, page: null }; });
+      if (!Array.isArray(m.pages)) {
+        M.pages[m.id] = null;
+        reps.forEach(function (r) { M.owner[r] = { section: m.id, page: null, drawn: false }; });
+        return;
+      }
+      var pages = [];
+      var listed = Object.create(null);
+      m.pages.forEach(function (p) { listed[p.id] = 1; });
+      reps.forEach(function (r) { if (!listed[r]) pages.push({ id: r, title: builtinLabel(r), icon: r, help: '', builtin: true, search: [] }); });
+      m.pages.forEach(function (p) {
+        var builtin = reps.indexOf(p.id) >= 0 && typeof p.render !== 'function';
+        pages.push({ id: p.id, title: typeof p.title === 'string' && p.title.trim() ? p.title : builtinLabel(p.id), icon: typeof p.icon === 'string' ? p.icon : builtin ? p.id : null,
+          help: typeof p.help === 'string' ? p.help : '', builtin: builtin, search: Array.isArray(p.search) ? p.search : [] });
+        (p.search || []).forEach(function (s) { M.rows[s.row] = { section: m.id, page: p.id }; });
+      });
+      pages.forEach(function (p) { if (reps.indexOf(p.id) >= 0) M.owner[p.id] = { section: m.id, page: p.id, drawn: p.builtin }; });
+      M.pages[m.id] = pages;
+    });
+    var all = SECTIONS.filter(function (s) { return !M.owner[s.id]; }).map(function (s) {
+      return { id: s.id, label: s.label, group: s.group, icon: s.id, help: '', order: ORDER[s.id], module: false, down: null };
+    }).concat(list);
+    all.forEach(function (e, i) { e.seq = i; });
+    all.sort(function (a, b) {
+      var ga = a.group === 'mantle' ? 2 : a.group ? 1 : 0, gb = b.group === 'mantle' ? 2 : b.group ? 1 : 0;
+      return ga - gb || a.order - b.order || (a.module === b.module ? 0 : a.module ? 1 : -1) || a.seq - b.seq;
+    });
+    M.nav = all;
+    return M;
+  }
+
+  /**
+   * Where a deep link lands: settings.open / settings.nav { section, page, row } -> { section (the
+   * sidebar item), page (null = the section itself or its overview), view (the BUILT-IN view that
+   * draws it, or null when a module draws it), row, down }. A row's own place wins over the
+   * section named with it; a built-in id goes to the module that replaced it.
+   */
+  function resolve(model, n) {
+    var Mo = model || sectionModel([]);
+    n = n || {};
+    var row = typeof n.row === 'string' && n.row ? n.row : null, sec = n.section || null, page = n.page || null;
+    if (row && Mo.rows[row]) { sec = Mo.rows[row].section; page = Mo.rows[row].page; }
+    else if (row) {
+      var pre = row.split('.')[0];
+      if (isSection(pre) || Mo.mods[pre]) { if (pre !== sec) page = null; sec = pre; }
+    }
+    if (sec && Mo.owner[sec]) { page = Mo.owner[sec].page; sec = Mo.owner[sec].section; }
+    var m = sec ? Mo.mods[sec] : null;
+    if (m) {
+      if (m.down) return { section: sec, page: null, view: null, row: null, down: m.down };
+      var pages = Mo.pages[sec];
+      if (!pages) return { section: sec, page: null, view: null, row: row, down: null };
+      var p = pages.filter(function (x) { return x.id === page; })[0];
+      if (!p) return { section: sec, page: null, view: null, row: null, down: null };
+      return { section: sec, page: p.id, view: p.builtin ? p.id : null, row: row, down: null };
+    }
+    if (sec && isSection(sec)) return { section: sec, page: null, view: sec, row: row, down: null };
+    return { section: 'home', page: null, view: 'home', row: null, down: null };
+  }
+
   /* ---- search ---- */
   function norm(s) {
     return String(s == null ? '' : s).toLowerCase()
       .replace(/[&+,/()\[\]\-–—.:;'"!?_|]/g, ' ')
       .replace(/\s+/g, ' ').trim();
   }
-  var KIND_RANK = { section: 0, row: 1, feature: 2, option: 3, shortcut: 4, catalog: 5 };
+  var KIND_RANK = { section: 0, page: 1, row: 2, feature: 3, option: 4, shortcut: 5, catalog: 6 };
 
   /**
    * One index over the static rows, Mantle's features/options/shortcuts (settings.mantle) and the
@@ -133,12 +293,38 @@
       byId[e.id] = e;
       out.push(e);
     }
+    // Section modules (o.model = sectionModel(...)): a built-in a module took over is a page of it
+    // (still drawn by the built-in, so its rows stay), or gone when the module draws that content.
+    var mo = o.model && o.model.mods ? o.model : null;
+    var own = mo ? mo.owner : Object.create(null), claimed = Object.create(null);
     SECTIONS.forEach(function (s) {
-      add({ id: s.id, kind: 'section', group: 'mantle', label: s.label, sub: s.group === 'windows' ? 'Windows' : s.group === 'mantle' ? 'Mantle' : '', kw: s.keywords, section: s.id, row: null });
+      var ow = own[s.id];
+      if (ow && !ow.drawn) return;
+      if (ow) add({ id: s.id, kind: 'page', group: 'mantle', label: s.label, sub: mo.mods[ow.section].label, kw: s.keywords, section: s.id, row: null });
+      else add({ id: s.id, kind: 'section', group: 'mantle', label: s.label, sub: s.group === 'windows' ? 'Windows' : s.group === 'mantle' ? 'Mantle' : '', kw: s.keywords, section: s.id, row: null });
     });
     ROWS.forEach(function (r) {
+      if (own[r.section] && !own[r.section].drawn) return;
       var sec = SECTIONS.filter(function (s) { return s.id === r.section; })[0];
       add({ id: r.id, kind: 'row', group: 'mantle', label: r.label, sub: sec ? sec.label : '', kw: r.keywords, section: r.section, row: r.id });
+    });
+    if (mo) mo.nav.forEach(function (e) {
+      if (!e.module) return;
+      add({ id: 'section.' + e.id, kind: 'section', group: 'mantle', label: e.label, sub: e.down ? 'Down: ' + e.down : e.group === 'mantle' ? 'Mantle' : 'Windows', kw: e.keywords, section: e.id, row: null });
+      if (e.down) return;
+      function rows(list, page, sub) {
+        list.forEach(function (s) {
+          if (byId[s.row]) return;                          // a built-in row id reused on purpose: one entry
+          add({ id: s.row, kind: 'row', group: 'mantle', label: s.label, sub: sub, kw: s.keywords || '', section: e.id, page: page, row: s.row });
+          if (s.uri) claimed[s.uri.toLowerCase()] = byId[s.row];
+        });
+      }
+      rows(e.search, null, e.label);
+      (mo.pages[e.id] || []).forEach(function (p) {
+        if (p.builtin) return;
+        add({ id: 'page.' + e.id + '.' + p.id, kind: 'page', group: 'mantle', label: p.title, sub: e.label, kw: p.help || '', section: e.id, page: p.id, row: null });
+        rows(p.search, p.id, e.label + ' › ' + p.title);
+      });
     });
     var m = o.mantle && typeof o.mantle === 'object' ? o.mantle : null;
     var feats = m && Array.isArray(m.features) ? m.features : [];
@@ -158,10 +344,11 @@
     var cat = o.catalog && Array.isArray(o.catalog.items) ? o.catalog.items : Array.isArray(o.catalog) ? o.catalog : [];
     cat.forEach(function (it, i) {
       if (!it || !it.name) return;
-      var mine = it.row && byId[it.row];
+      var mine = (it.row && byId[it.row]) || (it.uri && claimed[String(it.uri).toLowerCase()]);
       if (mine) { mine.kw += ' ' + it.name + ' ' + (it.keywords || ''); return; }
+      var dead = it.section && own[it.section] && !own[it.section].drawn;   // its built-in is gone: land on the module
       add({ id: 'catalog.' + (it.uri || i), kind: 'catalog', group: 'windows', label: it.name, sub: it.section ? 'Covered here' : 'Windows Settings',
-        kw: it.keywords || '', uri: it.uri || 'ms-settings:', section: isSection(it.section) ? it.section : null, row: it.row || null });
+        kw: it.keywords || '', uri: it.uri || 'ms-settings:', section: isSection(it.section) ? it.section : null, row: dead ? null : it.row || null });
     });
     out.forEach(function (e) { e.nl = norm(e.label); e.nk = norm(e.kw + ' ' + (e.kind === 'shortcut' ? e.sub : '')); });
     return out;
@@ -392,6 +579,7 @@
     SECTIONS: SECTIONS, ROWS: ROWS, MORE: MORE, PM_LABEL: PM_LABEL,
     more: more, featureRow: featureRow, optionRow: optionRow, shortcutRow: shortcutRow, sectionIds: sectionIds, isSection: isSection,
     sectionOf: sectionOf, rowById: rowById,
+    REPLACEABLE: REPLACEABLE, ORDER: ORDER, checkSection: checkSection, sectionModel: sectionModel, resolve: resolve,
     norm: norm, buildIndex: buildIndex, score: score, search: search, grouped: grouped, fuzzy: fuzzy,
     plural: plural, pct: pct, dur: dur, batteryWords: batteryWords, netWords: netWords, shortCommand: shortCommand,
     keyCaps: keyCaps, letter: letter, featureState: featureState, health: health, taskmgr: taskmgr, optionValue: optionValue,

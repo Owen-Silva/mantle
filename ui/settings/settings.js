@@ -58,6 +58,10 @@
     problems: Object.create(null),   // page-wide problems (banner): key -> words
     toast: null,                     // { tone, text } a note with no row to sit under
     btWatchWhy: null, index: null,
+    // section modules (kit.js, SECTIONS.md): the sidebar model, the sidebar item that is current, the
+    // module page shown (null = its overview or a one-page section), the view to go back to after a
+    // search, the crumb over a built-in drawn as a module's page, the mounted module
+    model: M.sectionModel([]), navId: 'home', page: null, baseView: 'home', crumb: null, mod: null, modsReady: false, modelSeq: 0,
   };
 
   /* ---------------------------------------------------------------- data slots */
@@ -85,6 +89,30 @@
     apps: ['startup', 'features'], mantle: ['mantle', 'corners'], shortcuts: ['mantle'], about: ['about'],
   };
 
+  /* ---------------------------------------------------------------- glass (lane settingsfx2) */
+  /* Main asks DWM for acrylic behind this window and says so in the URL (?glass=acrylic). The page turns
+     clear (settings.css html.glass) only once DWM's read-back says acrylic AND a light frame
+     (settings.glass, replayed on subscribe): measured in real Electron, the light frame can take seconds
+     to land while the sidecar is busy, and until then Windows' dark-mode acrylic would sit under dark
+     text. Refused = solid, and About says why. DWM draws the backdrop only on the ACTIVE window, so
+     while the window is in the background the page stands on the opaque --lg-ground. */
+  const docEl = document.documentElement;
+  const glassAsked = /[?&]glass=acrylic(&|$)/.test(location.search);
+  S.glass = glassAsked ? { material: 'acrylic', ok: null, why: null } : null;
+  function glassApply() {
+    docEl.classList.toggle('glass', !!(glassAsked && S.glass && S.glass.ok === true));
+    docEl.classList.toggle('inactive', !document.hasFocus());
+  }
+  function glassTake(g) {
+    if (!g || typeof g !== 'object') return;
+    S.glass = g;
+    glassApply();
+    if (S.view === 'about') schedule();
+  }
+  glassApply();
+  window.addEventListener('focus', () => docEl.classList.remove('inactive'));
+  window.addEventListener('blur', () => docEl.classList.add('inactive'));
+
   function slot(k) { return S.d[k] || (S.d[k] = { st: 'idle', v: null, reason: null, at: 0, gen: 0 }); }
   function take(k, r) {
     const s = slot(k);
@@ -98,12 +126,12 @@
   function read(k) {
     const s = slot(k), gen = ++s.gen;
     if (s.st !== 'ok') s.st = 'loading';
-    return LOAD[k]().then((r) => { if (gen === s.gen) { take(k, r); schedule(); } },
-      (e) => { if (gen === s.gen) { s.st = 'fail'; s.reason = msg(e); s.at = Date.now(); if (k === 'mantle' || k === 'catalog') rebuildIndex(); schedule(); } });
+    return LOAD[k]().then((r) => { if (gen === s.gen) { take(k, r); schedule(k); } },
+      (e) => { if (gen === s.gen) { s.st = 'fail'; s.reason = msg(e); s.at = Date.now(); if (k === 'mantle' || k === 'catalog') rebuildIndex(); schedule(k); } });
   }
   function ensure(sec) { return Promise.all((NEEDS[sec] || []).map(read)); }
   function rebuildIndex() {
-    S.index = M.buildIndex({ mantle: slot('mantle').v, catalog: slot('catalog').v });
+    S.index = M.buildIndex({ mantle: slot('mantle').v, catalog: slot('catalog').v, model: S.model });
     if (S.view === 'search') S.results = null;
   }
 
@@ -209,7 +237,8 @@
   }
 
   const ACT = {
-    nav: (t) => go(t.dataset.section || M.sectionOf(t.dataset.row), t.dataset.row || null),
+    nav: (t) => go(t.dataset.section || null, t.dataset.row || null, t.dataset.page || null),
+    remount: () => { unmount(); S.lastView = null; schedule(); },
     win: (t) => openWin(t.dataset.uri || 'ms-settings:', rowOf(t)),
     retry: (t) => { (t.dataset.what || '').split(',').filter(Boolean).forEach(read); },
     'win-op': (t) => {
@@ -407,14 +436,31 @@
     lock: '<rect x="3.5" y="7.2" width="9" height="6.3" rx="1.2"/><path d="M5.5 7.2V5.5a2.5 2.5 0 0 1 5 0v1.7"/>',
     moon: '<path d="M12.8 10.2A5.4 5.4 0 0 1 5.8 3.2a5.4 5.4 0 1 0 7 7z"/>',
     mic: '<rect x="6" y="2" width="4" height="7.5" rx="2"/><path d="M3.8 7.8a4.2 4.2 0 0 0 8.4 0M8 12v2"/>',
+    shield: '<path d="M8 1.8l5 1.9v3.9c0 3.1-2.1 5.5-5 6.6-2.9-1.1-5-3.5-5-6.6V3.7z"/>',
     game: '<path d="M4.5 5h7a3 3 0 0 1 2.9 3.8l-.7 2.6a1.4 1.4 0 0 1-2.4.6L10 10.5H6L4.7 12a1.4 1.4 0 0 1-2.4-.6l-.7-2.6A3 3 0 0 1 4.5 5z"/><path d="M5.2 7v2M4.2 8h2M10.5 7.6h.01M11.8 8.6h.01"/>',
   };
   const tpl = document.createElement('template');
+  /* LAG (lane settingsfx): every render drew every icon by parsing SVG markup; each one is now parsed
+     once and cloned (a clone is a fraction of a parse). */
+  const iconCache = new Map();
   function icon(name, size) {
+    const s = size || 16, k = name + '|' + s;
+    let n = iconCache.get(k);
+    if (!n) {
+      tpl.innerHTML = '<svg viewBox="0 0 16 16" width="' + s + '" height="' + s + '" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[name] || '') + '</svg>';
+      n = tpl.content.firstChild;
+      tpl.content.removeChild(n);
+      iconCache.set(k, n);
+    }
+    return n.cloneNode(true);
+  }
+  /* a module's own 16x16 icon markup (SECTIONS.md: icon may be an ICON name or '<path .../>') */
+  function svgOf(markup, size) {
     const s = size || 16;
-    tpl.innerHTML = '<svg viewBox="0 0 16 16" width="' + s + '" height="' + s + '" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICON[name] || '') + '</svg>';
+    tpl.innerHTML = '<svg viewBox="0 0 16 16" width="' + s + '" height="' + s + '" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + String(markup).replace(/<\/?(script|foreignObject)[^>]*>/gi, '') + '</svg>';
     return tpl.content.firstChild;
   }
+  const iconAny = (name, size) => (typeof name === 'string' && name.trim().charAt(0) === '<' ? svgOf(name, size) : icon(ICON[name] ? name : 'apps', size));
   function sig(level) {
     const svg = document.createElementNS(SVGNS, 'svg');
     svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('width', '16'); svg.setAttribute('height', '16'); svg.setAttribute('class', 'sig'); svg.setAttribute('aria-hidden', 'true');
@@ -444,20 +490,44 @@
     let fc = from.firstChild, tc = to.firstChild;
     while (tc) {
       const next = tc.nextSibling;
+      if (tc.__keep) {                     // an unchanged row (keep()): its live node stays exactly as it is
+        if (tc.__keep === fc) fc = fc.nextSibling; else from.insertBefore(tc.__keep, fc);
+        tc = next;
+        continue;
+      }
+      let live;
       if (fc && same(fc, tc)) {
+        live = fc;
         if (fc.nodeType === 1) morph(fc, tc); else if (fc.nodeValue !== tc.nodeValue) fc.nodeValue = tc.nodeValue;
         fc = fc.nextSibling;
       } else {
         const k = keyOf(tc);
         let m = null;
         if (k) for (let x = fc; x; x = x.nextSibling) if (x.nodeType === 1 && x.nodeName === tc.nodeName && keyOf(x) === k) { m = x; break; }
-        if (m) { from.insertBefore(m, fc); morph(m, tc); } else from.insertBefore(tc, fc);
+        if (m) { from.insertBefore(m, fc); morph(m, tc); live = m; } else { from.insertBefore(tc, fc); live = tc; }
       }
+      if (tc.__memo) { const e = kept.get(tc.__memo); if (e) e.el = live; }
       tc = next;
     }
     while (fc) { const n = fc.nextSibling; from.removeChild(fc); fc = n; }
     // after the children: a select's value needs its options in place first
     if ((from.tagName === 'INPUT' || from.tagName === 'SELECT') && to.hasAttribute('data-val') && !held(from) && from.value !== to.value) from.value = to.value;
+  }
+
+  /* ROW PATCHING (lane settingsfx2, measured in real Electron): every live push (qs ~1/s while watched,
+     volume, net, the mixer's 2 s read) re-ran the view, and on Sound, Home and Network that rebuilt every
+     row as fresh DOM (the mixer's app icons as new <img>s each time) for morph() to diff. keep(id, deps,
+     build) builds a row only when what it shows changed; an unchanged row is a placeholder that morph()
+     skips, so its live node is never touched. deps must name EVERYTHING the row draws from; the row's
+     note, pending set and search flash are added here. Forgotten when the view changes (renderNow). */
+  const kept = new Map();                  // row id -> { sig, el }: the rows of this view as last drawn
+  function keep(id, deps, build) {
+    const sig = JSON.stringify([deps, S.notes[id] || null, !!S.pending[id], !!(S.flash && S.flash.row === id)]);
+    const e = kept.get(id);
+    if (e && e.sig === sig && e.el && e.el.isConnected) { const ph = document.createElement('i'); ph.__keep = e.el; return ph; }
+    const n = build();
+    if (n && n.nodeType === 1) { n.__memo = id; kept.set(id, { sig, el: null }); } else kept.delete(id);
+    return n;
   }
 
   /* ---------------------------------------------------------------- building blocks */
@@ -491,7 +561,11 @@
   function tile(content, cls) { return h('div', { class: 'tile' + (cls ? ' ' + cls : '') }, content); }
   function card(key) { const c = h('div', { class: 'card', 'data-k': key }); for (let i = 1; i < arguments.length; i++) add(c, arguments[i]); return c; }
   function groupT(text, key, aside) { return h('div', { class: 'group-t' + (S.flash && S.flash.row === key ? ' flash' : ''), 'data-k': 'g:' + key, 'data-row': key.indexOf('.') > 0 ? key : null }, text, aside ? h('span', { class: 'aside' }, aside) : null); }
-  function head(title, summary) { return [h('h1', { 'data-k': 'h1' }, title), h('p', { class: 'summary', 'data-k': 'summary' }, summary)]; }
+  function crumbTo(section, label) { return [h('button', { class: 'crumb', type: 'button', 'data-k': 'crumb', 'data-act': 'nav', 'data-section': section }, label), h('span', { class: 'crumb-sep', 'data-k': 'sep' }, ' › ')]; }
+  /* a built-in drawn as a page of a section module gets that module's crumb before its title */
+  function head(title, summary) {
+    return [h('h1', { 'data-k': 'h1' }, S.crumb ? crumbTo(S.crumb.section, S.crumb.label) : null, title), h('p', { class: 'summary', 'data-k': 'summary' }, summary)];
+  }
   function sumParts(parts) { const out = []; parts.filter(Boolean).forEach((p, i) => { if (i) out.push(' · '); out.push(typeof p === 'string' ? p : h('span', { class: 'w' }, p.warn)); }); return out; }
   function moreCard(sec) {
     const links = M.more(sec);
@@ -528,15 +602,81 @@
   /* ---------------------------------------------------------------- sections */
   const V = {};
 
+  /* ---- section modules: a category's overview (its pages, like Windows 11), a DOWN module, and
+     the mount that hands a module page its own DOM (renderNow never morphs inside it) ---- */
+  V.overview = function () {
+    const e = S.model.mods[S.navId] || { id: S.navId, label: S.navId, help: '' }, pages = S.model.pages[S.navId] || [];
+    return [head(e.label, e.help || M.plural(pages.length, 'page')),
+      card('ov-' + e.id, pages.map((p) => h('button', { class: 'row clickable', type: 'button', 'data-k': 'p:' + p.id, 'data-row': 'page:' + p.id, 'data-act': 'nav', 'data-section': e.id, 'data-page': p.id },
+        tile(iconAny(p.icon || e.icon || 'apps')), h('div', { class: 'row-l' }, h('div', { class: 'row-t' }, p.title), p.help ? h('div', { class: 'row-h' }, p.help) : null),
+        h('span', { class: 'arr' }, icon('chev', 14)))))];
+  };
+  V.down = function () {
+    const e = S.model.mods[S.navId] || { label: S.navId, down: 'it is not loaded' };
+    return [head(e.label, 'This section is down, so nothing of it is drawn'),
+      card('down-' + S.navId, h('div', { class: 'fail' }, h('span', { class: 'row-ico' }, icon('warn')), h('div', { class: 'row-l' }, cap(e.down || 'no reason came back'))))];
+  };
+  const SS = window.SettingsSections;
+  const kitDeps = {
+    h, add, why, call, icon: iconAny, svg: svgOf,
+    on(ev, fn) {
+      if (!mantle || typeof mantle.on !== 'function') return () => {};
+      try {
+        const off = mantle.on(ev, (p) => { try { fn(p); } catch (e) { S.problems['ev:' + ev] = 'A live update (' + ev + ') could not be shown: ' + msg(e); schedule(); } });
+        return typeof off === 'function' ? off : () => {};
+      } catch (e) { S.problems['ev:' + ev] = 'Live updates for ' + ev + ' are off: ' + msg(e); schedule(); return () => {}; }
+    },
+    test: () => S.test,
+    go: (section, row, page) => { go(section || null, row || null, page || null); },
+    highlight: (row) => { if (typeof row === 'string' && row) { S.flash = { row }; jumpTo(row, 0); } },
+  };
+  function modKey() { return S.navId + '/' + (S.page || ''); }
+  function unmount() {
+    const m = S.mod;
+    if (!m) return;
+    S.mod = null;
+    try { if (m.handle && typeof m.handle.dispose === 'function') m.handle.dispose(); } catch (_) { /* its kit below still stops every watch and loop */ }
+    m.kit.dispose();
+  }
+  function modFail(title, e) {
+    return card('mod-fail', h('div', { class: 'fail' }, h('span', { class: 'row-ico' }, icon('warn')),
+      h('div', { class: 'row-l' }, title + ' could not be drawn: ' + msg(e)), btn('Try again', { 'data-act': 'remount' })));
+  }
+  function mount() {
+    const key = modKey();
+    if (S.mod && S.mod.key === key) return;
+    unmount();
+    const e = S.model.mods[S.navId] || { label: S.navId, help: '' }, def = SS.get(S.navId), pg = S.page ? SS.page(S.navId, S.page) : null;
+    const title = pg ? pg.title : e.label, help = pg ? pg.help : e.help;
+    const root = h('div', { class: 'modroot' });
+    pageEl.replaceChildren(h('h1', null, pg ? crumbTo(S.navId, e.label) : null, title), help ? h('p', { class: 'summary' }, help) : '', root);
+    const kit = SS.create(kitDeps, { section: S.navId, page: S.page });
+    const m = S.mod = { key, kit, handle: null };
+    const fail = (err) => { if (S.mod !== m) return; kit.dispose(); root.replaceChildren(modFail(title, err)); };
+    try {
+      const render = pg ? pg.render : def && def.render;
+      if (typeof render !== 'function') throw new Error('it has no render(el, kit)');
+      Promise.resolve(render(root, kit)).then((hd) => { if (S.mod === m) m.handle = hd && typeof hd === 'object' ? hd : null; else if (hd && typeof hd.dispose === 'function') hd.dispose(); }, fail);
+    } catch (err) { fail(err); }
+  }
+  function modUpdate() {
+    const m = S.mod;
+    if (!m || !m.handle || typeof m.handle.update !== 'function') return;
+    try { const p = m.handle.update(); if (p && typeof p.catch === 'function') p.catch((e) => { S.problems.modupdate = 'This page could not refresh: ' + msg(e); schedule(); }); }
+    catch (e) { S.problems.modupdate = 'This page could not refresh: ' + msg(e); schedule(); }
+  }
+
   V.home = function () {
     const vol = qp('volume'), br = qp('brightness'), bt = qp('bluetooth'), nl = qp('nightlight');
     const net = slot('net'), bat = slot('battery'), pm = slot('pm'), mn = slot('mantle'), au = slot('audio');
     const outName = au.v && Array.isArray(au.v.devices) ? (au.v.devices.find((d) => d.isDefault) || {}).name : null;
     const tiles = [];
+    let cant = 0;
     function T(key, section, ico, k, v, s, warn) {
-      tiles.push(h('button', { class: 'tileb', type: 'button', 'data-k': 'tile-' + key, 'data-act': 'nav', 'data-section': section },
+      if (s && warn) cant++;
+      tiles.push(keep('tile-' + key, [section, ico, k, v, s || null, !!warn], () => h('button', { class: 'tileb', type: 'button', 'data-k': 'tile-' + key, 'data-act': 'nav', 'data-section': section },
         h('span', { class: 't-k' }, icon(ico), k), h('span', { class: 't-v' }, v),
-        s ? h('span', { class: 't-s' + (warn ? ' warn' : ''), title: cap(s) }, cap(s)) : null));
+        s ? h('span', { class: 't-s' + (warn ? ' warn' : ''), title: cap(s) }, cap(s)) : null)));
     }
     // sound
     if (!vol) T('sound', 'sound', 'sound', 'Sound', '…', 'Reading the volume');
@@ -576,7 +716,6 @@
         hh.bad.length ? hh.bad.map((b) => b.label + ': ' + b.reason).join('; ') : hh.resting.length ? 'Resting: ' + hh.resting.map((r) => r.label).join(', ') : 'All healthy', hh.bad.length > 0);
     }
     // the summary carries the good readings; what cannot be read is counted here and said on its tile
-    const cant = tiles.filter((t) => t.querySelector('.t-s.warn')).length;
     const out = head('Home', sumParts([
       vol && partOk(vol) ? 'Volume ' + (vol.muted ? 'muted' : M.pct(vol.level)) : null,
       net.v && net.v.ok !== false && !nw.warn ? nw.text : null,
@@ -586,15 +725,18 @@
     out.push(h('div', { class: 'tiles', 'data-k': 'tiles' }, tiles));
     if (mn.v) {
       const hh = M.health(mn.v.features);
-      if (hh.bad.length || hh.resting.length) {
+      // Settings' own problems (its icon file missing, ...) from settings.mantle, then the features
+      const own = Array.isArray(mn.v.problems) ? mn.v.problems : [];
+      if (hh.bad.length || hh.resting.length || own.length) {
         out.push(groupT('Mantle needs a look', 'home-attn'));
-        out.push(card('home-attn', hh.bad.concat(hh.resting).map((b) => {
+        out.push(keep('home-attn', [own, hh.bad.map((b) => [b.name, b.label, b.reason]), hh.resting.map((b) => [b.name, b.label, b.reason])], () => card('home-attn', own.map((p, i) => h('div', { class: 'row', 'data-k': 'own-' + i },
+          tile(icon('warn')), h('div', { class: 'row-l' }, h('div', { class: 'row-t' }, 'Mantle Settings'), why(p)))), hh.bad.concat(hh.resting).map((b) => {
           const bad = hh.bad.indexOf(b) >= 0;
           return h('button', { class: 'row clickable', type: 'button', 'data-k': 'attn-' + b.name, 'data-act': 'nav', 'data-row': M.featureRow(b.name), 'data-section': 'mantle' },
             tile(M.letter(b.label)), h('div', { class: 'row-l' }, h('div', { class: 'row-t' }, b.label),
               bad ? why(b.reason) : h('div', { class: 'row-h' }, 'Resting while ' + String(b.reason).replace(/^while\s+/i, ''))),
             h('span', { class: 'arr' }, icon('chev', 14)));
-        })));
+        }))));
       }
     }
     return out.concat(moreCard('home'));
@@ -649,6 +791,7 @@
     const volLive = partOk(vol) && !!vol;
     const vHeld = qsHeld('volume');
     const vV = vHeld && S.shown.volume != null ? S.shown.volume : vol && typeof vol.level === 'number' ? vol.level : 0;
+    const outRow = () => {
     let outCtl, outWhy = null;
     if (au.st === 'fail') { outWhy = 'The playback devices could not be read: ' + au.reason; outCtl = btn('Try again', { 'data-act': 'retry', 'data-what': 'audio' }); }
     else if (!au.v) outCtl = h('span', { class: 'state' }, 'Reading…');
@@ -656,19 +799,21 @@
     else if (!devs.length) { outWhy = 'Windows reports no active playback device'; outCtl = winBtn('Sound devices', 'ms-settings:sound-devices'); }
     else outCtl = h('span', { class: 'selwrap' }, h('select', { 'data-change': 'out', 'data-val': def ? def.id : '', 'aria-label': 'Output device', disabled: pend('sound.output') },
       devs.map((d) => h('option', { value: d.id, 'data-k': d.id, selected: d.isDefault }, d.name))));
+    return row({ id: 'sound.output', label: 'Output device', help: 'Where sound plays: the default for every app', tile: tile(icon('sound')), why: outWhy, ctl: outCtl });
+    };
     out.push(card('sound-out',
-      row({ id: 'sound.output', label: 'Output device', help: 'Where sound plays: the default for every app', tile: tile(icon('sound')), why: outWhy, ctl: outCtl }),
-      row({ id: 'sound.volume', label: 'Volume', tile: tile(icon(vol && vol.muted ? 'mute' : 'sound')),
+      keep('sound.output', [au.st, au.reason, au.v, pend('sound.output')], outRow),
+      keep('sound.volume', [vol, vHeld, Math.round(vV), volLive], () => row({ id: 'sound.volume', label: 'Volume', tile: tile(icon(vol && vol.muted ? 'mute' : 'sound')),
         help: !vol ? 'Reading…' : volLive ? (vol.muted ? 'Muted' : 'The default output\'s level') : null, why: vol && !volLive ? vol.reason : null,
         ctl: [h('input', { type: 'range', min: 0, max: 100, step: 1, 'data-val': Math.round(vV), 'data-input': 'level', 'data-part': 'volume', 'aria-label': 'Volume', disabled: !volLive }),
           h('span', { class: 'rng-v' }, volLive ? Math.round(vV) + '%' : '—'),
-          h('button', { class: 'ibtn' + (vol && vol.muted ? ' on' : ''), type: 'button', 'data-act': 'mute', 'aria-pressed': vol && vol.muted ? 'true' : 'false', 'aria-label': vol && vol.muted ? 'Unmute' : 'Mute', title: vol && vol.muted ? 'Unmute' : 'Mute', disabled: !volLive }, icon(vol && vol.muted ? 'mute' : 'sound'))] })));
+          h('button', { class: 'ibtn' + (vol && vol.muted ? ' on' : ''), type: 'button', 'data-act': 'mute', 'aria-pressed': vol && vol.muted ? 'true' : 'false', 'aria-label': vol && vol.muted ? 'Unmute' : 'Mute', title: vol && vol.muted ? 'Unmute' : 'Mute', disabled: !volLive }, icon(vol && vol.muted ? 'mute' : 'sound'))] }))));
     out.push(groupT('Input', 'sound-in'));
     const ins = au.v && Array.isArray(au.v.inputs) ? au.v.inputs : null;
-    out.push(card('sound-in', row({ id: 'sound.input', label: 'Input device', cls: 'dim', tile: tile(icon('mic')),
+    out.push(card('sound-in', keep('sound.input', [ins], () => row({ id: 'sound.input', label: 'Input device', cls: 'dim', tile: tile(icon('mic')),
       help: ins && ins.length ? (ins.find((d) => d.isDefault) || ins[0]).name : null,
       info: ins && ins.length ? null : 'Mantle reads playback devices only, so the microphone is chosen in Windows Settings',
-      ctl: winBtn('Open', 'ms-settings:sound-devices') })));
+      ctl: winBtn('Open', 'ms-settings:sound-devices') }))));
     out.push(groupT('Volume mixer', 'sound.mixer', ss.v && ss.v.device ? 'On ' + ss.v.device.name : null));
     const g = gate('sessions', 'sound-mix');
     if (g) out.push(g);
@@ -676,12 +821,12 @@
     else if (!apps.length) out.push(card('sound-mix', h('div', { class: 'empty' }, 'No app has sound open right now')));
     else out.push(card('sound-mix', apps.map((a) => {
       const id = 'sound.mixer.' + a.key, busy = !!(slv[a.key] && slv[a.key].busy);
-      return row({ id, cls: 'mix', label: h('span', { class: 'mixname', title: a.name }, a.name),
+      return keep(id, [a, busy], () => row({ id, cls: 'mix', label: h('span', { class: 'mixname', title: a.name }, a.name),
         tile: tile(a.icon ? h('img', { src: a.icon, alt: '' }) : M.letter(a.name)),
         help: a.system ? 'Windows\' own sounds' : a.active ? 'Playing' : (a.sessions > 1 ? a.sessions + ' sessions' : 'Quiet'),
         ctl: [h('input', { type: 'range', min: 0, max: 100, step: 1, 'data-val': Math.round(a.level || 0), 'data-input': 'app-level', 'data-key': a.key, 'aria-label': a.name + ' volume', 'aria-busy': busy ? 'true' : null }),
           h('span', { class: 'rng-v' }, Math.round(a.level || 0) + '%'),
-          h('button', { class: 'ibtn' + (a.muted ? ' on' : ''), type: 'button', 'data-act': 'app-mute', 'data-key': a.key, 'aria-pressed': a.muted ? 'true' : 'false', 'aria-label': (a.muted ? 'Unmute ' : 'Mute ') + a.name, title: a.muted ? 'Unmute' : 'Mute' }, icon(a.muted ? 'mute' : 'sound'))] });
+          h('button', { class: 'ibtn' + (a.muted ? ' on' : ''), type: 'button', 'data-act': 'app-mute', 'data-key': a.key, 'aria-pressed': a.muted ? 'true' : 'false', 'aria-label': (a.muted ? 'Unmute ' : 'Mute ') + a.name, title: a.muted ? 'Unmute' : 'Mute' }, icon(a.muted ? 'mute' : 'sound'))] }));
     })));
     return out.concat(moreCard('sound'));
   };
@@ -735,14 +880,14 @@
     out.push(groupT('Wi-Fi', 'net-wifi'));
     const wOn = !!(w && w.on);
     out.push(card('net-wifi',
-      row({ id: 'network.wifi', label: 'Wi-Fi', tile: tile(icon('network')),
+      keep('network.wifi', [w, !!S.qsBusy.wifi], () => row({ id: 'network.wifi', label: 'Wi-Fi', tile: tile(icon('network')),
         help: !w ? 'Reading…' : partOk(w) && w.present !== false ? (wOn ? 'The wireless radio is on' : 'The wireless radio is off') : null,
         why: w && !partOk(w) ? w.reason : w && w.present === false ? 'This PC has no Wi-Fi adapter' : null,
-        ctl: sw(wOn, { 'data-act': 'qs', 'data-part': 'wifi' }, { label: 'Wi-Fi', disabled: !w || !partOk(w) || w.present === false, pending: !!S.qsBusy.wifi }) }),
-      row({ id: 'network.status', label: 'Connection', tile: tile(icon('network')),
+        ctl: sw(wOn, { 'data-act': 'qs', 'data-part': 'wifi' }, { label: 'Wi-Fi', disabled: !w || !partOk(w) || w.present === false, pending: !!S.qsBusy.wifi }) })),
+      keep('network.status', [net.st, net.reason, net.v], () => row({ id: 'network.status', label: 'Connection', tile: tile(icon('network')),
         help: net.v && net.v.ok !== false && !nw.warn ? nw.text + (net.v.adapter ? ' · ' + net.v.adapter : '') : !net.v && net.st !== 'fail' ? 'Reading…' : null,
         why: net.st === 'fail' ? 'The network could not be read: ' + net.reason : nw.warn ? nw.text : null,
-        ctl: net.v && net.v.ok !== false && net.v.internet ? h('span', { class: 'state ok' }, h('span', { class: 'pip ok' }), 'Internet') : null })));
+        ctl: net.v && net.v.ok !== false && net.v.internet ? h('span', { class: 'state ok' }, h('span', { class: 'pip ok' }), 'Internet') : null }))));
     const scanning = pend('network.scan');
     out.push(groupT('Available networks', 'network.networks',
       h('button', { class: 'ibtn' + (scanning ? ' spin' : ''), type: 'button', 'data-act': 'wifi-scan', title: 'Look for networks', 'aria-label': 'Look for networks', disabled: scanning || !(wl.v && wl.v.on) }, icon('refresh'))));
@@ -760,6 +905,7 @@
       if (!nets.length) rows.push(h('div', { class: 'empty', 'data-k': 'none' }, 'No networks in range. Refresh to look again.'));
       nets.forEach((n, i) => {
         const k = wifiKey(n, i), id = 'network.net.' + k, joining = pend('network.join.' + k) || n.connecting;
+        rows.push(keep(id, [n, !!joining, S.expand === k], () => {
         const bars = Math.max(1, Math.min(4, Math.ceil((n.signal || 0) / 25)));
         let ctl = null, info = null;
         if (joining) ctl = btn('Connecting…', { disabled: true }, 'pending');
@@ -769,9 +915,10 @@
         const pw = S.expand === k ? h('div', { class: 'pw', 'data-k': 'pw' },
           h('input', { class: 'inp', type: 'password', autocomplete: 'off', spellcheck: 'false', placeholder: 'Network password', 'aria-label': 'Password for ' + (n.ssid || 'the network'), 'data-enter': 'wifi-pw', 'data-net': k }),
           btn('Connect', { 'data-act': 'wifi-pw', 'data-net': k }, 'acc'), btn('Cancel', { 'data-act': 'wifi-cancel' }, 'quiet')) : null;
-        rows.push(row({ id, label: n.hidden ? 'Hidden network' : n.ssid, tile: tile(sig(bars), n.connected ? 'acc' : ''),
+        return row({ id, label: n.hidden ? 'Hidden network' : n.ssid, tile: tile(sig(bars), n.connected ? 'acc' : ''),
           help: [n.connected ? 'Connected' : null, n.secure ? n.security || 'Secured' : 'Open', n.known && !n.connected ? 'Saved' : null].filter(Boolean).join(' · '),
-          info, extra: pw, ctl }));
+          info, extra: pw, ctl });
+        }));
       });
       out.push(card('net-list', rows));
     }
@@ -989,6 +1136,12 @@
       row({ id: 'about.uptime', label: 'Running since ' + (since || 'an unknown time'), tile: tile(icon('about')), help: up != null ? 'Up for ' + M.dur(up) : null }),
       row({ id: 'about.mode', label: v.mode === 'test' ? 'Test run' : 'Live', tile: tile(icon('about')),
         help: v.mode === 'test' ? 'A test instance: switches here are dry runs and change nothing on this PC' : 'The shell Owen uses every day' })));
+    const gl = S.glass;
+    out.push(groupT('Window', 'about-w'));
+    out.push(card('about-w', row({ id: 'about.glass', tile: tile(icon('display')),
+      label: !gl ? 'Solid' : gl.ok === true ? 'Glass (acrylic, light)' : gl.ok === false ? 'Solid, not glass' : 'Glass (acrylic): checking with Windows…',
+      help: !gl ? 'This page was opened without glass' : gl.ok === true ? 'Windows reads back the acrylic backdrop and a light frame. The window turns solid while it is in the background: Windows draws acrylic only behind the active window' : null,
+      why: gl && gl.ok === false ? gl.why || 'no reason came back' : null })));
     out.push(groupT('Runtime', 'about.runtime'));
     out.push(card('about-rt', h('div', { class: 'facts', 'data-k': 'rt', style: null },
       [['Electron', v.electron], ['Chromium', v.chrome], ['Node', v.node], ['Windows', v.windows]].map((f) => h('div', { 'data-k': f[0] }, h('div', { class: 'fk' }, f[0]), h('div', { class: 'fv' }, f[1] || 'Not reported'))))));
@@ -1042,12 +1195,12 @@
   function activate(hh) {
     const e = hh.entry;
     if (e.kind === 'catalog' && !e.section) { openWin(e.uri, null); return; }
-    go(e.section, e.kind === 'section' ? null : e.row);
+    go(e.section, e.kind === 'section' || e.kind === 'page' ? null : e.row, e.page || null);
   }
   function onFind() {
     S.query = findEl.value;
     S.results = null; S.sel = 0;
-    S.view = S.query.trim() ? 'search' : S.section;
+    S.view = S.query.trim() ? 'search' : S.baseView;
     findEl.setAttribute('aria-expanded', S.view === 'search' ? 'true' : 'false');
     renderNow();
     scroller.scrollTop = 0;
@@ -1061,16 +1214,23 @@
   }
 
   /* ---------------------------------------------------------------- navigation */
-  function go(section, rowId) {
-    if (!M.isSection(section)) section = M.sectionOf(rowId) || 'home';
-    const was = S.section;
-    S.section = section; S.view = section; S.flash = null;
+  /* Anywhere: a built-in section, a module section / page, or a row (whose own place wins). The
+     sidebar item is S.navId; S.section is the BUILT-IN whose data and loops apply (null while a
+     module draws: its kit runs its own). */
+  function go(section, rowId, page) {
+    const r = M.resolve(S.model, { section, page, row: rowId });
+    const was = S.navId + '/' + S.page + '/' + S.view;
+    S.navId = r.section; S.page = r.page; S.flash = null;
+    S.crumb = r.page && r.view ? { section: r.section, label: (S.model.mods[r.section] || {}).label || r.section } : null;
+    S.view = r.down ? 'down' : r.view ? r.view : S.model.pages[r.section] && !r.page ? 'overview' : 'mod';
+    S.section = r.view || null;
+    S.baseView = S.view;
     if (findEl.value) { findEl.value = ''; S.query = ''; S.results = null; findEl.setAttribute('aria-expanded', 'false'); }
-    const p = ensure(section);
-    if (was !== section) scroller.scrollTop = 0;
-    startLoops(section);
+    const p = ensure(S.section);
+    if (was !== S.navId + '/' + S.page + '/' + S.view) scroller.scrollTop = 0;
+    startLoops(S.section);
     renderNow();
-    if (rowId) { S.flash = { row: rowId }; jumpTo(rowId, 0); }
+    if (r.row) { S.flash = { row: r.row }; jumpTo(r.row, 0); }
     return p;
   }
   function jumpTo(id, tries) {
@@ -1083,6 +1243,8 @@
       return;
     }
     el.scrollIntoView({ block: 'center' });
+    // a module's rows are its own DOM (never re-rendered by this page): the highlight goes on directly
+    if (S.view === 'mod') { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1700); }
     // a group title's own control (the Wi-Fi refresh), else the first control in the card under it
     const ctl = 'button:not(:disabled), input:not(:disabled), select:not(:disabled)';
     const scope = el.classList.contains('group-t') && !el.querySelector(ctl) ? el.nextElementSibling : el;
@@ -1093,9 +1255,9 @@
   }
   function nav(n) {
     n = n || {};
-    if (n.query) { go(M.isSection(n.section) ? n.section : S.section); findEl.value = String(n.query); onFind(); findEl.focus(); return Promise.resolve(); }
+    if (n.query) { go(n.section || S.navId, null, n.page || null); findEl.value = String(n.query); onFind(); findEl.focus(); return Promise.resolve(); }
     // a row names its own section ('mantle.option.gamemode.auto' lives in Mantle), whatever section came with it
-    return go(M.sectionOf(n.row) || n.section || 'home', n.row || null);
+    return go(n.section || null, n.row || null, n.page || null);
   }
 
   /* ---------------------------------------------------------------- loops and watches */
@@ -1166,18 +1328,36 @@
   }
 
   /* ---------------------------------------------------------------- render */
-  let raf = 0;
-  function schedule() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; renderNow(); }); }
+  /* LAG (lane settingsfx, measured on the mock): every live push (volume, net, qs every ~2 s...) rebuilt
+     and diffed the WHOLE page, 6-20 ms of main thread each, even on a page that does not show that
+     value. A push now names its data slot, and the page is rebuilt only if the view on screen reads it;
+     otherwise only the sidebar and banner are looked at, and the sidebar only when its inputs moved. */
+  const USES = {
+    home: ['qs', 'net', 'battery', 'pm', 'mantle', 'audio'], display: ['qs', 'displays'], sound: ['qs', 'audio', 'sessions'],
+    bluetooth: ['qs', 'bt'], network: ['qs', 'net', 'wifi'], power: ['pm', 'battery', 'gm', 'qs'], notifications: ['mantle', 'qs'],
+    apps: ['startup', 'features', 'corners', 'mantle'], mantle: ['mantle', 'corners', 'features'], shortcuts: ['mantle'],
+    about: ['about', 'catalog', 'mantle', 'qs'], search: ['mantle', 'catalog'], overview: [], down: [], mod: [],
+  };
+  let raf = 0, pageDirty = false;
+  function schedule(k) {
+    if (!k || !USES[S.view] || USES[S.view].indexOf(k) >= 0) pageDirty = true;
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (pageDirty) renderNow(); else { renderNav(); renderBanner(); } });
+  }
+  let navKey = '';
   function renderNav() {
     const m = slot('mantle').v;
     const bad = m ? M.health(m.features).bad.length : 0;
+    const key = [S.modelSeq, S.navId, S.view === 'search', bad].join('|');
+    if (key === navKey) return;
+    navKey = key;
     const tmp = h('div', { id: 'nav', class: 'nav', role: 'list' });
     let group = undefined;
-    M.SECTIONS.forEach((s) => {
+    S.model.nav.forEach((s) => {
       if (s.group !== group) { group = s.group; if (group) add(tmp, h('div', { class: 'nav-g', 'data-k': 'g-' + group }, group === 'windows' ? 'Windows' : 'Mantle')); }
-      const cur = S.view === s.id;
-      add(tmp, h('button', { class: 'nav-i', type: 'button', role: 'listitem', 'data-k': s.id, 'data-act': 'nav', 'data-section': s.id, 'aria-current': cur ? 'page' : null },
-        icon(s.id), h('span', null, s.label), s.id === 'mantle' && bad ? h('span', { class: 'ndot', title: bad + ' not healthy' }) : null));
+      const cur = S.view !== 'search' && S.navId === s.id;
+      const dot = s.down ? h('span', { class: 'ndot', title: 'Down: ' + s.down }) : s.id === 'mantle' && bad ? h('span', { class: 'ndot', title: bad + ' not healthy' }) : null;
+      add(tmp, h('button', { class: 'nav-i', type: 'button', role: 'listitem', 'data-k': s.id, 'data-act': 'nav', 'data-section': s.id, 'aria-current': cur ? 'page' : null, title: s.down ? s.label + ' is down: ' + s.down : null },
+        iconAny(s.icon || s.id), h('span', null, s.label), dot));
     });
     morph(navEl, tmp);
   }
@@ -1191,12 +1371,17 @@
   }
   function renderNow() {
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    pageDirty = false;
     renderNav();
     renderBanner();
-    if (S.view !== S.lastView) { pageEl.replaceChildren(); scroller.scrollTop = 0; S.lastView = S.view; }
-    const tmp = h('div', { id: 'page', class: 'page' });
-    add(tmp, S.view === 'search' ? vSearch() : (V[S.view] || V.home)());
-    morph(pageEl, tmp);
+    const vk = S.view === 'search' ? 'search' : S.view + ':' + modKey();
+    if (vk !== S.lastView) { if (S.view !== 'mod' || S.mod) { unmount(); pageEl.replaceChildren(); } scroller.scrollTop = 0; S.lastView = vk; kept.clear(); }
+    if (S.view === 'mod') mount();          // a module page owns its DOM: never morphed from here
+    else {
+      const tmp = h('div', { id: 'page', class: 'page' });
+      add(tmp, S.view === 'search' ? vSearch() : (V[S.view] || V.home)());
+      morph(pageEl, tmp);
+    }
     document.body.classList.toggle('maxed', S.maxed);
     const ab = slot('about').v;
     $('testchip').hidden = !(S.test || (ab && ab.mode === 'test'));
@@ -1243,7 +1428,7 @@
     if (!typing && !e.ctrlKey && !e.altKey && !e.metaKey && e.key.length === 1 && e.key !== ' ') findEl.focus();
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) sleep(); else wake(); });
-  window.addEventListener('focus', () => { if (!document.hidden) { ensure(S.section); if (S.view === 'search') { read('mantle'); read('catalog'); } } });
+  window.addEventListener('focus', () => { if (!document.hidden) { ensure(S.section); modUpdate(); if (S.view === 'search') { read('mantle'); read('catalog'); } } });
   window.addEventListener('pagehide', sleep);
   window.addEventListener('resize', () => {
     const mx = window.outerWidth >= screen.availWidth && window.outerHeight >= screen.availHeight;
@@ -1251,23 +1436,24 @@
   });
 
   /* ---------------------------------------------------------------- events from main */
-  on('qs', (d) => { qsTake(d); schedule(); });
+  on('qs', (d) => { qsTake(d); schedule('qs'); });
   on('volume', (v) => {
     if (!v || typeof v !== 'object' || qsHeld('volume')) return;
     const q = slot('qs').v;
     if (!q) return;
     q.volume = v.ok !== false && typeof v.level === 'number' ? { ok: true, level: v.level, muted: !!v.muted, reason: null }
       : { ok: false, level: null, muted: false, reason: v.reason || 'the volume could not be read, and no reason came back' };
-    schedule();
+    schedule('qs');
   });
-  on('net', (r) => { take('net', r); schedule(); });
-  on('battery', (r) => { take('battery', r); schedule(); });
-  on('btdevices', (r) => { if (r && typeof r === 'object' && Array.isArray(r.devices)) { take('bt', r); schedule(); } });
-  on('powermode', (r) => { take('pm', r); schedule(); });
-  on('gamemode.state', (r) => { take('gm', r); schedule(); });
-  on('corners.state', (r) => { take('corners', r); schedule(); });
-  on('settings.changed', () => { read('mantle'); if (S.section === 'apps') read('features'); if (S.section === 'mantle') read('corners'); });
+  on('net', (r) => { take('net', r); schedule('net'); });
+  on('battery', (r) => { take('battery', r); schedule('battery'); });
+  on('btdevices', (r) => { if (r && typeof r === 'object' && Array.isArray(r.devices)) { take('bt', r); schedule('bt'); } });
+  on('powermode', (r) => { take('pm', r); schedule('pm'); });
+  on('gamemode.state', (r) => { take('gm', r); schedule('gm'); });
+  on('corners.state', (r) => { take('corners', r); schedule('corners'); });
+  on('settings.changed', () => { read('mantle'); if (S.section === 'apps') read('features'); if (S.section === 'mantle') read('corners'); modUpdate(); });
   on('settings.nav', (n) => { nav(n); });
+  on('settings.glass', glassTake);
 
   /* ---------------------------------------------------------------- start */
   function boot() {
@@ -1277,17 +1463,29 @@
       if (!r || typeof r !== 'object') r = { ok: false, reason: 'it answered with nothing' };
       if (r.ok === false) S.problems.hello = 'Mantle did not say which page to open (' + (r.reason || 'no reason came back') + '), so this is Home.';
       S.test = !!r.test;
+      if (r.glass) glassTake(r.glass);
       return r;
     }, (e) => {
       if (mantle) S.problems.hello = 'Mantle did not say which page to open (' + msg(e) + '), so this is Home.';
       return {};
-    }).then((r) => {
+    });
+    // The section modules (SECTIONS.md): listed by main, loaded here, in before the first nav so a
+    // deep link into a module lands.
+    const mods = call('settings.sections').then((r) => {
+      if (!r || typeof r !== 'object') r = { ok: false, reason: 'settings.sections answered with nothing', sections: [] };
+      if (r.ok === false) S.problems.sections = 'Some Settings sections may be missing: ' + (r.reason || 'no reason came back');
+      return SS.load(r.sections, M);
+    }, (e) => {
+      if (mantle) S.problems.sections = 'The Settings sections beyond the built-in ones could not be listed (' + msg(e) + ')';
+      return [];
+    }).then((list) => { S.model = M.sectionModel(list); S.modelSeq++; S.modsReady = true; rebuildIndex(); });
+    const booted = Promise.all([first, mods]).then(([r]) => {
       awake = !document.hidden;
       if (awake) qsWatch(true);
       const extra = [read('catalog'), slot('mantle').st === 'idle' ? read('mantle') : null];
-      return Promise.all([nav({ section: r.section, row: r.row, query: r.query })].concat(extra));
+      return Promise.all([nav({ section: r.section, page: r.page, row: r.row, query: r.query })].concat(extra));
     });
-    first.catch(() => {}).then(() => {
+    booted.catch(() => {}).then(() => {
       renderNow();
       requestAnimationFrame(() => requestAnimationFrame(() => { document.documentElement.dataset.ready = '1'; }));
     });

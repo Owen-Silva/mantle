@@ -347,6 +347,26 @@ select:disabled, .inp:disabled { opacity: .5; }
 .noresults { padding: 22px 16px; text-align: center; }
 .noresults .row-t { margin-bottom: 10px; }
 
+/* ---------------------------------------------------------------- section modules (kit.js, SECTIONS.md)
+   The kit builds the SAME .row / .card / .sw / .seg / .btn / .why markup as the built-ins, so these
+   are only the pieces the built-ins never needed: the crumb over a module page, the Admin badge, a
+   list's rows inside a card, and the reason slot that stays out of the layout while empty. */
+h1 .crumb { font: inherit; border: 0; padding: 0; background: transparent; color: var(--lg-ink-3); }
+h1 .crumb:hover { color: var(--lg-ink); }
+h1 .crumb-sep { color: var(--lg-ink-3); }
+.admin {
+  display: inline-flex; align-items: center; gap: 3px;
+  margin-left: 8px; padding: 0 6px; height: 18px; vertical-align: 1px;
+  border-radius: var(--lg-r-ctl);
+  font-size: 11px; font-weight: 600; color: var(--lg-ink-2); background: var(--lg-sunk);
+}
+.btn svg + svg, .btn > svg:last-child:not(:first-child) { margin-left: 2px; }
+.row-w:empty { display: none; }
+.card > .klist:first-child > .row:first-child { border-top: 0; border-top-left-radius: 11px; border-top-right-radius: 11px; }
+.card > .klist:last-child > .row:last-child { border-bottom-left-radius: 11px; border-bottom-right-radius: 11px; }
+.k-empty { min-height: 44px; }
+.row.k-toggle .row-c, .row.k-status .row-c { min-width: 0; }
+
 @media (max-width: 860px) {
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tileb.wide { grid-column: span 2; }
@@ -354,3 +374,14 @@ select:disabled, .inp:disabled { opacity: .5; }
   .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   input[type="range"] { width: 150px; }
 }
+
+/* ---------------------------------------------------------------- glass (lane settingsfx2) */
+/* html.glass: DWM's acrylic is behind the window (lib/features/settings.js asks for it, sets a light
+   frame and reads both back), so the big surfaces let it through: the page itself is clear, the sidebar
+   keeps its --lg-fill wash and every card its --lg-fill-strong, which is what keeps rows readable over
+   any desktop. The blur is DWM's and costs the page nothing: NO backdrop-filter here (on the bar a CSS
+   blur cost a quarter of a core).
+   html.glass.inactive: DWM draws the backdrop only behind the ACTIVE window, so a window in the
+   background stands on the opaque ground, the way Windows' own apps turn solid when inactive. */
+html.glass, html.glass body { background: transparent; }
+html.glass.inactive, html.glass.inactive body { background: var(--lg-ground); }

@@ -14,6 +14,11 @@
  *          btoff     the Bluetooth radio is off
  *          nobridge  no window.mantle at all: the page must say it cannot reach Mantle
  *        taskmgr=on | off | rest   Mantle's task manager feature (absent by default)
+ *        glass=acrylic   what main puts in the URL when it asked DWM for acrylic (lib/features/settings.js)
+ *        glassok=1 | 0 | wait   DWM's read-back: acrylic + light frame / refused with a made-up reason / not yet
+ *        desk=1   paints a MADE-UP desktop behind the clear page, blurred and tinted the way DWM's light
+ *                 acrylic draws it, so a headless shot shows the glass look. It stands in for DWM only
+ *                 here: the page itself never uses a CSS blur.
  * The page sets <html data-ready="1"> itself once the requested section's first paint settled.
  * window.__mockCalls lists every call; window.__mockEmit(event, payload) pushes an event.
  */
@@ -25,6 +30,21 @@
   if (mode === 'nobridge') return;
   const FAIL = mode === 'failing', ADMIN = mode === 'admin', TEST = q.get('test') === '1';
   const TM = q.get('taskmgr');
+  const GLASS = q.get('glass') !== 'acrylic' ? null : q.get('glassok') === '0'
+    ? { material: 'acrylic', ok: false, why: 'Windows did not take the acrylic backdrop (it reads back 1), so the window is solid', backdrop: 1, dark: 0 }
+    : q.get('glassok') === 'wait' ? { material: 'acrylic', ok: null, why: null, backdrop: null, dark: null }
+      : { material: 'acrylic', ok: true, why: null, backdrop: 3, dark: 0 };
+  if (q.get('desk') === '1') {
+    // the made-up desktop: colour fields a wallpaper might have, then DWM's blur and light tint over it
+    const desk = document.createElement('div'), tint = document.createElement('div');
+    Object.assign(desk.style, { position: 'fixed', inset: '-60px', zIndex: '-2', filter: 'blur(38px) saturate(1.25)',
+      background: 'radial-gradient(40% 50% at 18% 30%, #ff8a5c, transparent 70%), radial-gradient(45% 55% at 78% 22%, #5b7cff, transparent 70%),'
+        + ' radial-gradient(50% 60% at 60% 85%, #2fb58f, transparent 70%), radial-gradient(35% 40% at 30% 88%, #ffd166, transparent 70%), linear-gradient(135deg, #3a2f6b, #1d4e6b)' });
+    Object.assign(tint.style, { position: 'fixed', inset: '0', zIndex: '-1', background: 'rgba(243,244,248,.70)' });
+    const put = () => { document.body.prepend(tint); document.body.prepend(desk); };
+    if (document.body) put(); else document.addEventListener('DOMContentLoaded', put);
+  }
+  const SECS = (q.get('sections') || '').split(',').filter(Boolean);
   const now = Date.now();
   const SIDECAR = 'the sidecar is restarting (it exited with code 1 a moment ago)';
 
@@ -234,7 +254,13 @@
   function answer(name, a) {
     a = a || {};
     switch (name) {
-      case 'settings.hello': return { ok: true, section: q.get('section') || 'home', row: q.get('row') || null, query: q.get('q') || null, test: TEST };
+      case 'settings.hello': return { ok: true, section: q.get('section') || 'home', page: q.get('page') || null, row: q.get('row') || null, query: q.get('q') || null, test: TEST, glass: GLASS };
+      // section modules: ?sections=a,b loads the FIXTURES in test-sections/ (never sections/, which
+      // belongs to the category lanes); an id ending in "!" is DOWN on the main side
+      case 'settings.sections': return { ok: true, reason: null, sections: SECS.map((id) => (id.endsWith('!')
+        ? { id: id.slice(0, -1), file: null, down: 'lib/features/_settings-sections/' + id.slice(0, -1) + '.js did not load (mock: main-side boom)', main: { ok: false, reason: 'mock: main-side boom', commands: [] } }
+        : { id, file: 'test-sections/' + id + '.js', down: null, main: null })) };
+      case 'settings.pickPath': return TEST ? { ok: false, reason: 'a test run never opens a folder dialog', path: null, cancelled: false } : later(200, { ok: true, cancelled: false, reason: null, path: 'D:\\Made-up folder' });
       case 'settings.mantle': return FAIL ? boom('settings.mantle: the settings feature is not running (it failed to start: the feature seam threw)') : mantleView();
       case 'settings.enable': {
         const f = featureOf(a.feature);
@@ -263,7 +289,7 @@
       case 'settings.about': return FAIL ? boom('settings.about: the settings feature is not running') : {
         ok: true, version: '0.9.14', commit: 'a1b2c3d4e5f60718', commitReason: null, startedAt: now - (3 * 3600 + 4 * 60) * 1000, uptimeMs: (3 * 3600 + 4 * 60) * 1000,
         mode: TEST ? 'test' : 'live', logFile: 'C:\\Users\\you\\AppData\\Roaming\\Mantle\\logs\\mantle.log', logDir: 'C:\\Users\\you\\AppData\\Roaming\\Mantle\\logs',
-        electron: '44.0.0', chrome: '146.0.7300.0', node: '24.4.0', windows: '10.0.26200' };
+        electron: '44.0.0', chrome: '146.0.7300.0', node: '24.4.0', windows: '10.0.26200', glass: GLASS };
       case 'settings.openLogs': return { ok: true, reason: null, dryRun: TEST };
       case 'settings.openWindows': return { ok: true, reason: null, dryRun: TEST };
       case 'settings.catalog': return FAIL ? { ok: false, reason: 'the launcher\'s settings catalog is not loaded yet' } : { ok: true, items: CAT.map((x) => Object.assign({}, x)) };
@@ -343,7 +369,14 @@
         });
       }
       case 'qs.wifi.disconnect': nets.forEach((x) => { x.connected = false; }); qs.wifi.connected = false; return later(400, { ok: true, reason: null });
-      default: return { ok: false, reason: 'the mock does not play ' + name };
+      default:
+        // a fixture section's main-side command: settings.<id>.<name> answers with what it was sent
+        if (/^settings\.[a-z][a-z0-9-]*\.[A-Za-z]\w*$/.test(name)) {
+          if (/\.fail$/.test(name)) return later(120, { ok: false, reason: 'mock: this switch cannot move (the service is stopped)' });
+          if (/\.admin$/.test(name)) return later(120, { ok: false, reason: 'Mantle cannot ask for administrator rights yet' });
+          return later(120, Object.assign({ ok: true, reason: null, dryRun: TEST || undefined }, a && 'value' in a ? { value: a.value } : {}, TEST ? { reason: 'test run: nothing was changed' } : {}));
+        }
+        return { ok: false, reason: 'the mock does not play ' + name };
     }
   }
 
