@@ -82,6 +82,32 @@
   var HINT = { checking: '', notrunning: 'Not running', noport: 'Needs restart', starting: 'Starting…', loading: 'Loading…', portbusy: 'Port busy',
     internals: 'Spotify changed', noinstall: 'Not found', error: 'Error', off: 'Off', missing: 'Off' };
 
+  /* spotfix lane (2026-09-28): ONE source for the window's words. The header's word and the app line
+     both come from here, so "Not hidden" next to "Running hidden" (seen live: the header read the
+     window record, the line a later memory read) cannot happen again. w: the newest window record
+     (the push or info, whichever came last; main keeps it true to its own reads); visible: the last
+     read, used only for a Spotify whose window Mantle holds nothing about (or could not take over).
+     -> { key, hint (header, '' = none), line (app line), bad (orange line, '' = none), act: the
+     window link ({ text, verb }), mem: whether the memory follows the line } */
+  function look(w, visible, now) {
+    var st = w && w.state, byRead = visible === false ? 'Running hidden' : visible === true ? 'Window open' : 'Running';
+    var openOrHide = visible === true ? { text: 'Hide window', verb: 'hideWindow' } : { text: 'Open Spotify', verb: 'openWindow' };
+    if (st === 'hiding') {
+      var n = w.trying || !w.retryAt ? 0 : Math.max(1, Math.ceil((w.retryAt - now) / 1000));
+      return { key: 'hiding', hint: 'Hiding…', bad: '', mem: false, act: { text: 'Hide now', verb: 'hideWindow' },
+        line: 'Hiding Spotify’s window… (' + (w.retryWhy || 'Spotify is slow to answer') + '; ' + (n ? 'trying again in ' + n + ' s' : 'trying again now') + ')' };
+    }
+    if (st === 'hidden') return { key: 'hidden', hint: 'Hidden', line: 'Running hidden', bad: '', mem: true, act: { text: 'Open Spotify', verb: 'openWindow' } };
+    if (st === 'shown') return { key: 'shown', hint: '', line: 'Window open', bad: '', mem: true, act: { text: 'Hide window', verb: 'hideWindow' } };
+    if (st === 'failed' && w.takeOverFailed) return { key: 'unwatched', hint: 'Not watched', line: byRead, bad: w.reason || '', mem: true, act: openOrHide };
+    if (st === 'failed') {
+      return { key: 'failed', hint: 'Not hidden', line: visible === true ? 'Window open' : 'Running', bad: w.reason || 'Spotify’s window could not be hidden', mem: true,
+        act: w.own ? { text: 'Hide now', verb: 'hideWindow' } : openOrHide };
+    }
+    return { key: 'none', hint: '', line: byRead, bad: '', mem: true, act: openOrHide };
+  }
+  function lookNow() { return look(S.win || null, S.info && S.info.visible != null ? S.info.visible : null, Date.now()); }
+
   function isSpotify(s) {
     return !!s && (/spotify/i.test(String(s.aumid || '')) || /spotify/i.test(String((s.app && s.app.name) || '')));
   }
@@ -98,6 +124,7 @@
     if (!S || !st) return;
     var was = S.status && S.status.state;
     S.status = st;
+    if (Object.prototype.hasOwnProperty.call(st, 'window')) S.win = st.window;   // look(): the newest window record
     if (st.state !== 'connected') { S.q = null; S.qErr = null; }
     if (st.state === 'connected' && was !== 'connected' && expanded) { refresh(true); loadInfo(); if (S.tab === 'lib') loadLib(); }
     if (st.state !== 'connected') { S.info = null; S.quitArmed = false; }
@@ -217,6 +244,7 @@
       else if (!r.ok) say((verb === 'restart' ? 'Not restarted: ' : 'Not started: ') + (r.reason || 'no reason given'), true);
       else if (r.loading) say(r.note || 'Spotify is still loading; Mantle connects once it has loaded.', !!r.forced);
       else if (r.note) say(r.note, true);
+      else if (r.hidden === false && r.reason) say('Spotify started. ' + r.reason, !r.hiding);   // spotfix lane: its window is not hidden (yet)
       else say(verb === 'restart' ? 'Spotify restarted. Press play to carry on.' : 'Spotify started.');
       loadStatus();
     }, function (e) { if (S === mine) { say('Spotify was not ' + (verb === 'restart' ? 'restarted' : 'started') + ': ' + why(e), true); loadStatus(); } });
@@ -233,6 +261,7 @@
     call('info').then(function (r) {
       if (S !== mine) return;
       S.infoLoading = false; S.info = r.ok ? r : null; S.infoErr = r.ok ? '' : (r.reason || 'Spotify’s state could not be read');
+      if (r.ok && Object.prototype.hasOwnProperty.call(r, 'window')) S.win = r.window;
       render();
     }, function (e) { if (S !== mine) return; S.infoLoading = false; S.infoErr = 'Spotify’s state could not be read: ' + why(e); render(); });
   }
@@ -267,7 +296,9 @@
   }
   function windowDo(verb) {
     act(verb, verb, {}, function (r) {
+      if (r && Object.prototype.hasOwnProperty.call(r, 'window')) S.win = r.window;
       if (r.dryRun) say('Test instance: ' + r.reason);
+      else if (r.hiding) say(r.reason || 'Spotify is slow to answer; Mantle keeps trying to hide its window.');   // spotfix lane: tried again, said above
       else if (!r.ok) say((verb === 'openWindow' ? 'Spotify did not open: ' : 'Not hidden: ') + (r.reason || 'Spotify gave no reason'), true);
       else if (!r.verified) say(r.reason, true);
       else say(verb === 'openWindow' ? 'Spotify’s window is open.' : 'Spotify is hidden again.');
@@ -544,24 +575,26 @@
     line.textContent = ''; tabs.textContent = '';
     line.hidden = tabs.hidden = st !== 'connected';
     if (st !== 'connected') return;
-    var w = (S.status && S.status.window) || null, inf = S.info, m = inf && inf.memory;
-    var shown = inf && inf.visible != null ? inf.visible : w ? w.state === 'shown' : null;
+    var w = S.win || null, inf = S.info, m = inf && inf.memory, L = lookNow();
     var main = mk('div', 'spq-appmain');
     var wv = watchView(), watching = !!(wv && wv.state === 'watching');
     var memTxt = watching && wv.mb != null && wv.at && Date.now() - wv.at < 90000 ? mbText(wv.mb) : m ? mb(m) : '';
     var trimTxt = watching ? (wv.lastTrim && wv.lastTrim.ok ? ' · trimmed ' + ago(wv.lastTrim.at) : ' · not trimmed yet') : '';
-    var txt = mk('span', 'spq-apptxt', (shown === false ? 'Running hidden' : shown === true ? 'Window open' : 'Running') + (memTxt ? ' · ' + memTxt : S.infoLoading ? ' · …' : '') + trimTxt);
-    txt.title = (m ? 'Spotify’s ' + m.n + ' processes: ' + (m.privateWsMB != null ? m.privateWsMB + ' MB of RAM of their own (Task Manager’s Memory), ' : '') + m.wsMB + ' MB working set, ' + m.privateMB + ' MB committed'
-      : (inf && inf.memoryReason) || S.infoErr || 'Reading Spotify’s memory…') + (w && w.how ? (w.adopted && w.how === 'adopted after a Mantle restart' ? '\nTaken over after a Mantle restart: an earlier Mantle started and hid it' : '\nHidden by ' + w.how) : '') + (w && w.trim ? '\n' + w.trim.text : '')
+    S.appTail = L.mem ? (memTxt ? ' · ' + memTxt : S.infoLoading ? ' · …' : '') + trimTxt : '';
+    var txt = mk('span', 'spq-apptxt', L.line + S.appTail);
+    S.appTxt = txt;
+    var pre = L.key === 'hiding' && w.lastReason ? 'The last try: ' + w.lastReason + (w.tries ? ' (' + w.tries + ' tr' + (w.tries === 1 ? 'y' : 'ies') + ' so far)' : '') + '\n' : '';
+    txt.title = pre + (m ? 'Spotify’s ' + m.n + ' processes: ' + (m.privateWsMB != null ? m.privateWsMB + ' MB of RAM of their own (Task Manager’s Memory), ' : '') + m.wsMB + ' MB working set, ' + m.privateMB + ' MB committed'
+      : (inf && inf.memoryReason) || S.infoErr || 'Reading Spotify’s memory…') + (w && w.how && L.key === 'hidden' ? (w.adopted && w.how === 'adopted after a Mantle restart' ? '\nTaken over after a Mantle restart: an earlier Mantle started and hid it' : '\nHidden by ' + w.how) : '') + (w && w.trim ? '\n' + w.trim.text : '')
       + (watching ? '\nMemory watch: trimmed when over ' + wv.aboveMB + ' MB, checked every 30 s, at most once every ' + Math.round(wv.gapMs / 60000) + ' min; never the process playing the audio'
         : wv && wv.state === 'stopped' && wv.reason ? '\nMemory watch stopped: ' + wv.reason : '')
       + (wv && wv.lastTrim ? '\n' + wv.lastTrim.text + ' (' + ago(wv.lastTrim.at) + ')' : '') + (wv && wv.note ? '\n' + cap(wv.note) : '');
     main.appendChild(txt);
-    main.appendChild(linkBtn(shown === true ? 'Hide window' : 'Open Spotify', function () { windowDo(shown === true ? 'hideWindow' : 'openWindow'); }));
+    main.appendChild(linkBtn(L.act.text, function () { windowDo(L.act.verb); }, L.key === 'failed' && L.act.text === 'Hide now' ? 'act' : ''));
     main.appendChild(linkBtn(S.quitArmed ? 'Click again to quit' : 'Quit', quitApp, S.quitArmed ? 'warn' : ''));
     line.appendChild(main);
     var watchBad = wv ? (wv.state === 'unavailable' ? wv.reason : watching ? wv.error || (wv.lastTrim && !wv.lastTrim.ok ? wv.lastTrim.text : '') : '') : '';
-    var bad = (w && w.state === 'failed' && w.reason) || (w && w.trim && !w.trim.ok && !w.trim.skipped && w.trim.text) || watchBad || S.infoErr || (inf && inf.memoryReason) || '';
+    var bad = L.bad || (w && w.trim && !w.trim.ok && !w.trim.skipped && w.trim.text) || watchBad || S.infoErr || (inf && inf.memoryReason) || '';
     if (bad) line.appendChild(mk('div', 'spq-fine spq-bad', cap(bad)));
     else if (watching && wv.note) line.appendChild(mk('div', 'spq-fine', cap(wv.note)));
     var rv = S.status && S.status.revive;
@@ -597,6 +630,22 @@
     tabs.appendChild(sh); tabs.appendChild(rp);
   }
 
+  /* spotfix lane: while main tries the hide again, the app line counts down to the next try (its text
+     only, once a second, while the list is open; nothing is read or asked). */
+  function hideTick(on) {
+    if (!S) return;
+    on = !!(on && S.shown && expanded);
+    if (on && !S.hideTimer) {
+      S.hideTimer = setInterval(function () {
+        if (!S) return;
+        var L = lookNow();
+        if (L.key !== 'hiding' || !S.shown || !expanded) { hideTick(false); return; }
+        if (S.appTxt) S.appTxt.textContent = L.line + (S.appTail || '');
+      }, 1000);
+    }
+    if (!on && S.hideTimer) { clearInterval(S.hideTimer); S.hideTimer = 0; }
+  }
+
   /* quiet: called from inside bar.js's own repaint, which measures the card itself afterwards */
   function render(quiet) {
     if (!S) return;
@@ -611,11 +660,13 @@
     var n = S.q ? S.q.queued.length + S.q.nextUp.length : 0;
     var hint = st === 'connected' ? (S.qErr ? 'Error' : S.q ? (S.q.queued.length ? S.q.queued.length + ' queued' : n ? n + ' next' : 'Empty') : '')
       : (HINT[st] != null ? HINT[st] : '');
-    var wst = S.status && S.status.window && S.status.window.state;
-    if (st === 'connected' && wst === 'hidden') hint = 'Hidden' + (hint ? ' · ' + hint : '');
-    else if (st === 'connected' && wst === 'failed') hint = S.status.window.takeOverFailed ? 'Not watched' : 'Not hidden';
+    // spotfix lane: the window's word comes from look(), the same place as the app line's
+    var L = st === 'connected' ? lookNow() : null;
+    if (L && L.key === 'hidden') hint = 'Hidden' + (hint ? ' · ' + hint : '');
+    else if (L && L.hint) hint = L.hint;
     S.hint.textContent = hint;
-    S.hint.classList.toggle('warn', st !== 'connected' && st !== 'checking' && st !== 'starting' && st !== 'loading' || !!S.qErr);
+    S.hint.classList.toggle('warn', st !== 'connected' && st !== 'checking' && st !== 'starting' && st !== 'loading' || !!S.qErr || !!(L && (L.key === 'failed' || L.key === 'unwatched')));
+    hideTick(L && L.key === 'hiding');
     S.body.hidden = !expanded;
     if (!expanded) { if (!quiet) relayout(); return; }
 
@@ -623,7 +674,7 @@
     // keep the list (and its scroll) when nothing in it changed
     var sig = [st, S.status && S.status.reason, S.query, S.searching, S.loading && !S.q, S.busy, JSON.stringify(S.added), S.restartArmed,
       S.q && S.q.at, S.qErr && S.qErr.reason, S.results && (S.results.q + JSON.stringify([S.results.tracks, S.results.artists, S.results.albums, S.results.playlists].map(function (a) { return (a || []).length; })) + (S.results.reason || '')), S.kbdWhy,
-      S.tab, S.lib && S.lib.at, S.libLoading, S.libErr && S.libErr.reason, JSON.stringify(S.status && S.status.window), JSON.stringify(S.info), S.infoErr, S.quitArmed].join('\u0001');
+      S.tab, S.lib && S.lib.at, S.libLoading, S.libErr && S.libErr.reason, JSON.stringify(S.status && S.status.window), JSON.stringify(S.win), JSON.stringify(S.info), S.infoErr, S.quitArmed].join('\u0001');
     if (sig !== S.sig) {
       S.sig = sig;
       drawAppLine(st);
@@ -671,7 +722,7 @@
 
   /* ------------------------------------------------------------------ bar.js hooks */
 
-  window.MantleSpotify = {
+  var API = {
     isSpotify: isSpotify,
 
     /* api: { call, on, msg, repaint } from bar.js. Returns the section (already in the card). */
@@ -720,7 +771,7 @@
       S = { api: api, root: root, head: head, hint: hint, body: body, scroll: scroll, state: state, list: list,
         addRow: addRow, input: input, appLine: appLine, tabs: tabs, tab: 'queue', lib: null, libErr: null, libLoading: false, info: null, infoErr: '', infoLoading: false, quitArmed: false, sqLine: sqLine, clear: clear, kbdLine: kbdLine, noteEl: noteEl,
         status: null, q: null, qErr: null, results: null, query: '', added: {}, busy: '', noteText: '', noteBad: false,
-        shown: null, sig: '', trackSig: null, timer: 0, settle: 0, searchTimer: 0, kbd: '', kbdWhy: '', loading: false, restartArmed: false };
+        shown: null, sig: '', trackSig: null, timer: 0, settle: 0, searchTimer: 0, win: null, hideTimer: 0, kbd: '', kbdWhy: '', loading: false, restartArmed: false };
 
       head.addEventListener('click', function () {
         expanded = !expanded;
@@ -773,9 +824,13 @@
       if (S.timer) clearInterval(S.timer);
       if (S.settle) clearTimeout(S.settle);
       if (S.searchTimer) clearTimeout(S.searchTimer);
+      if (S.hideTimer) clearInterval(S.hideTimer);
       if (S.unsub) { try { S.unsub(); } catch (e) { /* gone */ } }
       if (S.kbd === 'yes') S.api.call('qs.keyboard', { on: false }).catch(function () {});
       S = null;
     }
   };
+  // spotfix lane: look() is also loaded by require() in node (lib/features/spotify.test.js), where there is no window
+  if (typeof window !== 'undefined') window.MantleSpotify = API;
+  if (typeof module === 'object' && module.exports) module.exports = { look: look };
 })();
