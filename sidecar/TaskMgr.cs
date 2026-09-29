@@ -88,13 +88,11 @@ namespace Mantle {
       "shellexperiencehost.exe", "searchhost.exe", "textinputhost.exe", "applicationframehost.exe", "dllhost.exe",
       "userinit.exe", "wudfhost.exe", "spoolsv.exe"
     };
-    /// Games and their anti-cheat (the same families as lib/features/_gamemode-plan.js NEVER[0..1])
-    /// and Lively, Owen's wallpaper app. Prefixes of the image name.
-    static readonly string[] NeverPrefixes = {
-      "VALORANT", "vgc", "vgtray", "vgk", "vanguard", "EasyAntiCheat", "EAAntiCheat", "BEService", "BattlEye", "FACEIT",
-      "RobloxPlayer", "Minecraft", "javaw", "cs2", "r5apex", "Fortnite", "RocketLeague", "GTA5", "Overwatch",
-      "EscapeFromTarkov", "Cyberpunk2077", "League of Legends", "Lively"
-    };
+    /// Games, their clients (Riot Client, League's) and their anti-cheat: game mode's OWN list,
+    /// GameMode.GamePrefixes (= lib/features/_gamemode-plan.js NEVER[0..1]), not a copy. This used to
+    /// be a copy, it lacked "Riot", and a trim of RiotClientServices hung Riot Client twice (lane
+    /// gamequiet, 2026-09-28). Then Lively, Owen's wallpaper app. Prefixes of the image name.
+    static readonly string[] NeverPrefixes = GameMode.Join(GameMode.GamePrefixes, new[] { "Lively" });
 
     public static void Register(FeatureTable t) {
       t.Add("taskmgr.snapshot", Lanes.Slow, Snapshot);     // RAM, every process (private working set, CPU time), app windows
@@ -294,7 +292,9 @@ namespace Mantle {
       if (SystemNames.Contains(p.File)) return "a Windows or Mantle process";
       foreach (string n in NeverPrefixes)
         if (p.File.StartsWith(n, StringComparison.OrdinalIgnoreCase))
-          return n == "Lively" ? "Lively, the wallpaper app" : "a game or its anti-cheat";
+          return n == "Lively" ? "Lively, the wallpaper app"
+            : n == "Riot" || n == "League" ? "a game's client (" + n + "): Mantle never closes or trims it, a trim made Riot Client hang"
+            : "a game or its anti-cheat";
       // Mantle: this sidecar, the Electron that started it, and everything under that Electron.
       uint self = (uint)Program.OwnPid, parent = (uint)Program.ParentPid;
       Proc q = p;

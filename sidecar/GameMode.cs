@@ -140,15 +140,33 @@ namespace Mantle {
     /// music, recording, and input-device software (throttling a mouse driver's helper adds input lag).
     /// lib/features/_gamemode-plan.js carries the same list with the words the panel shows; this copy
     /// is the one a bug in main cannot get past.
-    static readonly string[] NeverPrefixes = {
+    ///
+    /// GamePrefixes: the games, their clients (Riot Client, League's) and their anti-cheat, name for name
+    /// _gamemode-plan.js NEVER[0..1]. Task Manager's guard (TaskMgr.cs) refuses exactly these as well:
+    /// ONE list, read by both. lane gamequiet, 2026-09-28: Task Manager kept its own copy, it lacked
+    /// "Riot", Owen trimmed RiotClientServices 10 s before Valorant launched and Riot Client hung twice.
+    /// lib/features/taskmgr.test.js fails when this list and NEVER[0..1] differ.
+    internal static readonly string[] GamePrefixes = {
       "VALORANT", "Riot", "vgc", "vgtray", "vgk", "vanguard", "League", "EasyAntiCheat", "EAAntiCheat", "BEService",
-      "BattlEye", "FACEIT", "javaw", "java", "Minecraft", "Roblox", "GameBar", "XboxPcApp", "steam", "EpicGames",
+      "BattlEye", "FACEIT", "javaw", "java", "Minecraft", "Roblox",
       "cs2", "csgo", "r5apex", "Fortnite", "RocketLeague", "GTA5", "Overwatch", "EscapeFromTarkov", "Cyberpunk2077",
+    };
+    static readonly string[] OtherNeverPrefixes = {
+      "GameBar", "XboxPcApp", "steam", "EpicGames",
       "Discord", "Spotify", "obs", "Streamlabs", "Medal", "vlc", "wmplayer", "Music.UI", "Microsoft.Media.Player",
       "TeamSpeak", "ts3client", "Mumble", "Teams", "ms-teams", "Zoom", "Skype", "WhatsApp", "audiodg",
       "lghub", "LGHUB", "Razer", "SteelSeries", "iCUE", "Corsair", "NVIDIA", "nvcontainer", "Mantle.Sidecar",
       "TabTip", "GameInput", "TextInputHost", "ctfmon", "Defender", "MsMpEng", "MpDefender", "SecurityHealth", "NisSrv",
     };
+    // Declared after both halves: static initialisers run in the order they are written.
+    static readonly string[] NeverPrefixes = Join(GamePrefixes, OtherNeverPrefixes);
+
+    internal static string[] Join(string[] a, string[] b) {
+      var r = new string[a.Length + b.Length];
+      a.CopyTo(r, 0);
+      b.CopyTo(r, a.Length);
+      return r;
+    }
 
     /// The pure rule. `why` in plain words, or null when the target may be written.
     public static string Refuse(string file, string path, uint pid, uint session, bool elevated, uint fgPid, uint ownSession) {

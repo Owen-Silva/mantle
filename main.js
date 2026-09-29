@@ -1177,9 +1177,50 @@ function inHotZone(pt, rect, inBand) {
  * too old must not mean "Owen's taskbar never appears again". The verdict is
  * cached for 600 ms so that a cursor parked on the edge asks a few times a
  * second, not twelve.
+ *
+ * EXCEPT WHILE A GAME RUNS (gameQuiet below): then the edge never reveals the bar,
+ * the sidecar is not asked, and a slow or failed answer can never fall back to
+ * revealing.
  */
+// <mainrel:gamequiet> (lib/main-rel.test.js runs this region with a fake sidecar and rest)
+/*
+ * GAME QUIET (lane gamequiet, 2026-09-28). Valorant ran at 30 fps with stutter while mantle.log said
+ * "reveal: the cursor reached the bottom edge" -> "bar revealed" -> "bar backdrop capture on: 4 fps",
+ * three times, with Mantle RESTING for it: the sidecar had stalled, the fullscreen check below timed
+ * out, and it degraded towards revealing, as it was built to. While a game runs (Mantle rests with a
+ * why that names a game, _gamemode-plan.js restIsGame; NOT game mode on by hand with no game):
+ *   - the bottom edge never reveals the bar, whatever the sidecar says or fails to say;
+ *   - nothing captures the screen (the backdrop loops, the pre-reveal frame, the desktop reshoot):
+ *     the bar and the launcher use their flat tint. Said once per rest in the log.
+ * Outside a game nothing changes. The bar stays PARKED below the screen: never hide()/show() here.
+ */
+function gameQuiet() {
+  return restState && GamePlan.restIsGame(restState.why) ? restState.why : null;
+}
+let backdropQuietSaid = null;    // the rest the "no screen capture" line was written for
+/** Null when a backdrop capture may run, else why not (and the log says so once per rest). */
+function backdropQuiet(label) {
+  const game = gameQuiet();
+  if (!game) return null;
+  if (backdropQuietSaid !== restState) {
+    backdropQuietSaid = restState;
+    process.stdout.write(`mantle: backdrop: no screen capture while ${game}: the bar and the launcher use their flat tint until it exits\n`);
+  }
+  return `no screen capture while ${game}, so ${label} uses its flat tint`;
+}
+function quietVerdict(game) {
+  const v = { blocked: true, reason: `Mantle is resting while ${game}, so the edge does not reveal the bar (it must not paint over a game)`, at: 0 };
+  if (v.reason !== foregroundReason) {
+    foregroundReason = v.reason;
+    process.stdout.write(`mantle: bar reveal check: ${v.reason}\n`);
+  }
+  return v;
+}
 let fgVerdict = { blocked: false, reason: null, at: 0 };
 async function foregroundBlocksReveal() {
+  // Before the cache and before the sidecar: a game running is known without asking anything.
+  const game = gameQuiet();
+  if (game) return quietVerdict(game);
   const now = Date.now();
   if (now - fgVerdict.at < 600) return fgVerdict;
   const blocked = sidecar.blockedReason();
@@ -1208,12 +1249,17 @@ async function foregroundBlocksReveal() {
       : `Mantle could not check for a fullscreen window (${err.message}), so the bar reveals anyway`;
     fgVerdict = { blocked: false, reason: why, at: now };
   }
+  // The rest can begin while the sidecar is being asked (up to 1.5 s): a late answer, or none,
+  // never reveals over a game that started meanwhile.
+  const late = gameQuiet();
+  if (late) return quietVerdict(late);
   if (fgVerdict.reason !== foregroundReason) {
     foregroundReason = fgVerdict.reason;
     if (fgVerdict.reason) process.stdout.write(`mantle: bar reveal check: ${fgVerdict.reason}\n`);
   }
   return fgVerdict;
 }
+// </mainrel:gamequiet>
 
 function cancelPendingHide() {
   if (!hideTimer) return false;
@@ -1335,7 +1381,9 @@ async function revealByPage(geo, why, visible) {
   const shotRect = clampToDisplay(geo.pill ? geo.pill.phys : rect).rect;
   if (!visible || barParked) {
     try {
-      const shot = await sidecar.call('backdrop', { x: shotRect.x, y: shotRect.y, w: shotRect.w, h: shotRect.h, scale: BACKDROP_SCALE }, 2000);
+      // gamequiet: no pre-reveal picture while a game runs; the page keeps its flat tint.
+      const shot = backdropQuiet('the bar') ? null
+        : await sidecar.call('backdrop', { x: shotRect.x, y: shotRect.y, w: shotRect.w, h: shotRect.h, scale: BACKDROP_SCALE }, 2000);
       if (shot && shot.png) {
         broadcast('bar.backdrop', { png: shot.png, w: shot.w, h: shot.h, rect: { x: shotRect.x, y: shotRect.y, w: shotRect.w, h: shotRect.h }, ms: Number(shot.ms) || 0 });
       }
@@ -1748,8 +1796,13 @@ function makeBackdrop(opts) {
   const set = (patch) => setBackdropPiece(opts.key, Object.assign({ fps }, patch));
   const onProtectError = (e) => set({ ok: false, reason: `${opts.label} could not be put back into screen captures, so it will be missing from screenshots: ${e.message}` });
 
+  let quiet = null;                   // set while a game runs: no capture at all (gameQuiet)
   /** One frame. Returns true if it worked. Never throws. */
   async function frame(protect) {
+    // gamequiet: checked before the content protection and the sidecar, on every frame, so a
+    // loop that was running when the game started ends at its next tick.
+    quiet = backdropQuiet(opts.label);
+    if (quiet) { set({ on: false, ok: true, ms: 0, reason: quiet }); return false; }
     const win = opts.win();
     if (!win || win.isDestroyed()) return false;
     const asked = opts.rect();
@@ -1787,6 +1840,7 @@ function makeBackdrop(opts) {
     if (shuttingDown) return;
     const ok = await frame(true);
     if (!ok) {
+      if (quiet) { stop(quiet); return; }
       if (off) { stop(off); return; }
       if (fails >= BACKDROP_MAX_FAILS) {
         stop(`${BACKDROP_MAX_FAILS} captures in a row failed, so ${opts.label} falls back to its flat tint`);
@@ -1814,6 +1868,8 @@ function makeBackdrop(opts) {
     start(why) {
       if (timer || shuttingDown || !opts.ms) return;
       if (off) { set({ on: false, ok: false, reason: off }); return; }
+      const q = backdropQuiet(opts.label);
+      if (q) { set({ on: false, ok: true, ms: 0, reason: q }); return; }
       fails = 0;
       frames = 0;
       set({ on: true, ok: true, reason: `starting: ${why}` });
@@ -1897,6 +1953,9 @@ function windowPhysRect(win) {
  */
 async function reshootDesktopBackdrop(why) {
   if (!desktopWin || desktopWin.isDestroyed()) return;
+  // gamequiet: a game switching its resolution fires this; nothing is hidden, shot or shown for it.
+  const quiet = backdropQuiet('the desktop layer');
+  if (quiet) { setBackdropPiece('desktop', { reason: `not re-shot (${why}): ${quiet}` }); return; }
   const wasVisible = desktopWin.isVisible();
   try { if (wasVisible) desktopWin.hide(); } catch (_) { /* carry on: the shot is worth more than the hide */ }
   await wait(60);

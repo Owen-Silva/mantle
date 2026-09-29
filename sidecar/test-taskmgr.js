@@ -81,6 +81,31 @@ const pick = (snap, pid) => snap.procs.find((p) => p.pid === pid);
       t.check('frame: a window that is not Mantle\'s own is refused (this test\'s parent has none)', f1.ok === false && /not a window of Mantle's own Electron/.test(f1.error), JSON.stringify(f1));
     } else t.check('frame: a foreign window to be refused was found', false, `windows answered ${JSON.stringify(wl).slice(0, 120)}`);
 
+    // gamequiet (2026-09-28): a trim of RiotClientServices hung Riot Client twice; TaskMgr.cs now reads
+    // game mode's own never-touch list. A stand-in named Riot*.exe (a copy of node, this test's OWN
+    // child, never a real Riot process) must be refused by name, with the reason, before any handle.
+    const fs = require('fs'), os = require('os'), path = require('path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mantle-riot-'));
+    const riotExe = path.join(dir, 'RiotMantleTest.exe');
+    let riot = null;
+    try {
+      try { fs.linkSync(process.execPath, riotExe); } catch (_) { fs.copyFileSync(process.execPath, riotExe); }
+      riot = cp.spawn(riotExe, ['-e', 'setTimeout(() => {}, 15000)'], { stdio: 'ignore', windowsHide: true });
+      await sleep(700);
+      const rs = await s.call('taskmgr.snapshot', {}, 8000);
+      const rp = pick(rs, riot.pid);
+      t.check('gamequiet: the Riot* stand-in is in the table', !!rp && /^RiotMantleTest\.exe$/i.test(rp.file), rp && rp.file);
+      if (rp) {
+        const g1 = await s.call('taskmgr.trim', { procs: [{ pid: rp.pid, created: rp.created }], dryRun: true }, 4000);
+        t.check('gamequiet: a Riot* process is refused a trim, with the reason', g1.trimmed === 0 && g1.refused.length === 1 && /game's client \(Riot\)/.test(g1.refused[0].why) && /never closes or trims/.test(g1.refused[0].why), JSON.stringify(g1.refused));
+        const g2 = await s.call('taskmgr.close', { procs: [{ pid: rp.pid, created: rp.created }], root: rp.pid, dryRun: true }, 4000);
+        t.check('gamequiet: a Riot* process is refused a close, with the reason', g2.done === false && g2.refused.length === 1 && /game's client \(Riot\)/.test(g2.refused[0].why), JSON.stringify(g2.refused));
+      }
+    } finally {
+      if (riot) { try { riot.kill(); } catch (_) {} await sleep(300); }   // this test's own stand-in only
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+    }
+
     if (orphan) {
       const d1 =await s.call('taskmgr.close', { procs: [{ pid: orphan.pid, created: orphan.created }], root: orphan.pid, dryRun: true }, 4000);
       t.check('dry close: a windowless process -> taskkill /PID n /T without /F', d1.done && d1.how === 'taskkill' && d1.command === `taskkill /PID ${orphan.pid} /T` && d1.dryRun, JSON.stringify(d1));
