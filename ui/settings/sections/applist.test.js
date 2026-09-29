@@ -98,7 +98,8 @@ async function nodeTests() {
   check('page: every row is apps.*, none twice', rows.every((r) => /^apps\./.test(r.row)) && new Set(rows.map((r) => r.row)).size === rows.length);
   check('page: keeps the built-in row ids (apps.startup, apps.installed, apps.defaults, apps.taskmgr)', ['apps.startup', 'apps.installed', 'apps.defaults', 'apps.taskmgr'].every((r) => rows.some((x) => x.row === r)));
   const uris = rows.filter((r) => r.uri).map((r) => r.uri).sort();
-  check('page: claims the Apps pages once each (Startup apps keeps the built-in apps.startup catalog entry, which now lands here)', uris.join() === ['ms-settings:advanced-apps', 'ms-settings:appexecutionalias', 'ms-settings:appsfeatures', 'ms-settings:appsforwebsites', 'ms-settings:defaultapps', 'ms-settings:optionalfeatures', 'ms-settings:videoplayback'].join(), uris.join());
+  // (lane wire, 2026-09-29: Startup apps claims ms-settings:startupapps too, so the launcher lands on this page, not the retired built-in)
+  check('page: claims the Apps pages once each', uris.join() === ['ms-settings:advanced-apps', 'ms-settings:appexecutionalias', 'ms-settings:appsfeatures', 'ms-settings:appsforwebsites', 'ms-settings:defaultapps', 'ms-settings:optionalfeatures', 'ms-settings:startupapps', 'ms-settings:videoplayback'].join(), uris.join());
   check('page: never opens Windows Settings', !/openWindows/.test(src));
   check('page: Startup uses the built-in commands unchanged', /kit\.call\('settings\.startup', \{\}\)/.test(src) && /kit\.call\('settings\.startupSet', \{ item: it\.item, on: v \}\)/.test(src));
   check('page: the final Uninstall click sends confirm:true, the first only a plan', /C\(kit, 'plan', \{ key, action: act \}\)/.test(src) && /C\(kit, S\.confirm\.action, \{ key, confirm: true \}\)/.test(src));

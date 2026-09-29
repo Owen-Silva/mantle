@@ -420,6 +420,7 @@
     order: 100,
     help: 'Windows Security, app permissions, diagnostics, search',
     keywords: 'privacy security permissions app permissions defender antivirus',
+    uri: 'ms-settings:privacy',       // the category root claims Windows' Privacy & security page (lane wire)
     pages,
   });
 })();

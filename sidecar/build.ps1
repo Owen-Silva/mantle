@@ -130,9 +130,11 @@ $interop = Join-Path (Split-Path -Parent $csc) 'System.Runtime.InteropServices.W
 # (UserNotificationListener, the AppInfo on each toast, Launcher.LaunchUriAsync).
 # Windows.Graphics + Windows.Globalization are for Ocr.cs (SoftwareBitmap, and the Language
 # an OcrEngine reports; Windows.Media.Ocr itself is in Windows.Media.winmd).
+# Windows.Networking is for the Network page's mobile hotspot (NetworkOperatorTetheringManager,
+# ConnectionProfile; lane wire 2026-09-29, for the Network lane).
 $split = @('Windows.Foundation.winmd', 'Windows.Media.winmd', 'Windows.Storage.winmd', 'Windows.Devices.winmd',
            'Windows.UI.winmd', 'Windows.ApplicationModel.winmd', 'Windows.System.winmd',
-           'Windows.Graphics.winmd', 'Windows.Globalization.winmd') |
+           'Windows.Graphics.winmd', 'Windows.Globalization.winmd', 'Windows.Networking.winmd') |
          ForEach-Object { Join-Path $wm $_ }
 $splitOk = $facade -and (Test-Path $interop) -and (@($split | Where-Object { -not (Test-Path $_) }).Count -eq 0)
 

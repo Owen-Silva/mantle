@@ -343,7 +343,7 @@
           R('apps.video.battery', 'Video battery options', 'battery life video quality'), R('apps.video.lowres', 'Play video at a lower resolution on battery', 'low resolution battery')],
         render: renderVideo },
       { id: 'apps', title: 'Startup', icon: SVG.rocket, help: 'Apps that start when you sign in, Task manager',
-        search: [R('apps.startup', 'Startup apps', 'startup autostart launch at login run at startup boot'),
+        search: [R('apps.startup', 'Startup apps', 'startup autostart launch at login run at startup boot', 'ms-settings:startupapps'),
           R('apps.startup.count', 'How many startup apps are on', 'startup count'), R('apps.taskmgr', 'Task manager', 'task manager processes running apps end task')],
         render: renderStartup },
     ],

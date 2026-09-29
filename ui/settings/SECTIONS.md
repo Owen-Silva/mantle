@@ -34,6 +34,7 @@ MantleSettings.section({
   help: 'Display, sound, notifications, power',   // optional: the line under the title
   keywords: 'pc computer',          // optional: extra search words for the section itself
   replaces: ['display', 'sound'],   // optional: a built-in id or a list of them (see "Replacing")
+  uri: 'ms-settings:system',        // optional: Windows pages this whole category replaces (its root; see "Claims")
   search: [                         // optional: rows of the section itself (STATIC metadata)
     { row: 'system.name', label: 'Device name', keywords: 'rename pc', uri: 'ms-settings:about' },
   ],
@@ -57,6 +58,27 @@ own id when you draw the same setting (`display.brightness`, so old deep links s
 characters: letters, digits, `_ . + -`, up to 80. `uri` claims a Windows Settings page: the launcher
 catalog's entry for it joins your row instead of saying "Opens Windows Settings".
 
+### Claims (where a Windows Settings page goes)
+
+A `uri` (one `ms-settings:` page, or on a section / page a list of them) CLAIMS that Windows page for
+Mantle: on a search row it lands on that row, on a page (`{ id, title, uri, ... }`) on that page, on
+the section itself on its overview (a category root: `uri: 'ms-settings:privacy'`). Then, with no
+list to keep by hand:
+
+- **the launcher** (Win+S) lists the page (by Windows' name when `lib/launcher-index.js` SETTINGS has
+  it, else by your row's label), says "Mantle Settings" and opens YOUR page. `lib/launcher-index.js`
+  `sectionClaims()` reads the claims by running each page file in an empty vm context (only
+  `MantleSettings.section` exists there; `render` is never called), so a page file must build its
+  definition without touching the DOM while it loads. Windows' page opens only when Mantle Settings is
+  off, resting or not running, and the launcher says why;
+- **Settings' search** folds the Windows page's name and keywords into your entry;
+- **links inside Mantle Settings** to that page (the built-in pages' "More in Windows Settings"
+  footers, their "Open" buttons) go to your page instead of out to Windows.
+
+The first file by name to claim a page keeps it. A DOWN section claims nothing (Windows' page is used
+again, and says so). Claim every Windows page yours replaces; `kit.openWindows(uri)` still opens the
+real one when you mean it (a setting only Windows' own Settings may change).
+
 **render(el, kit)** draws into `el` (an empty `div` the page gives it) using the kit, and returns
 `{ update?(), dispose() }` (or a promise of it). `update()` is called when the window is focused again
 and when any Mantle switch or option changes (`settings.changed`): re-read your values there.
@@ -66,7 +88,7 @@ stops every `kit.watch` and `kit.every` for you. The page draws the title (and t
 ### Subpages
 
 - With `pages`, the sidebar shows the category and the section opens on an overview card listing its
-  pages (icon, title, `help`). Each page has `{ id, title, icon?, help?, search?, render }`.
+  pages (icon, title, `help`). Each page has `{ id, title, icon?, help?, uri?, search?, render }`.
 - Without `pages`, `render` draws the section directly.
 - Deep links are `settings.open { section, page, row }` (any may be left out). A `row` alone finds its
   own section and page. `{ section }` alone opens the overview.
@@ -224,7 +246,11 @@ the read-back and the test-run dry run. Copy both to `<id>.js` (and rename `exam
 
 - `node lib/features/settings.test.js` pins the main half (loading from temp folders, `settings.<id>.<name>`,
   DOWN reasons, `env`, stop) and the page half's rules through `ui/settings/model.js` (`checkSection`,
-  `sectionModel`: replacing, subpages, order; `resolve`: deep links; `buildIndex`: search metadata).
+  `sectionModel`: replacing, subpages, order, claims; `resolve`: deep links; `buildIndex`: search
+  metadata; `more` / `claimOf`: links into Mantle).
+- `node lib/launcher-index.test.js` runs the REAL section files' claims: every claimed page is a
+  launcher row saying "Mantle Settings" whose dry run opens your section/page, and every page file
+  loads in the claims sandbox.
 - `ui/settings/test-sections/` holds made-up FIXTURES for the mock page:
   `index.html?sections=fx-system,fx-broken,fx-lonely,fx-bad,fx-main!` (an id ending in `!` is DOWN on
   the main side) shows a category with pages replacing Display and Sound, every kit control, a module

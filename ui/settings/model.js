@@ -74,8 +74,9 @@
     ['about.windows', 'All Windows settings', 'windows settings control panel'],
   ].map(function (r) { return { id: r[0], section: r[0].split('.')[0], label: r[1], keywords: r[2] }; });
 
-  /* "More in Windows Settings" at the foot of each section: pages it does not cover, from the
-     launcher's catalog (lib/launcher-index.js SETTINGS) so every uri is a real page. */
+  /* "More in Windows Settings" at the foot of each built-in section: related pages it does not
+     cover, from the launcher's catalog (lib/launcher-index.js SETTINGS) so every uri is a real page.
+     One a section module claims is drawn as a link to Mantle's page instead (more(section, model)). */
   var MORE = {
     home: [['Windows Update', 'ms-settings:windowsupdate'], ['Personalization', 'ms-settings:personalization'],
       ['Privacy & security', 'ms-settings:privacy'], ['Accounts', 'ms-settings:yourinfo']],
@@ -96,7 +97,22 @@
     shortcuts: [['Keyboard', 'ms-settings:keyboard'], ['Accessibility keyboard', 'ms-settings:easeofaccess-keyboard']],
     about: [['About this PC', 'ms-settings:about'], ['Windows Update', 'ms-settings:windowsupdate']],
   };
-  function more(section) { return (MORE[section] || []).map(function (m) { return { label: m[0], uri: m[1] }; }); }
+  /* With the section model: a page a section module now claims says where Mantle's own page is
+     (`to` = { section, page, row }), and the page draws it as a link INTO Mantle Settings instead of
+     out to Windows (lane wire, 2026-09-29: Owen, "nothing links out to ms-settings"). */
+  function more(section, model) {
+    return (MORE[section] || []).map(function (m) {
+      var to = claimOf(model, m[1]);
+      return to ? { label: m[0], uri: m[1], to: to } : { label: m[0], uri: m[1] };
+    });
+  }
+  /** Which module page draws an ms-settings page now: { section, page, row }, or null (Windows' own
+   *  is the only one: no module claims it, or the one that does is DOWN). */
+  function claimOf(model, uri) {
+    var c = model && model.claims ? model.claims[String(uri || '').toLowerCase()] : null;
+    if (!c || !model.mods || !model.mods[c.section] || model.mods[c.section].down) return null;
+    return { section: c.section, page: c.page, row: c.row };
+  }
 
   /* ---- row ids ---- */
   function featureRow(name) { return 'mantle.feature.' + name; }
@@ -139,6 +155,16 @@
     }
     return null;
   }
+  /* A section or a page may claim Windows Settings pages WITHOUT naming a row (`uri`: one
+     ms-settings: page or a list of them): a category's own root (ms-settings:privacy is the Privacy &
+     security overview, not any one row). Lane wire, 2026-09-29. */
+  function checkUri(u, where) {
+    if (u === undefined) return null;
+    var l = [].concat(u);
+    if (!l.length) return where + ' uri must be an ms-settings: page or a list of them';
+    for (var i = 0; i < l.length; i++) if (!(typeof l[i] === 'string' && URI_RE.test(l[i]))) return where + ' uri must be an ms-settings: page or a list of them';
+    return null;
+  }
   /**
    * Why a registered section definition cannot be used, or null. `file` is the id its file name
    * gives (sections/<file>.js). Checks the SHAPE only; render() is not called here.
@@ -157,7 +183,7 @@
       if (REPLACEABLE.indexOf(reps[i]) < 0) return 'replaces ' + JSON.stringify(reps[i]) + ', which is not one of ' + REPLACEABLE.join(', ');
       if (reps.indexOf(reps[i]) !== i) return 'it replaces "' + reps[i] + '" twice';
     }
-    var seen = Object.create(null), why = checkSearch(def.search, 'its', seen);
+    var seen = Object.create(null), why = checkUri(def.uri, 'its') || checkSearch(def.search, 'its', seen);
     if (why) return why;
     if (def.pages === undefined) return typeof def.render === 'function' ? null : 'it has no pages and no render(el, kit)';
     if (!Array.isArray(def.pages) || !def.pages.length) return 'pages must be a non-empty list (or left out for a one-page section)';
@@ -171,7 +197,7 @@
       if (!placeholder && typeof p.render !== 'function') return 'page "' + p.id + '" has no render(el, kit)' + (isSection(p.id) ? ' (to show the built-in ' + builtinLabel(p.id) + ' page here, replace it and leave render out)' : '');
       if (!placeholder && (typeof p.title !== 'string' || !p.title.trim())) return 'page "' + p.id + '" has no title';
       if (p.icon !== undefined && typeof p.icon !== 'string') return 'page "' + p.id + '": icon must be a built-in icon name or 16x16 SVG markup';
-      why = checkSearch(p.search, 'page "' + p.id + '"', seen);
+      why = checkUri(p.uri, 'page "' + p.id + '"') || checkSearch(p.search, 'page "' + p.id + '"', seen);
       if (why) return why;
     }
     return null;
@@ -191,9 +217,19 @@
    *      rows: { rowId: { section, page } }, mods: { id: entry } }
    */
   function sectionModel(mods) {
-    var M = { nav: [], owner: Object.create(null), pages: Object.create(null), rows: Object.create(null), mods: Object.create(null) };
+    var M = { nav: [], owner: Object.create(null), pages: Object.create(null), rows: Object.create(null), mods: Object.create(null), claims: Object.create(null) };
     var taken = Object.create(null);
     var list = [];
+    // claims: ms-settings page (lower-case) -> { section, page, row } of the first module (by file
+    // name) that claims it, on the section, a page or a row (lib/launcher-index.js sectionClaims()
+    // reads the same files the same way, so the launcher and this page agree)
+    function claim(uri, to) {
+      [].concat(uri === undefined ? [] : uri).forEach(function (u) {
+        if (typeof u !== 'string' || !URI_RE.test(u)) return;
+        var k = u.toLowerCase();
+        if (!M.claims[k]) M.claims[k] = to;
+      });
+    }
     (Array.isArray(mods) ? mods : []).forEach(function (m) {
       if (!m || typeof m.id !== 'string' || M.mods[m.id]) return;
       var down = m.down || null, reps = [];
@@ -211,7 +247,8 @@
       list.push(e);
       if (down) { M.pages[m.id] = null; return; }
       reps.forEach(function (r) { taken[r] = e.label; });
-      (m.search || []).forEach(function (s) { M.rows[s.row] = { section: m.id, page: null }; });
+      claim(m.uri, { section: m.id, page: null, row: null });
+      (m.search || []).forEach(function (s) { M.rows[s.row] = { section: m.id, page: null }; claim(s.uri, { section: m.id, page: null, row: s.row }); });
       if (!Array.isArray(m.pages)) {
         M.pages[m.id] = null;
         reps.forEach(function (r) { M.owner[r] = { section: m.id, page: null, drawn: false }; });
@@ -225,7 +262,8 @@
         var builtin = reps.indexOf(p.id) >= 0 && typeof p.render !== 'function';
         pages.push({ id: p.id, title: typeof p.title === 'string' && p.title.trim() ? p.title : builtinLabel(p.id), icon: typeof p.icon === 'string' ? p.icon : builtin ? p.id : null,
           help: typeof p.help === 'string' ? p.help : '', builtin: builtin, search: Array.isArray(p.search) ? p.search : [] });
-        (p.search || []).forEach(function (s) { M.rows[s.row] = { section: m.id, page: p.id }; });
+        claim(p.uri, { section: m.id, page: p.id, row: null });
+        (p.search || []).forEach(function (s) { M.rows[s.row] = { section: m.id, page: p.id }; claim(s.uri, { section: m.id, page: p.id, row: s.row }); });
       });
       pages.forEach(function (p) { if (reps.indexOf(p.id) >= 0) M.owner[p.id] = { section: m.id, page: p.id, drawn: p.builtin }; });
       M.pages[m.id] = pages;
@@ -316,7 +354,6 @@
         list.forEach(function (s) {
           if (byId[s.row]) return;                          // a built-in row id reused on purpose: one entry
           add({ id: s.row, kind: 'row', group: 'mantle', label: s.label, sub: sub, kw: s.keywords || '', section: e.id, page: page, row: s.row });
-          if (s.uri) claimed[s.uri.toLowerCase()] = byId[s.row];
         });
       }
       rows(e.search, null, e.label);
@@ -325,6 +362,13 @@
         add({ id: 'page.' + e.id + '.' + p.id, kind: 'page', group: 'mantle', label: p.title, sub: e.label, kw: p.help || '', section: e.id, page: p.id, row: null });
         rows(p.search, p.id, e.label + ' › ' + p.title);
       });
+    });
+    // a claimed ms-settings page joins the entry that claims it: its row, else its page, else the
+    // section itself (a category's root, e.g. ms-settings:privacy)
+    if (mo && mo.claims) Object.keys(mo.claims).forEach(function (u) {
+      var c = mo.claims[u];
+      var hit = (c.row && byId[c.row]) || (c.page && (byId['page.' + c.section + '.' + c.page] || (own[c.page] && byId[c.page]))) || byId['section.' + c.section];
+      if (hit) claimed[u] = hit;
     });
     var m = o.mantle && typeof o.mantle === 'object' ? o.mantle : null;
     var feats = m && Array.isArray(m.features) ? m.features : [];
@@ -347,7 +391,8 @@
       var mine = (it.row && byId[it.row]) || (it.uri && claimed[String(it.uri).toLowerCase()]);
       if (mine) { mine.kw += ' ' + it.name + ' ' + (it.keywords || ''); return; }
       var dead = it.section && own[it.section] && !own[it.section].drawn;   // its built-in is gone: land on the module
-      add({ id: 'catalog.' + (it.uri || i), kind: 'catalog', group: 'windows', label: it.name, sub: it.section ? 'Covered here' : 'Windows Settings',
+      // (a module's claim whose module is DOWN or missing lands here too: Windows' page is what opens)
+      add({ id: 'catalog.' + (it.uri || i), kind: 'catalog', group: 'windows', label: it.name, sub: isSection(it.section) ? 'Covered here' : 'Windows Settings',
         kw: it.keywords || '', uri: it.uri || 'ms-settings:', section: isSection(it.section) ? it.section : null, row: dead ? null : it.row || null });
     });
     out.forEach(function (e) { e.nl = norm(e.label); e.nk = norm(e.kw + ' ' + (e.kind === 'shortcut' ? e.sub : '')); });
@@ -515,6 +560,10 @@
     return m ? m[0].toUpperCase() : '?';
   }
 
+  /* A feature that owns no chords at all (an explicitly empty list) has no keys to lose: lib/features.js
+     reports it keys:false 'it takes no keys from Windows', which is not a fault (the lane wire sweep,
+     2026-09-29, found 8 such features on Home's "needs a look" and the Mantle page). */
+  function chordless(f) { return Array.isArray(f.chords) && f.chords.length === 0; }
   /** A feature's one state line: tone ok | warn | off | rest, and the words. */
   function featureState(f) {
     if (!f) return { tone: 'warn', text: 'Mantle did not report this feature' };
@@ -522,7 +571,7 @@
     if (f.ok === false) return { tone: 'warn', text: f.reason || 'Not healthy, and it gave no reason' };
     if (f.resting) return { tone: 'rest', text: 'Resting while ' + String(f.resting).replace(/^while\s+/i, '') };
     if (f.stopped) return { tone: 'warn', text: 'Stopped' + (f.reason ? ': ' + f.reason : '') };
-    if (f.keys === false) return { tone: 'warn', text: 'On, but its keys are Windows\' right now: ' + (f.keysReason || 'no reason came back') };
+    if (f.keys === false && !chordless(f)) return { tone: 'warn', text: 'On, but its keys are Windows\' right now: ' + (f.keysReason || 'no reason came back') };
     var chords = Array.isArray(f.chords) && f.chords.length ? ' · ' + f.chords.join(', ') : '';
     return { tone: 'ok', text: (f.running === false ? 'On, starting' : 'On') + chords };
   }
@@ -531,7 +580,7 @@
   function health(features) {
     var fs = Array.isArray(features) ? features : [];
     var on = fs.filter(function (f) { return f && f.enabled; });
-    var bad = on.filter(function (f) { return f.ok === false || f.stopped || f.keys === false; }).map(function (f) {
+    var bad = on.filter(function (f) { return f.ok === false || f.stopped || (f.keys === false && !chordless(f)); }).map(function (f) {
       var keys = f.ok !== false && !f.stopped;
       return { name: f.name, label: f.label || f.name, reason: keys ? 'its keys are Windows\' right now: ' + (f.keysReason || 'no reason came back') : f.reason || 'no reason came back' };
     });
@@ -577,7 +626,7 @@
 
   return {
     SECTIONS: SECTIONS, ROWS: ROWS, MORE: MORE, PM_LABEL: PM_LABEL,
-    more: more, featureRow: featureRow, optionRow: optionRow, shortcutRow: shortcutRow, sectionIds: sectionIds, isSection: isSection,
+    more: more, claimOf: claimOf, featureRow: featureRow, optionRow: optionRow, shortcutRow: shortcutRow, sectionIds: sectionIds, isSection: isSection,
     sectionOf: sectionOf, rowById: rowById,
     REPLACEABLE: REPLACEABLE, ORDER: ORDER, checkSection: checkSection, sectionModel: sectionModel, resolve: resolve,
     norm: norm, buildIndex: buildIndex, score: score, search: search, grouped: grouped, fuzzy: fuzzy,

@@ -231,6 +231,11 @@
     if (i >= 0) f.options[i] = O;
   }
   function openWin(uri, rowId) {
+    // a page a section module claims is Mantle's now: go there instead of out to Windows (lane wire)
+    // (not when that IS the page on screen with no row to show: then Windows' page is the "more")
+    const to = M.claimOf(S.model, uri);
+    const here = to && !to.row && S.navId === to.section && (S.page || null) === (to.page || null);
+    if (to && !here) return go(to.section, to.row, to.page);
     return act(rowId, call('settings.openWindows', { uri }), (r) => {
       if (r.ok !== false && r.dryRun) r.dryRun = false, note(rowId, 'info', 'Test run: Windows Settings was not opened (' + uri + ')');
     });
@@ -567,17 +572,37 @@
     return [h('h1', { 'data-k': 'h1' }, S.crumb ? crumbTo(S.crumb.section, S.crumb.label) : null, title), h('p', { class: 'summary', 'data-k': 'summary' }, summary)];
   }
   function sumParts(parts) { const out = []; parts.filter(Boolean).forEach((p, i) => { if (i) out.push(' · '); out.push(typeof p === 'string' ? p : h('span', { class: 'w' }, p.warn)); }); return out; }
+  /* The related pages at the foot of a built-in section. A page a section module claims now is
+     Mantle's: it goes there (a "Related settings" card, in-window); only the rest still open Windows
+     Settings (lane wire, 2026-09-29). Row ids keep their index in MORE, so a note stays on its row. */
   function moreCard(sec) {
-    const links = M.more(sec);
+    const links = M.more(sec, S.model).map((l, i) => Object.assign({ i }, l));
     if (!links.length) return null;
-    const c = card('more-' + sec, links.map((l, i) => {
-        const id = 'more.' + sec + '.' + i, n = S.notes[id];
+    const out = [];
+    const mine = links.filter((l) => l.to), win = links.filter((l) => !l.to);
+    if (mine.length) {
+      const c = card('rel-' + sec, mine.map((l) => {
+        const id = 'more.' + sec + '.' + l.i;
+        // data-row here is where it GOES (ACT.nav), as on every nav button
+        return h('button', { class: 'row clickable', type: 'button', 'data-k': id, 'data-act': 'nav',
+            'data-section': l.to.section, 'data-page': l.to.page || null, 'data-row': l.to.row || null },
+          h('div', { class: 'row-l' }, h('div', { class: 'row-t' }, l.label)),
+          h('span', { class: 'arr' }, icon('chev', 14)));
+      }));
+      c.classList.add('more');
+      out.push(groupT('Related settings', 'rel-' + sec), c);
+    }
+    if (win.length) {
+      const c = card('more-' + sec, win.map((l) => {
+        const id = 'more.' + sec + '.' + l.i, n = S.notes[id];
         return h('button', { class: 'row clickable', type: 'button', 'data-k': id, 'data-row': id, 'data-act': 'win', 'data-uri': l.uri },
           h('div', { class: 'row-l' }, h('div', { class: 'row-t' }, l.label), n ? why(n.text, n.tone === 'info') : null),
           h('span', { class: 'arr' }, icon('arrow', 14)));
       }));
-    c.classList.add('more');
-    return [groupT('More in Windows Settings', 'more-' + sec), c];
+      c.classList.add('more');
+      out.push(groupT('More in Windows Settings', 'more-' + sec), c);
+    }
+    return out;
   }
   /* null when the slot is readable, else a card that says it is loading or why it failed */
   function gate(keys, key) {

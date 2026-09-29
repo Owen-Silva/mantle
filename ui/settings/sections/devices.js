@@ -458,7 +458,8 @@
   }
 
   // ============================================================== the section
-  const row = (r, label, keywords) => ({ row: r, label, keywords });
+  // uri: the Windows Settings page this row replaces (its claim, ui/settings/SECTIONS.md; lane wire)
+  const row = (r, label, keywords, uri) => (uri ? { row: r, label, keywords, uri } : { row: r, label, keywords });
   MantleSettings.section({
     id: 'devices',
     title: 'Bluetooth & devices',
@@ -470,20 +471,20 @@
     replaces: ['bluetooth'],
     pages: [
       { id: 'bluetooth', title: 'Devices', icon: 'bluetooth', help: 'Bluetooth, pair, connect and remove devices',
-        search: [row('bluetooth.radio', 'Bluetooth', 'bt radio wireless on off'), row('bluetooth.devices', 'Paired devices', 'bt headphones earbuds connect disconnect battery remove unpair'),
+        search: [row('bluetooth.radio', 'Bluetooth', 'bt radio wireless on off', 'ms-settings:bluetooth'), row('bluetooth.devices', 'Paired devices', 'bt headphones earbuds connect disconnect battery remove unpair', 'ms-settings:connecteddevices'),
           row('devices.bluetooth.add', 'Add a device', 'pair new bluetooth device search discover pin'), row('devices.bluetooth.swiftPair', 'Swift Pair notifications', 'swift pair quick pair notification')] },
       { id: 'printers', title: 'Printers & scanners', icon: 'apps', help: 'Default printer, print queue, add or remove',
-        search: [row('devices.printers.list', 'Printers', 'printer default remove'), row('devices.printers.manage', 'Let Windows manage my default printer', 'default printer'),
+        search: [row('devices.printers.list', 'Printers', 'printer default remove', 'ms-settings:printers'), row('devices.printers.manage', 'Let Windows manage my default printer', 'default printer'),
           row('devices.printers.queue', 'Print queue', 'jobs cancel print'), row('devices.printers.add', 'Add a printer', 'network shared printer add'), row('devices.printers.scanners', 'Scanners', 'scanner scan')],
         render: printersPage },
       { id: 'mouse', title: 'Mouse', icon: 'apps', help: 'Buttons, pointer speed, scrolling',
-        search: [row('devices.mouse.primary', 'Primary mouse button', 'left right swap buttons'), row('devices.mouse.speed', 'Mouse pointer speed', 'sensitivity cursor speed dpi'),
+        search: [row('devices.mouse.primary', 'Primary mouse button', 'left right swap buttons', 'ms-settings:mousetouchpad'), row('devices.mouse.speed', 'Mouse pointer speed', 'sensitivity cursor speed dpi'),
           row('devices.mouse.precision', 'Enhance pointer precision', 'acceleration'), row('devices.mouse.scrollLines', 'Lines to scroll at a time', 'wheel scroll'),
           row('devices.mouse.scrollInactive', 'Scroll inactive windows', 'hover wheel'), row('devices.mouse.doubleClick', 'Double-click speed', 'double click'),
           row('devices.mouse.trails', 'Pointer trails', 'trail'), row('devices.mouse.clickLock', 'ClickLock', 'click lock drag')],
         render: mousePage },
       { id: 'touchpad', title: 'Touchpad', icon: 'apps', help: 'Taps, gestures, scrolling',
-        search: [row('devices.touchpad.enabled', 'Touchpad', 'trackpad on off'), row('devices.touchpad.tap', 'Tap to click', 'tap click'),
+        search: [row('devices.touchpad.enabled', 'Touchpad', 'trackpad on off', 'ms-settings:devices-touchpad'), row('devices.touchpad.tap', 'Tap to click', 'tap click'),
           row('devices.touchpad.scrollDirection', 'Scrolling direction', 'natural reverse scroll'), row('devices.touchpad.sensitivity', 'Touchpad sensitivity', 'palm')],
         render: touchpadPage },
       { id: 'keyboard', title: 'Keyboard', icon: 'apps', help: 'Repeat delay and rate, cursor blink',
@@ -491,13 +492,13 @@
           row('devices.keyboard.caretBlinkMs', 'Cursor blink rate', 'caret blink')],
         render: keyboardPage },
       { id: 'pen', title: 'Pen & Windows Ink', icon: 'apps', help: 'Pen and touch',
-        search: [row('devices.pen.present', 'Pen', 'stylus windows ink handwriting')], render: penPage },
+        search: [row('devices.pen.present', 'Pen', 'stylus windows ink handwriting', 'ms-settings:pen')], render: penPage },
       { id: 'cameras', title: 'Cameras', icon: 'display', help: 'Connected cameras, enable or disable',
-        search: [row('devices.cameras.list', 'Cameras', 'webcam camera disable enable')], render: camerasPage },
+        search: [row('devices.cameras.list', 'Cameras', 'webcam camera disable enable', 'ms-settings:camera')], render: camerasPage },
       { id: 'autoplay', title: 'AutoPlay', icon: 'apps', help: 'What happens when you plug in a drive or card',
-        search: [row('devices.autoplay.enabled', 'Use AutoPlay', 'autoplay autorun removable drive memory card')], render: autoplayPage },
+        search: [row('devices.autoplay.enabled', 'Use AutoPlay', 'autoplay autorun removable drive memory card', 'ms-settings:autoplay')], render: autoplayPage },
       { id: 'usb', title: 'USB', icon: 'apps', help: 'Connection notifications, battery saver',
-        search: [row('devices.usb.notifyErrors', 'USB connection notifications', 'usb error notification'), row('devices.usb.batterySaver', 'USB battery saver', 'usb battery drain')],
+        search: [row('devices.usb.notifyErrors', 'USB connection notifications', 'usb error notification', 'ms-settings:usb'), row('devices.usb.batterySaver', 'USB battery saver', 'usb battery drain')],
         render: usbPage },
     ].map((p) => (p.id === 'bluetooth' ? Object.assign(p, { render: devicesPage }) : p)),
   });
