@@ -1052,12 +1052,252 @@
     return update().then(() => ({ update, dispose() { if (S.mic) R(kit, 'micStop'); } }));
   }
 
-  /* ---------------------------------------------------------------- Storage (backend pending) */
-  function renderPending(what) {
-    return function (el, kit) {
-      el.append(kit.card(kit.reason(`${what} is being built: its backend has not landed in this Mantle yet.`)));
-      return { dispose() {} };
+  /* ---------------------------------------------------------------- Storage (lane storage, over SysStorage.cs)
+   * Drives with a bar, the category scan (its own sidecar thread; progress arrives as
+   * settings.system.storage events, counts only), Temporary files with a cleanup PLAN Owen confirms
+   * (Downloads and the Recycle Bin are never ticked for him), Storage Sense, cleanup recommendations
+   * (read only) and Advanced storage settings (read only, each with its reason). */
+  const S_KINDS = ['temp', 'thumbnails', 'systemTemp', 'deliveryOptimization', 'windowsUpdate', 'recycleBin', 'downloads'];
+  const S_ADMIN = ['systemTemp', 'deliveryOptimization', 'windowsUpdate'];
+  const S_KLABEL = { temp: 'Temporary files', thumbnails: 'Thumbnails', systemTemp: 'Windows temporary files', deliveryOptimization: 'Delivery Optimization files',
+    windowsUpdate: 'Windows Update cleanup', recycleBin: 'Recycle Bin', downloads: 'Downloads' };
+  const S_CATS = [['apps', 'Installed apps'], ['documents', 'Documents'], ['pictures', 'Pictures'], ['videos', 'Videos'], ['music', 'Music'],
+    ['temp', 'Temporary files'], ['system', 'System & reserved'], ['otherUsers', 'Other people'], ['other', 'Other']];
+  const S_CLEAN = 'delete the Windows system files you chose to clean up';
+  const S_CADENCE = [{ value: 1, label: 'Every day' }, { value: 7, label: 'Every week' }, { value: 30, label: 'Every month' }, { value: 0, label: 'When free disk space is low' }];
+  const n0 = (n) => Number(n || 0).toLocaleString('en-US');
+  const ageOpts = (cur, never) => {
+    const l = [0, 1, 14, 30, 60].map((v) => ({ value: v, label: v === 0 ? never : `${v} day${v === 1 ? '' : 's'}` }));
+    if (cur != null && !l.some((x) => x.value === cur)) l.unshift({ value: cur, label: `Custom: ${cur} days` });
+    return l;
+  };
+  /** A thin used-space bar under a row's words (--lg-* tokens only; the kit has no bar). */
+  function withBar(kit, ctl) {
+    const outer = kit.h('div', {}), inner = kit.h('div', {});
+    Object.assign(outer.style, { height: '6px', borderRadius: 'var(--lg-r-pill)', background: 'var(--lg-sunk)', overflow: 'hidden', marginTop: '6px', maxWidth: '420px' });
+    Object.assign(inner.style, { height: '100%', width: '0%', background: 'var(--lg-acc)', borderRadius: 'inherit' });
+    outer.append(inner);
+    const l = ctl.el.querySelector('.row-l'); if (l) l.append(outer);
+    return { set(f, warn) { inner.style.width = `${Math.max(0, Math.min(100, (f || 0) * 100)).toFixed(1)}%`; inner.style.background = warn ? 'var(--lg-warn)' : 'var(--lg-acc)'; } };
+  }
+
+  function renderStorage(el, kit) {
+    const h = kit.h;
+    const S = { tick: { temp: true, thumbnails: true }, plan: null, scanning: null, temp: null };
+
+    /* -- drives */
+    const drivesBox = h('div', {});
+    /* -- storage use (the category scan) */
+    const scanBtn = kit.button({ row: 'system.storage.scan', label: 'Storage use', help: 'Sorts what is on the Windows drive into categories. It only reads: nothing is moved or deleted', text: 'Scan', onClick: scanClick });
+    const scanSt = kit.status({ row: 'system.storage.scan.progress', label: 'Scan', value: 'Not scanned yet', tone: 'info' });
+    const cat = {};
+    for (const [k, label] of S_CATS) { cat[k] = kit.status({ row: `system.storage.category.${k}`, label, value: '—' }); cat[k].bar = withBar(kit, cat[k]); }
+    /* -- temporary files + the cleanup plan */
+    const tick = {};
+    for (const k of S_KINDS) {
+      tick[k] = kit.toggle({ row: `system.storage.temp.${k}`, label: S_KLABEL[k], value: !!S.tick[k], disabled: true, help: 'Measuring…',
+        admin: S_ADMIN.includes(k) ? S_CLEAN : undefined,
+        onChange: (on) => { S.tick[k] = on; dropPlan('The ticks changed: review the cleanup again'); return { ok: true, value: on }; } });
+    }
+    const review = kit.button({ row: 'system.storage.temp.review', label: 'Review cleanup', help: 'Measures exactly what would be removed. Nothing is deleted yet', text: 'Review', onClick: reviewClick });
+    const planList = kit.list({ row: 'system.storage.temp.plan', items: [], empty: 'No plan yet: tick what to clean up, then Review' });
+    const confirmBtn = kit.button({ row: 'system.storage.temp.confirm', label: 'Remove the files in the plan', text: 'Confirm cleanup', tone: 'acc', disabled: true,
+      info: 'Nothing is deleted until you review a plan and confirm it here', onClick: confirmClick });
+    /* -- Storage Sense */
+    const senseW = (key, pick) => (v) => W(kit, 'storageSense', { key, value: pick ? pick(v) : v }, (r) => r.value);
+    const sOn = kit.toggle({ row: 'system.storage.sense', label: 'Storage Sense', help: 'Frees up space on its own: temporary files, and old Recycle Bin and Downloads files if you choose', onChange: senseW('on') });
+    const sTemp = kit.toggle({ row: 'system.storage.sense.temp', label: 'Clean up temporary system and app files', help: 'Keeps Windows running smoothly', onChange: senseW('temp') });
+    const sCad = kit.choice({ row: 'system.storage.sense.cadence', label: 'Run Storage Sense', style: 'dropdown', options: S_CADENCE, onChange: senseW('cadence', Number) });
+    const sRb = kit.choice({ row: 'system.storage.sense.recycle', label: 'Delete files in my Recycle Bin if they have been there for over', style: 'dropdown', options: ageOpts(null, 'Never'), onChange: senseW('recycleDays', Number) });
+    const sDl = kit.choice({ row: 'system.storage.sense.downloads', label: 'Delete files in my Downloads folder if they have not been opened for more than', style: 'dropdown', options: ageOpts(null, 'Never (default)'), onChange: senseW('downloadsDays', Number) });
+    const cloudBox = h('div', {});
+    /* -- recommendations (read only) */
+    const recList = kit.list({ row: 'system.storage.recommend.files', items: [], empty: 'Scan the drive to find large or unused files' });
+    const recNote = kit.status({ row: 'system.storage.recommend', label: 'Large or unused files', value: 'Read only', tone: 'info',
+      reason: 'Read only here: Mantle lists your large and unused files so you can decide; it never deletes your own files from this list' });
+    /* -- advanced storage settings (read only) */
+    const saveBox = h('div', {});
+    const disks = kit.list({ row: 'system.storage.disks.list', items: [], empty: 'Reading disks and volumes…' });
+    const diskRo = kit.status({ row: 'system.storage.disks', label: 'Disks & volumes', value: 'Read only', tone: 'info' });
+    const pools = kit.status({ row: 'system.storage.spaces', label: 'Storage Spaces', value: '—' });
+    const backup = kit.status({ row: 'system.storage.backup', label: 'Backup options', value: '—' });
+
+    el.append(
+      kit.group('Drives', { row: 'system.storage.drives', aside: 'Used and free space' }), drivesBox,
+      kit.group('Storage use', { aside: 'What is taking the space' }), kit.card(scanBtn, scanSt, ...S_CATS.map(([k]) => cat[k])),
+      kit.group('Temporary files', { row: 'system.storage.temp', aside: 'Tick, review the plan, then confirm' }), kit.card(...S_KINDS.map((k) => tick[k]), review),
+      kit.card(planList, confirmBtn),
+      kit.group('Storage Sense', { aside: 'Automatic cleanup' }), kit.card(sOn, sTemp, sCad, sRb, sDl),
+      kit.group('Locally available cloud content', { row: 'system.storage.sense.cloud', aside: 'OneDrive files that go back online-only' }), cloudBox,
+      kit.group('Cleanup recommendations'), kit.card(recNote, recList),
+      kit.group('Where new content is saved', { row: 'system.storage.saveLocations' }), saveBox,
+      kit.group('Advanced storage settings'), kit.card(diskRo, disks, pools, backup));
+
+    /* ---- drives */
+    function fillDrives(g) {
+      if (!g || !g.ok) { drivesBox.replaceChildren(kit.card(kit.reason(fail('The drives', g)))); return; }
+      const rows = (g.drives || []).map((d) => {
+        const low = d.ready && d.total > 0 && d.free / d.total < 0.1;
+        const st = kit.status({ row: `system.storage.drive.${d.drive[0].toLowerCase()}`, icon: 'apps',
+          label: `${d.label || (d.type === 'removable' ? 'USB drive' : 'Local Disk')} (${d.drive})`,
+          help: d.ready ? `${bytes(d.used)} used of ${bytes(d.total)}${d.format ? ` · ${d.format}` : ''}${d.system ? ' · Windows is on this drive' : ''}` : 'Not ready',
+          value: d.ready ? `${bytes(d.free)} free` : '—', tone: !d.ready || low ? 'warn' : 'ok',
+          reason: !d.ready ? d.reason : low ? 'Less than 10% is free: Windows may slow down. Temporary files below can free some' : (d.reason || null) });
+        if (d.ready) withBar(kit, st).set(d.total ? d.used / d.total : 0, low);
+        return st;
+      });
+      drivesBox.replaceChildren(rows.length ? kit.card(...rows) : kit.card(kit.reason('Windows reported no local drives')));
+    }
+
+    /* ---- Storage Sense */
+    function fillSense(g) {
+      const s = g && g.ok && g.sense;
+      if (!s) { const why = fail('Storage Sense', g); [sOn, sTemp, sCad, sRb, sDl].forEach((c) => c.set({ disabled: true, reason: why })); cloudBox.replaceChildren(); return; }
+      const note = (x) => (x && x.note) || null;
+      sOn.set(Object.assign(side(s.on), { info: note(s.on) }));
+      sTemp.set(side(s.temp));
+      const cad = S_CADENCE.some((o) => o.value === s.cadence.value) ? S_CADENCE : [{ value: s.cadence.value, label: `Custom: every ${s.cadence.value} days` }].concat(S_CADENCE);
+      sCad.set(Object.assign(side(s.cadence), { options: cad }));
+      const off = s.on.value ? null : 'Storage Sense is off, so this waits until it is turned on';
+      sRb.set(Object.assign(side(s.recycleDays), { options: ageOpts(s.recycleDays.value, 'Never'), info: note(s.recycleDays) || off }));
+      sDl.set(Object.assign(side(s.downloadsDays), { options: ageOpts(s.downloadsDays.value, 'Never (default)'), info: off }));
+      sTemp.set({ info: off }); sCad.set({ info: off });
+      const accts = s.cloud || [];
+      cloudBox.replaceChildren(kit.card(...(accts.length ? accts.map((a, i) => kit.choice({ row: `system.storage.sense.cloud.${i}`, label: a.label,
+        help: 'Content you have not opened for this long becomes online-only (it stays in OneDrive)', style: 'dropdown', options: ageOpts(a.value, 'Never'),
+        value: a.value, disabled: !a.writable, reason: a.writable ? null : a.why, info: s.cloudNote,
+        onChange: (v) => W(kit, 'storageSense', { key: 'cloudDays', account: a.account, value: Number(v) }, (r) => r.value) }))
+      : [kit.status({ row: 'system.storage.sense.cloud.none', label: 'Cloud content', value: 'Nothing to free', tone: 'info', reason: s.cloudWhy })])));
+    }
+
+    /* ---- the category scan */
+    const catLabel = (k) => (S_CATS.find((c) => c[0] === k) || [k, k])[1];
+    function fillCats(res, at) {
+      if (!res || !Array.isArray(res.categories)) return;
+      for (const c of res.categories) {
+        const x = cat[c.key]; if (!x) continue;
+        x.set({ value: bytes(c.bytes), help: c.note || null, reason: c.reason || null });
+        x.bar.set(res.used ? c.bytes / res.used : 0);
+      }
+      scanSt.set({ value: `${res.drive} scanned${at ? ` ${new Date(at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}: ${bytes(res.used)} used of ${bytes(res.total)}`, tone: 'ok', reason: null });
+    }
+    function scanRunning(ev) {
+      S.scanning = ev.scan;
+      scanBtn.set({ text: 'Stop' });
+      scanSt.set({ value: `Scanning ${catLabel(ev.category || 'apps').toLowerCase()}… step ${Math.min((ev.done || 0) + 1, ev.total || 1)} of ${ev.total || '?'}, ${bytes(ev.bytes || 0)} counted`, tone: 'info', reason: null });
+    }
+    function scanEnded() { S.scanning = null; scanBtn.set({ text: 'Scan again' }); }
+    async function scanClick() {
+      if (S.scanning) { const r = await R(kit, 'storageScanStop'); return r.ok ? { ok: true, note: 'Stopping the scan…' } : r; }
+      const r = await R(kit, 'storageScan', {});
+      if (!r.ok) return r;
+      scanRunning({ scan: r.scan, done: 0, total: r.total, bytes: 0 });
+      return { ok: true };
+    }
+    const fillRec = (r) => {
+      if (!r || !r.ok) { recList.set({ items: [], empty: fail('The recommendations', r) }); return; }
+      recList.set({ empty: r.reason || 'Nothing to recommend', items: (r.files || []).map((f, i) => ({ key: `f${i}`, label: f.name, mono: true, value: bytes(f.bytes),
+        help: `${f.why === 'large' ? 'Large' : 'Not changed for over a year'} · ${f.folder}${f.modified ? ` · changed ${new Date(f.modified).toLocaleDateString('en-GB', { dateStyle: 'medium' })}` : ''}` })) });
     };
+    kit.watch('settings.system.storage', (ev) => {
+      if (!ev || typeof ev !== 'object') return;
+      if (ev.what === 'progress') scanRunning(ev);
+      else if (ev.what === 'done') { scanEnded(); fillCats(ev, new Date().toISOString()); R(kit, 'storageRecommend').then(fillRec); }
+      else if (ev.what === 'cancelled') { scanEnded(); scanSt.set({ value: 'Scan stopped: the categories show the last finished scan, if any', tone: 'info' }); }
+      else if (ev.what === 'failed') { scanEnded(); scanSt.set({ value: 'Scan failed', tone: 'warn', reason: ev.reason || 'the scan stopped without a reason' }); }
+      else if (ev.what === 'cleanProgress') confirmBtn.set({ info: `Removing… ${n0(ev.removed)} files, ${bytes(ev.freed)} so far` });
+    });
+
+    /* ---- temporary files + the plan */
+    function fillTemp(r) {
+      S.temp = r;
+      review.set({ disabled: !r || !r.ok, reason: r && r.ok ? null : fail('The temporary files', r) });
+      for (const k of S_KINDS) {
+        const x = r && r.ok ? (r.kinds || []).find((y) => y.kind === k) : null;
+        if (!x) { tick[k].set({ disabled: true, help: null, reason: r && r.ok ? 'Windows did not report this kind' : fail('The temporary files', r) }); continue; }
+        const size = x.measured ? `${bytes(x.bytes)} in ${n0(k === 'downloads' ? x.entries : x.files)} ${k === 'downloads' || k === 'recycleBin' ? 'items' : 'files'}` : 'size not known yet';
+        const there = x.measured && x.allBytes > x.bytes ? ` (${bytes(x.allBytes)} is there; the rest is newer)` : '';
+        tick[k].set({ value: !!S.tick[k], disabled: !x.measured && !x.admin, help: `${x.rule}. ${size}${there}`,
+          reason: !x.measured && !x.admin ? x.reason : null,
+          info: x.yours ? 'Your own files: never ticked for you' : (!x.measured ? x.reason : x.reason || null) });
+      }
+    }
+    function dropPlan(why) {
+      if (!S.plan) return;
+      S.plan = null;
+      planList.set({ items: [], empty: why });
+      confirmBtn.set({ disabled: true, label: 'Remove the files in the plan', admin: undefined, info: 'Nothing is deleted until you review a plan and confirm it here' });
+    }
+    async function reviewClick() {
+      const kinds = S_KINDS.filter((k) => S.tick[k]);
+      if (!kinds.length) return { ok: false, reason: 'Tick at least one kind of file to clean up' };
+      const r = await R(kit, 'cleanupPlan', { kinds });
+      if (!r.ok) return r;
+      S.plan = r;
+      planList.set({ items: r.items.map((x) => ({ key: x.kind, label: x.label, value: x.measured ? bytes(x.bytes) : 'Size unknown',
+        help: `${x.rule}${x.measured ? ` · ${n0(x.kind === 'downloads' ? x.entries : x.files)} ${x.kind === 'downloads' || x.kind === 'recycleBin' ? 'items' : 'files'}` : ''}${x.admin ? ' · needs administrator permission' : ''}`,
+        reason: x.kind === 'downloads' ? 'Your own files: everything in Downloads moves to the Recycle Bin' : x.kind === 'recycleBin' ? 'Your own files: the Recycle Bin is emptied for good' : (x.measured ? null : x.reason) })) });
+      confirmBtn.set({ disabled: false, label: `Remove ${n0(r.totalFiles)} files (${bytes(r.totalBytes)})`, admin: r.needsAdmin ? S_CLEAN : undefined,
+        info: 'Only the files in this plan, and only if they have not changed since it was made' });
+      return { ok: true, note: `Plan ready: ${n0(r.totalFiles)} files, ${bytes(r.totalBytes)}. Nothing is deleted until you confirm below` };
+    }
+    async function confirmClick() {
+      const p = S.plan;
+      if (!p) return { ok: false, reason: 'Review the cleanup first: there is no plan to confirm' };
+      const r = await W(kit, 'cleanup', { plan: p.plan, confirm: true });
+      if (!r || r.ok === false || r.dryRun) return r;
+      let note = `Removed ${n0(r.removed)} files and freed ${bytes(r.freed)}${r.skipped ? `; ${n0(r.skipped)} in use were left` : ''}${r.changed ? `; ${n0(r.changed)} changed since the plan were left` : ''}`;
+      const per = (r.kinds || []).slice();
+      if (r.admin) {
+        const a = await A(kit, r.admin.elevate, r.admin.args);
+        if (a && a.cancelled) note += '; you said no to the administrator prompt, so Windows\' own files were left';
+        else if (a && a.ok && !a.dryRun) { note += `; ${a.note || 'the Windows system files were cleaned up'}`; (a.kinds || []).forEach((x) => per.push(x)); }
+        else note += `; the Windows system files were not cleaned up: ${(a && a.reason) || 'no answer'}`;
+      }
+      S.plan = null;
+      planList.set({ items: per.map((x) => ({ key: x.kind, label: S_KLABEL[x.kind] || x.kind, value: `${bytes(x.freed || 0)} freed`,
+        help: `${n0(x.removed || 0)} removed${x.changed ? ` · ${n0(x.changed)} changed since the plan, left` : ''}`,
+        reason: x.reason || (x.refused ? `${n0(x.refused)} refused: ${x.refusedWhy}` : null) })), empty: 'Done' });
+      confirmBtn.set({ disabled: true, label: 'Remove the files in the plan', admin: undefined, info: null });
+      setTimeout(() => { R(kit, 'storageTemp').then(fillTemp); update(); }, 50);
+      return { ok: true, note };
+    }
+
+    /* ---- advanced (read only) */
+    function fillAdv(a) {
+      if (!a || !a.ok) {
+        const why = fail('Advanced storage settings', a);
+        saveBox.replaceChildren(kit.card(kit.reason(why))); disks.set({ items: [], empty: why }); [diskRo, pools, backup].forEach((c) => c.set({ reason: why }));
+        return;
+      }
+      saveBox.replaceChildren(kit.card(...(a.saveLocations || []).map((x) => kit.status({ row: `system.storage.saveLocations.${x.kind}`, label: x.label, value: x.drive || '—', reason: x.why }))));
+      const items = [];
+      for (const d of a.disks || []) {
+        items.push({ key: `disk${d.number}`, label: d.name || `Disk ${d.number}`, value: bytes(d.bytes),
+          help: [`Disk ${d.number}`, d.bus, d.media, d.style, d.health, d.boot ? 'Windows starts from it' : null].filter(Boolean).join(' · '),
+          reason: d.health && d.health !== 'Healthy' ? `Windows reports this disk as: ${d.health}` : null });
+        for (const p of d.partitions || []) items.push({ key: `disk${d.number}p${p.number}`, label: p.letter ? `${p.label || 'Local Disk'} (${p.letter})` : p.kind,
+          value: bytes(p.bytes), help: [p.letter ? p.kind : null, p.fs, p.free != null ? `${bytes(p.free)} free` : null, p.health].filter(Boolean).join(' · ') || 'No file system' });
+      }
+      disks.set({ items, empty: a.disksReason || 'Windows reported no disks' });
+      diskRo.set({ reason: a.disksWhy, info: a.disksReason || null });
+      pools.set({ value: a.pools && a.pools.length ? `${a.pools.length} pool${a.pools.length === 1 ? '' : 's'}` : 'No storage pools', reason: a.poolsReason || a.poolsWhy });
+      const b = a.backup || {};
+      backup.set({ value: `File History ${b.fileHistory ? 'is set up' : 'is not set up'} · OneDrive ${b.oneDrive ? 'signed in' : 'not signed in'}`, reason: b.why });
+    }
+
+    async function update() {
+      const g = await R(kit, 'storage');
+      fillDrives(g); fillSense(g);
+      if (g && g.ok && g.scan && !S.scanning) {
+        if (g.scan.state === 'running') scanRunning(g.scan);
+        else if (g.scan.state === 'done' && g.scan.result && !S.scanned) { S.scanned = true; fillCats(g.scan.result, g.scan.at); scanBtn.set({ text: 'Scan again' }); R(kit, 'storageRecommend').then(fillRec); }
+      }
+    }
+    R(kit, 'storageAdvanced').then(fillAdv);
+    R(kit, 'storageTemp').then(fillTemp);
+    kit.every(15000, update);
+    return update().then(() => ({ update, dispose() {} }));
   }
 
   /* ---------------------------------------------------------------- the section */
@@ -1149,9 +1389,32 @@
           { row: 'power.battery', label: 'Battery', keywords: 'charge percent' },
         ],
         render: renderPower },
-      { id: 'storage', title: 'Storage', icon: 'apps', help: 'Storage space, drives, configuration rules',
-        search: [{ row: 'system.storage.sense', label: 'Storage Sense', keywords: 'cleanup free space temp files', uri: 'ms-settings:storagesense' }],
-        render: renderPending('Storage') },
+      { id: 'storage', title: 'Storage', icon: 'apps', help: 'Drives, what uses space, temporary files, Storage Sense',
+        search: [
+          { row: 'system.storage.drives', label: 'Drives', keywords: 'disk space free space used drive capacity c: full storage used on other drives' },
+          { row: 'system.storage.scan', label: 'Storage use', keywords: 'what is using space categories apps documents pictures videos music system reserved scan analyse' },
+          { row: 'system.storage.category.system', label: 'System & reserved', keywords: 'system files page file hibernation reserved storage windows folder' },
+          { row: 'system.storage.category.apps', label: 'Installed apps (storage)', keywords: 'apps size program files space used by apps' },
+          { row: 'system.storage.temp', label: 'Temporary files', keywords: 'temp files delete cleanup disk cleanup free up space now' },
+          { row: 'system.storage.temp.thumbnails', label: 'Thumbnails', keywords: 'thumbnail cache thumbcache previews' },
+          { row: 'system.storage.temp.deliveryOptimization', label: 'Delivery Optimization files', keywords: 'delivery optimization cache update sharing' },
+          { row: 'system.storage.temp.windowsUpdate', label: 'Windows Update cleanup', keywords: 'windows update cleanup old updates softwaredistribution' },
+          { row: 'system.storage.temp.recycleBin', label: 'Empty the Recycle Bin', keywords: 'recycle bin empty trash deleted files' },
+          { row: 'system.storage.temp.downloads', label: 'Clean up Downloads', keywords: 'downloads folder delete old downloads' },
+          { row: 'system.storage.temp.review', label: 'Review cleanup', keywords: 'clean up now remove files plan confirm' },
+          { row: 'system.storage.sense', label: 'Storage Sense', keywords: 'cleanup free space temp files automatic', uri: 'ms-settings:storagesense' },
+          { row: 'system.storage.sense.temp', label: 'Clean up temporary system and app files', keywords: 'storage sense temporary files automatic' },
+          { row: 'system.storage.sense.cadence', label: 'Run Storage Sense', keywords: 'storage sense schedule every day week month low disk space configure', uri: 'ms-settings:storagepolicies' },
+          { row: 'system.storage.sense.recycle', label: 'Recycle Bin cleanup schedule', keywords: 'recycle bin delete after days storage sense' },
+          { row: 'system.storage.sense.downloads', label: 'Downloads cleanup schedule', keywords: 'downloads delete after days not opened storage sense' },
+          { row: 'system.storage.sense.cloud', label: 'Locally available cloud content', keywords: 'onedrive online only files on demand free up space cloud' },
+          { row: 'system.storage.recommend', label: 'Cleanup recommendations', keywords: 'large files unused files big files recommendations', uri: 'ms-settings:storagerecommendations' },
+          { row: 'system.storage.saveLocations', label: 'Where new content is saved', keywords: 'save location new apps documents music photos videos default drive', uri: 'ms-settings:savelocations' },
+          { row: 'system.storage.disks', label: 'Disks & volumes', keywords: 'disk management partitions volumes format drive letter ssd nvme health', uri: 'ms-settings:disksandvolumes' },
+          { row: 'system.storage.spaces', label: 'Storage Spaces', keywords: 'storage spaces pool mirror parity raid' },
+          { row: 'system.storage.backup', label: 'Backup options', keywords: 'backup file history onedrive backup' },
+        ],
+        render: renderStorage },
       { id: 'multitasking', title: 'Multitasking', icon: '<rect x="2" y="3" width="5" height="10" rx="1"/><rect x="9" y="3" width="5" height="10" rx="1"/>', help: 'Snap windows, desktops, task switching',
         search: [
           { row: 'system.multitasking.snap', label: 'Snap windows', keywords: 'snap layouts assist', uri: 'ms-settings:multitasking' },
