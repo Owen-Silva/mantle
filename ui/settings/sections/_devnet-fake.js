@@ -3,8 +3,8 @@
  * (the leading _ keeps Settings from ever loading it as a section).
  *
  * It wraps the settings lane's mock (ui/settings/mock-mantle.js, not edited): settings.sections lists
- * the REAL page files sections/devices.js and sections/network.js, settings.devices.* and
- * settings.network.* are answered here with the real shapes (lib/features/_settings-sections/*.js
+ * the REAL page files sections/devices.js and sections/internet.js, settings.devices.* and
+ * settings.internet.* are answered here with the real shapes (lib/features/_settings-sections/*.js
  * over the sidecar's replies), everything else goes to the mock. EVERYTHING IS MADE UP: no name,
  * network, address or device here comes from Owen's machine.
  *
@@ -140,8 +140,83 @@
     cancel() { if (window.__devnetPairDone) window.__devnetPairDone(false); return { ok: true }; },
   };
 
-  const NET = window.__devnetNet || {};   // the network half joins here (see the network part below)
-  const table = { 'settings.devices.': dev, 'settings.network.': NET };
+  // ---------------------------------------------------------------- network (lane net2)
+  // settings.internet.* (the section's id is "internet": a module may not take the built-in id
+  // "network"). Same shapes as lib/features/_settings-sections/internet.js over the sidecar.
+  const G = (n) => '{' + String(n).repeat(8) + '-' + String(n).repeat(4) + '-' + String(n).repeat(4) + '-' + String(n).repeat(4) + '-' + String(n).repeat(12) + '}';
+  const addr = (o) => Object.assign({ ipv4: [], ipv6: [], gateway: [], dns4: [], dns6: [], dnsManual: false, manualDns: [], dhcp: true, mac: null, bytesIn: null, bytesOut: null, reason: null }, o);
+  const N = {
+    known: [
+      { profile: 'Home-5G', ssid: 'Home-5G', security: 'WPA3-Personal', autoConnect: true, hidden: false, randomMac: 'off', keySaved: true, allUsers: true, connected: true, canEdit: true },
+      { profile: 'Cafe Guest', ssid: 'Cafe Guest', security: 'Open', autoConnect: false, hidden: false, randomMac: 'daily', keySaved: false, allUsers: true, connected: false, canEdit: true },
+      { profile: 'Office', ssid: 'Office', security: 'WPA2-Enterprise', autoConnect: true, hidden: false, randomMac: null, randomMacWhy: 'this saved network has no setting of its own, so Windows\' default applies',
+        keySaved: false, allUsers: true, connected: false, canEdit: false, editWhy: 'your organization\'s policy set up this network, so only it can change it' },
+      { profile: 'Attic', ssid: 'Attic', security: 'WPA2-Personal', autoConnect: true, hidden: true, randomMac: 'on', keySaved: true, allUsers: false, connected: false, canEdit: true },
+    ],
+    adapters: [
+      { adapter: G(1), name: 'Wi-Fi', description: 'Mock Wireless AX210', kind: 'wifi', physical: true, enabled: true, status: 'connected', speedBps: 1201000000,
+        driver: { provider: 'Mock Corp', version: '23.60.1.2', date: '5-14-2026' }, canToggle: true,
+        addressing: addr({ ipv4: ['192.168.50.23 / 255.255.255.0'], ipv6: ['fe80::1c2b:3a4d:5e6f:7081'], gateway: ['192.168.50.1'], dns4: ['192.168.50.1'], mac: '02:00:5E:10:20:30', bytesIn: 4831838208, bytesOut: 612368384 }) },
+      { adapter: G(2), name: 'Ethernet', description: 'Mock 2.5GbE Controller', kind: 'ethernet', physical: true, enabled: true, status: 'disconnected', speedBps: null,
+        driver: { provider: 'Mock Corp', version: '1.1.4.43', date: '2-2-2026' }, canToggle: true,
+        addressing: addr({ dnsManual: true, manualDns: ['1.1.1.1', '1.0.0.1'], mac: '02:00:5E:40:50:60', reason: 'the adapter is off or has no connection, so it has no addresses' }) },
+      { adapter: G(3), name: 'Bluetooth Network Connection', description: 'Bluetooth Device (Personal Area Network)', kind: 'bluetooth', physical: true, enabled: true, status: 'disconnected', speedBps: null,
+        driver: { provider: 'Microsoft', version: '10.0.26100.1', date: '6-21-2006' }, canToggle: true, addressing: addr({ reason: 'the adapter is off or has no connection, so it has no addresses' }) },
+      { adapter: G(4), name: 'vEthernet (Default Switch)', description: 'Hyper-V Virtual Ethernet Adapter', kind: 'virtual', physical: false, enabled: false, status: 'disabled', speedBps: null,
+        driver: { provider: 'Microsoft', version: '10.0.26100.1', date: '6-21-2006' }, canToggle: true, addressing: addr({ reason: 'the adapter is off or has no connection, so it has no addresses' }) },
+    ],
+    proxy: { autoDetect: true, script: { on: false, url: null }, manual: { on: false, server: null, port: null, bypass: [], local: false } },
+    vpn: [{ entry: 'Work VPN', kind: 'vpn', server: 'vpn.example.com', type: 'IKEv2', allUsers: false, connected: false },
+      { entry: 'Lab tunnel', kind: 'vpn', server: '203.0.113.9', type: 'SSTP', allUsers: true, connected: true }],
+    airplane: false,
+  };
+  const failNet = (cmd) => no(cmd + ': the Wi-Fi service (WLAN AutoConfig) is not running');
+  const NET = {
+    known: () => (FAIL ? failNet('netwifi.known') : { ok: true, present: true, iface: G(1), adapter: 'Mock Wireless AX210', profiles: JSON.parse(JSON.stringify(N.known)), reason: null }),
+    props: () => (FAIL ? failNet('netwifi.props') : Object.assign({ ok: true, present: true, connected: true, iface: G(1), adapter: 'Mock Wireless AX210', ssid: 'Home-5G', profile: 'Home-5G',
+      bssid: '02:00:5E:AA:BB:CC', protocol: 'Wi-Fi 6 (802.11ax)', security: 'WPA3-Personal', cipher: 'AES (CCMP)', band: '5 GHz', channel: 44, frequencyMHz: 5220, signal: 88,
+      rxMbps: 1201, txMbps: 960, reason: null }, { driver: N.adapters[0].driver, addressing: N.adapters[0].addressing })),
+    adapters: () => (FAIL ? no('netadapt.list: Windows\' adapter list could not be read (access denied)') : { ok: true, adapters: JSON.parse(JSON.stringify(N.adapters)), elevated: false, reason: null }),
+    proxy: () => (FAIL ? no('netproxy.get: the proxy settings could not be read') : Object.assign({ ok: true, reason: null }, JSON.parse(JSON.stringify(N.proxy)))),
+    vpn: () => ({ ok: true, entries: N.vpn.slice(), reason: null }),
+    airplane: () => ({ ok: true, airplane: N.airplane, canSet: !FAIL, registryAgrees: true, reason: FAIL ? 'Windows\' radio management could not be opened' : null }),
+    wifiConnect(a) {
+      const hadPw = !!a.password;   // not deleted here: the call log redacts it after this answers
+      if (a.hidden && !a.security) return no('choose the hidden network\'s security (open, WPA2 or WPA3)');
+      if (a.hidden && a.security !== 'open' && !hadPw) return no('type the hidden network\'s password');
+      if (TEST) return dry('join ' + (a.hidden ? 'the hidden network' : 'this network') + ' and connect to it automatically from now on');
+      return later(600, { ok: true, ssid: a.ssid, connected: true, reason: null });
+    },
+    wifiDisconnect: () => (TEST ? dry('disconnect Wi-Fi from this network') : { ok: true }),
+    wifiForget(a) {
+      if (TEST) return dry('forget this saved network: its password is deleted and it no longer connects by itself');
+      N.known = N.known.filter((k) => k.profile !== a.profile); return { ok: true, forgotten: true };
+    },
+    wifiSet(a) {
+      const k = N.known.find((x) => x.profile === a.profile);
+      if (!k) return no('netwifi.set: Windows has no saved network with that profile name');
+      if (TEST) return dry(a.metered !== undefined ? (a.metered ? 'mark this network as metered' : 'stop treating this network as metered') : 'change this saved network\'s settings');
+      ['autoConnect', 'hidden', 'randomMac'].forEach((f) => { if (a[f] !== undefined) k[f] = a[f]; });
+      return { ok: true, now: a.metered !== undefined ? { metered: a.metered } : Object.assign({}, k) };
+    },
+    adapterEnable(a) {
+      const x = N.adapters.find((y) => y.adapter === a.adapter);
+      if (TEST) return dry((a.on ? 'turn ' : 'turn ') + (x ? x.name : 'the adapter') + (a.on ? ' back on' : ' off') + ' after an administrator prompt');
+      return { ok: true, kind: 'ok', adapter: a.adapter, on: a.on, note: null };
+    },
+    dnsSet: (a) => (TEST ? dry('set the DNS servers to ' + ((a.servers || []).join(', ') || 'automatic (from DHCP)') + ' after an administrator prompt') : { ok: true, kind: 'ok', note: null }),
+    networkReset: () => (TEST ? dry('ask for administrator permission (system.networkReset)') : { ok: true, kind: 'ok', restartNeeded: true, note: 'Network adapters were reset. Restart the PC to finish.' }),
+    proxySet(a) {
+      if (TEST) return dry(a.autoDetect !== undefined ? (a.autoDetect ? 'detect proxy settings automatically' : 'stop detecting proxy settings automatically') : 'change the proxy settings');
+      if (a.autoDetect !== undefined) N.proxy.autoDetect = a.autoDetect;
+      if (a.script) Object.assign(N.proxy.script, a.script);
+      if (a.manual) Object.assign(N.proxy.manual, a.manual);
+      return { ok: true, now: JSON.parse(JSON.stringify(N.proxy)) };
+    },
+    vpnConnect: (a) => (TEST ? dry((a.on ? 'connect' : 'disconnect') + ' this VPN' + (a.on ? ' with its saved sign-in' : '')) : { ok: true, value: a.on }),
+    airplaneSet: (a) => (TEST ? dry('turn airplane mode ' + (a.on ? 'on (Wi-Fi, Bluetooth and mobile data go off)' : 'off')) : (N.airplane = a.on, { ok: true, value: a.on })),
+  };
+  const table = { 'settings.devices.': dev, 'settings.internet.': NET, 'settings.network.': NET };
 
   function answer(name, args) {
     for (const pre of Object.keys(table)) {
@@ -162,7 +237,8 @@
         on: m.on.bind(m),
         call(name, args) {
           if (name === 'settings.sections') {
-            const ids = String(window.__DEVNET_SECS || 'devices,network').split(',').filter(Boolean);
+            // "network" is the built-in's id: its module is sections/internet.js (id internet).
+            const ids = String(window.__DEVNET_SECS || 'devices,internet').split(',').filter(Boolean).map((x) => (x === 'network' ? 'internet' : x));
             return Promise.resolve({ ok: true, reason: null, sections: ids.map((id) => ({ id, file: 'sections/' + id + '.js', down: null, main: null })) });
           }
           const copy = args && typeof args === 'object' ? JSON.parse(JSON.stringify(args)) : args;
@@ -176,5 +252,5 @@
       };
     },
   });
-  window.__devnet = { D, NET };
+  window.__devnet = { D, NET, N };
 }());

@@ -168,6 +168,16 @@ namespace Mantle {
             if (perr != null) return "wlan connect: " + perr;
           }
           bool auto = Json.GetBool(req, "auto", true);
+          // A HIDDEN network (hidden:true, lane net2): it is in no scan, so the request names its
+          // security and Mantle writes a nonBroadcast profile, then connects by that profile.
+          bool hidden = Json.GetBool(req, "hidden", false);
+          string hAuth = null, hEnc = null;
+          if (hidden) {
+            if (string.IsNullOrEmpty(ssid)) return "wlan connect: a hidden network needs ssid (its exact name)";
+            if (!SchemaWords(Json.GetString(req, "security"), out hAuth, out hEnc)) return "wlan connect: a hidden network needs security: open, wpa, wpa2 or wpa3";
+            if (hAuth == "open" && password != null) return "wlan connect: an open network takes no password";
+            if (hAuth != "open" && password == null) return "wlan connect: a secured hidden network needs its password";
+          }
           if (passive) return PassiveRefusal + ": wlan connect would join a network on the live machine";
           lock (_lock) {
             if (_connecting != null)
@@ -177,8 +187,14 @@ namespace Mantle {
           }
           string pwLocal = password;
           password = null;
-          Post(id, arrived, ttl, delegate () { return Connect(ssid, hex, pwLocal, auto); },
-               delegate () { lock (_lock) _connecting = null; });
+          if (hidden) {
+            string ha = hAuth, he = hEnc;
+            Post(id, arrived, ttl, delegate () { return ConnectHidden(ssid, ha, he, pwLocal, auto); },
+                 delegate () { lock (_lock) _connecting = null; });
+          } else {
+            Post(id, arrived, ttl, delegate () { return Connect(ssid, hex, pwLocal, auto); },
+                 delegate () { lock (_lock) _connecting = null; });
+          }
           result = Program.Deferred;
           return null;
         }
@@ -225,8 +241,9 @@ namespace Mantle {
           if (raw.Length > 32) return "wlan profile: a network name is at most 32 bytes";
           string testKey = password;
           bool testAuto = Json.GetBool(req, "auto", true);
+          bool testHidden = Json.GetBool(req, "hidden", false);
           Post(id, arrived, ttl, delegate () {
-            string xml = ProfileXml(ProfileName(ssid), raw, ssid, auth, enc, testKey, testAuto);
+            string xml = ProfileXml(ProfileName(ssid), raw, ssid, auth, enc, testKey, testAuto, testHidden);
             return Json.Obj("ok", true, "xml", xml, "wellFormed", WellFormed(xml), "profileName", ProfileName(ssid), "reason", null);
           });
           result = Program.Deferred;
@@ -770,6 +787,73 @@ namespace Mantle {
       }
     }
 
+    /// A hidden network (lane net2): no scan lists it, so there is nothing to match. Writes a
+    /// nonBroadcast profile for the name and security given, then connects by it and waits the
+    /// same way Connect does. Never overwrites a saved profile; a failed join removes the profile
+    /// it made.
+    static IDictionary ConnectHidden(string ssid, string auth, string enc, string password, bool auto) {
+      var sw = Stopwatch.StartNew();
+      IntPtr h = IntPtr.Zero;
+      int token = 0;
+      string profile = null;
+      bool made = false;
+      try {
+        string err;
+        h = Open(out err);
+        if (h == IntPtr.Zero) return Outcome(false, ssid, err, 0, sw);
+        Guid g; string ifName; uint ifState; int ifCount;
+        err = PickInterface(h, out g, out ifName, out ifState, out ifCount);
+        if (err != null) return Outcome(false, ssid, err, 0, sw);
+        if (!RadioOn(h, g)) return Outcome(false, ssid, "the Wi-Fi radio is off; turn Wi-Fi on first", 0, sw);
+        string name = ProfileName(ssid);
+        if (ProfileExists(h, g, name)) {
+          password = null;
+          return Outcome(false, ssid, "Windows already has a saved network called \"" + name + "\"; connect to it from the saved networks, or forget it first", 0, sw);
+        }
+        string xml = ProfileXml(name, Encoding.UTF8.GetBytes(ssid), ssid, auth, enc, password, auto, true);
+        password = null;
+        if (!WellFormed(xml)) { xml = null; return Outcome(false, ssid, "Mantle built a profile Windows could not read (a Mantle bug; nothing was changed)", 0, sw); }
+        uint why2;
+        uint rc = Native.WlanSetProfile(h, ref g, 0, xml, null, false, IntPtr.Zero, out why2);
+        xml = null;
+        if (rc != 0) return Outcome(false, ssid, "Windows refused the network profile (" + ErrorText(rc) + (why2 != 0 ? "; " + ReasonText(why2) : "") + ")", why2, sw);
+        profile = name;
+        made = true;
+        var w = new Waiter(g, new uint[] { ACM_CONNECTION_COMPLETE, ACM_CONNECTION_ATTEMPT_FAIL }, profile);
+        string lerr;
+        token = Listen(h, w, out lerr);
+        var cp = new Native.WLAN_CONNECTION_PARAMETERS();
+        cp.wlanConnectionMode = MODE_PROFILE;
+        cp.strProfile = profile;
+        cp.dot11BssType = BSS_INFRASTRUCTURE;
+        uint crc = Native.WlanConnect(h, ref g, ref cp, IntPtr.Zero);
+        if (crc != 0) return Outcome(false, ssid, "Windows refused to start connecting (" + ErrorText(crc) + ")" + Forget(h, g, profile), 0, sw);
+        bool heard, ok;
+        uint code = 0;
+        if (token != 0) {
+          heard = w.Done.WaitOne(ConnectWaitMs);
+          code = w.ReasonCode;
+          ok = heard && w.Code == ACM_CONNECTION_COMPLETE && code == 0;
+        } else {
+          heard = false; ok = false;
+          for (int waited = 0; waited < ConnectWaitMs; waited += 500) {
+            Thread.Sleep(500);
+            if (CurrentSsid(h, g) == ssid && ConnectedNow(h, g)) { ok = true; heard = true; break; }
+          }
+        }
+        string reason = ok ? null : !heard ? "Windows did not find or join the hidden network within " + (ConnectWaitMs / 1000) + " s" : ReasonText(code);
+        if (!ok) reason += Forget(h, g, profile);
+        return Outcome(ok, ssid, reason, code, sw);
+      } catch (Exception ex) {
+        string gone = made && h != IntPtr.Zero && profile != null ? ForgetQuietly(h, profile) : "";
+        return Outcome(false, ssid, "the connection could not be made (" + ex.GetType().Name + ": " + ex.Message + ")" + gone, 0, sw);
+      } finally {
+        password = null;
+        Unlisten(h, token);
+        Close(h);
+      }
+    }
+
     /// Delete the profile THIS connect created, after it failed. Returns the
     /// text to append to the reason (it is part of what happened).
     static string Forget(IntPtr h, Guid g, string profile) {
@@ -867,13 +951,20 @@ namespace Mantle {
     /// present) and as text; every text value is XML-escaped. A 64-digit key is
     /// the raw PSK (networkKey), anything else a passphrase.
     public static string ProfileXml(string profileName, byte[] ssid, string ssidText, string auth, string enc, string key, bool auto) {
+      return ProfileXml(profileName, ssid, ssidText, auth, enc, key, auto, false);
+    }
+
+    /// `hidden`: SSIDConfig/nonBroadcast=true, so Windows probes for a network that hides its name.
+    public static string ProfileXml(string profileName, byte[] ssid, string ssidText, string auth, string enc, string key, bool auto, bool hidden) {
       var sb = new StringBuilder(1024);
       sb.Append("<?xml version=\"1.0\"?>");
       sb.Append("<WLANProfile xmlns=\"http://www.microsoft.com/networking/WLAN/profile/v1\">");
       sb.Append("<name>").Append(Esc(profileName)).Append("</name>");
       sb.Append("<SSIDConfig><SSID><hex>").Append(HexOf(ssid)).Append("</hex>");
       if (ssidText != null && XmlSafe(ssidText)) sb.Append("<name>").Append(Esc(ssidText)).Append("</name>");
-      sb.Append("</SSID></SSIDConfig>");
+      sb.Append("</SSID>");
+      if (hidden) sb.Append("<nonBroadcast>true</nonBroadcast>");
+      sb.Append("</SSIDConfig>");
       sb.Append("<connectionType>ESS</connectionType>");
       sb.Append("<connectionMode>").Append(auto ? "auto" : "manual").Append("</connectionMode>");
       sb.Append("<MSM><security><authEncryption>");
