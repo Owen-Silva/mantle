@@ -370,6 +370,67 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
 .cell.run .ind { visibility: visible; }
 .cell.act .ind { width: 16px; background: var(--lg-acc); }
 
+/* THE APPS BEHIND "+N" (bar lane, 2026-09-29; bar.js applyOverflow / buildOvfPop). Icons that do
+   not fit leave the strip (display:none, so the row never clips half an icon) and "+N", a cell of
+   the same size and states, says how many and opens them. The panel is a grid of the same icons
+   with their names, and the same running line. */
+.dock .cell.ovf, .dock .div.ovf { display: none; }
+.dmore {
+  flex: 0 0 var(--cell);
+  width: var(--cell);
+  height: var(--cell);
+  border: 0;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
+  color: var(--lg-ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  transition: background-color 150ms steps(2), color 150ms steps(2);
+}
+.dmore[hidden] { display: none; }
+.dmore:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.dmore:active { background: var(--lg-press); }
+.dmore:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+
+.pop.ovf { max-width: 360px; }
+.ovf-grid { display: grid; grid-template-columns: repeat(4, 76px); gap: 2px; }
+.ovf-app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 4px 5px;
+  border: 0;
+  border-radius: var(--lg-r);
+  background: transparent;
+  color: var(--lg-ink-2);
+  font: inherit;
+  cursor: default;
+  transition: background-color 150ms steps(2);
+}
+.ovf-app:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.ovf-app:active { background: var(--lg-press); }
+.ovf-app:active .ovf-ico { transform: scale(.92); }
+.ovf-ico {
+  width: var(--cell-icon); height: var(--cell-icon);
+  display: grid; place-items: center; overflow: hidden; border-radius: 6px;
+  font-size: 12.5px; font-weight: 600; color: var(--lg-ink);
+  transition: transform 120ms steps(2);
+}
+.ovf-ico img { width: var(--cell-icon); height: var(--cell-icon); display: block; }
+.ovf-ico.tile { background: var(--lg-tile); }
+.ovf-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; line-height: 1.3; }
+.ovf-app .ind { width: 6px; height: 3px; border-radius: 2px; background: var(--lg-ink-2); visibility: hidden; }
+.ovf-app.run .ind { visibility: visible; }
+.ovf-app.act .ind { width: 16px; background: var(--lg-acc); }
+
 /* DRAG TO REORDER (lane bardrag, 2026-09-29; bar.js "drag to reorder"). Transforms only, so a
    frame of a drag is a composite and never a layout. The neighbours slide aside on the theme's
    ease; the lifted icon follows the pointer with no transition, sits on the popover surface with
@@ -578,6 +639,24 @@ body[data-edge="top"] .pop { animation-name: pop-wipe-down; }
 .pop .item:hover { background: var(--lg-hover); color: var(--lg-ink); }
 .pop .item.danger:hover { color: var(--lg-warn); }
 .pop .item.armed { color: var(--lg-warn); background: var(--lg-warn-soft); }
+.pop .item:active { background: var(--lg-press); }
+.pop .item:disabled { opacity: .55; }
+.pop .item:disabled:hover { background: transparent; color: var(--lg-ink-2); }
+
+/* ---------------------------------------------------------------- the More menu (2026-09-29)
+   A menu row with its shortcut at the end; a copy that is not the real shell says so in one quiet
+   line; a problem is a warn glyph, its label, and the reason in quiet ink under it. */
+.pop .mitem { display: flex; align-items: center; gap: 12px; }
+.pop .mitem > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop .mitem kbd { flex: 0 0 auto; font: inherit; font-size: 11.5px; color: var(--lg-ink-3); }
+.pop .mwho { margin: -4px 0 8px; }
+.pop .mprob { display: flex; gap: 7px; align-items: flex-start; margin: 0 0 9px; color: var(--lg-ink-2); }
+.pop .mprob > svg { flex: 0 0 auto; margin-top: 1px; color: var(--lg-ink-3); }
+.pop .mprob.warn > svg, .pop .mprob.warn .mprob-l { color: var(--lg-warn); }
+.pop .mprob-t { min-width: 0; }
+.pop .mprob-l { color: var(--lg-ink); line-height: 1.35; }
+.pop .mprob-r { color: var(--lg-ink-3); line-height: 1.4; margin-top: 1px; overflow-wrap: anywhere; }
+.pop .hidgo { margin: -4px 0 8px; }
 .pop .mute { flex: 0 0 auto; padding: 5px 9px; border-radius: var(--lg-r-ctl); border: 0; background: var(--lg-sunk); color: var(--lg-ink-2); font: inherit; }
 .pop .mute[aria-pressed="true"] { background: var(--lg-acc); color: var(--lg-acc-on); }
 
@@ -870,7 +949,14 @@ body.pill .chips { display: none; }
   cursor: default;
   transition: background-color 150ms steps(2), color 150ms steps(2);
 }
+.calbtn:not(.today) { display: grid; place-items: center; padding: 0; }
 .calbtn:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.calbtn:active { background: var(--lg-press); }
+/* Today on today's month does nothing, and says so by looking it (2026-09-29) */
+.calbtn:disabled, .calbtn:disabled:hover { background: transparent; color: var(--lg-ink-3); opacity: .6; }
+/* Every control a popover holds gets the bar's focus ring and a quiet disabled look (bar lane,
+   2026-09-29): the calendar, the More menu and the apps-that-do-not-fit panel had neither. */
+.pop button:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; box-shadow: 0 0 0 2px var(--lg-acc-soft); }
 
 .calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
 .caldow { margin-bottom: 2px; }

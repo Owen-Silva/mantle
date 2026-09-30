@@ -97,7 +97,7 @@
   function on(channel, cb, onFail) {
     function broke(reason) {
       if (onFail) onFail(reason);
-      else fail('chan:' + channel, channel + ' off', reason, 'warn');
+      else fail('chan:' + channel, 'Part of the bar not updating', 'this part of the bar could not connect to Mantle, so it will not update until Mantle restarts', 'warn', channel + ': ' + reason);
     }
     if (!mantle || typeof mantle.on !== 'function') {
       broke('window.mantle.on is not available, so "' + channel + '" never updates');
@@ -119,14 +119,50 @@
   var failures = Object.create(null);
   var state = null;
 
-  function fail(key, label, reason, tone) {
+  /* PLAIN WORDS ON SCREEN (bar lane, 2026-09-29; BRIEF "no jargon on screen"). A reason that came
+     from main or the sidecar is written for a log, and it used to reach the chip, its tooltip and
+     the More menu as it was: "sidecar down", "bar.window close was refused", "(main.js
+     POPOVER_MAX)". The bar's own strings are now written plainly with the technical detail passed
+     to the console only (fail's 5th argument); this maps the few words that still arrive from
+     outside. The log keeps the original. */
+  var PLAIN = [
+    [/\bthe sidecar\b/gi, 'Mantle\'s helper'], [/\bsidecar\b/gi, 'Mantle\'s helper'],
+    [/\bthe bridge\b/gi, 'Mantle'], [/\bbridge\b/gi, 'Mantle'], [/\bwindow\.mantle\b/g, 'Mantle'],
+    [/\bpreload\b/gi, 'Mantle'], [/\brenderer\b/gi, 'bar'], [/\bIPC\b/g, 'Mantle'],
+    [/\bhwnds?\b/gi, 'window'], [/\bAUMID\b/g, 'app'], [/\bdryRun\b/g, 'test'],
+    [/\s*\((?:main\.js|lib\/|sidecar\/)[^)]*\)/g, ''],
+    [/\s*\(?\b(?:0x[0-9a-f]{8}|E(?:NOENT|ACCES|PERM|BUSY|TIMEDOUT|PIPE|CONNRESET))\b\)?/gi, ''],
+    [/\b(?:bar|qs|sys|state|jumplist|media|net|tray|osd|notifs|corners|shell|launcher|volume|battery|spotify|downloads|gamemode|powermode|topbar)\.[a-z][a-z.]*\b/g, 'Mantle'],
+    [/\bundefined\b|\bnull\b|\bNaN\b|\[object Object\]/g, 'nothing']
+  ];
+  function plain(s) {
+    s = String(s == null ? '' : s);
+    for (var i = 0; i < PLAIN.length; i++) s = s.replace(PLAIN[i][0], PLAIN[i][1]);
+    return s.replace(/Mantle(?:'s helper)? Mantle\b/g, 'Mantle').replace(/\s{2,}/g, ' ').trim();
+  }
+
+  /* MAIN'S OWN WORDS (r3 bar lane, 2026-09-30). The reasons in state.* are written for the log
+     ("helper exited: exit code 1", "test mode: hook not installed", "explorer exposes 0 legacy tray
+     buttons on this build"). A reason that is still technical after plain() is replaced by the
+     bar's own sentence for that problem; the original goes to the console once per change. */
+  var TECHY = /\b(?:hook|exit code|code \d|legacy|explorer|exposes|pid|exe|win32|hresult|stack|timed? ?out|\d+ ?ms|build|api|dll|handle|registry|nothing)\b|\.exe\b|0x[0-9a-f]/i;
+  var toldLog = Object.create(null);
+  function said(tag, raw, fallback) {
+    if (raw && toldLog[tag] !== raw) { toldLog[tag] = raw; console.log('[bar] ' + tag + ': ' + raw); }
+    var p = raw ? plain(raw) : '';
+    return p && !TECHY.test(p) ? cap(p) : fallback;
+  }
+  function cap(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  function fail(key, label, reason, tone, detail) {
     /* Re-reporting the SAME failure is a no-op. layoutDock() can raise the clipping failure on
        every resize frame, and renderChips() calls layoutDock() — without this guard that is a
        console flood and a re-entrant render loop. */
     var was = failures[key];
-    if (was && was.label === label && was.reason === reason && was.tone === (tone || '')) return;
-    failures[key] = { key: key, label: label, reason: reason, tone: tone || '' };
-    console.warn('[bar]', label, '—', reason);
+    var l = plain(label), r = cap(plain(reason));
+    if (was && was.label === l && was.reason === r && was.tone === (tone || '')) return;
+    failures[key] = { key: key, label: l, reason: r, tone: tone || '' };
+    console.warn('[bar]', label, '—', reason, detail ? '(' + detail + ')' : '');
     renderChips();
   }
   function clearFail(key) {
@@ -140,25 +176,32 @@
     out.sort(function (a, b) { return (a.key === 'bridge' ? 0 : 1) - (b.key === 'bridge' ? 0 : 1); });
     if (state) {
       // Contract: state.sidecar.status is 'ok' | 'starting' | 'down' (main session, 2026-09-21).
+      /* Labels are written for someone who is not Owen (2026-09-29): what stopped working, not
+         which part of Mantle it lives in. Main's own reason is used only when it reads plainly (said()). */
       if (state.sidecar && state.sidecar.status && state.sidecar.status !== 'ok')
-        out.push({ label: 'sidecar ' + state.sidecar.status, reason: state.sidecar.reason || 'the sidecar is not running and no reason was given', tone: state.sidecar.status === 'down' ? 'warn' : '' });
+        out.push({ label: state.sidecar.status === 'starting' ? 'Starting up' : 'Windows link lost',
+          reason: state.sidecar.status === 'starting'
+            ? 'Mantle is still connecting to Windows; apps, sound and network fill in within a few seconds'
+            : (said('sidecar', state.sidecar.reason, ''), 'Mantle cannot reach Windows right now, so apps, sound and network may not update. If it does not come back, restart Mantle from this menu'),
+          tone: state.sidecar.status === 'down' ? 'warn' : '' });
       // The taskbar only matters in live mode: in test mode Mantle deliberately leaves it alone.
       if (state.mode === 'live' && state.taskbar && state.taskbar.hidden === false)
-        out.push({ label: 'taskbar showing', reason: state.taskbar.reason || 'the Windows taskbar could not be hidden and no reason was given', tone: '' });
+        out.push({ label: 'Windows taskbar showing', reason: said('taskbar', state.taskbar.reason, 'Windows would not let Mantle hide its taskbar. Restarting Mantle usually fixes this'), tone: '' });
       if (state.desktop && state.desktop.attached === false)
-        out.push({ label: 'desktop off', reason: state.desktop.reason || 'the desktop layer is not attached and no reason was given', tone: '' });
-      if (state.hotkey && state.hotkey.winTap === false)
-        out.push({ label: 'hotkey off', reason: state.hotkey.reason || 'the global hotkey is not registered and no reason was given', tone: '' });
+        out.push({ label: 'Desktop not attached', reason: said('desktop', state.desktop.reason, 'Mantle\'s desktop could not sit on the wallpaper, so desktop icons may not show. Restarting Mantle usually fixes this'), tone: '' });
+      // A test copy leaves the Windows key to Windows on purpose: not a problem to report there.
+      if (state.hotkey && state.hotkey.winTap === false && state.mode !== 'test')
+        out.push({ label: 'Windows key not taken', reason: (said('hotkey', state.hotkey.reason, ''), 'Tapping the Windows key opens Windows\' Start, not Mantle\'s launcher. Restarting Mantle usually fixes this'), tone: '' });
       /* bar:{mode, revealed, reason} — lane A's own report about the reveal machinery. A reason
          at all means something is off (the edge watcher could not start, the bar is pinned open
          because a popover is up, …), so it is shown whatever `mode` says. */
       if (state.bar && state.bar.reason && state.bar.ok === false)   // main narrates healthy states too; only a not-ok reason is a chip
-        out.push({ label: 'bar ' + (state.bar.mode || 'mode?'), reason: state.bar.reason, tone: '' });
+        out.push({ label: 'Bar may not hide', reason: said('bar', state.bar.reason, 'The bar may stay up instead of tucking away. Restarting Mantle usually fixes this'), tone: '' });
       /* tray:{watch, reason} — watch:false means tray changes are not being followed, so what is
          drawn is a snapshot that will silently go stale. Suppressed when the tray is already
          saying it is unavailable in its own chip: one problem, one chip. */
       if (state.tray && state.tray.watch === false && !(state.tray.status === 'unavailable' || trayThrew))
-        out.push({ label: 'tray watch off', reason: state.tray.reason || 'tray changes are not being watched and no reason was given', tone: '' });
+        out.push({ label: 'Tray icons not updating', reason: said('traywatch', state.tray.reason, 'New or changed tray icons will not show until Mantle restarts'), tone: '' });
     }
     return out;
   }
@@ -295,7 +338,7 @@
 
   function setBackdrop(p) {
     if (!p || typeof p.png !== 'string' || p.png.slice(0, 5) !== 'data:') {
-      fail('backdrop', 'no blur', 'bar.backdrop arrived without a png data URL, so the bar cannot' +
+      fail('backdrop', 'Glass not blurred', 'Mantle did not get a picture of the screen behind the bar, so it cannot' +
         ' blur what is behind it and is showing a thicker tint instead' +
         (p && p.reason ? ': ' + p.reason : ''));
       return;
@@ -344,7 +387,7 @@
   var pointerIn = false;
   function hover(inside) {
     callR('bar.hover', { inside: inside }).then(function () { clearFail('hover'); }, function (e) {
-      fail('hover', 'hover off', 'bar.hover was refused, so the bar may not hide itself: ' + msg(e), 'warn');
+      fail('hover', 'Bar may not hide', 'Mantle did not hear that the pointer moved, so the bar may stay up: ' + msg(e), 'warn', 'bar.hover');
     });
   }
   el.bar.addEventListener('mouseenter', function () { pointerIn = true; hover(true); });
@@ -411,13 +454,18 @@
     var tip = name + (wins.length ? ' — ' + wins.length + (wins.length === 1 ? ' window' : ' windows') : '');
     /* An icon that is missing must say WHY on the item itself: a blank tile with no explanation is
        the silent failure this shell refuses. */
-    if (!it.icon) tip += '\n(no icon: ' + (it.iconReason || 'the sidecar gave no reason') + ')';
+    if (!it.icon) tip += '\n(no icon: ' + plain(it.iconReason || 'Windows gave no reason') + ')';
     /* Mantle's own app (Mantle Settings / Task Manager), and a pin of Windows' own that it stands in
        for (icons lane, 2026-09-28): say so, where Windows' own is, and why a click would open Windows'. */
     if (it.mantleApp && it.standsInFor) tip += '\n(' + (it.kind === 'pinned' && !it.selfPin ? 'Mantle\'s, in place of ' + it.standsInFor + '; ' : '') + 'right-click: ' + it.standsInFor + ')';
-    if (it.standInReason) tip += '\n(' + it.standInReason + ')';
-    if (wins.length > 1) tip += '\n(right-click: the window list)';
-    if (it.kind === 'pinned') tip += '\n(middle-click: new window)';
+    if (it.standInReason) tip += '\n(' + plain(it.standInReason) + ')';
+    /* The shortcuts, one plain line (2026-09-29): what the other two buttons do. Right-click is the
+       app's menu (jump list, pin, close) when that module loaded, else the window list. */
+    var how = [];
+    if (it.kind === 'pinned') how.push('Middle-click for a new window');
+    how.push(window.MantleJumpList ? 'right-click for more' : (wins.length > 1 ? 'right-click for its windows' : ''));
+    how = how.filter(Boolean).join(', ');
+    if (how) tip += '\n' + how.charAt(0).toUpperCase() + how.slice(1);
     /* While this icon's window flyout is up the tooltip is held back (b._fly): Chromium's tooltip
        is a window of its own and would open on top of the live previews. It comes back on close. */
     b._tip = tip;
@@ -465,12 +513,12 @@
     // mid-drag the DOM order is the drag's: the reply waits for the drop (dragCommit renders it)
     if (dragBusy()) { dragPending = res; return; }
     if (!res || typeof res !== 'object') {
-      fail('pinned', 'apps off', 'bar.pinned replied ' + (res === null ? 'null' : typeof res) + ' instead of {ok, reason, items}', 'warn');
+      fail('pinned', 'Apps not shown', 'the app list could not be read, so no apps are shown; restarting Mantle usually fixes this', 'warn', 'bar.pinned replied ' + (res === null ? 'null' : typeof res));
       return;
     }
     if (!Array.isArray(res.items)) {
-      fail('pinned', 'apps off', (res.ok === false ? (res.reason || 'bar.pinned replied ok:false and gave no reason')
-        : 'bar.pinned replied without an items array (got ' + typeof res.items + ')'), 'warn');
+      fail('pinned', 'Apps not shown', (res.ok === false ? (res.reason || 'the app list could not be read, and no reason was given')
+        : 'the app list could not be read, so no apps are shown; restarting Mantle usually fixes this'), 'warn', 'items: ' + typeof res.items);
       return;
     }
     /* PARTIAL IS NOT OFF. At startup the sidecar is still coming up, so the first reply is
@@ -480,9 +528,9 @@
        that ate the space the dock measures against. So render whatever arrived, and say only
        that it is incomplete; the next complete reply clears it. */
     if (res.ok === false && res.items.length) {
-      fail('pinned', 'apps partial', res.reason || 'bar.pinned replied ok:false and gave no reason — showing what it did send');
+      fail('pinned', 'Some apps still loading', res.reason || 'part of the app list could not be read yet; the rest is shown');
     } else if (res.ok === false) {
-      fail('pinned', 'apps off', res.reason || 'bar.pinned replied ok:false and gave no reason', 'warn');
+      fail('pinned', 'Apps not shown', res.reason || 'the app list could not be read, and no reason was given', 'warn');
       return;
     } else {
       clearFail('pinned');
@@ -531,7 +579,7 @@
     call('bar.pinned').then(function (r) { pinInFlight = false; renderDock(r); },
       function (e) {
         pinInFlight = false;
-        fail('pinned', 'apps off', 'bar.pinned was refused, so there are no icons to show: ' + msg(e), 'warn');
+        fail('pinned', 'Apps not shown', 'the app list could not be read, so there are no icons to show: ' + msg(e), 'warn');
       });
   }
 
@@ -618,15 +666,16 @@
 
   /* How many cells actually survive a given width, so the chip can say how many are hidden rather
      than just that some are. The divider counts as part of the first running item. */
-  function fitCount(width) {
+  function fitInfo(width) {
     var used = 0, n = 0;
     for (var i = 0; i < items.length; i++) {
       var add = (i ? GAP : 0) + CELL + (items[i].kind === 'running' && i > 0 && items[i - 1].kind !== 'running' ? DIV : 0);
       if (used + add > width) break;
       used += add; n++;
     }
-    return n;
+    return { n: n, used: used };
   }
+  function fitCount(width) { return fitInfo(width).n; }
 
   /* decide(): the whole rule in one pure function of (measurement, need). Returns the cap, the
      shift off centre, and how many icons are lost — nothing here touches the DOM. */
@@ -639,11 +688,17 @@
       else if (r > m.spanR) shift = m.spanR - r;     // pushed left, off the clock (the usual one)
       return { cap: 'none', shift: shift, hidden: 0 };
     }
-    /* Genuinely too many: fill the span from its left edge and say what was lost. */
+    /* Genuinely too many (OVERFLOW, 2026-09-29): as many as fit with room kept for the "+N" button,
+       filled from the span's left edge; the rest wait behind that button. They used to be clipped
+       off the end with a chip saying how many, and could not be reached at all. `n` is how many
+       icons stay on the strip; `w` is the strip's width with the button, which the shift centres. */
+    var fit = fitInfo(m.span - CELL - GAP);
+    var w = fit.n ? fit.used + GAP + CELL : CELL;
     return {
       cap: Math.max(Math.round(m.span), CELL) + 'px',
-      shift: m.spanL - (m.centre - Math.max(m.span, CELL) / 2),
-      hidden: Math.max(1, items.length - fitCount(m.span))
+      shift: m.spanL - (m.centre - w / 2),
+      hidden: Math.max(1, items.length - fit.n),
+      n: fit.n
     };
   }
 
@@ -657,10 +712,49 @@
     return (revealed ? 'up:' : 'down:') + m.w + ':' + need + ':' + Math.round(m.spanR);
   }
 
-  function applyDock(d) {
+  function applyDock(d, settled) {
     el.dock.style.setProperty('--dock-max', d.cap);
     el.dock.style.setProperty('--dock-shift', Math.round(d.shift) + 'px');
+    /* Which icons sit behind "+N" is decided only by a SETTLED judgement, never a frame of the
+       entrance: the button must not blink in and out while the pill grows. */
+    if (settled) applyOverflow(d.hidden ? d.n : items.length);
   }
+
+  /* THE "+N" BUTTON (2026-09-29). The icons past `keep` get .ovf (display:none) and the button,
+     the dock's last child, says how many and opens them in a panel (buildOvfPop). The hidden ones
+     are always the TAIL of the order, so a drag among the icons on the strip keeps its indexes. */
+  var ovfBtn = document.createElement('button');
+  ovfBtn.type = 'button';
+  ovfBtn.className = 'dmore';
+  ovfBtn.id = 'dock-more';
+  ovfBtn.hidden = true;
+  el.dock.appendChild(ovfBtn);
+  var ovfSig = '';                     // which icons wait behind "+N", and their running marks
+  function applyOverflow(keep) {
+    var i = 0, hidden = 0, divHidden = false, sig = '';
+    for (var n = el.dock.firstChild; n; n = n.nextSibling) {
+      if (n === ovfBtn) continue;
+      if (n === divEl) { divHidden = i >= keep; if (n.classList.contains('ovf') !== divHidden) n.classList.toggle('ovf', divHidden); continue; }
+      if (!n.classList || !n.classList.contains('cell')) continue;
+      var out = i >= keep;
+      if (out) { hidden++; sig += n.dataset.id + (n.classList.contains('run') ? '*' : '') + (n.classList.contains('act') ? '!' : '') + '|'; }
+      if (n.classList.contains('ovf') !== out) n.classList.toggle('ovf', out);
+      i++;
+    }
+    if (el.dock.lastChild !== ovfBtn) el.dock.appendChild(ovfBtn);   // renders insert cells before it; keep it last
+    ovfBtn.hidden = !hidden;
+    var label = '+' + hidden;
+    if (ovfBtn.textContent !== label) ovfBtn.textContent = label;
+    var tip = hidden + (hidden === 1 ? ' more app' : ' more apps') + ' that do not fit';
+    if (ovfBtn.title !== tip) { ovfBtn.title = tip; ovfBtn.setAttribute('aria-label', tip); }
+    if (!hidden && popKey === 'ovf') closePop();
+    /* An open panel is rebuilt only when what it lists changed: layoutDock runs on every render,
+       and a rebuild each time would also re-ask main for the panel's room. */
+    else if (popKey === 'ovf' && sig !== ovfSig) openPop('ovf', ovfBtn, buildOvfPop, { rebuild: true });
+    ovfSig = sig;
+  }
+  /* Where a popover for icon `b` is anchored: the icon, or "+N" when the icon waits behind it. */
+  function anchorOf(b) { return b && b.classList.contains('ovf') && !ovfBtn.hidden ? ovfBtn : b; }
 
   function layoutDock() {
     var m = measure();
@@ -706,16 +800,13 @@
     if (key !== lastKey) {
       lastKey = key;
       frozen = decide(m, need);
-      // Only while the bar is up: parked (hidden) the window sits at its narrow start width, and a
-      // report from there is a false alarm (seen live as "507px in a 695px bar" on every hide).
+      /* No "N apps hidden" chip any more (2026-09-29): the "+N" button at the end of the strip
+         says it where the apps are, and opens them. The numbers stay in the log. */
       if (revealed && frozen.hidden)
-        fail('dockclip', frozen.hidden + ' app' + (frozen.hidden === 1 ? '' : 's') + ' hidden',
-          items.length + ' app icons need ' + need + 'px and the free span between the launcher and' +
-          ' the readouts is only ' + Math.round(m.span) + 'px in a ' + m.w + 'px bar, so the last ' +
-          frozen.hidden + ' cannot be shown');
-      else clearFail('dockclip');
+        console.log('[bar] ' + frozen.hidden + ' of ' + items.length + ' apps behind +N: they need ' + need + 'px, the span is ' + Math.round(m.span) + 'px in a ' + m.w + 'px bar');
+      clearFail('dockclip');
     }
-    applyDock(frozen);
+    applyDock(frozen, true);
   }
   var mediaFitAfter = 0;               // set by slide(): not before the pill has landed
 
@@ -757,9 +848,16 @@
 
   /* act(): fire a bridge call for a click and, if it fails, put the reason in the bar.
      Every user action goes through here, so no click can ever do nothing without saying why. */
+  /* What a failed click reads as on the strip: what the user tried, in their words. */
+  var ACT_LABEL = {
+    open: 'App did not open', window: 'Window did not switch', launcher: 'Launcher did not open',
+    tray: 'Tray icon did not respond', settings: 'Settings did not open'
+  };
+  /* A module file that did not load: said once, the same way, with what to do about it. */
+  var MISSING = 'part of Mantle did not load (restarting Mantle usually fixes this), so ';
   function act(channel, payload, what) {
     return callR(channel, payload).then(function (r) { clearFail('act'); return r; }, function (e) {
-      fail('act', (what || channel.split('.')[0]) + ' failed', channel + ' was refused: ' + msg(e), 'warn');
+      fail('act', ACT_LABEL[what] || 'That did not work', msg(e), 'warn', channel);
     });
   }
 
@@ -868,7 +966,7 @@
     if (!it || !winsOf(it).length) return;
     var key = popKeyOf(b);
     if (popKey === key && fly) { fly.by = by === 'click' ? 'click' : fly.by; return; }   // already up: a click only takes ownership
-    openPop(key, b, function (pop) { flyBuild(pop, b, it, by); }, { swap: isFlyKey(popKey) })
+    openPop(key, anchorOf(b), function (pop) { flyBuild(pop, b, it, by); }, { swap: isFlyKey(popKey) })
       .then(function () { flyRoomReady(key); });
   }
 
@@ -905,7 +1003,7 @@
      mode: placed mid-transition, the flyout sat 41 css px to the right of its icon. */
   el.bar.addEventListener('transitionend', function (ev) {
     if (ev.target !== el.bar || !fly || !fly.ready || !isFlyKey(popKey)) return;
-    if (fly.cell && fly.cell.isConnected) popPlace(fly.cell);
+    if (fly.cell && fly.cell.isConnected) popPlace(anchorOf(fly.cell));
     flyQueueSync();
   });
 
@@ -1005,8 +1103,8 @@
       card.classList.remove('closing', 'live');
       card.classList.add('fail', 'held');
       x.disabled = false;
-      fail('act', 'close failed', 'bar.window close was refused: ' + msg(e), 'warn');
-      why.textContent = 'not closed: ' + msg(e);
+      fail('act', 'Window did not close', msg(e), 'warn', 'bar.window close');
+      why.textContent = 'Not closed: ' + plain(msg(e));
       flyQueueSync();   // resend without this card, so main takes its picture off the words
     });
   }
@@ -1105,7 +1203,7 @@
     var b = cells[popKey.slice(4)];
     if (!b || !winsOf(b._item).length) { closePop(); return; }
     var by = fly.by;
-    openPop(popKey, b, function (pop) { flyBuild(pop, b, b._item, by); }, { swap: true, rebuild: true })
+    openPop(popKey, anchorOf(b), function (pop) { flyBuild(pop, b, b._item, by); }, { swap: true, rebuild: true })
       .then(function () { flyRoomReady(popKeyOf(b)); });
   }
 
@@ -1204,13 +1302,13 @@
   function jlKey(b) { return 'jl:' + b.dataset.key; }
   function openJump(b) {
     var it = b._item;
-    openPop(jlKey(b), b, function (pop) {
+    openPop(jlKey(b), anchorOf(b), function (pop) {
       JL.open(pop, it, {
         call: call, callR: callR, msg: msg,
         resize: function () {
           if (popKey !== jlKey(b)) return;
           callR('bar.popover', { open: true, height: popNeed(), key: popKey }).catch(function () {});
-          popPlace(b);
+          popPlace(anchorOf(b));
         },
         close: closePop,
         refreshPinned: refreshPinned,
@@ -1236,6 +1334,58 @@
     if (fly && popKey === popKeyOf(b)) { fly.by = 'click'; return; }
     openAppPop(b, b._item);
   });
+
+  /* ================================================================= the apps behind "+N"
+
+     Windows 11's taskbar overflow (2026-09-29). Owen: "i want to be able to see all my pinned
+     stuff not just some of them". The panel lists exactly the icons the strip could not fit, in
+     their order, each with its name (a grid of bare icons is a guessing game). A tile does what its
+     icon would: click opens or switches (two or more windows: the previews, over "+N"), middle-click
+     a new window, right-click the app's menu. */
+  function buildOvfPop(pop) {
+    pop.classList.add('ovf');
+    var grid = document.createElement('div');
+    grid.className = 'ovf-grid';
+    for (var n = el.dock.firstChild; n; n = n.nextSibling) {
+      if (!n.classList || !n.classList.contains('cell') || !n.classList.contains('ovf') || !n._item) continue;
+      grid.appendChild(ovfTile(n));
+    }
+    // up to 4 across; fewer apps make a narrower panel instead of an empty column on the right
+    grid.style.gridTemplateColumns = 'repeat(' + Math.max(1, Math.min(4, grid.childNodes.length)) + ', 76px)';
+    pop.appendChild(grid);
+  }
+  function ovfTile(b) {
+    var it = b._item, name = it.name || it.exe || 'app';
+    var t = document.createElement('button');
+    t.type = 'button';
+    t.className = 'ovf-app' + (b.classList.contains('run') ? ' run' : '') + (b.classList.contains('act') ? ' act' : '');
+    t.title = b._tip || name;
+    var ico = b.firstChild.cloneNode(true);       // the same decoded icon (or letter tile) as the strip's
+    ico.className = (ico.className || 'ico') + ' ovf-ico';
+    var nm = document.createElement('span'); nm.className = 'ovf-name'; nm.textContent = name;
+    var ind = document.createElement('span'); ind.className = 'ind';
+    t.appendChild(ico); t.appendChild(nm); t.appendChild(ind);
+    t.addEventListener('click', function () {
+      closePop();
+      act('bar.open', { id: b.dataset.id }, 'open').then(function (r) {
+        if (r && r.action === 'list') openAppPop(b, b._item);
+        fellBack(r);
+      });
+    });
+    t.addEventListener('mousedown', function (ev) { if (ev.button === 1) ev.preventDefault(); });
+    t.addEventListener('auxclick', function (ev) {
+      if (ev.button !== 1) return;
+      ev.preventDefault();
+      closePop();
+      act('bar.open', { id: b.dataset.id, fresh: true }, 'open').then(fellBack);
+    });
+    t.addEventListener('contextmenu', function (ev) {
+      ev.preventDefault();
+      if (JL && b._item) openJump(b);
+    });
+    return t;
+  }
+  ovfBtn.addEventListener('click', function () { openPop('ovf', ovfBtn, buildOvfPop); });
 
   /* ================================================================= drag to reorder
 
@@ -1321,7 +1471,7 @@
     var d = drag, b = d.b;
     d.lifted = true;
     d.kind = kindOf(b._item);
-    d.list = groupCells(d.kind);
+    d.list = groupCells(d.kind).filter(function (c) { return !c.classList.contains('ovf'); });   // not the ones behind +N
     d.from = d.to = d.list.indexOf(b);
     // the one layout read of the whole drag
     d.slots = d.list.map(function (c) { return c.getBoundingClientRect().left; });
@@ -1520,7 +1670,7 @@
 
   function renderWindows(list) {
     if (!Array.isArray(list)) {
-      fail('windows', 'windows off', 'the "windows" channel sent ' + (list === null ? 'null' : typeof list) + ' instead of an array', 'warn');
+      fail('windows', 'Open windows not updating', 'the list of open windows could not be read, so the running marks may be out of date', 'warn', 'windows sent ' + (list === null ? 'null' : typeof list));
       return;
     }
     clearFail('windows');
@@ -1596,7 +1746,7 @@
     var name = it.title || it.tooltip || it.id || 'tray icon';
     var can = it.clickable !== false;
     b.className = 'btn ti' + (can ? '' : ' off');
-    b.title = can ? name : name + '\n\n' + (it.reason || 'Mantle cannot click this icon, and the sidecar did not say why');
+    b.title = can ? name : name + '\n\n' + plain(it.reason || 'Mantle cannot click this icon, and Windows did not say why');
     b.setAttribute('aria-label', name);
     if (!can) b.setAttribute('aria-disabled', 'true');
     var ico = document.createElement('span');
@@ -1616,12 +1766,12 @@
       ico.classList.add('letter');
     }
     b.addEventListener('click', function () {
-      if (!can) { onRefuse(it.reason || 'Mantle cannot click ' + name + ', and the sidecar did not say why'); return; }
+      if (!can) { onRefuse(plain(it.reason || 'Mantle cannot click ' + name + ', and Windows did not say why')); return; }
       act('tray.click', { id: it.id, button: 'left' }, 'tray');
     });
     b.addEventListener('contextmenu', function (ev) {
       ev.preventDefault();
-      if (!can) { onRefuse(it.reason || 'Mantle cannot click ' + name + ', and the sidecar did not say why'); return; }
+      if (!can) { onRefuse(plain(it.reason || 'Mantle cannot click ' + name + ', and Windows did not say why')); return; }
       act('tray.click', { id: it.id, button: 'right' }, 'tray');    // the sidecar says why menus are unreachable
     });
     return b;
@@ -1639,11 +1789,26 @@
      carries the news. data: URLs never taint a canvas, so getImageData is allowed here. */
   var LIGHT_LUMA = 0.75;                // 0..1; a white glyph measures ~1.0, every coloured icon here 0.34-0.54
   var tones = Object.create(null);      // icon data URL -> {v, why}, or an array of waiters
+  /* BOUNDED (2026-09-29). The cache is keyed by the icon's whole data URL (a few KB each), and a
+     tray icon that redraws itself (a sync spinner, a badge count, a meter) is a new key every
+     time: over a day the page kept every frame it had ever seen. Now the oldest settled entries go
+     once there are TONE_MAX; an icon still on screen is just measured again if it comes back. */
+  var TONE_MAX = 48, toneOrder = [];
+  function toneKeep(src) {
+    toneOrder.push(src);
+    for (var i = 0; toneOrder.length > TONE_MAX && i < toneOrder.length; ) {
+      var k = toneOrder[i];
+      if (Array.isArray(tones[k])) { i++; continue; }    // still being measured: its waiters need it
+      delete tones[k];
+      toneOrder.splice(i, 1);
+    }
+  }
   function toneOf(src, done) {
     var t = tones[src];
     if (t && !Array.isArray(t)) { done(t.v, t.why); return; }
     if (t) { t.push(done); return; }
     tones[src] = [done];
+    toneKeep(src);
     var img = new Image();
     function settle(v, why) {
       var waiters = tones[src];
@@ -1733,12 +1898,12 @@
     el.pop.classList.add('popcapped');
     el.pop.style.maxHeight = Math.max(80, room - 16) + 'px';
     popNote('Taller than the screen allows: scroll for the rest',
-      'This panel needs ' + need + ' px and a popover gets at most ' + max + ' px (main.js POPOVER_MAX), so it scrolls');
+      'This panel is taller than the room above the bar, so it scrolls');
   }
 
   function popAsk(key, need) {
     callR('bar.popover', { open: true, height: need, key: key }).catch(function (e) {
-      if (popKey === key) popNote('This panel may be clipped: bar.popover — ' + msg(e));
+      if (popKey === key) popNote('Part of this panel may be cut off: ' + plain(msg(e)));
     });
   }
 
@@ -1814,7 +1979,7 @@
       if (popKey !== key) return;
       var note = document.createElement('div');
       note.className = 'note';
-      note.textContent = 'this popover may be clipped: bar.popover — ' + msg(e);
+      note.textContent = 'Part of this panel may be cut off: ' + plain(msg(e));
       el.pop.appendChild(note);
     });
 
@@ -1839,7 +2004,7 @@
     if (!popKey) return;
     if (el.pop.contains(ev.target)) return;
     // the anchors toggle themselves, so a click on one must not also be an outside click
-    if (ev.target.closest && ev.target.closest('#volume, #network, #battery, #clock, #notifs, #downloads, #more, #media, .cell')) return;
+    if (ev.target.closest && ev.target.closest('#volume, #network, #battery, #clock, #notifs, #downloads, #more, #media, .cell, #dock-more')) return;
     closePop();
   }, true);
   document.addEventListener('keydown', function (ev) {
@@ -1903,7 +2068,7 @@
      if the last 10% is one click away. A refused key press lands in the state strip. */
   function keys(combo, what) {
     callR('sys.keys', { combo: combo }).then(function () { clearFail('keys'); }, function (e) {
-      fail('keys', what + ' failed', 'sys.keys ' + combo + ' was refused, so the Windows flyout did not open: ' + msg(e), 'warn');
+      fail('keys', 'Windows panel did not open', 'Windows did not open its ' + what + ' panel: ' + msg(e), 'warn', 'sys.keys ' + combo);
     });
   }
 
@@ -1967,7 +2132,7 @@
       qsTake(d); clearFail('qs');
       return d;
     }, function (e) {
-      fail('qs', 'quick settings off', 'qs.get was refused, so the panel cannot read the system: ' + msg(e), 'warn');
+      fail('qs', 'Quick Settings not reading', 'the settings could not be read, so the panel may show old values: ' + msg(e), 'warn', 'qs.get');
       throw e;
     });
   }
@@ -1976,7 +2141,7 @@
      watch, which pushes each part the moment it changes (2026-09-23; it was a 2 s re-read). */
   function qsWatch(on) {
     callR('qs.watch', { on: !!on }).then(function () { clearFail('qswatch'); }, function (e) {
-      if (on) fail('qswatch', 'qs stale', 'qs.watch was refused, so the panel shows a snapshot and will not update itself: ' + msg(e));
+      if (on) fail('qswatch', 'Quick Settings not live', 'the panel shows the values from when it opened and will not follow changes: ' + msg(e), '', 'qs.watch');
     });
   }
 
@@ -2025,7 +2190,7 @@
       if (r.ok === false) {
         qsNote[key] = part === 'bluetooth' && window.MantleBt && MantleBt.refusedNote
           ? MantleBt.refusedNote(r.reason, value) : qsWhy(part, r.reason);
-        fail('qsset', part + ' failed', 'qs.set ' + part + ' was refused: ' + (r.reason || 'no reason given'), 'warn');
+        fail('qsset', qsLabel(part) + ' did not change', r.reason || 'Windows did not say why', 'warn', 'qs.set ' + part);
         // no read-back came with it (an unknown part, a bad value): what the system says, again
         if (!r.state) qsSnapshot().then(qsRepaint, qsRepaint);
       } else clearFail('qsset');
@@ -2034,7 +2199,7 @@
     }, function (e) {
       settle();
       qsNote[key] = qsWhy(part, msg(e));
-      fail('qsset', part + ' failed', 'qs.set ' + part + ' was refused: ' + msg(e), 'warn');
+      fail('qsset', qsLabel(part) + ' did not change', msg(e), 'warn', 'qs.set ' + part);
       qsSnapshot().then(qsRepaint, qsRepaint); // the guess is undone by what the system says
       qsRepaint();
       return { ok: false, part: part, reason: msg(e) };
@@ -2160,10 +2325,19 @@
           }, { minGapMs: 16, onIdle: function () { qsRepaint(); } })
         : { push: function (v) { qsSet(setPart, v, function (p) { p.level = v; }); }, busy: function () { return false; } };
       qsHold[part] = function () { return sl.dragging || sl.send.busy(); };
-      range.addEventListener('pointerdown', function () { sl.dragging = true; });
-      var letGo = function () { if (sl.dragging) { sl.dragging = false; qsRepaint(); } };
-      window.addEventListener('pointerup', letGo);
-      window.addEventListener('pointercancel', letGo);
+      /* The release is heard on the WINDOW (the pointer may leave the slider), but only for the
+         press that needs it (2026-09-29): these two were added on every panel open and never
+         removed, 4 more listeners per open, each holding a closed panel's controls. */
+      var letGo = function () {
+        window.removeEventListener('pointerup', letGo);
+        window.removeEventListener('pointercancel', letGo);
+        if (sl.dragging) { sl.dragging = false; qsRepaint(); }
+      };
+      range.addEventListener('pointerdown', function () {
+        sl.dragging = true;
+        window.addEventListener('pointerup', letGo);
+        window.addEventListener('pointercancel', letGo);
+      });
       range.addEventListener('input', function () {
         var v = Number(range.value);
         val.textContent = v + '%';
@@ -2195,20 +2369,20 @@
        panel's optimistic pattern with the read-back deciding (ui/bar/powermode.js). Muted with its
        reason when Windows would not apply it (any plan but Balanced). */
     if (window.MantlePowerMode) MantlePowerMode.attach(pop, { call: call, on: on }, notes);
-    else fail('powermode', 'power mode missing', 'ui/bar/powermode.js did not load, so quick settings has no power-mode switch', 'warn');
+    else fail('powermode', 'Power mode missing', MISSING + 'Quick Settings has no power mode switch', 'warn', 'powermode.js did not load');
     /* GAME MODE (lane gamemode, 2026-09-25): on/off, what it did and did not do, and why (ui/bar/gamemode.js). */
     if (window.MantleGameMode) MantleGameMode.attach(pop, { call: call, on: on }, notes);
-    else fail('gamemode', 'game mode missing', 'ui/bar/gamemode.js did not load, so quick settings has no Game mode tile', 'warn');
+    else fail('gamemode', 'Game mode missing', MISSING + 'Quick Settings has no Game mode tile', 'warn', 'gamemode.js did not load');
     /* TOP BAR (lane tbvideo, 2026-09-26): hide / show it by hand, and "Hidden · Win+Alt+T to show" while it is (ui/bar/topbarhide.js). */
     if (window.MantleTopbarHide) MantleTopbarHide.attach(pop, { call: call, on: on }, notes);
-    else fail('topbarhide', 'top bar row missing', 'ui/bar/topbarhide.js did not load, so quick settings cannot show a hidden top bar again (Win+Alt+T still does)', 'warn');
+    else fail('topbarhide', 'Top bar row missing', MISSING + 'Quick Settings cannot show a hidden top bar again (Win+Alt+T still does)', 'warn', 'topbarhide.js did not load');
     /* HOT CORNERS (lane corners, 2026-09-27): what each screen corner does (ui/bar/corners.js); its choices open below the grid, so it asks for room again. */
     if (window.MantleCorners) MantleCorners.attach(pop, { call: call, on: on, resize: function () {
       if (popKey === 'qs') callR('bar.popover', { open: true, height: popNeed(), key: 'qs' }).catch(function (e) {
-        if (popKey === 'qs') popNote('This panel may be clipped: bar.popover — ' + msg(e));
+        if (popKey === 'qs') popNote('Part of this panel may be cut off: ' + plain(msg(e)));
       });
     } }, notes);
-    else fail('corners', 'hot corners row missing', 'ui/bar/corners.js did not load, so quick settings cannot change what the screen corners do', 'warn');
+    else fail('corners', 'Hot corners row missing', MISSING + 'Quick Settings cannot change what the screen corners do', 'warn', 'corners.js did not load');
 
     var foot = document.createElement('div'); foot.className = 'qsfoot';
     var power = document.createElement('div'); power.className = 'qspower';
@@ -2520,16 +2694,27 @@
      The clock opens a month, the way Windows' does. Windows puts the notification centre above
      it; Mantle's is the bell's own panel (ui/bar/notifications.js, 2026-09-22), and the link at
      the bottom goes there. */
-  var calShown = null;          // the 1st of the month on screen; null = follow today
+  var calShown = null;          // the 1st of the month on screen
 
   function sameDay(a, b) {
     return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   }
 
+  /* A chevron drawn in the bar's icon family (1.25 stroke on the 16 grid), not a typed '‹' whose
+     weight and baseline follow the font. dir: -1 = left, 1 = right. */
+  function chevron(dir) {
+    return svg('<path d="' + (dir < 0 ? 'M9.8 3.8L5.6 8l4.2 4.2' : 'M6.2 3.8L10.4 8l-4.2 4.2') +
+      '" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>', 14);
+  }
+
   function buildCalPop(pop) {
     pop.classList.add('cal');
     var today = new Date();
-    if (!calShown) calShown = new Date(today.getFullYear(), today.getMonth(), 1);
+    /* EVERY open starts on today's month (2026-09-29). It used to be set once, on the first open of
+       the page's life, and kept: the bar lives for days, so from the 1st of the next month the clock
+       opened the calendar on the month before, with no day marked today; and a month left open on
+       Friday was still there on Monday. Windows' calendar always opens on today. */
+    calShown = new Date(today.getFullYear(), today.getMonth(), 1);
 
     var head = document.createElement('div'); head.className = 'calhead';
     var big = document.createElement('div'); big.className = 'big';
@@ -2538,23 +2723,23 @@
     pop.appendChild(head);
 
     var nav = document.createElement('div'); nav.className = 'calnav';
-    function navBtn(text, tip, fn) {
+    function navBtn(html, tip, fn, cls) {
       var b = document.createElement('button');
-      b.type = 'button'; b.className = 'calbtn'; b.textContent = text; b.title = tip;
+      b.type = 'button'; b.className = 'calbtn' + (cls ? ' ' + cls : ''); b.title = tip;
+      b.setAttribute('aria-label', tip);
+      if (cls) b.textContent = html; else b.innerHTML = html;
       b.addEventListener('click', fn);
       return b;
     }
+    function step(n) { calShown = new Date(calShown.getFullYear(), calShown.getMonth() + n, 1); paintGrid(); }
     var title = document.createElement('div'); title.className = 'caltitle';
-    var prev = navBtn('‹', 'Previous month', function () {
-      calShown = new Date(calShown.getFullYear(), calShown.getMonth() - 1, 1); paintGrid();
-    });
-    var next = navBtn('›', 'Next month', function () {
-      calShown = new Date(calShown.getFullYear(), calShown.getMonth() + 1, 1); paintGrid();
-    });
+    title.setAttribute('aria-live', 'polite');
+    var prev = navBtn(chevron(-1), 'Previous month', function () { step(-1); });
+    var next = navBtn(chevron(1), 'Next month', function () { step(1); });
     var now = navBtn('Today', 'Back to this month', function () {
       var t = new Date();
       calShown = new Date(t.getFullYear(), t.getMonth(), 1); paintGrid();
-    });
+    }, 'today');
     nav.appendChild(title); nav.appendChild(now); nav.appendChild(prev); nav.appendChild(next);
     pop.appendChild(nav);
 
@@ -2571,6 +2756,18 @@
 
     var grid = document.createElement('div'); grid.className = 'calgrid';
     pop.appendChild(grid);
+    /* The wheel turns the months, the way Windows' calendar does (2026-09-29): down = later. One
+       month per notch whatever the device's delta, and a touchpad's stream of small deltas is
+       summed to a notch, so one flick does not fly through a year. */
+    var wheelSum = 0;
+    pop.addEventListener('wheel', function (ev) {
+      if (!ev.target.closest || !ev.target.closest('.calgrid, .calnav')) return;
+      ev.preventDefault();
+      wheelSum += ev.deltaY;
+      if (Math.abs(wheelSum) < 50) return;
+      step(wheelSum > 0 ? 1 : -1);
+      wheelSum = 0;
+    }, { passive: false });
 
     var foot = document.createElement('div'); foot.className = 'calfoot';
     var link = document.createElement('button');
@@ -2589,6 +2786,7 @@
     function paintGrid() {
       var t = new Date();
       title.textContent = calShown.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      now.disabled = calShown.getFullYear() === t.getFullYear() && calShown.getMonth() === t.getMonth();
       grid.textContent = '';
       var first = new Date(calShown.getFullYear(), calShown.getMonth(), 1);
       var start = new Date(first);
@@ -2679,7 +2877,7 @@
   /* A refusal goes where the eye is: into the open card, or a chip when it came from the bar. */
   function mediaSay(text, where) {
     if (where === 'card' && popKey === 'media') { mediaNote = text; if (mediaPaint) mediaPaint(); }
-    else fail('mediactl', 'play/pause refused', text, 'warn');
+    else fail('mediactl', 'Playback did not respond', text, 'warn');
   }
 
   function mediaDo(action, where) {
@@ -2723,7 +2921,7 @@
   function renderMedia(p) {
     media = p || null;
     mediaAt = Date.now();
-    if (media && media.ok === false) fail('media', 'now playing off', media.reason || 'now playing could not be read, and main gave no reason', 'warn');
+    if (media && media.ok === false) fail('media', 'Now playing not reading', media.reason || 'what is playing could not be read, and no reason was given', 'warn');
     else clearFail('media');
     var s = mediaShown();
     el.media.hidden = !s;
@@ -3019,7 +3217,7 @@
       var h = popNeed();
       if (mediaRoom && h !== mediaRoom && popKey === 'media') {
         callR('bar.popover', { open: true, height: h, key: 'media' }).then(null, function (e) {
-          note.textContent = 'this card may be clipped: bar.popover — ' + msg(e);
+          note.textContent = 'Part of this card may be cut off: ' + plain(msg(e));
           note.hidden = false;
         });
       }
@@ -3051,25 +3249,31 @@
     var h = document.createElement('h3');
     h.textContent = 'Mantle';
     pop.appendChild(h);
-    /* Which mode and which bridge, always in words: a mock bridge must never be mistakable for
-       the real shell, and "live" vs "test" changes what Restore/Quit actually do. */
-    var who = document.createElement('div');
-    who.className = 'sub';
-    who.style.margin = '-4px 0 8px';
-    who.textContent = (state && state.mode ? state.mode + ' mode' : 'mode unknown') + ' · ' +
-      (state && state.bar && state.bar.mode ? 'bar ' + state.bar.mode + ' · ' : '') +
-      (!mantle ? 'no bridge'
-        : failures.bridge ? 'bridge failing'          // never claim "ok" while a chip says otherwise
-        : mantle.mode === 'mock' ? 'mock bridge'
-        : 'bridge ok');
-    pop.appendChild(who);
-    if ((state && state.tray && state.tray.status === 'unavailable') || trayThrew) {
-      var trayNote = document.createElement('div');
-      trayNote.className = 'sub';
-      trayNote.style.margin = '-2px 0 8px';
-      trayNote.textContent = 'notification area: ' + ((state && state.tray && state.tray.reason) || trayThrew || 'unavailable, and no reason was given');
-      pop.appendChild(trayNote);
+    /* MINIMAL (2026-09-29): a healthy live Mantle shows no status line at all ("live mode · bar
+       pill · bridge ok" was status nobody acts on, in words nobody but Owen reads). A copy that is
+       NOT the real shell still says so, because it changes what Restore and Quit do. */
+    var copy = !mantle ? '' : mantle.mode === 'mock' ? 'Preview: not connected to Windows'
+      : (state && state.mode === 'test') ? 'Test copy: it changes nothing on this PC' : '';
+    if (copy) {
+      var who = document.createElement('div');
+      who.className = 'sub mwho';
+      who.textContent = copy;
+      pop.appendChild(who);
     }
+    /* Problems first, each as a warn glyph and its label, the reason under it in quiet ink. */
+    var probs = chipData();
+    if ((state && state.tray && state.tray.status === 'unavailable') || trayThrew)
+      probs.push({ label: 'Tray icons not shown', reason: said('tray', (state && state.tray && state.tray.reason) || trayThrew, 'Windows did not share its tray icons, so they are not shown here'), tone: '' });
+    probs.forEach(function (c) {
+      var line = document.createElement('div');
+      line.className = 'mprob' + (c.tone === 'warn' ? ' warn' : '');
+      line.innerHTML = svg('<path d="M8 2.4 14 13H2z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/><path d="M8 6.4v3.1" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/><circle cx="8" cy="11.3" r=".8" fill="currentColor"/>', 14);
+      var tx = document.createElement('div'); tx.className = 'mprob-t';
+      var lb = document.createElement('div'); lb.className = 'mprob-l'; lb.textContent = c.label;
+      var rs = document.createElement('div'); rs.className = 'mprob-r'; rs.textContent = c.reason;
+      tx.appendChild(lb); tx.appendChild(rs); line.appendChild(tx);
+      pop.appendChild(line);
+    });
     /* The tray icons Windows keeps in its hidden-icons flyout: listed, dimmed, never clicked.
        Hover says why per icon (the sidecar's words, which name the Settings switch); a click says
        it in the line under the row, so a click on one is never a silent nothing. */
@@ -3082,26 +3286,39 @@
       row.className = 'hidtray';
       var why = document.createElement('div');
       why.className = 'sub hidwhy';
-      why.textContent = 'Windows keeps these in its hidden-icons flyout, which Mantle cannot reach. Turn one On under Settings › Personalization › Taskbar › Other system tray icons and it becomes clickable here.';
+      why.textContent = 'Windows hides these, so Mantle can\'t click them. Turn one on in taskbar settings to use it here.';
       trayHidden.forEach(function (it) {
         row.appendChild(trayButton(it, function (reason) { why.textContent = reason; why.classList.add('said'); }));
       });
       pop.appendChild(row);
       pop.appendChild(why);
+      /* No dead end: the switch the line names is one click away (Mantle's page when it has one). */
+      var tbs = document.createElement('button');
+      tbs.type = 'button'; tbs.className = 'qslink hidgo';
+      tbs.textContent = 'Open taskbar settings';
+      tbs.title = 'Settings › Personalization › Taskbar › Other system tray icons';
+      tbs.addEventListener('click', function () { closePop(); act('open', { target: 'ms-settings:taskbar' }, 'settings').then(fellBack); });
+      pop.appendChild(tbs);
     }
-    /* every chip, in words: in pill mode the strip shows pips only */
-    chipData().forEach(function (c) {
-      var line = document.createElement('div'); line.className = 'sub'; line.style.margin = '-2px 0 8px';
-      line.textContent = c.label + ': ' + c.reason;
-      pop.appendChild(line);
-    });
+
+    /* The two things a taskbar's own menu is for, with their shortcuts (2026-09-29). */
+    var set = document.createElement('button');
+    set.type = 'button'; set.className = 'item mitem';
+    set.innerHTML = '<span>Settings</span><kbd>Win+I</kbd>';
+    set.title = 'Open Mantle Settings';
+    set.addEventListener('click', function () { closePop(); act('open', { target: 'ms-settings:' }, 'settings').then(fellBack); });
+    pop.appendChild(set);
 
     var restore = document.createElement('button');
-    restore.type = 'button'; restore.className = 'item';
-    restore.textContent = 'Restore Windows taskbar';
+    restore.type = 'button'; restore.className = 'item mitem';
+    restore.innerHTML = '<span>Restore Windows taskbar</span>';
+    restore.title = 'Bring back Windows\' own taskbar in place of this bar';
     restore.addEventListener('click', function () {
+      if (restore.disabled) return;
+      restore.disabled = true;            // one request at a time: a double-click must not send two
       callR('shell.restore').then(function () { closePop(); }, function (e) {
-        restore.textContent = 'Restore failed — ' + msg(e);
+        restore.disabled = false;
+        restore.firstChild.textContent = 'Could not restore: ' + plain(msg(e));
         restore.classList.add('armed');
       });
     });
@@ -3121,25 +3338,35 @@
       restart.classList.remove('armed');
       restart.textContent = 'Restarting…';
       callR('shell.restart').then(function (r) {
-        restart.textContent = 'Restarting (' + ((r && r.via) || 'relaunch') + ')…';
+        console.log('[bar] restarting via', (r && r.via) || 'relaunch');   // the how is for the log
       }, function (e) {
         restart.disabled = false;
-        restart.textContent = 'Restart failed — ' + msg(e);
+        restart.textContent = 'Could not restart: ' + plain(msg(e));
         restart.classList.add('armed');
       });
     });
     pop.appendChild(restart);
 
     /* Quit is behind a second click: the bar is the only way back to a normal desktop, so a
-       stray click must not take the shell down. */
+       stray click must not take the shell down. The arm lapses after 4 s (2026-09-29), so a click
+       that was a slip is forgiven without a word, and the second click is never a surprise later. */
     var quit = document.createElement('button');
     quit.type = 'button'; quit.className = 'item danger';
     quit.textContent = 'Quit Mantle';
-    var armed = false;
+    quit.title = 'Close Mantle; Windows\' own taskbar comes back';
+    var armed = false, armT = 0;
     quit.addEventListener('click', function () {
-      if (!armed) { armed = true; quit.textContent = 'Click again to quit'; quit.classList.add('armed'); return; }
+      if (quit.disabled) return;
+      if (!armed) {
+        armed = true; quit.textContent = 'Click again to quit'; quit.classList.add('armed');
+        armT = setTimeout(function () { armed = false; quit.textContent = 'Quit Mantle'; quit.classList.remove('armed'); }, 4000);
+        return;
+      }
+      clearTimeout(armT);
+      quit.disabled = true;
       callR('shell.quit').then(function () { closePop(); }, function (e) {
-        quit.textContent = 'Quit failed — ' + msg(e);
+        quit.disabled = false; armed = false;
+        quit.textContent = 'Could not quit: ' + plain(msg(e));
       });
     });
     pop.appendChild(quit);
@@ -3242,6 +3469,13 @@
 
   var lastTray = [];
 
+  /* Read-only numbers for the page tests (bar.page.test.js), on the mock bridge only: inside
+     Mantle there is no such object. */
+  if (mantle && mantle.mode === 'mock') window.__barDebug = {
+    tones: function () { return Object.keys(tones).length; },
+    popKey: function () { return popKey; }
+  };
+
   volumeGlyph();      // draw the speaker immediately, in its "unknown" form, rather than an empty square
   tick();             // clock first: it is the one thing that must be right even if the bridge is dead
 
@@ -3257,7 +3491,7 @@
       svg: svg, wifiGlyph: wifiGlyph, volumeSvg: volumeSvg, popNeed: popNeed
     });
   } else {
-    fail('qsmore', 'Wi-Fi list missing', 'ui/bar/qs-more.js did not load, so quick settings has no Wi-Fi list, Bluetooth devices, output picker or mixer', 'warn');
+    fail('qsmore', 'Wi-Fi list missing', MISSING + 'Quick Settings has no Wi-Fi list, Bluetooth devices, sound output picker or mixer', 'warn', 'qs-more.js did not load');
   }
 
   /* The Downloads shelf (ui/bar/downloads.js), handed the same helpers as the bell. Without that
@@ -3270,7 +3504,7 @@
   } else {
     var dlBtn = document.getElementById('downloads');
     if (dlBtn) dlBtn.hidden = true;
-    fail('downloads', 'downloads shelf missing', 'ui/bar/downloads.js did not load, so the Downloads button is hidden', 'warn');
+    fail('downloads', 'Downloads missing', MISSING + 'the Downloads button is hidden', 'warn', 'downloads.js did not load');
   }
 
   if (window.MantleNotifs) {
@@ -3282,11 +3516,11 @@
   } else {
     var bell = document.getElementById('notifs');
     if (bell) bell.addEventListener('click', function () { closePop(); keys('win+n', 'notifications'); });
-    fail('notifs', 'notifications panel missing', 'ui/bar/notifications.js did not load, so the bell opens Windows\' notification centre instead', 'warn');
+    fail('notifs', 'Notifications panel missing', MISSING + 'the bell opens Windows\' notification centre instead', 'warn', 'notifications.js did not load');
   }
 
   if (!mantle) {
-    fail('bridge', 'bridge missing', 'window.mantle is not present (preload did not run) — the bar cannot see Windows', 'warn');
+    fail('bridge', 'Not connected', 'this bar is not connected to Mantle, so it cannot see Windows; restart Mantle from this menu', 'warn', 'window.mantle is not present');
     renderTray([]);
   } else {
     call('state.get').then(function (s) {
@@ -3294,7 +3528,7 @@
       applyState(s);
     }, function (e) {
       // The brief's literal case: one chip, and the message in it.
-      fail('bridge', 'bridge missing: ' + msg(e), 'state.get was refused: ' + msg(e), 'warn');
+      fail('bridge', 'Not connected', 'this bar could not reach Mantle: ' + msg(e), 'warn', 'state.get');
       renderTray([]);
     });
 
