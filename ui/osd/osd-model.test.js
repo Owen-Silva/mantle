@@ -105,6 +105,29 @@ check('sun glyph: filled from 50', /fill="currentColor"/.test(M.sunSvg(60)) && !
   check('system sounds are named in words', M.appName({ system: true, name: 'x' }) === 'System sounds' && M.appName({}) === 'An app');
 }
 
+// ---- plain: reasons on screen carry no codes or jargon (capture-osd 2026-09-29)
+{
+  const nd = M.describe('volume', { ok: false, reason: 'the volume key did nothing: no default playback device (HRESULT 0x80070490) - nothing is plugged in, or audio is disabled' });
+  check('no playback device: the pop-up says what to do, in plain words', /^Volume unavailable: No speakers or headphones are connected\. Plug some in/.test(nd.aria) && !/0x|HRESULT/.test(nd.aria), nd.aria);
+  const code = M.plain('the volume could not be read: COMException: Element not found. (0x80070490)');
+  check('another reason keeps its words but loses the code and the exception name', code === 'the volume could not be read: Element not found.', code);
+  check('"sidecar" never reaches the screen', !/sidecar/i.test(M.plain('the sidecar did not answer')), M.plain('the sidecar did not answer'));
+  check('an empty or odd reason still says something', M.plain('') === 'no reason was given' && M.plain(null) === 'no reason was given' && !/object Object/.test(M.plain({})) && M.plain({ message: 'gone' }) === 'gone', M.plain({}));
+}
+
+// ---- wheel: a notch is one step; a touchpad's small deltas add up (capture-osd 2026-09-29)
+{
+  check('a mouse notch up is one step up, down one step down', M.wheel(0, -100, 0).steps === 1 && M.wheel(0, 100, 0).steps === -1);
+  check('a big notch (9 lines a notch) is still ONE step', M.wheel(0, -300, 0).steps === 1);
+  check('line-mode events count one notch each', M.wheel(0, -3, 1).steps === 1);
+  let acc = 0, steps = 0;
+  for (let i = 0; i < 40; i++) { const w = M.wheel(acc, -4, 0); acc = w.acc; steps += w.steps; }
+  check('a touchpad swipe of 40 x 4 px is one step, not forty', steps === 1, steps);
+  const turn = M.wheel(-80, 30, 0);
+  check('turning round drops the carry from the other direction', turn.steps === 0 && turn.acc === 30, turn);
+  check('a zero or junk delta does nothing', M.wheel(0, 0, 0).steps === 0 && M.wheel(0, NaN, 0).steps === 0);
+}
+
 // ---- place
 {
   const work = { x: 0, y: 0, width: 1536, height: 864 };
@@ -119,6 +142,18 @@ check('sun glyph: filled from 50', /fill="currentColor"/.test(M.sunSvg(60)) && !
   check('taller than the screen: clamped inside the work area', big.y >= 0, big);
   const off = M.place(bar, { x: 1536, y: 0, width: 1920, height: 1040 }, { w: 260, h: 52 }, 10);
   check('second display: x inside it', off.x >= 1536 && off.x + 260 <= 1536 + 1920, off);
+  // capture-osd 2026-09-29: the bar lives on ONE display; the pop-up goes to the one under the
+  // cursor. A bar on another display (or parked below the screen) says nothing about this one.
+  check('second display: the other display\'s bar is ignored (near the bottom, not at the bar\'s y)',
+    off.y === 1040 - 10 - 52 - 40 && !off.below, off);
+  const parked = M.place({ x: 400, y: 900, width: 736, height: 44 }, work, { w: 260, h: 52 }, 10);
+  check('bar parked below the screen: placed as if there were no bar (a gap, never flush with the edge)',
+    parked.y === n.y, { parked, n });
+  const topWork = { x: 0, y: 28, width: 1536, height: 836 };   // Owen's: the top bar reserves 28 px
+  const q = M.place({ x: 400, y: 812, width: 736, height: 44 }, topWork, { w: 324, h: 82 }, 0);
+  const dock = M.place({ x: 0, y: 820, width: 1536, height: 44 }, { x: 0, y: 0, width: 1536, height: 820 }, { w: 260, h: 52 }, 10, { x: 0, y: 0, width: 1536, height: 864 });
+  check('--dock bar reserving its strip outside the work area: still just above it', dock.y === 820 - 10 - 52, dock);
+  check('work area that starts below a top strip: still just above the bottom bar', q.y === 812 - 82 && q.x === 606, q);
 }
 
 console.log(`osd-model: ${passed} passed, ${failures.length} failed`);

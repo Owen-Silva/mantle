@@ -79,7 +79,8 @@ const CONTRAST = async (b64) => {
 
 function gamesRunning() {
   const out = execFileSync('powershell', ['-NoProfile', '-Command',
-    '@(Get-Process javaw,Minecraft*,RobloxPlayerBeta,*Riot*,VALORANT* -ErrorAction SilentlyContinue).Count'], { encoding: 'utf8' }).trim();
+    // the lanes' own list (scratchpad BRIEF): the Riot CLIENT idling is not a game, VALORANT is
+    '@(Get-Process VALORANT*,javaw,Minecraft*,RobloxPlayerBeta -ErrorAction SilentlyContinue).Count'], { encoding: 'utf8' }).trim();
   return out === '0' ? 0 : (Number(out) || 1);
 }
 

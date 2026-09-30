@@ -89,17 +89,52 @@
     return svg(s, size);
   }
 
+  /* A REASON IN PLAIN WORDS (capture-osd 2026-09-29). Reasons come up from Windows through the
+     sidecar with codes in them ("no default playback device (HRESULT 0x80070490)"); the pop-up is
+     read by someone who is not Owen, so known ones become a sentence that says what to do, and any
+     other loses its error codes and exception names but keeps its words (never a silent blank). */
+  var NO_DEVICE = 'No speakers or headphones are connected. Plug some in, or turn a sound device on in Windows’ Sound settings';
+  function plain(reason) {
+    var s = typeof reason === 'string' ? reason
+      : reason && typeof reason === 'object' ? (typeof reason.message === 'string' ? reason.message : '')
+        : reason == null ? '' : String(reason);
+    if (/no default playback device/i.test(s)) return NO_DEVICE;
+    s = s.replace(/\s*\((?:HRESULT|error|code)?\s*:?\s*0x[0-9a-f]+\)/gi, '')
+      .replace(/\b(?:HRESULT\s*)?0x[0-9a-f]{6,8}\b/gi, '')
+      .replace(/\b[A-Z][A-Za-z]*Exception:\s*/g, '')
+      .replace(/\bthe sidecar\b/gi, 'Mantle').replace(/\bsidecar\b/gi, 'Mantle')
+      .replace(/\s{2,}/g, ' ').replace(/\s+([,.;:)])/g, '$1').trim();
+    return s || 'no reason was given';
+  }
+
+  /* THE WHEEL over the pop-up (capture-osd 2026-09-29). Every wheel event used to be a 2-point step,
+     so a touchpad (dozens of tiny deltas per swipe) threw the volume from 20 to 100 in one flick.
+     Now a mouse notch (|deltaY| >= 100 px, or any line/page-mode event) is one step, and small deltas
+     add up until they make a notch's worth. Returns { steps: +n up / -n down, acc: the carry }. */
+  var NOTCH = 100;
+  function wheel(acc, deltaY, deltaMode) {
+    var d = Number(deltaY);
+    if (!isFinite(d) || d === 0) return { steps: 0, acc: acc || 0 };
+    if (deltaMode === 1 || deltaMode === 2 || Math.abs(d) >= NOTCH) return { steps: d < 0 ? 1 : -1, acc: 0 };
+    var a = (acc || 0);
+    if (a !== 0 && (a < 0) !== (d < 0)) a = 0;          // turned round: start the new direction afresh
+    a += d;
+    var n = 0;
+    while (Math.abs(a) >= NOTCH) { n += a < 0 ? 1 : -1; a += a < 0 ? NOTCH : -NOTCH; }
+    return { steps: n, acc: a };
+  }
+
   /* What the pill says, in words, for its number, its label and its screen-reader line. */
   function describe(kind, st) {
     st = st || {};
     var l = pct(st.level);
     if (kind === 'brightness') {
       if (st.ok === false || l === null)
-        return { value: '—', label: 'Brightness', aria: 'Brightness unavailable: ' + (st.reason || 'no reason was given'), fill: 0, dead: true };
+        return { value: '—', label: 'Brightness', aria: 'Brightness unavailable: ' + plain(st.reason), fill: 0, dead: true };
       return { value: String(l), label: 'Brightness', aria: 'Brightness ' + l + '%', fill: l, dead: false };
     }
     if (st.ok === false || l === null)
-      return { value: '—', label: 'Volume', aria: 'Volume unavailable: ' + (st.reason || 'no reason was given'), fill: 0, dead: true };
+      return { value: '—', label: 'Volume', aria: 'Volume unavailable: ' + plain(st.reason), fill: 0, dead: true };
     if (st.muted) return { value: String(l), label: 'Muted', aria: 'Muted (volume ' + l + '%)', fill: l, dead: false, muted: true };
     return { value: String(l), label: 'Volume', aria: 'Volume ' + l + '%', fill: l, dead: false };
   }
@@ -133,15 +168,21 @@
   }
 
   /* WHERE THE POP-UP GOES (main uses this): bottom-centre of the display, just above the bar.
-     bar: the bar's on-screen rect (DIP) or null; work: the display's work area; size: {w, h}.
+     bar: the bar's on-screen rect (DIP) or null; work: the display's work area; size: {w, h};
+     bounds (optional): the whole display, to tell whether the bar is on THIS display at all.
      `gap` is the space between the pill and whatever is under it. Top-docked bar: the pop-up
      goes below it instead. Whole DIPs, always inside the work area. */
-  function place(bar, work, size, gap) {
+  function place(bar, work, size, gap, bounds) {
     gap = gap === undefined ? 10 : gap;
+    var on = bounds || work;   // the whole display: a --dock bar reserves its strip OUTSIDE the work area
     var w = Math.round(size.w), h = Math.round(size.h);
     var x = Math.round(work.x + (work.width - w) / 2);
     var y;
-    var barUsable = bar && bar.width > 0 && bar.height > 0;
+    // Only a bar ON this display counts (capture-osd 2026-09-29): the pop-up goes to the display under
+    // the cursor, the bar lives on one display, and a hover-mode bar is parked below the screen.
+    var barUsable = bar && bar.width > 0 && bar.height > 0 &&
+      bar.x < on.x + on.width && bar.x + bar.width > on.x &&
+      bar.y < on.y + on.height && bar.y + bar.height > on.y;
     var top = barUsable && bar.y + bar.height / 2 < work.y + work.height / 2;
     if (barUsable && !top) y = Math.round(bar.y - gap - h);
     else if (barUsable && top) y = Math.round(bar.y + bar.height + gap);
@@ -153,7 +194,7 @@
 
   return {
     HOLD_MS: HOLD_MS, GRACE_MS: GRACE_MS,
-    fader: fader, pct: pct, volumeSvg: volumeSvg, sunSvg: sunSvg, describe: describe,
+    fader: fader, pct: pct, volumeSvg: volumeSvg, sunSvg: sunSvg, describe: describe, plain: plain, wheel: wheel,
     listApps: listApps, appName: appName, place: place,
   };
 }));
