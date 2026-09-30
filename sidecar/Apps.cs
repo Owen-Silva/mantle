@@ -67,7 +67,10 @@ namespace Mantle {
     /// a pinned Store app.
     public const string AppsFolderClsid = "::{4234d49b-0245-4df3-b780-3893943456e1}\\";
 
-    const int IconPx = 32;
+    // 64, was 32 (core-needs, 2026-09-30): the bar and the launcher draw an app icon at 24-32 CSS
+    // px, which is 48-64 device px at 200 %. A 32 px picture was blown up (soft) past 100 %; the
+    // shell renders 64 from the icon's own large frame, so it is sharp at every scale up to 200 %.
+    public const int IconPx = 64;
     const int SIIGBF_RESIZETOFIT = 0x00000000;
     const int SIIGBF_ICONONLY = 0x00000004;
 
@@ -221,7 +224,7 @@ namespace Mantle {
         var item = raw as IShellItem;
         if (item == null) return "the shell returned something that is not a shell item for '" + aumid + "'";
         name = DisplayName(item, Win32.SIGDN_NORMALDISPLAY);
-        png = Image32(raw);
+        png = ImagePng(raw, IconPx);
         // Locked: `app` fills this on the slow lane while the window list reads
         // it on the ui lane (Lanes.cs). The shell calls stay outside the lock.
         lock (_iconCache) _iconCache[aumid] = png;
@@ -263,16 +266,34 @@ namespace Mantle {
       }
     }
 
-    /// 32x32 PNG data URL from a shell item, or null. ICONONLY so a document
+    /// A file's icon (an .exe, a .lnk, anything the shell can parse) as a px x px PNG data URL, from
+    /// the same image factory as a Store app's: the icon's own large frame, not SHGetFileInfo's
+    /// 32 px one scaled up. Null on any failure: Icons.cs then falls back to SHGetFileInfo.
+    public static string ImageForPath(string path, int px) {
+      if (string.IsNullOrEmpty(path)) return null;
+      object raw = null;
+      try {
+        Guid iid = IidShellItem;
+        int hr = Win32.SHCreateItemFromParsingName(path, IntPtr.Zero, ref iid, out raw);
+        if (hr != Win32.S_OK || raw == null) return null;
+        return ImagePng(raw, px);
+      } catch (Exception) {
+        return null;
+      } finally {
+        if (raw != null) { try { Marshal.FinalReleaseComObject(raw); } catch (Exception) { } }
+      }
+    }
+
+    /// px x px PNG data URL from a shell item, or null. ICONONLY so a document
     /// never comes back as a thumbnail of its contents.
-    static string Image32(object raw) {
+    static string ImagePng(object raw, int px) {
       var factory = raw as IShellItemImageFactory;
       if (factory == null) return null;
       IntPtr hbmp = IntPtr.Zero;
       try {
         var size = new Win32.SIZE();
-        size.cx = IconPx;
-        size.cy = IconPx;
+        size.cx = px;
+        size.cy = px;
         factory.GetImage(size, SIIGBF_ICONONLY | SIIGBF_RESIZETOFIT, out hbmp);
         if (hbmp == IntPtr.Zero) return null;
         return PngFromHBitmap(hbmp);
@@ -478,7 +499,7 @@ namespace Mantle {
           "parsing", parsing,
           "aumid", aumid,
           "lnk", lnk,
-          "iconPng", kind == "app" && aumid != null ? IconFor(aumid) : Image32(raw)));
+          "iconPng", kind == "app" && aumid != null ? IconFor(aumid) : ImagePng(raw, IconPx)));
       } catch (Exception) {
         skipped++;
       } finally {

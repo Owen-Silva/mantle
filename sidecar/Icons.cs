@@ -1,4 +1,10 @@
-// Icons.cs - exe/shortcut icon -> 32x32 PNG data URL, cached per path.
+// Icons.cs - exe/shortcut icon -> 64x64 PNG data URL, cached per path.
+//
+// WHY 64 (core-needs, 2026-09-30; was 32): the bar and the launcher draw an app icon at 24-32 CSS
+// px, 48-64 device px at 150-200 %, so a 32 px picture was blown up and soft. The shell's image
+// factory (Apps.ImageForPath) renders 64 from the icon's own large frame; SHGetFileInfo, which only
+// has the 32 px "large" icon, is now the fallback. Tray icons (FromHIcon) stay 32: they are drawn
+// at 16 CSS px.
 //
 // WHY a cache: the window list is rebuilt on every change and on a 2 s poll.
 // Extracting an icon costs a shell round trip, so doing it per rebuild would
@@ -18,7 +24,8 @@ using System.IO;
 
 namespace Mantle {
   static class Icons {
-    const int Size = 32;
+    public const int Size = 64;
+    const int TraySize = 32;
     static readonly Dictionary<string, string> _cache =
       new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -50,6 +57,9 @@ namespace Mantle {
       // Check first, because the exception .NET raises for a missing file is
       // just the path repeated back - useless in a log line that already has it.
       if (!File.Exists(path)) { why = "no such file"; return null; }
+      // The sharp one first: the icon's own 64/128/256 frame, the picture Explorer draws at 64.
+      string sharp = Apps.ImageForPath(path, Size);
+      if (sharp != null) return sharp;
       IntPtr hIcon = IntPtr.Zero;
       bool destroy = false;
       Icon managed = null;
@@ -77,7 +87,7 @@ namespace Mantle {
         using (Icon ico = managed ?? (hIcon != IntPtr.Zero ? Icon.FromHandle(hIcon) : null)) {
           if (ico == null) { if (why == null) why = "no icon handle"; return null; }
           using (Bitmap raw = ico.ToBitmap())
-          using (Bitmap sized = Resize(raw))
+          using (Bitmap sized = Resize(raw, Size))
           using (var ms = new MemoryStream()) {
             sized.Save(ms, ImageFormat.Png);
             return "data:image/png;base64," + Convert.ToBase64String(ms.ToArray());
@@ -91,13 +101,13 @@ namespace Mantle {
       }
     }
 
-    static Bitmap Resize(Bitmap src) {
-      if (src.Width == Size && src.Height == Size) return new Bitmap(src);
-      var dst = new Bitmap(Size, Size, PixelFormat.Format32bppArgb);
+    static Bitmap Resize(Bitmap src, int px) {
+      if (src.Width == px && src.Height == px) return new Bitmap(src);
+      var dst = new Bitmap(px, px, PixelFormat.Format32bppArgb);
       using (var g = Graphics.FromImage(dst)) {
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        g.DrawImage(src, new Rectangle(0, 0, Size, Size));
+        g.DrawImage(src, new Rectangle(0, 0, px, px));
       }
       return dst;
     }
@@ -108,7 +118,7 @@ namespace Mantle {
       try {
         using (var ico = Icon.FromHandle(hIcon))
         using (Bitmap raw = ico.ToBitmap())
-        using (Bitmap sized = Resize(raw))
+        using (Bitmap sized = Resize(raw, TraySize))
         using (var ms = new MemoryStream()) {
           sized.Save(ms, ImageFormat.Png);
           return "data:image/png;base64," + Convert.ToBase64String(ms.ToArray());
