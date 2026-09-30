@@ -569,6 +569,7 @@ namespace Mantle {
       public IntPtr Hwnd;
       public int Pid;
       public string Exe = "", Title = "", Class = "";
+      public string Name = "this window";   // the app's own name for the words a person reads ("Google Chrome", not chrome.exe)
       public SnapRect Rect, Frame;
       public SnapMargins Margins;
       public bool MarginsOk;
@@ -596,7 +597,10 @@ namespace Mantle {
       N.GetWindowThreadProcessId(hwnd, out w.Pid);
       w.Title = TitleOf(hwnd);
       w.Class = ClassOf(hwnd);
-      w.Exe = ExeOf(w.Pid);
+      string exePath = ExePathOf(w.Pid);
+      int slash = exePath.LastIndexOfAny(new char[] { '\\', '/' });
+      w.Exe = slash >= 0 ? exePath.Substring(slash + 1) : exePath;
+      w.Name = AppNameOf(exePath, w.Exe, w.Title);
       N.GetWindowRect(hwnd, out w.Rect);
       w.Frame = FrameOf(hwnd, w.Rect);
       w.Style = (uint)N.GetWindowLongW(hwnd, -16);
@@ -686,17 +690,39 @@ namespace Mantle {
       return sb.ToString();
     }
 
-    static string ExeOf(int pid) {
+    static string ExePathOf(int pid) {
       IntPtr h = N.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid);
       if (h == IntPtr.Zero) return "";
       try {
         var sb = new StringBuilder(520);
         int len = sb.Capacity;
         if (!N.QueryFullProcessImageNameW(h, 0, sb, ref len)) return "";
-        string p = sb.ToString();
-        int i = p.LastIndexOfAny(new char[] { '\\', '/' });
-        return i >= 0 ? p.Substring(i + 1) : p;
+        return sb.ToString();
       } finally { N.CloseHandle(h); }
+    }
+
+    // The name a person knows the app by, for the notice's words (2026-09-29 quality pass: "Could not
+    // snap Taskmgr.exe" read like a log line). The exe's own FileDescription ("Task Manager"), cached
+    // per path (one file read, ~1 ms, the first time only). A Store app's host (ApplicationFrameHost)
+    // describes itself, not the app, so its window title is the name; the exe without ".exe" last.
+    static readonly Dictionary<string, string> _names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    public static string AppNameOf(string path, string exe, string title) {
+      string bare = exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? exe.Substring(0, exe.Length - 4) : exe;
+      if (string.Equals(exe, "ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase))
+        return title.Length > 0 && title.Length <= 60 ? title : "this app";
+      if (string.Equals(exe, "explorer.exe", StringComparison.OrdinalIgnoreCase)) return "File Explorer";
+      string desc = null;
+      if (path.Length > 0) {
+        lock (_names) { if (_names.TryGetValue(path, out desc)) return desc; }
+        try { desc = FileVersionInfo.GetVersionInfo(path).FileDescription; } catch (Exception) { desc = null; }
+        desc = desc == null ? "" : desc.Trim();
+        // a description that is empty, a file name, or a paragraph is no name
+        if (desc.Length == 0 || desc.Length > 48 || desc.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) desc = "";
+        lock (_names) { if (_names.Count > 256) _names.Clear(); _names[path] = desc.Length > 0 ? desc : (bare.Length > 0 ? bare : "this window"); }
+        if (desc.Length > 0) return desc;
+      }
+      return bare.Length > 0 ? bare : "this window";
     }
 
     // ---------------------------------------------------------------- can it move?
@@ -775,7 +801,7 @@ namespace Mantle {
         return FeatureTable.PassiveRefusal + ": snap would move a window on the live desktop " +
                "(a test may only move a window its own harness made)";
       w = Measure(hwnd, mons);
-      string name = w.Exe.Length > 0 ? w.Exe : "this window";
+      string name = w.Name;
       if (!Program.Passive && Program.ParentPid > 0 && pid == Program.ParentPid) return "that is one of Mantle's own windows";
       if (pid == Program.OwnPid && !Program.Passive) return "that is one of Mantle's own windows";
       if (ShellClasses.Contains(w.Class)) return "the desktop and the taskbar are not windows that snap";
@@ -789,12 +815,12 @@ namespace Mantle {
       string ilWhy;
       int il = IntegrityOf(pid, out ilWhy);
       if (il > OwnIntegrity())
-        return name + " is running as administrator and Mantle is not, so Windows will not let Mantle move it " +
-               "(User Interface Privilege Isolation). Run Mantle as administrator to snap it.";
-      if (N.IsHungAppWindow(hwnd)) return name + " is not responding, so it cannot be moved";
+        return name + " is running as administrator, so Windows does not let Mantle move it. " +
+               "To snap it, run Mantle as administrator too.";
+      if (N.IsHungAppWindow(hwnd)) return name + " is not responding, so it was left where it is. Try again once it responds.";
       UIntPtr res;
       if (N.SendMessageTimeoutW(hwnd, 0 /* WM_NULL */, UIntPtr.Zero, IntPtr.Zero, 0x0002 /* SMTO_ABORTIFHUNG */, 250, out res) == IntPtr.Zero)
-        return name + " did not answer within 250 ms (busy or hung), so it was left where it is";
+        return name + " is busy and did not answer, so it was left where it is. Try again in a moment.";
       return null;
     }
 
@@ -877,7 +903,7 @@ namespace Mantle {
         // In its zone, only not on every pixel of it: say which edge and why, but it is NOT a
         // "does not fit" (lib/features/snap.js shows a notice only for fit === false).
         mv.Rounded = true;
-        string name = w.Exe.Length > 0 ? w.Exe : "the app";
+        string name = w.Name;
         string edges = SnapGeom.EdgeWords(target, mv.Frame);
         if (mon != null && SnapGeom.Virtualized(mon.Dpi, w.VirtDpi) && SnapGeom.Near(mv.Frame, mv.Goal, 0))
           mv.FitWhy = name + (w.Awareness == "unaware" ? " is DPI-unaware" : w.Awareness == "system" ? " is only system-DPI-aware" :
@@ -891,21 +917,23 @@ namespace Mantle {
       } else if (!SnapGeom.Near(mv.Frame, target, 1)) {
         mv.Fit = false;
         if (mv.Frame.Width > target.Width + 1 || mv.Frame.Height > target.Height + 1)
-          mv.FitWhy = (w.Exe.Length > 0 ? w.Exe : "the app") + " will not go smaller than " + mv.Frame.Width + " x " +
-                      mv.Frame.Height + " px, so it overlaps the zone (" + target.Width + " x " + target.Height + ")";
+          mv.FitWhy = w.Name + " will not go smaller than " + mv.Frame.Width + " x " +
+                      mv.Frame.Height + ", so it overlaps the space next to it";
         else
-          mv.FitWhy = (w.Exe.Length > 0 ? w.Exe : "the app") + " sized itself to " + mv.Frame.Width + " x " + mv.Frame.Height +
-                      " px instead of " + target.Width + " x " + target.Height;
+          mv.FitWhy = w.Name + " chose its own size (" + mv.Frame.Width + " x " + mv.Frame.Height +
+                      ") instead of filling the space (" + target.Width + " x " + target.Height + ")";
       }
       return mv;
     }
 
     static string MoveError(string api, int err, Win w) {
-      string name = w.Exe.Length > 0 ? w.Exe : "this window";
+      string name = w.Name;
       if (err == 5)
-        return name + " refused to be moved (access denied): it runs at a higher privilege than Mantle, so Windows " +
-               "blocks it (User Interface Privilege Isolation)";
-      return api + " failed on " + name + " (Win32 error " + err + ")";
+        return name + " is running as administrator, so Windows does not let Mantle move it. " +
+               "To snap it, run Mantle as administrator too.";
+      // plain words on screen; the call and code go to the sidecar's own error stream for a developer
+      try { Console.Error.WriteLine("snap: " + api + " failed with error " + err); } catch (Exception) { }
+      return "Windows would not move " + name + ". Try again, or drag it by its title bar.";
     }
 
     /// Is some other window already filling `frame`? Then Snap Assist has nothing to fill there.
@@ -935,7 +963,7 @@ namespace Mantle {
 
     static IDictionary Refusal(IntPtr hwnd, Win w, string why, string action, Stopwatch sw) {
       return Json.Obj("ok", false, "hwnd", hwnd.ToInt64().ToString(CultureInfo.InvariantCulture),
-                      "exe", w != null ? w.Exe : "", "title", w != null ? w.Title : "",
+                      "exe", w != null ? w.Exe : "", "app", w != null ? w.Name : "", "title", w != null ? w.Title : "",
                       "action", action, "reason", why, "ms", Math.Round(sw.Elapsed.TotalMilliseconds, 2));
     }
 
@@ -970,7 +998,7 @@ namespace Mantle {
     }
 
     static IDictionary Execute(Win w, SnapPlan plan, List<SnapMonitor> mons, Rec mem, Stopwatch sw) {
-      string name = w.Exe.Length > 0 ? w.Exe : "this window";
+      string name = w.Name;
       IntPtr hwnd = w.Hwnd;
       if (plan.Action == "none")
         return Answer(w, plan, true, null, null, sw, "nothing to do: " + name + " " + plan.Why);
@@ -1048,7 +1076,7 @@ namespace Mantle {
       var o = (IDictionary)Json.Obj(
         "ok", ok,
         "hwnd", w.Hwnd.ToInt64().ToString(CultureInfo.InvariantCulture),
-        "exe", w.Exe, "title", w.Title, "pid", w.Pid,
+        "exe", w.Exe, "app", w.Name, "title", w.Title, "pid", w.Pid,
         "from", plan.From, "to", ok ? plan.To : plan.From, "action", plan.Action,
         "monitor", plan.Monitor != null ? plan.Monitor.ToJson() : null,
         "target", plan.HasFrame ? plan.Frame.ToJson() : null,
@@ -1102,7 +1130,7 @@ namespace Mantle {
       if (monId != null) {
         mon = null;
         foreach (SnapMonitor m in mons) if (m.Id == monId) mon = m;
-        if (mon == null) return "snap.zone: monitor " + monId + " is not connected any more";
+        if (mon == null) return "that screen is not connected any more";
       }
       Rec mem = Mem(hwnd, false);
       string state = SnapGeom.Detect(w.Minimized, w.Maximized, w.Frame, w.Monitor,
@@ -1163,7 +1191,7 @@ namespace Mantle {
       SnapRect normal = WorkspaceToScreen(w.Placement.rcNormalPosition, w.ExStyle, mons);
       result = Json.Obj(
         "hwnd", hwnd.ToInt64().ToString(CultureInfo.InvariantCulture),
-        "exe", w.Exe, "title", w.Title, "class", w.Class, "pid", w.Pid,
+        "exe", w.Exe, "app", w.Name, "title", w.Title, "class", w.Class, "pid", w.Pid,
         "rect", w.Rect.ToJson(), "frame", w.Frame.ToJson(),
         "margins", w.Margins.ToJson(), "marginsOk", w.MarginsOk, "dpi", w.Dpi,
         "awareness", w.Awareness, "virtDpi", w.VirtDpi,
