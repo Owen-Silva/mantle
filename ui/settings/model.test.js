@@ -186,5 +186,47 @@ t('displayFacts', () => {
   eq(f[0][1], '2560 \u00d7 1600'); eq(f[1][1], '150%'); eq(f[2][1], '120 Hz'); eq(f[3][1], 'Landscape');
 });
 
+/* A page and its own row with the same name are ONE search result (quality pass 2026-09-29). */
+t('search: a page and its same-named row are one result that ranks as the page', () => {
+  const mk = (id, order, pages) => ({ id, title: id === 'aa' ? 'Aa' : 'Bb', group: 'windows', order, render() {}, pages });
+  const model = M.sectionModel([
+    mk('aa', 10, [{ id: 'gm', title: 'Game Mode', help: 'made-up', render() {}, search: [{ row: 'aa.gm.on', label: 'Game Mode', keywords: 'perf' }] }]),
+    mk('bb', 20, [{ id: 'gm2', title: 'Game Mode', help: 'made-up', render() {}, search: [{ row: 'bb.gm2.x', label: 'Something else' }] }]),
+  ]);
+  const idx = M.buildIndex({ model, catalog: [] });
+  const hits = M.search(idx, 'game mode');
+  eq(hits.filter((h) => h.entry.nl === 'game mode' && /^(aa|bb)$/.test(h.entry.section)).length, 2, 'two "Game Mode" results (one per section), not three');
+  eq(hits[0].entry.id, 'aa.gm.on', 'the row that absorbed its page comes first (section order, page rank)');
+  ok(!idx.some((e) => e.id === 'page.aa.gm'), 'the absorbed page is gone');
+  ok(idx.some((e) => e.id === 'page.bb.gm2'), 'a page without a same-named row stays');
+  ok(/made-up/.test(idx.find((e) => e.id === 'aa.gm.on').kw), 'the page\'s words moved to the row');
+});
+
+/* plain(): the words a person sees for Mantle's transport failures (quality pass 2026-09-29: before it,
+   a failed read showed 'could not send "startup.list" to the sidecar: ...' on the page). */
+t('plain: text without jargon is unchanged', () => {
+  for (const s of ['Bluetooth is off', 'Windows will ask for administrator permission to rename this PC.', 'This PC has no battery: it always runs on mains power', 'Test run: nothing was changed'])
+    eq(M.plain(s), s);
+  eq(M.plain(null), null);
+});
+t('plain: a sidecar that is down or restarting', () => {
+  eq(M.plain('the startup apps could not be read: could not send "startup.list" to the sidecar: it is not running (stopped, or restarting)'),
+    'the startup apps could not be read: Mantle\'s connection to Windows is restarting. Try again in a moment');
+  eq(M.plain('sysdisplay.get failed: the sidecar is not running'), 'Mantle\'s connection to Windows is restarting. Try again in a moment');
+  eq(M.plain('sidecar down: no exe at sidecar\\bin\\Mantle.Sidecar.exe'), 'Mantle\'s connection to Windows is restarting. Try again in a moment');
+});
+t('plain: a timeout, a missing command, a huge answer, a passive refusal', () => {
+  eq(M.plain('The sound devices could not be read: the sidecar did not answer "syssound.get" within 10s'), 'The sound devices could not be read: Windows took too long to answer. Try again in a moment');
+  eq(M.plain('the sidecar exe has no startup.set command yet (build the sidecar: npm run build:sidecar)'), 'This needs a newer version of Mantle. Restart Mantle to finish updating it');
+  eq(M.plain('the sidecar\'s answer to "sysapps.installed" was 9.1 MB, over the cap'), 'Windows sent back more than Mantle can show at once');
+  eq(M.plain('refused: sidecar is passive (test mode)'), 'This is a test run, so nothing was changed');
+});
+t('plain: a thrown section command and raw values', () => {
+  eq(M.plain('system.get failed (TypeError: Cannot read properties of undefined)'), 'Something went wrong inside Mantle. Try again; if it keeps happening, restart Mantle');
+  eq(M.plain('Could not change it: Windows answered 0x80070005'), 'Could not change it: Windows did not allow it: it needs administrator rights');
+  eq(M.plain('[object Object]'), 'Something went wrong inside Mantle. Try again; if it keeps happening, restart Mantle');
+  ok(!/sidecar|"|0x/i.test(M.plain('The list failed: the sidecar sent "x.y" 0x8007000E back')), M.plain('The list failed: the sidecar sent "x.y" 0x8007000E back'));
+});
+
 process.stdout.write(`${passed} passed, ${failed} failed\n`);
 process.exitCode = failed ? 1 : 0;

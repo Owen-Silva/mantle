@@ -35,7 +35,7 @@
     { id: 'apps', label: 'Apps', group: 'windows', keywords: 'startup installed apps default apps task manager programs' },
     { id: 'mantle', label: 'Mantle', group: 'mantle', keywords: 'features options mantle shell' },
     { id: 'shortcuts', label: 'Keyboard shortcuts', group: 'mantle', keywords: 'keys hotkeys chords shortcuts' },
-    { id: 'about', label: 'About', group: 'mantle', keywords: 'version commit uptime logs' },
+    { id: 'about', label: 'About Mantle', group: 'mantle', keywords: 'about version commit uptime logs' },
   ];
 
   /* ---- every static row (id, section, label, keywords). Dynamic rows (features, options,
@@ -67,7 +67,7 @@
     ['mantle.features', 'Mantle features', 'features tray switches on off'],
     ['mantle.corners', 'Hot corners', 'hot corners screen corners mouse corner actions task view show desktop'],
     ['shortcuts.list', 'Keyboard shortcuts', 'hotkeys keys chords shortcuts rebinding'],
-    ['about.version', 'Version', 'about version build commit mantle'],
+    ['about.version', 'Mantle version', 'about version build commit mantle'],
     ['about.uptime', 'Running since', 'uptime started running since restart'],
     ['about.runtime', 'Electron, Chromium, Node and Windows', 'electron chrome chromium node windows versions'],
     ['about.logs', 'Log folder', 'logs log file diagnostics troubleshooting'],
@@ -395,6 +395,17 @@
       add({ id: 'catalog.' + (it.uri || i), kind: 'catalog', group: 'windows', label: it.name, sub: isSection(it.section) ? 'Covered here' : 'Windows Settings',
         kw: it.keywords || '', uri: it.uri || 'ms-settings:', section: isSection(it.section) ? it.section : null, row: dead ? null : it.row || null });
     });
+    // A page whose own row has the page's name ("Game Mode" page, "Game Mode" switch on it) is ONE
+    // result: the row, which lands on that page AND highlights the switch. Two identical lines in the
+    // results read as a bug (quality pass 2026-09-29). The page's words (and Windows' name for it)
+    // move to the row, so nothing that found the page stops finding it.
+    var rowNamed = Object.create(null);
+    out.forEach(function (e) { if (e.kind === 'row' && e.page) rowNamed[e.section + '/' + e.page + '/' + norm(e.label)] = e; });
+    out = out.filter(function (e) {
+      var r = e.kind === 'page' && e.page ? rowNamed[e.section + '/' + e.page + '/' + norm(e.label)] : null;
+      if (r) { r.kw += ' ' + e.kw; r.asPage = true; }          // and ranks as the page did
+      return !r;
+    });
     out.forEach(function (e) { e.nl = norm(e.label); e.nk = norm(e.kw + ' ' + (e.kind === 'shortcut' ? e.sub : '')); });
     return out;
   }
@@ -460,7 +471,7 @@
     hits.sort(function (a, b) {
       return b.score - a.score
         || (a.entry.group === b.entry.group ? 0 : a.entry.group === 'mantle' ? -1 : 1)
-        || KIND_RANK[a.entry.kind] - KIND_RANK[b.entry.kind]
+        || KIND_RANK[a.entry.asPage ? 'page' : a.entry.kind] - KIND_RANK[b.entry.asPage ? 'page' : b.entry.kind]
         || a.entry.nl.length - b.entry.nl.length
         || a.entry.order - b.entry.order;
     });
@@ -635,7 +646,39 @@
     ];
   }
 
+  /**
+   * A reason in plain words (the polish bar: "no jargon on screen", and No Silent Failures: every
+   * failure still says why and what to do next). Mantle's transport answers name its internals
+   * ('could not send "sysdisplay.get" to the sidecar: it is not running (stopped, or restarting)',
+   * 'the sidecar did not answer "x.y" within 10s', 'system.get failed (TypeError: ...)'). The plain
+   * lead-in a section wrote before it ("The startup apps could not be read: ") is kept; the jargon
+   * tail is replaced by what it means for a person. Text with no jargon comes back unchanged.
+   */
+  var JARGON_RE = /sidecar|"[a-z][a-z0-9-]*\.[A-Za-z][\w.]*"|\b[a-z][a-z0-9-]*\.[A-Za-z]\w* (?:failed|threw)\b|\bdryRun\b|\bE(?:NOENT|ACCES|PERM|PIPE|CONNRESET)\b|\b0x[0-9a-f]{6,8}\b|\bHRESULT\b|\[object Object\]|\bundefined\b|\bnull\b|\bNaN\b|window\.mantle/i;
+  function plain(s) {
+    if (s == null) return s;
+    var t = String(s);
+    if (!JARGON_RE.test(t)) return t;
+    var parts = t.split(/: /), keep = [];
+    for (var i = 0; i < parts.length && !JARGON_RE.test(parts[i]); i++) keep.push(parts[i]);
+    var rest = parts.slice(keep.length).join(': ');
+    keep = keep.filter(function (k) { return !/^\s*refused\s*$/i.test(k); });
+    var say;
+    if (/passive/i.test(rest)) say = 'this is a test run, so nothing was changed';
+    else if (/did not answer|timed? ?out|within \d/i.test(rest)) say = 'Windows took too long to answer. Try again in a moment';
+    else if (/not running|restarting|sidecar down|not finished starting|ready line|never said ready|exited|is not connected|window\.mantle/i.test(rest)) say = 'Mantle\'s connection to Windows is restarting. Try again in a moment';
+    else if (/no \S+ command|unknown command|not a command/i.test(rest)) say = 'this needs a newer version of Mantle. Restart Mantle to finish updating it';
+    else if (/\d+(\.\d+)? ?MB/.test(rest)) say = 'Windows sent back more than Mantle can show at once';
+    else if (/E(?:ACCES|PERM)\b|0x80070005|access (is )?denied/i.test(rest)) say = 'Windows did not allow it: it needs administrator rights';
+    else if (/ENOENT/.test(rest)) say = 'Windows could not find it any more. Refresh and try again';
+    else if (/(?:failed|threw)\b|TypeError|ReferenceError|RangeError|\bundefined\b|\bnull\b|\bNaN\b|\[object/i.test(rest)) say = 'something went wrong inside Mantle. Try again; if it keeps happening, restart Mantle';
+    else say = rest.replace(/the sidecar('s)?/gi, 'Mantle\'s connection to Windows$1').replace(/\s*"[a-z][a-z0-9-]*\.[A-Za-z][\w.]*"\s*/g, ' ')
+      .replace(/\b0x[0-9a-f]{6,8}\b/gi, '').replace(/\bHRESULT\b/gi, 'error').replace(/\s{2,}/g, ' ').trim();
+    return keep.length ? keep.join(': ') + ': ' + say : say.charAt(0).toUpperCase() + say.slice(1);
+  }
+
   return {
+    plain: plain,
     SECTIONS: SECTIONS, ROWS: ROWS, MORE: MORE, PM_LABEL: PM_LABEL,
     more: more, claimOf: claimOf, featureRow: featureRow, optionRow: optionRow, shortcutRow: shortcutRow, sectionIds: sectionIds, isSection: isSection,
     sectionOf: sectionOf, rowById: rowById,
