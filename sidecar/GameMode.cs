@@ -12,8 +12,9 @@
 //     Owen switched "Lift Energy saver while gaming" on; put back afterwards.
 //
 // ANTI-CHEAT (the brief, non-negotiable). The game and its anti-cheat are NEVER opened with more
-// than PROCESS_QUERY_LIMITED_INFORMATION - and this file does not even do that: the process list is
-// a Toolhelp snapshot (no handle to anything), the foreground window's exe comes from
+// than PROCESS_QUERY_LIMITED_INFORMATION - and this file barely does that: the process list is a
+// Toolhelp snapshot (no handle; each process's session is asked once per run of it, which Windows
+// answers through a QUERY_LIMITED open - see Snapshot), the foreground window's exe comes from
 // Foreground.Read() (PROCESS_QUERY_LIMITED_INFORMATION, the same read the bar has always made), and
 // every write target is refused below if it is a game, an anti-cheat, the foreground process, a
 // Windows component, another session, elevated, or this sidecar - whatever main asked for. No
@@ -213,21 +214,44 @@ namespace Mantle {
 
     sealed class Proc { public uint Pid, Ppid, Session; public string File; }
 
+    /// A process's session never changes while it lives, so it is asked ONCE per process (lane
+    /// sysmon-game, 2026-09-29). ProcessIdToSessionId opens the process (QUERY_LIMITED) under the hood:
+    /// before this, the 3 s game watch did that to all ~320 processes, anti-cheat included, every tick.
+    /// Keyed by pid and checked against the parent pid and the exe name, so a reused pid is asked again.
+    /// MEASURED (this PC, ~320 processes, passive build): the scan stays ~18-20 ms either way (the Toolhelp
+    /// snapshot itself is the cost); what changes is that the game and its anti-cheat are opened once
+    /// per run instead of every 3 s.
+    sealed class SessionSeen { public uint Ppid, Session; public string File; }
+    static Dictionary<uint, SessionSeen> _sessions = new Dictionary<uint, SessionSeen>();
+    static readonly object _sessionLock = new object();
+
     static List<Proc> Snapshot(out string err) {
       err = null;
       var list = new List<Proc>();
       IntPtr snap = N.CreateToolhelp32Snapshot(N.TH32CS_SNAPPROCESS, 0);
       if (snap == IntPtr.Zero || snap == new IntPtr(-1)) { err = "Windows would not list the processes (error " + Marshal.GetLastWin32Error() + ")"; return list; }
-      try {
-        var e = new N.PROCESSENTRY32W();
-        e.dwSize = (uint)Marshal.SizeOf(typeof(N.PROCESSENTRY32W));
-        if (!N.Process32FirstW(snap, ref e)) return list;
-        do {
-          uint s;
-          list.Add(new Proc { Pid = e.th32ProcessID, Ppid = e.th32ParentProcessID, File = e.szExeFile,
-                              Session = N.ProcessIdToSessionId(e.th32ProcessID, out s) ? s : uint.MaxValue });
-        } while (N.Process32NextW(snap, ref e));
-      } finally { N.CloseHandle(snap); }
+      lock (_sessionLock) {
+        var next = new Dictionary<uint, SessionSeen>();
+        try {
+          var e = new N.PROCESSENTRY32W();
+          e.dwSize = (uint)Marshal.SizeOf(typeof(N.PROCESSENTRY32W));
+          if (!N.Process32FirstW(snap, ref e)) return list;
+          do {
+            SessionSeen seen;
+            uint s;
+            if (!_sessions.TryGetValue(e.th32ProcessID, out seen) || seen.Ppid != e.th32ParentProcessID || !string.Equals(seen.File, e.szExeFile, StringComparison.Ordinal)) {
+              // An unreadable session is not remembered: it is asked again next time.
+              seen = new SessionSeen { Ppid = e.th32ParentProcessID, File = e.szExeFile,
+                                       Session = N.ProcessIdToSessionId(e.th32ProcessID, out s) ? s : uint.MaxValue };
+            }
+            if (seen.Session != uint.MaxValue) next[e.th32ProcessID] = seen;
+            list.Add(new Proc { Pid = e.th32ProcessID, Ppid = e.th32ParentProcessID, File = e.szExeFile, Session = seen.Session });
+          } while (N.Process32NextW(snap, ref e));
+        } finally {
+          N.CloseHandle(snap);
+          if (next.Count > 0) _sessions = next;   // only live processes are kept: the cache never grows
+        }
+      }
       return list;
     }
 
@@ -318,6 +342,9 @@ namespace Mantle {
       var items = req.ContainsKey("items") ? req["items"] as List<object> : null;
       if (items == null) return "gamemode.apply needs items: [{pid, created, ...}]";
       uint fgPid = ForegroundPid(), own = OwnSession();
+      // TESTS ONLY, and only in passive (which writes nothing): stand a process the test started in
+      // for "the app in front", so the in-front rule is proved without touching Owen's window.
+      if (Program.Passive && req.ContainsKey("testFgPid")) fgPid = (uint)Math.Max(0, Json.GetInt(req, "testFgPid", 0));
       var outList = new List<object>();
       foreach (object o in items) {
         var it = o as Dictionary<string, object>;
@@ -337,6 +364,23 @@ namespace Mantle {
       return true;
     }
 
+    /// Does this item only LIFT game mode's throttle (Efficiency mode off / Windows' choice, priority
+    /// back to normal)? Then it cannot slow the process it names. Anything else is not easing.
+    static bool Easing(Dictionary<string, object> it) {
+      bool any = false;
+      uint c, s;
+      if (GetMask(it, "eco", out c, out s)) {
+        if ((c & EXECUTION_SPEED) != 0 && (s & EXECUTION_SPEED) != 0) return false;
+        any = true;
+      }
+      string p = Json.GetString(it, "prio");
+      if (!string.IsNullOrEmpty(p)) {
+        if (p != "normal") return false;
+        any = true;
+      }
+      return any;
+    }
+
     static IDictionary ApplyOne(Dictionary<string, object> it, uint fgPid, uint own) {
       uint pid = (uint)Math.Max(0, Json.GetInt(it, "pid", 0));
       string wantCreated = Json.GetString(it, "created");
@@ -348,6 +392,11 @@ namespace Mantle {
       foreach (Proc p in Snapshot(out err)) if (p.Pid == pid) { file = p.File; break; }
       if (file == null) { r["why"] = "it has exited"; r["gone"] = true; return r; }
       r["file"] = file;
+      // PUTTING BACK is allowed on the app in front (lane sysmon-game, 2026-09-29): the in-front rule is
+      // there so game mode never slows what Owen is using. It used to refuse the restore too, so the app
+      // he was in when the game closed stayed in Efficiency mode at below-normal priority until Mantle
+      // restarted. A write that only lifts the throttle can never slow anything.
+      if (Easing(it)) fgPid = 0;
       if (IsGameish(file) || pid <= 8 || pid == (uint)Program.OwnPid || pid == fgPid || session != own) {
         r["why"] = "refused: " + Refuse(file, "?", pid, session, false, fgPid, own);
         return r;

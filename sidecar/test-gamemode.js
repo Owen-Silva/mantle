@@ -88,6 +88,50 @@ const T = require('./test-lib');
     const r5 = await s.send('gamemode.apply', { items: [{ pid: 4, eco: { control: 1, state: 1 } }] }, 6000);
     t.check('apply: the System process is refused', r5.result.results[0].ok === false, JSON.stringify(r5.result.results[0]));
 
+    // ---- the app in front (lane sysmon-game, 2026-09-29): never SLOWED, but always PUT BACK. A child
+    // this test started stands in for "the app in front" (testFgPid: passive only); Owen's window is
+    // never read for this. Before the fix the restore was refused too, and the app he was in when the
+    // game closed stayed slowed until Mantle restarted.
+    {
+      const fk = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore', windowsHide: true });
+      await new Promise((r) => setTimeout(r, 400));
+      const sc = await s.send('gamemode.scan', { procs: true, detail: true }, 10000);
+      const row = (sc.result.procs || []).find((p) => p.pid === fk.pid) || {};
+      const who = { pid: fk.pid, created: row.created, file: row.file };
+      const slow = (await s.send('gamemode.apply', { testFgPid: fk.pid, items: [Object.assign({ eco: { control: 1, state: 1 }, prio: 'belownormal', prioIf: 'normal' }, who)] }, 6000)).result.results[0];
+      t.check('in front: slowing the app in front is refused before anything is read or written', slow.ok === false && /app in front/.test(slow.why || '') && !slow.eco && !slow.prio, JSON.stringify(slow));
+      const back = (await s.send('gamemode.apply', { testFgPid: fk.pid, items: [Object.assign({ eco: { control: 0, state: 0 }, ecoIf: { control: 1, state: 1 }, prio: 'normal', prioIf: 'belownormal' }, who)] }, 6000)).result.results[0];
+      t.check('in front: PUTTING BACK the app in front is allowed (never "refused: the app in front")', !/app in front/.test(back.why || '') && !!back.eco && !!back.prio, JSON.stringify(back));
+      t.check('in front: ...and it writes nothing here (same value, or refused as passive)', back.eco.wrote === false && back.prio.wrote === false, JSON.stringify(back));
+      const mixed = (await s.send('gamemode.apply', { testFgPid: fk.pid, items: [Object.assign({ eco: { control: 0, state: 0 }, prio: 'belownormal' }, who)] }, 6000)).result.results[0];
+      t.check('in front: an item that lifts one throttle but sets another is still refused', mixed.ok === false && /app in front/.test(mixed.why || ''), JSON.stringify(mixed));
+      const real = (await s.send('gamemode.apply', { items: [Object.assign({ eco: { control: 1, state: 1 } }, who)] }, 6000)).result.results[0];
+      t.check('in front: without testFgPid the stand-in is not in front (passive refusal, no write)', real.eco && real.eco.wrote === false, JSON.stringify(real));
+      try { fk.kill(); } catch (_) { /* gone */ }
+    }
+
+    // ---- sessions asked once per process (lane sysmon-game, 2026-09-29): the same answer every scan
+    {
+      const s1 = (await s.send('gamemode.scan', { procs: true }, 10000)).result;
+      const s2 = (await s.send('gamemode.scan', { procs: true }, 10000)).result;
+      const m1 = new Map((s1.procs || []).map((p) => [p.pid + ':' + p.file, p.session]));
+      const both = (s2.procs || []).filter((p) => m1.has(p.pid + ':' + p.file));
+      const diff = both.filter((p) => m1.get(p.pid + ':' + p.file) !== p.session);
+      t.check('sessions: a second scan gives every process the same session', both.length > 20 && diff.length === 0, `same ${both.length}, differ ${diff.length}`);
+      const mine = (s2.procs || []).find((p) => p.pid === process.pid);
+      t.check('sessions: this test runs in the scan\'s own session', mine && mine.session === s2.ownSession, JSON.stringify(mine && mine.session) + ' vs ' + s2.ownSession);
+      const late = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { stdio: 'ignore', windowsHide: true });
+      await new Promise((r) => setTimeout(r, 300));
+      const s3 = (await s.send('gamemode.scan', { procs: true }, 10000)).result;
+      const lr = (s3.procs || []).find((p) => p.pid === late.pid);
+      t.check('sessions: a process started after the last scan gets its session', lr && lr.session === s3.ownSession, JSON.stringify(lr));
+      const ms = [];
+      for (let i = 0; i < 9; i++) ms.push((await s.send('gamemode.scan', { procs: true }, 10000)).result.ms);
+      ms.sort((x, y) => x - y);
+      t.check(`sessions: the 3 s watch's scan is cheap (median ${ms[4]} ms, ${(s3.procs || []).length} processes)`, ms[4] < 60, ms.join(','));
+      try { late.kill(); } catch (_) { /* gone */ }
+    }
+
     // ---- power: same value = no write; a change = passive refusal
     const pm = await s.send('powermode.get', {}, 6000);
     const st = pm.result || {};
