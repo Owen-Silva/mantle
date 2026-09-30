@@ -92,6 +92,23 @@
     search: 'Search apps, files, settings and the web',
   };
 
+  /* ONE ACTION PER DECISION (lane launch-ui, 2026-09-29). A held Enter auto-repeats and a
+     double-click is two clicks: both used to start an app two or three times. A row's action is
+     now ignored while its request is on its way, and again for FIRE_GAP_MS after it was sent, so
+     a double-click (~200 ms apart) is one launch however fast main answers. */
+  var inFlight = null;        // 'row id|action' whose request has not answered yet
+  var lastFire = { key: '', at: 0 };
+  var FIRE_GAP_MS = 500;
+
+  /* FRESH APPS. main keeps the index for ten minutes, so an app installed a minute ago was not
+     there when you went to open it. Each open (at most every REFRESH_MS) asks for a rebuild in the
+     background, after the first rows are on screen, and searches again only if the index changed. */
+  var REFRESH_MS = 30000;
+  var lastRefresh = 0;
+  var indexSig = '';
+  var answered = false;       // the first apps.search has answered (until then: the loading line)
+  var lastSearched = null;    // the text the last apps.search answer was for
+
   /* ---- shown / hidden, and the one animation ----------------------------
      Electron fires visibilitychange on window show and hide, which is the only signal this page
      needs: main never animates the window itself. Defined above the bridge check on purpose —
@@ -163,10 +180,11 @@
     els.results.textContent = '';
     var dead = document.createElement('div');
     dead.className = 'empty is-bad';
-    dead.textContent = 'The Mantle bridge is missing: window.mantle was never injected, ' +
-      'so nothing can be searched or opened. The launcher window was probably created without its preload script.';
+    dead.textContent = 'The launcher could not connect to Mantle, so nothing can be searched or opened. Restarting Mantle usually fixes this.';
+    // the plumbing, for whoever debugs it: window.mantle was never injected (no preload script)
+    dead.title = 'window.mantle is missing: the launcher window was created without its preload script';
     els.results.appendChild(dead);
-    els.counts.textContent = 'not connected';
+    els.counts.textContent = 'Not connected';
     return;
   }
 
@@ -242,16 +260,30 @@
     els.results.textContent = '';
 
     renderHint();
+    var n = rows.length;
+    var count = !answered ? 'Loading' : n ? n + (n === 1 ? ' result' : ' results') : 'No results';
+    if (els.counts.textContent !== count) els.counts.textContent = count;
 
+    var typed = els.q.value.trim();
     if (!rows.length) {
       var blank = document.createElement('div');
-      blank.className = 'empty';
-      var typed = els.q.value.trim();
-      blank.textContent = !typed ? (mode === 'search' ? 'Type to search apps, files, settings and the web.' : 'Nothing to show yet.')
+      blank.className = 'empty' + (answered ? '' : ' is-loading');
+      blank.setAttribute('role', 'status');
+      blank.textContent = !answered ? 'Getting your apps ready…'
+        : !typed ? (mode === 'search' ? 'Type to search apps, files, settings and the web.' : 'No apps to show yet. Type to search files, settings and the web.')
         : filePending ? 'Nothing matches ‘' + typed + '’ yet. Searching your files…'
         : 'Nothing matches ‘' + typed + '’';
       els.results.appendChild(blank);
       return;
+    }
+    /* NO MATCH IS NOT A DEAD END: when the web row is all there is, say so above it, so Enter's
+       "Search the web" reads as the way on rather than as a strange first result. */
+    if (typed && rows.every(function (r) { return r.kind === 'web'; })) {
+      var none = document.createElement('div');
+      none.className = 'empty is-none';
+      none.setAttribute('role', 'status');
+      none.textContent = 'No apps, settings or commands match ‘' + typed + '’.';
+      els.results.appendChild(none);
     }
 
     var at = 0;
@@ -268,8 +300,20 @@
         var st = document.createElement('div');
         st.className = 'grp-status is-' + grp.status.kind;
         st.setAttribute('role', 'status');
-        st.textContent = grp.status.text;
+        st.textContent = plain(grp.status.text);
+        if (st.textContent !== grp.status.text) st.title = grp.status.text;
         els.results.appendChild(st);
+      }
+    }
+
+    /* A name or subtitle cut short by the ellipsis gets its whole text one hover away (one layout
+       read for the dozen rows; a file row already carries its full path). */
+    var cells = els.results.querySelectorAll('.row:not([title]) .name, .row:not([title]) .sub');
+    for (var c = 0; c < cells.length; c++) {
+      if (cells[c].scrollWidth > cells[c].clientWidth + 1) {
+        var rowOf = cells[c].closest('.row');
+        var it = rows[Number(rowOf.dataset.i)];
+        if (it) rowOf.title = (it.name || '') + (it.subtitle ? ' · ' + it.subtitle : '');
       }
     }
 
@@ -326,7 +370,8 @@
       if (note && note.id === item.id) {
         var why = document.createElement('div');
         why.className = 'why' + (note.ok ? ' is-ok' : '');
-        why.textContent = note.text;
+        why.textContent = plain(note.text);
+        if (why.textContent !== note.text) why.title = note.text;
         row.appendChild(why);
       }
       return row;
@@ -336,52 +381,88 @@
   /* One place builds this strip, because three things write to it: the per-source reasons, the
      index call's own failure, and the backdrop. Anything that appends to #srcErrors by hand gets
      wiped by the next render, which is how a reason quietly disappears. */
+  /* PLAIN WORDS (lane launch-ui, 2026-09-29). Reasons come from main, the index and Windows, and
+     some carry the plumbing: "sidecar", "spawn ENOENT", "(EPERM)", "0x80070005". Everything this
+     page prints goes through here first; the untouched text stays one hover away (title) for
+     whoever is debugging. */
+  function plain(text) {
+    var t = String(text == null ? '' : text);
+    t = t.replace(/\bthe running sidecar\b/gi, 'Mantle\'s helper').replace(/\bthe sidecar\b/gi, 'Mantle\'s helper')
+      .replace(/\bsidecar\b/gi, 'Mantle\'s helper');
+    t = t.replace(/\s*\((?:E[A-Z]{3,}|0x[0-9a-fA-F]{8}|code -?\d+)\)/g, '')
+      .replace(/\b(?:spawn\s+)?E(?:NOENT|ACCES|PERM|BUSY|EXIST|NOTDIR|ISDIR)\b:?\s*/g, '')
+      .replace(/\s*\b0x[0-9a-fA-F]{8}\b/g, '')
+      .replace(/\s{2,}/g, ' ').trim();
+    // a sentence starts with a capital; a file name does not get one ("wt.exe not found", not "Wt.exe")
+    return t && !/^\S*[.\\/:]\S/.test(t) ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+  }
+
+  /* What a broken source means to someone searching, not which module said it. */
+  var SOURCE_WORDS = {
+    apps: 'Your apps could not be listed, so only settings, files and the web can be searched.',
+    commands: 'Your PowerShell commands could not be read.',
+    settings: 'Settings pages could not be listed.',
+    power: 'Lock, Sleep and the other power options could not be listed.',
+  };
+
+  /* One place builds this strip, because three things write to it: the per-source problems, the
+     index call's own failure, and the backdrop. The FOOTER ITSELF says only what is wrong and what
+     keys do (renderHint); the old "apps 87 · commands 22 · settings 154 · power 6" counts were
+     status nobody acts on, so they are now a screen-reader line (#counts, "12 results"). */
   function renderFooter() {
-    var parts = [];
     var lines = [];
     for (var i = 0; i < sources.length; i++) {
       var s = sources[i] || {};
-      parts.push((s.name || '?') + ' ' + (typeof s.count === 'number' ? s.count : '?'));
-      if (s.reason) {
-        lines.push({ text: (s.name || '?') + ': ' + s.reason, bad: s.status !== 'ok' });
+      if (s.status && s.status !== 'ok') {
+        lines.push({ text: SOURCE_WORDS[s.name] || 'Part of the search is unavailable right now.', detail: (s.name || '?') + ': ' + (s.reason || 'no reason given') });
       }
     }
-    /* The file search is not an indexed source of ours - Windows keeps that index - so it reports
-       per query: how many rows and how long the index took, or why there are none. */
-    if (fileState.status === 'ok') parts.push('files ' + fileState.n + ' in ' + fileState.ms + ' ms');
-    else if (fileState.status === 'error') parts.push('files unavailable');
-    // (the index's reason itself - stopped service, unindexed profile - is the Files group's own
-    // status line since Win+S, right where the missing rows would be; not repeated down here)
-
-    els.counts.textContent = indexError ? 'index unavailable'
-      : (parts.length ? parts.join(' · ') : 'nothing indexed');
-    if (indexError) lines.unshift({ text: 'index: ' + indexError, bad: true });
-    if (backdropNote) lines.push({ text: backdropNote, bad: true });
+    if (indexError) lines.unshift({ text: 'Your apps and settings could not be loaded. Files and the web can still be searched; close and reopen the launcher to try again.', detail: indexError });
+    if (backdropNote) lines.push({ text: 'The see-through effect is off: Mantle could not picture the screen behind this window.', detail: backdropNote });
 
     els.srcErrors.textContent = '';
     for (var j = 0; j < lines.length; j++) {
       var div = document.createElement('div');
-      div.className = lines[j].bad ? 'src-error' : 'src-note';
+      div.className = 'src-error';
       div.textContent = lines[j].text;
+      div.title = lines[j].detail || '';
       els.srcErrors.appendChild(div);
     }
   }
 
-  /* What Enter does right now, in the footer: it changes on an armed row and on a file row
-     (the only rows with a second action), so the key that does it is never a secret. */
+  /* WHAT THE KEYS DO, as keycaps in the footer: Enter's verb for the selected row, the second
+     action where there is one, Tab when there are groups to jump, Esc. The row decides the words,
+     so the key that does it is never a secret. */
+  var ENTER_VERB = { app: 'Open', command: 'Run', setting: 'Open', url: 'Open', file: 'Open', web: 'Search the web' };
+  var hintKey = '';
   function renderHint() {
     if (!els.hint) return;
     var item = rows[sel];
-    /* One line in a 680px footer beside the counts: with more than one group, "Tab next group"
-       takes the place of "Esc closes" (Esc is the one key everybody already tries). */
-    var tab = view.groups.length > 1;
-    var tail = tab ? ' · Tab next group' : ' · Esc closes';
-    var text = 'Enter opens' + tail;
-    if (armed && item && armed.id === item.id) text = 'Enter again to confirm · Esc cancels';
-    else if (item && item.kind === 'file') text = 'Enter opens · Ctrl+Enter shows in folder' + (tab ? ' · Tab next group' : '');
-    else if (item && item.kind === 'calc') text = (item.bad ? 'No answer to copy' : 'Enter copies the answer') + tail;
-    else if (item && item.kind === 'web') text = 'Enter searches the web' + tail;
-    if (els.hint.textContent !== text) els.hint.textContent = text;
+    var keys = [];
+    if (armed && item && armed.id === item.id) keys = [['Enter', 'Confirm'], ['Esc', 'Cancel']];
+    else {
+      if (item) {
+        if (item.kind === 'calc') { if (!item.bad) keys.push(['Enter', 'Copy answer']); }
+        else if (item.kind === 'power') keys.push(['Enter', item.name]);
+        else keys.push(['Enter', ENTER_VERB[item.kind] || 'Open']);
+        if (item.kind === 'file') keys.push(['Ctrl+Enter', 'Show in folder']);
+      }
+      if (view.groups.length > 1) keys.push(['Tab', 'Next group']);
+      keys.push(['Esc', 'Close']);
+    }
+    var key = JSON.stringify(keys);
+    if (key === hintKey) return;
+    hintKey = key;
+    els.hint.textContent = '';
+    for (var i = 0; i < keys.length; i++) {
+      var span = document.createElement('span');
+      span.className = 'k' + (keys[i][0] === 'Esc' && i === keys.length - 1 && keys.length > 1 ? ' k-end' : '');
+      var kbd = document.createElement('kbd');
+      kbd.textContent = keys[i][0];
+      span.appendChild(kbd);
+      span.appendChild(document.createTextNode(' ' + keys[i][1]));
+      els.hint.appendChild(span);
+    }
   }
 
   /* The shell's own health report, as far as the launcher is concerned.
@@ -395,7 +476,10 @@
     var sc = state && state.sidecar;
     if (sc && sc.status && sc.status !== 'ok') {
       els.notice.hidden = false;
-      els.notice.textContent = 'icons unavailable: ' + (sc.reason || 'the sidecar is ' + sc.status);
+      /* the rows still work without it - they just wear letter tiles - so this is a notice, not an error */
+      els.notice.textContent = sc.status === 'starting' ? 'Mantle is still starting: app icons appear in a moment.'
+        : 'App icons are unavailable because Mantle\'s helper stopped; it restarts by itself. Apps still open.';
+      els.notice.title = sc.reason || sc.status;
     } else {
       els.notice.hidden = true;
       els.notice.textContent = '';
@@ -418,20 +502,38 @@
     els.results.textContent = '';
     var bad = document.createElement('div');
     bad.className = 'empty is-bad';
-    bad.textContent = text;
+    bad.textContent = plain(text);
     els.results.appendChild(bad);
   }
 
+  /* Resolves true when the index is not the one the last call described (an app came or went). */
   function refreshIndex(force) {
     return mantle.call('apps.index', { refresh: !!force }).then(function (res) {
       sources = (res && res.sources) || [];
       indexError = '';
       renderFooter();
+      var sig = sources.map(function (s) { return (s && s.name) + ':' + (s && s.count); }).join(',');
+      var changed = !!indexSig && sig !== indexSig;
+      indexSig = sig;
+      return changed;
     }, function (err) {
       sources = [];
       indexError = reasonOf(err);
       renderFooter();
+      return false;
     });
+  }
+
+  /* The background rebuild on open (see REFRESH_MS). After the first rows are up, so it never
+     delays them; the search runs again only when the answer differs and the launcher is still up. */
+  function freshenSoon() {
+    if (Date.now() - lastRefresh < REFRESH_MS) return;
+    lastRefresh = Date.now();
+    setTimeout(function () {
+      refreshIndex(true).then(function (changed) {
+        if (changed && document.visibilityState !== 'hidden') runSearch();
+      });
+    }, 250);
   }
 
   function reasonOf(err) {
@@ -455,13 +557,16 @@
     var q = els.q.value;
     mantle.call('apps.search', { q: q }).then(function (res) {
       if (mine !== searchSeq) return;              // a newer query already answered
+      answered = true;
       appRows = Array.isArray(res) ? res : (res && res.items) || [];
-      userMoved = false;
-      note = null;
+      /* a re-search of the SAME text (the background refresh) keeps a hand-moved selection */
+      if (q !== lastSearched) { userMoved = false; note = null; }
+      lastSearched = q;
       mergeRows();
     }, function (err) {
       if (mine !== searchSeq) return;
-      showProblem('The search failed: ' + reasonOf(err));
+      answered = true;
+      showProblem('The search did not answer (' + reasonOf(err) + '). Type again to retry; files and the web may still work.');
     });
   }
 
@@ -546,7 +651,7 @@
     var calc = null;
     try { calc = Calc ? Calc.evaluate(typed) : null; } catch (e) { calc = { ok: false, expr: typed.trim(), reason: 'the calculator failed: ' + reasonOf(e) }; }
     if (!Groups) {
-      showProblem('ui/launcher/groups.js did not load, so the results cannot be laid out (check index.html loads it before launcher.js).');
+      showProblem('The launcher is missing part of itself (groups.js), so results cannot be shown. Reinstalling Mantle fixes this.');
       return;
     }
     view = Groups.build({ q: typed, appRows: appRows, fileRows: files, fileState: fileState, filePending: filePending, calc: calc });
@@ -599,6 +704,21 @@
     render();
   }
 
+  /* Sends one row action at most once per decision (see inFlight): not while the same row's same
+     action is still on its way, and not again within FIRE_GAP_MS of sending it. */
+  function once(item, action, send) {
+    var key = item.id + '|' + action;
+    var now = Date.now();
+    if (inFlight === key) return;
+    if (lastFire.key === key && now - lastFire.at < FIRE_GAP_MS) return;
+    inFlight = key;
+    lastFire = { key: key, at: now };
+    var done = function () { if (inFlight === key) inFlight = null; };
+    var p;
+    try { p = send(); } catch (e) { done(); throw e; }
+    Promise.resolve(p).then(done, done);
+  }
+
   /* Power rows: the first Enter on one that asks first arms it; the second sends it. Lock and
      Sleep go straight through. A dry run (a --test Mantle, or MANTLE_POWER_DRYRUN=1) comes back
      ok with the command it WOULD have run, printed under the row, and the launcher stays up. */
@@ -609,7 +729,7 @@
     }
     var confirmed = !!(item.confirm && armed && armed.id === item.id);
     disarm();
-    mantle.call('launcher.power', { action: item.path, confirmed: confirmed }).then(function (res) {
+    once(item, 'power', function () { return mantle.call('launcher.power', { action: item.path, confirmed: confirmed }).then(function (res) {
       if (res && res.ok) {
         if (res.dryRun || res.reason) { note = { id: item.id, text: res.reason, ok: true }; render(); }
         return;                                   // for real: main has already hidden the launcher
@@ -619,13 +739,13 @@
     }, function (err) {
       note = { id: item.id, text: 'the ' + item.name + ' request failed: ' + reasonOf(err), ok: false };
       render();
-    });
+    }); });
   }
 
   /* File rows: Enter opens it with its default app, Ctrl+Enter (or Ctrl+click) shows it selected
      in its folder. */
   function activateFile(item, reveal) {
-    callPreferring('search.openFile', 'launcher.openFile', { path: item.path, reveal: !!reveal }).then(function (res) {
+    once(item, reveal ? 'reveal' : 'open', function () { return callPreferring('search.openFile', 'launcher.openFile', { path: item.path, reveal: !!reveal }).then(function (res) {
       if (res && res.ok) {
         if (res.dryRun) { note = { id: item.id, text: res.reason, ok: true }; render(); return; }
         // launcher.openFile hides the window itself; search.openFile (a feature) cannot, so ask.
@@ -638,7 +758,7 @@
     }, function (err) {
       note = { id: item.id, text: 'the open request failed: ' + reasonOf(err), ok: false };
       render();
-    });
+    }); });
   }
 
   /* The calculator row: Enter copies the answer. Main works it out again from the expression and
@@ -646,7 +766,7 @@
      would copy. A row with no answer says so and copies nothing. */
   function activateCalc(item) {
     if (item.bad) { note = { id: item.id, text: 'there is no answer to copy: ' + item.name, ok: false }; render(); return; }
-    mantle.call('search.copy', { expr: item.expr }).then(function (res) {
+    once(item, 'copy', function () { return mantle.call('search.copy', { expr: item.expr }).then(function (res) {
       if (res && res.ok) {
         note = { id: item.id, text: res.dryRun ? res.reason : 'Copied ' + (res.copied || item.copy), ok: true };
         render();
@@ -658,7 +778,7 @@
     }, function (err) {
       note = { id: item.id, text: 'the copy request failed: ' + reasonOf(err), ok: false };
       render();
-    });
+    }); });
   }
 
   /* "Search the web for …": main builds the URL from the text and opens it the way a typed URL
@@ -667,7 +787,7 @@
     // what is typed NOW, not the row's copy of it: the row is rebuilt only when apps.search answers,
     // so an End+Enter inside that gap would search the previous text (caught by the selftest)
     var typed = els.q.value.trim() || item.path;
-    mantle.call('search.web', { q: typed }).then(function (res) {
+    once(item, 'web', function () { return mantle.call('search.web', { q: typed }).then(function (res) {
       if (res && res.ok) {
         if (res.dryRun || res.reason) { note = { id: item.id, text: res.reason, ok: true }; render(); }
         if (!res.dryRun) hideTimer = setTimeout(function () { mantle.call('launcher.hide'); }, res.reason ? 1400 : 0);
@@ -678,7 +798,7 @@
     }, function (err) {
       note = { id: item.id, text: 'the web search request failed: ' + reasonOf(err), ok: false };
       render();
-    });
+    }); });
   }
 
   function activate(alt) {
@@ -690,7 +810,7 @@
     if (item.kind === 'calc') { activateCalc(item); return; }
     if (item.kind === 'web') { activateWeb(item); return; }
 
-    mantle.call('apps.launch', { id: item.id }).then(function (res) {
+    once(item, 'open', function () { return mantle.call('apps.launch', { id: item.id }).then(function (res) {
       if (res && res.ok) {
         if (res.reason) {
           /* It opened, but not the way you asked (a plain PowerShell window
@@ -710,7 +830,7 @@
     }, function (err) {
       note = { id: item.id, text: 'the launch request failed: ' + reasonOf(err), ok: false };
       render();
-    });
+    }); });
   }
 
   /* ---- input ------------------------------------------------------------- */
@@ -734,14 +854,21 @@
     if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); return; }
     if (e.key === 'Enter') {
       e.preventDefault();
-      // a HELD Enter repeats; on a power row that would arm and confirm in one press
-      if (e.repeat && rows[sel] && rows[sel].kind === 'power') return;
+      // a HELD Enter repeats: it would start the app again and again (and arm + confirm a power row)
+      if (e.repeat) return;
       activate(e.ctrlKey);
       return;
     }
     if (e.key === 'Tab' && rows.length && Groups) {
       e.preventDefault();
       select(Groups.jumpGroup(view.groups, sel, e.shiftKey ? -1 : 1));
+      return;
+    }
+    if ((e.key === 'PageDown' || e.key === 'PageUp') && rows.length) {
+      // a page of rows (44 px each, less one so the row you were on stays in sight); never wraps
+      e.preventDefault();
+      var per = Math.max(1, Math.floor(els.results.clientHeight / 45) - 1);
+      select(Math.max(0, Math.min(rows.length - 1, sel + (e.key === 'PageDown' ? per : -per))));
       return;
     }
     if (e.key === 'Home' && rows.length) { e.preventDefault(); select(0); return; }
@@ -756,6 +883,9 @@
     var el = target && target.closest ? target.closest('.row') : null;
     return el ? Number(el.dataset.i) : -1;
   }
+  /* the typing box keeps the focus whatever is clicked: a click on the list used to take it, and
+     then Backspace and the arrow keys stopped reaching the box */
+  els.results.addEventListener('mousedown', function (e) { e.preventDefault(); });
   els.results.addEventListener('mousemove', function (e) {
     var i = rowIndexFrom(e.target);
     if (i >= 0) select(i);
@@ -779,17 +909,23 @@
       applyMode(pendingOpen ? pendingOpen.mode : 'apps');
       if (pendingOpen && pendingOpen.query) els.q.value = pendingOpen.query;
       pendingOpen = null;
-      if (els.q.value.trim().length >= FILE_MIN) queueFiles();
       note = null;
       disarm();
+      userMoved = false;
+      lastSearched = null;
+      inFlight = null;
       if (fileTimer) { clearTimeout(fileTimer); fileTimer = null; }
       fileSeq++;                  // an answer still on its way is for the last session's query
       filePending = false;
       fileRows = []; fileQ = '';
       fileState = { status: 'idle', reason: '', ms: 0, n: 0 };
+      /* AFTER the reset above (it used to run before it, and the reset cancelled it: Win+S with a
+         query already typed never searched files for it) */
+      if (els.q.value.trim().length >= FILE_MIN) queueFiles();
       renderFooter();
       refreshIndex(false);      // picks up icons that finished after the last open
       runSearch();
+      freshenSoon();            // an app installed since the last rebuild shows up now
       els.q.focus();
       els.results.scrollTop = 0;
       /* belt to visibilitychange's braces: this event is main saying the window IS on screen, and
@@ -824,5 +960,8 @@
   /* ---- boot ---------------------------------------------------------------- */
   refreshIndex(false);
   runSearch();
+  lastRefresh = Date.now();   // the boot's own index call is fresh: the first open need not rebuild
+  // the loading line only if the first answer is slow (a cold index waits on icons): no flash otherwise
+  setTimeout(function () { if (!answered) render(); }, 150);
   els.q.focus();
 })();

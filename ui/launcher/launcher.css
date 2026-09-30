@@ -264,18 +264,20 @@ body.no-backdrop .panel::after {
 .ico:not(.is-letter) { background: transparent; }
 .ico {
   flex: none;
-  width: 28px; height: 28px;
+  width: 24px; height: 24px;
   border-radius: var(--lg-r-ctl);
   background: var(--lg-sunk);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--lg-ink-2);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   overflow: hidden;
 }
-.ico img { width: 28px; height: 28px; object-fit: contain; display: block; }
+/* 24px, not 28: from a 32px icon, 28 CSS px is 35 / 42 device px at 125 / 150% - an upscale that
+   blurs. 24 is 30 / 36: crisp at 125%, near enough at 150% (and sharp everywhere from a 64px icon). */
+.ico img { width: 24px; height: 24px; object-fit: contain; display: block; }
 .ico svg { width: 16px; height: 16px; display: block; }
 .ico.is-letter { text-transform: uppercase; }
 
@@ -303,7 +305,7 @@ body.no-backdrop .panel::after {
 /* why a launch did not happen, printed under the row it belongs to: a failed
    Enter must never look like nothing happened */
 .why {
-  padding: 0 12px 9px 50px;
+  padding: 0 12px 9px 46px;             /* under the name: 10 + the 24px icon + 12 */
   font-size: 12px;
   line-height: 1.35;
   color: var(--lg-warn);
@@ -372,7 +374,7 @@ body.no-backdrop .panel::after {
 .row + .grp, .grp-status + .grp { margin-top: 2px; }
 /* the Files group's own line: searching, the index's reason, or "no files match" */
 .grp-status {
-  padding: 6px 12px 8px 52px;          /* under the name column, past the icon cell */
+  padding: 6px 12px 8px 46px;          /* under the name column: 10 + the 24px icon + 12, as .why */
   font-size: 12.5px;
   line-height: 1.35;
   color: var(--lg-ink-3);
@@ -400,6 +402,8 @@ body.no-backdrop .panel::after {
   color: var(--lg-ink-3);
 }
 .empty.is-bad { color: var(--lg-warn); }
+/* nothing on this PC matched: one quiet line above the web row, lined up with the row names */
+.empty.is-none { padding: 10px 12px 2px 16px; color: var(--lg-ink-2); }
 
 /* ---- footer ------------------------------------------------------------ */
 
@@ -414,25 +418,52 @@ body.no-backdrop .panel::after {
 }
 .foot-row {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  min-height: 20px;
 }
-.counts, .hint {
+/* THE KEYS (lane launch-ui, 2026-09-29): what Enter does for the selected row, the second action,
+   Tab, Esc - as keycaps, the way Raycast and Spotlight teach their keys. The keycap is the chip
+   recess with one hairline; the words are the footer's quiet ink. Esc sits at the right edge. */
+.hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
-/* --readout-stretch went with Bahnschrift: Segoe UI Variable has no width axis, so asking for
-   87.5% here would only invite a synthesised condense. */
-.counts { font-variant-numeric: tabular-nums; }
+.hint .k { display: inline-flex; align-items: center; gap: 5px; flex: none; }
+.hint .k-end { margin-left: auto; }
+kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 5px;
+  border: 1px solid var(--lg-edge-out);
+  border-radius: 4px;
+  background: var(--lg-sunk);
+  color: var(--lg-ink-2);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 15px;
+  text-align: center;
+}
+/* read by a screen reader ("12 results"), never drawn */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
 
-.src-errors:not(:empty) { margin-bottom: 5px; }
+.src-errors:not(:empty) { margin-bottom: 6px; }
 .src-error {
   color: var(--lg-warn);
   line-height: 1.35;
 }
-.src-note { color: var(--lg-ink-3); line-height: 1.35; }   /* a source that works but has something to say */
 
 /* ---- the sidecar notice ------------------------------------------------ */
 

@@ -52,9 +52,10 @@
            backdrop when main cannot photograph what is behind this window -->
       <div class="src-errors" id="srcErrors"></div>
       <div class="foot-row">
-        <span class="counts" id="counts">indexing…</span>
-        <!-- launcher.js rewrites this for an armed power row and for a file row (Ctrl+Enter) -->
-        <span class="hint" id="hint">Enter opens &middot; Esc closes</span>
+        <!-- what the keys do for the selected row, as keycaps (launcher.js renderHint) -->
+        <span class="hint" id="hint"><span class="k"><kbd>Enter</kbd> Open</span><span class="k k-end"><kbd>Esc</kbd> Close</span></span>
+        <!-- how many results, for a screen reader only: the counts line was status nobody acts on -->
+        <span class="counts sr-only" id="counts" role="status" aria-live="polite">Loading</span>
       </div>
     </footer>
 
