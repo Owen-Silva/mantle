@@ -25,20 +25,35 @@ html, body {
   transition: transform var(--lg-dur) var(--lg-ease), opacity 180ms linear;
 }
 #card.in { transform: none; opacity: 1; }
+/* Put away: it slides back down and fades on the exit timing, then main parks the window (card.js OUT_MS). */
+#card.out { transform: translateY(8px); opacity: 0; transition: transform var(--lg-dur-out) var(--lg-ease), opacity var(--lg-dur-out) linear; }
 #card[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { #card, #card.out { transition: none; transform: none; } }
 
 button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: default; outline: none; }
 button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 
+/* The picture is the card's one big target (it opens the screenshot), so it LOOKS clickable: on hover
+   the picture dims a touch and an open glyph comes up in its corner; pressed, it gives a little. */
 .thumb {
-  flex: none; width: 104px; height: 66px; border-radius: var(--lg-r-ctl); overflow: hidden;
+  position: relative; flex: none; width: 104px; height: 66px; border-radius: var(--lg-r-ctl); overflow: hidden;
   background: var(--lg-sunk); box-shadow: 0 0 0 1px var(--lg-edge-out);
+  transition: transform 120ms var(--lg-ease);
 }
-.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter 120ms linear; }
 .thumb img:not([src]) { visibility: hidden; }
+.open-glyph {
+  position: absolute; right: 5px; bottom: 5px; width: 20px; height: 20px; padding: 3px; box-sizing: border-box;
+  border-radius: 50%; background: var(--hud-face); color: var(--lg-ink); box-shadow: 0 0 0 1px var(--lg-edge-out);
+  opacity: 0; transition: opacity 120ms linear;
+}
+.thumb:not([disabled]):hover img, .thumb:focus-visible img { filter: brightness(.9); }
+.thumb:not([disabled]):hover .open-glyph, .thumb:focus-visible .open-glyph { opacity: 1; }
+.thumb:not([disabled]):active { transform: scale(.97); }
+.thumb:focus-visible { box-shadow: 0 0 0 1px var(--lg-edge-out), 0 0 0 3px var(--lg-acc); }
 
 .text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding-right: 22px; }
-.title { text-align: left; font-size: 14px; font-weight: 600; color: var(--lg-ink); border-radius: 4px; }
+.title { font-size: 14px; line-height: 20px; font-weight: 600; color: var(--lg-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .name, .status, .warn { font-size: 12px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .name { color: var(--lg-ink-2); }
 .status { color: var(--lg-ink-3); font-variant-numeric: tabular-nums; }
@@ -57,6 +72,7 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 .act:active { background: var(--lg-press); }
 .act[disabled] { color: var(--lg-ink-3); background: transparent; }
 .act.done { color: var(--lg-acc); }
+.act.bad { color: var(--lg-warn); }
 
 .x {
   position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border-radius: var(--lg-r-ctl);
@@ -64,13 +80,16 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 }
 .x svg { width: 14px; height: 14px; }
 .x:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.x:active { background: var(--lg-press); color: var(--lg-ink); }
 
-/* The Copy text card: no picture and no file actions (nothing was saved); the preview is the name line. */
-#card.text-card .thumb, #card.text-card .actions { display: none; }
+/* No file (a Copy text card, a capture that was not saved, Windows' snip standing in): no empty
+   picture box and no actions that could never work - the warn line says what happened instead. */
+#card.no-file .thumb, #card.no-file .actions { display: none; }
 #card.text-card .name { color: var(--lg-ink); }
 
 /* How long the card has left: a hairline that shrinks, paused while the pointer or focus is on it. */
 .timer {
   position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--lg-acc); opacity: .35;
-  transform-origin: left center;
+  transform-origin: left center; transition: opacity 120ms linear;
 }
+#card.paused .timer { opacity: .15; }      /* held by the pointer or the keyboard: the countdown rests */

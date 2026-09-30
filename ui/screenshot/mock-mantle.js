@@ -93,9 +93,9 @@
       seq: 1, grab: 7, mode: q.get('mode') || 'rect', monitor: mon, windows: wins,
       src: q.get('problem') === '1' ? null : paintDesktop(),
       cursor: cur ? { x: MX + Math.floor(cur.x * dpr), y: MY + Math.floor(cur.y * dpr) } : null,
-      problem: q.get('problem') === '1' ? 'the sidecar could not grab the screen (BitBlt failed, Win32 error 5)' : null,
+      problem: q.get('problem') === '1' ? 'Windows did not give Mantle a picture of this screen, so it cannot be captured here. Use another screen, or press Esc.' : null,
       ocr: q.get('ocr') === 'off'
-        ? { available: false, why: 'no OCR language is installed (Windows Settings > Time & language > Language & region: add a language with its optical character recognition feature)' }
+        ? { available: false, why: 'Windows has no text recognition installed: add a language in Windows Settings > Time & language > Language & region' }
         : { available: true, lang: 'en-US' },
     };
     emit('screenshot.frame', mock.frame);

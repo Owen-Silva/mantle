@@ -44,6 +44,7 @@
     kbd: null,          // the keyboard crosshair (CSS px), when the arrows are in use
     anchor: null,       // where a Rectangle drag (or a keyboard selection) started
     dragging: false, done: true, failed: false,
+    pressed: false,     // the left button went down on the page (not the bar) during this capture
   };
   window.__shot = S;    // for the tests and shoot.js: read-only use
 
@@ -177,7 +178,7 @@
 
   function clear() {
     S.done = true;
-    S.anchor = null; S.dragging = false; S.kbd = null; S.ptr = null; S.mon = null; S.windows = [];
+    S.anchor = null; S.dragging = false; S.pressed = false; S.kbd = null; S.ptr = null; S.mon = null; S.windows = [];
     frame.removeAttribute('src');            // a parked window holds no picture of the screen
     showHole(null);
     showGuides(null);
@@ -223,9 +224,10 @@
       setTimeout(function () { ready('timer (no animation frames: the window is hidden)'); }, 250);
     }, function (err) {
       if (S.seq !== f.seq) return;
-      var why = 'the frozen frame of this screen could not be decoded (' + ((err && err.message) || 'unknown error') + ')';
-      fail(why);
-      send('ready', { seq: f.seq, monitor: S.mon.index, ms: Math.round(performance.now() - t0), problem: why });
+      // The screen shows plain words; main's log gets the browser's own reason (ready.problem).
+      fail('Mantle could not show the picture of this screen. Press Esc and take the screenshot again.');
+      send('ready', { seq: f.seq, monitor: S.mon.index, ms: Math.round(performance.now() - t0),
+        problem: 'the frozen frame of this screen could not be decoded (' + ((err && err.message) || 'unknown error') + ')' });
     });
   }
 
@@ -234,8 +236,30 @@
   function pt(e) { return { x: e.clientX, y: e.clientY }; }
   function onBar(e) { return !!(e.target && e.target.closest && e.target.closest('#bar, #problem')); }
 
+  /* RIGHT-CLICK (lane capture-shot, 2026-09-29; it did nothing before): during a drag it drops the
+     selection and the crosshair is back (start over without leaving); otherwise it cancels, like Esc.
+     The way ShareX and Greenshot behave, and the one a hand already on the mouse reaches for. */
+  function rightClick() {
+    if (S.done) return;
+    if (drags(S.mode) && S.anchor) {
+      S.anchor = null; S.dragging = false; S.pressed = false;
+      document.body.classList.remove('selecting');
+      redraw();
+      return;
+    }
+    cancel('right-click');
+  }
+  document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  // mousedown, not pointerdown: a second button pressed DURING a left drag is a chorded press, which
+  // fires no pointerdown (Pointer Events), only a pointermove; the mouse event still comes.
+  document.addEventListener('mousedown', function (e) { if (e.button === 2) { e.preventDefault(); rightClick(); } });
+
   document.addEventListener('pointerdown', function (e) {
-    if (S.done || S.failed || e.button !== 0 || onBar(e)) return;
+    if (e.button === 2) return;          // the right button: mousedown above
+    // A press that starts on the bar (or the problem box) never captures when it is let go over
+    // the screen: before, pressing a mode button and sliding off it captured a window or the screen.
+    S.pressed = !(S.done || S.failed || e.button !== 0 || onBar(e));
+    if (!S.pressed) return;
     S.kbd = null;
     S.ptr = pt(e);
     if (drags(S.mode)) {
@@ -257,6 +281,8 @@
   document.addEventListener('pointerup', function (e) {
     if (S.done || S.failed || e.button !== 0) return;
     if (onBar(e) && !S.dragging) return;
+    if (!S.pressed) return;              // the press began on the bar, or before this capture
+    S.pressed = false;
     S.ptr = pt(e);
     var t = target(S.ptr);
     if (drags(S.mode)) {
@@ -309,6 +335,13 @@
   bridge.on('screenshot.frame', onFrame);
   bridge.on('screenshot.mode', function (m) { if (m && m.mode && m.mode !== S.mode && !S.done) setMode(m.mode, false); });
   bridge.on('screenshot.clear', function (c) { canary({ on: false }); clear(c); });
+  // Main asked Windows' OCR again during this capture (it was unavailable): the Copy text button follows.
+  bridge.on('screenshot.ocr', function (o) {
+    if (!o || S.done) return;
+    S.ocr = o;
+    showOcr();
+    if (hint.classList.contains('warn') && o.available) { hint.classList.remove('warn'); hint.textContent = HINTS[S.mode]; }
+  });
 
   // THE CANARY (lib/features/screenshot.js canary()): a magenta dot a few device pixels wide, on
   // top of everything on this page for one check, so main can read the SCREEN's pixel there and

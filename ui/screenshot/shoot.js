@@ -45,7 +45,9 @@ function check(name, ok, detail) {
 
 function gamesRunning() {
   const out = execFileSync('powershell', ['-NoProfile', '-Command',
-    '@(Get-Process javaw,Minecraft*,RobloxPlayerBeta,*Riot*,VALORANT* -ErrorAction SilentlyContinue).Count'], { encoding: 'utf8' });
+    // The lanes' game list (BRIEF). NOT *Riot*: RiotClientServices / CrashHandler are the launcher,
+    // up all day in the background, and matching them meant this test never ran on Owen's machine.
+    '@(Get-Process VALORANT*,javaw,Minecraft*,RobloxPlayerBeta -ErrorAction SilentlyContinue).Count'], { encoding: 'utf8' });
   return Number(out.trim()) || 0;
 }
 
@@ -158,10 +160,57 @@ async function modes(browser) {
   check('Esc cancels', x && x.why === 'Esc');
   await ctx.close();
 
+  // RIGHT-CLICK (lane capture-shot; it did nothing before). During a drag it drops the selection and
+  // the overlay stays (the next drag captures); with no drag it cancels, like Esc.
+  ({ ctx, page, errors } = await open(browser, `${PAGE}?mode=rect`, 1280, 720, 1));
+  await page.mouse.move(100, 100); await page.mouse.down(); await page.mouse.move(300, 250, { steps: 3 });
+  await page.mouse.down({ button: 'right' }); await page.mouse.up({ button: 'right' });
+  await page.mouse.up();
+  let st = await page.evaluate(() => ({ anchor: window.__shot.anchor, done: window.__shot.done, hole: document.getElementById('hole').hidden }));
+  c = await lastCall(page, 'screenshot.commit');
+  let xx = await lastCall(page, 'screenshot.cancel');
+  check('right-click during a drag drops the selection: nothing captured, nothing cancelled, the overlay stays', !c && !xx && !st.anchor && !st.done && st.hole, JSON.stringify({ st, c, xx }));
+  await page.mouse.move(400, 300); await page.mouse.down(); await page.mouse.move(600, 450, { steps: 3 }); await page.mouse.up();
+  c = await lastCall(page, 'screenshot.commit');
+  check('...and the next drag still captures', c && c.rect.w === 200 && c.rect.h === 150, JSON.stringify(c));
+  check('right-click: no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+  ({ ctx, page } = await open(browser, `${PAGE}?mode=window`, 1280, 720, 1));
+  await page.mouse.click(640, 400, { button: 'right' });
+  xx = await lastCall(page, 'screenshot.cancel');
+  c = await lastCall(page, 'screenshot.commit');
+  check('right-click with no drag cancels, like Esc (and captures nothing)', xx && xx.why === 'right-click' && !c, JSON.stringify({ xx, c }));
+  await ctx.close();
+
+  // A press that starts on the mode bar, let go over the screen, captures nothing (it captured the
+  // window under the pointer before); a plain click then still does; a double-click captures ONCE.
+  ({ ctx, page } = await open(browser, `${PAGE}?mode=window`, 1280, 720, 1));
+  const bb = await (await page.$('button[data-mode="window"]')).boundingBox();
+  await page.mouse.move(bb.x + 6, bb.y + 6); await page.mouse.down(); await page.mouse.move(640, 500, { steps: 4 }); await page.mouse.up();
+  c = await lastCall(page, 'screenshot.commit');
+  check('a press on the mode bar let go over the screen captures nothing', c === null, JSON.stringify(c));
+  await page.mouse.dblclick(640, 500);
+  const commits = await page.evaluate(() => window.__mock.calls.filter((x) => x.name === 'screenshot.commit').length);
+  check('then a double-click on a window captures it once', commits === 1, `${commits} commits`);
+  await ctx.close();
+  ({ ctx, page } = await open(browser, `${PAGE}?mode=rect`, 1280, 720, 1));
+  await page.click('#close');
+  xx = await lastCall(page, 'screenshot.cancel');
+  check('the X on the mode bar cancels', xx && xx.why === 'the close button', JSON.stringify(xx));
+  await ctx.close();
+  const tabs = [];
+  ({ ctx, page } = await open(browser, `${PAGE}?mode=rect`, 1280, 720, 1));
+  for (let i = 0; i < 5; i++) { await page.keyboard.press('Tab'); tabs.push(await page.evaluate(() => document.activeElement && (document.activeElement.getAttribute('data-mode') || document.activeElement.id))); }
+  check('Tab walks the mode bar in order, then the X', tabs.join(',') === 'rect,window,full,text,close', tabs.join(','));
+  await page.keyboard.press('Enter');
+  xx = await lastCall(page, 'screenshot.cancel');
+  check('Enter on the focused X cancels (Enter on a button never captures)', xx && xx.why === 'the close button' && !(await lastCall(page, 'screenshot.commit')), JSON.stringify(xx));
+  await ctx.close();
+
   // The problem panel (NO SILENT FAILURES) and a dark desktop.
   ({ ctx, page } = await open(browser, `${PAGE}?problem=1`, 1280, 720, 1));
   const shown = await page.evaluate(() => !document.getElementById('problem').hidden && document.getElementById('problem-text').textContent);
-  check('a frame problem is shown in plain words', /BitBlt failed/.test(shown || ''), shown);
+  check('a frame problem is shown in plain words (no codes, no jargon)', /picture of this screen/.test(shown || '') && !/sidecar|BitBlt|Win32|0x/i.test(shown || ''), shown);
   await page.screenshot({ path: path.join(OUT, 'overlay-problem.png') });
   await ctx.close();
   ({ ctx, page } = await open(browser, `${PAGE}?mode=window&dark=1&cursor=400,300`, 1920, 1080, 1));
@@ -201,17 +250,25 @@ async function copyText(browser) {
   // Unavailable: the button is aria-disabled with the reason as its tooltip; T and a click say it.
   ({ ctx, page, errors } = await open(browser, `${PAGE}?mode=rect&ocr=off`, 1280, 720, 1.25));
   const btn = await page.evaluate(() => { const b2 = document.querySelector('button[data-mode="text"]'); return { dis: b2.getAttribute('aria-disabled'), off: b2.classList.contains('off'), title: b2.title }; });
-  check('copy text unavailable: the button shows it, with the reason as its tooltip', btn.dis === 'true' && btn.off && /unavailable: no OCR language is installed/.test(btn.title), JSON.stringify(btn));
+  check('copy text unavailable: the button shows it, with the reason as its tooltip', btn.dis === 'true' && btn.off && /unavailable: Windows has no text recognition installed/.test(btn.title), JSON.stringify(btn));
   await page.keyboard.press('t');
   await page.click('button[data-mode="text"]', { force: true });   // aria-disabled: Playwright will not click it unforced; a real click still lands
   const after = await page.evaluate(() => ({ mode: window.__shot.mode, hint: document.getElementById('hint').textContent, warn: document.getElementById('hint').classList.contains('warn') }));
   const told = await page.evaluate(() => window.__mock.calls.filter((x) => x.name === 'screenshot.mode').length);
-  check('copy text unavailable: T and a click say why in the hint, and the mode stays', after.mode === 'rect' && after.warn && /Copy text is unavailable: no OCR language/.test(after.hint) && told === 0, JSON.stringify({ after, told }));
+  check('copy text unavailable: T and a click say why in the hint, and the mode stays', after.mode === 'rect' && after.warn && /Copy text is unavailable: Windows has no text recognition/.test(after.hint) && told === 0, JSON.stringify({ after, told }));
   await page.screenshot({ path: path.join(OUT, 'overlay-text-unavailable-1.25x.png') });
   await page.keyboard.press('f');
   const back = await page.evaluate(() => ({ mode: window.__shot.mode, warn: document.getElementById('hint').classList.contains('warn') }));
   check('copy text unavailable: another mode clears the warning', back.mode === 'full' && !back.warn, JSON.stringify(back));
   check('copy text unavailable: no page errors', errors.length === 0, errors.join(' | '));
+  // Main asked again during the capture and Windows' OCR answered (lane capture-shot): the button
+  // comes on without a new capture, and T now picks Copy text.
+  await page.keyboard.press('t');
+  await page.evaluate(() => window.__mockEmit('screenshot.ocr', { available: true, why: null, lang: 'en-US' }));
+  const on = await page.evaluate(() => { const b2 = document.querySelector('button[data-mode="text"]'); return { dis: b2.getAttribute('aria-disabled'), off: b2.classList.contains('off'), warn: document.getElementById('hint').classList.contains('warn') }; });
+  await page.keyboard.press('t');
+  const now = await page.evaluate(() => window.__shot.mode);
+  check('copy text: an OCR answer during the capture turns the button on and clears the warning; T works', on.dis === 'false' && !on.off && !on.warn && now === 'text', JSON.stringify({ on, now }));
   await ctx.close();
 }
 
@@ -225,7 +282,7 @@ async function cards(browser) {
       thumb: getComputedStyle(document.getElementById('open')).display, actions: getComputedStyle(document.querySelector('.actions')).display }));
     if (st === 'text') check('card text: "Copied 3 lines", the preview, plain text on the clipboard', t.title === 'Copied 3 lines' && /^“Question 7: .*…”$/.test(t.name) && /Plain text/.test(t.status) && !t.warn, JSON.stringify(t));
     if (st === 'notext') check('card notext: "No text found in that area", nothing copied', t.title === 'No text found in that area' && /Nothing was copied/.test(t.status) && !t.name, JSON.stringify(t));
-    if (st === 'textfail') check('card textfail: says not copied and why', t.title === 'Text not copied' && /Not copied: no OCR language/.test(t.warn), JSON.stringify(t));
+    if (st === 'textfail') check('card textfail: says not copied and why', t.title === 'Text not copied' && /^Windows has no text recognition/.test(t.warn) && !/Not copied/.test(t.warn), JSON.stringify(t));
     check(`card ${st}: no thumbnail and no file actions (nothing was saved)`, t.thumb === 'none' && t.actions === 'none', JSON.stringify(t));
     check(`card ${st}: no page errors`, errors.length === 0, errors.join(' | '));
     await ctx.close();
@@ -235,31 +292,109 @@ async function cards(browser) {
     const { ctx, page } = await open(browser, `${CARD}?state=text&life=0`, 420, 190, 1);
     await page.evaluate(() => window.__cardEmit('screenshot.card', { seq: 4, name: 'Screenshot 2026-09-27 101500.png', path: 'C:\\x.png', w: 800, h: 600, copied: true, lifeMs: 1e9 }));
     const t = await page.evaluate(() => ({ cls: document.getElementById('card').classList.contains('text-card'), thumb: getComputedStyle(document.getElementById('open')).display, title: document.getElementById('title').textContent, folder: document.getElementById('folder').disabled }));
-    check('card: a picture card after a text card is a picture card again (thumbnail, actions)', !t.cls && t.thumb !== 'none' && t.title === 'Screenshot saved' && !t.folder, JSON.stringify(t));
+    check('card: a picture card after a text card is a picture card again (thumbnail, actions)', !t.cls && t.thumb !== 'none' && t.title === 'Screenshot copied' && !t.folder, JSON.stringify(t));
     await ctx.close();
   }
   for (const st of ['ok', 'nosave', 'nocopy', 'neither']) {
     const { ctx, page, errors } = await open(browser, `${CARD}?state=${st}&life=0`, 420, 190, 1.25);
     await page.waitForTimeout(700);
     await page.screenshot({ path: path.join(OUT, `card-${st}.png`) });
-    const t = await page.evaluate(() => ({ title: document.getElementById('title').textContent, warn: document.getElementById('warn').hidden ? '' : document.getElementById('warn').textContent, folder: document.getElementById('folder').disabled }));
-    if (st === 'ok') check('card ok: saved and copied', /^Screenshot saved$/.test(t.title) && !t.warn && !t.folder, JSON.stringify(t));
-    if (st === 'nosave') check('card nosave: says copied, not saved, and why; folder disabled', /copied/.test(t.title) && /Not saved: .*read-only/.test(t.warn) && t.folder, JSON.stringify(t));
+    const t = await page.evaluate(() => ({ title: document.getElementById('title').textContent, name: document.getElementById('name').textContent, status: document.getElementById('status').textContent, warn: document.getElementById('warn').hidden ? '' : document.getElementById('warn').textContent, folder: document.getElementById('folder').disabled, thumb: getComputedStyle(document.getElementById('open')).display, actions: getComputedStyle(document.querySelector('.actions')).display }));
+    if (st === 'ok') check('card ok: "Screenshot copied", one line with the folder and size, no file name line', t.title === 'Screenshot copied' && t.status === 'Saved to Screenshots · 1280 × 720' && !t.name && !t.warn && !t.folder, JSON.stringify(t));
+    if (st === 'nosave') check('card nosave: says copied, not saved, and why; folder disabled', /copied/.test(t.title) && /Not saved: Windows did not let Mantle save there/.test(t.warn) && t.folder, JSON.stringify(t));
     if (st === 'nocopy') check('card nocopy: says saved, not copied, and why', /saved/.test(t.title) && /Not copied:/.test(t.warn), JSON.stringify(t));
     if (st === 'neither') check('card neither: says not saved, both reasons', /not saved/.test(t.title) && /Not saved/.test(t.warn) && /Not copied/.test(t.warn), JSON.stringify(t));
+    if (st === 'nosave' || st === 'neither') check(`card ${st}: no empty picture box and no dead buttons (nothing was saved)`, t.thumb === 'none' && t.actions === 'none', JSON.stringify(t));
+    if (st === 'nocopy') check('card nocopy: the picture and the file actions are there (it was saved)', t.thumb !== 'none' && t.actions !== 'none' && !t.folder, JSON.stringify(t));
+    check(`card ${st}: no jargon on screen`, !/sidecar|\bshot\.\w|Exception|0x[0-9A-F]|HRESULT|undefined|null|NaN/.test(t.title + t.status + t.warn), t.title + ' | ' + t.status + ' | ' + t.warn);
     check(`card ${st}: no page errors`, errors.length === 0, errors.join(' | '));
     await ctx.close();
   }
-  // The timer: a 5 s card dismisses itself; Esc dismisses at once; Copy path asks main.
-  const { ctx, page } = await open(browser, `${CARD}?state=ok`, 420, 190, 1);
-  await page.click('#copy-path');
-  const cp = await lastCall(page, 'screenshot.cardCopyPath');
-  check('card: Copy path asks main', !!cp);
-  await page.mouse.move(5, 5);         // off the card, so the timer runs
-  await page.waitForFunction(() => window.__mock.calls.some((c) => c.name === 'screenshot.cardDismiss'), null, { timeout: 9000 }).catch(() => {});
-  const d = await lastCall(page, 'screenshot.cardDismiss');
-  check('card: it dismisses itself after its time', d && d.why === 'timeout', JSON.stringify(d));
-  await ctx.close();
+  // THE ACTIONS, clicked (lane capture-shot): each asks main once, naming THIS card (its seq), and the
+  // timer pauses under the pointer and runs out once it leaves.
+  const dismissals = (page) => page.evaluate(() => window.__mock.calls.filter((c) => c.name === 'screenshot.cardDismiss').map((c) => c.args));
+  const card5 = (seq) => ({ seq, name: 'Screenshot 2026-09-29 101500.png', folderName: 'Screenshots', path: 'C:\\x.png', w: 10, h: 10, copied: true, lifeMs: 1e9 });
+  {
+    const { ctx, page } = await open(browser, `${CARD}?state=ok`, 420, 190, 1);
+    await page.click('#copy-path');
+    await page.click('#copy-path');
+    const n = await page.evaluate(() => window.__mock.calls.filter((c) => c.name === 'screenshot.cardCopyPath').length);
+    const cp = await lastCall(page, 'screenshot.cardCopyPath');
+    const lbl = await page.textContent('#copy-path');
+    check('card: Copy path asks main once (a second click adds nothing), names this card, says "Path copied"', n === 1 && cp && cp.seq === 3 && lbl === 'Path copied', JSON.stringify({ n, cp, lbl }));
+    await page.hover('#card');
+    const l0 = await page.evaluate(() => window.__card.left);
+    await page.waitForTimeout(1200);
+    const l1 = await page.evaluate(() => ({ left: window.__card.left, paused: document.getElementById('card').classList.contains('paused') }));
+    check('card: the pointer on the card pauses its timer, and the countdown bar rests', Math.abs(l1.left - l0) < 60 && l1.paused, JSON.stringify({ l0, l1 }));
+    await page.mouse.move(5, 5);         // off the card, so the timer runs
+    await page.waitForFunction(() => window.__mock.calls.some((c) => c.name === 'screenshot.cardDismiss'), null, { timeout: 9000 }).catch(() => {});
+    const d = await lastCall(page, 'screenshot.cardDismiss');
+    check('card: it dismisses itself after its time', d && d.why === 'timeout' && d.seq === 3, JSON.stringify(d));
+    await ctx.close();
+  }
+  {
+    const { ctx, page } = await open(browser, `${CARD}?state=ok&life=0`, 420, 190, 1);
+    await page.waitForTimeout(700);
+    await page.hover('#open');
+    await page.waitForTimeout(200);
+    const aff = await page.evaluate(() => ({ glyph: getComputedStyle(document.querySelector('.open-glyph')).opacity, tip: document.getElementById('open').title, titleTag: document.getElementById('title').tagName }));
+    await page.screenshot({ path: path.join(OUT, 'card-ok-hover.png') });
+    check('card: the picture looks clickable on hover (open glyph) and names the file in its tooltip; the title is plain text', aff.glyph === '1' && /^Open Screenshot 2026-09-24 143005\.png$/.test(aff.tip) && aff.titleTag === 'DIV', JSON.stringify(aff));
+    await page.dblclick('#open');
+    await page.waitForTimeout(500);
+    const opens = await page.evaluate(() => window.__mock.calls.filter((c) => c.name === 'screenshot.cardOpen').length);
+    const ds = await dismissals(page);
+    check('card: a double-click on the picture opens it ONCE and the card goes (after its slide-out)', opens === 1 && ds.length === 1 && ds[0].why === 'opened' && ds[0].seq === 3, JSON.stringify({ opens, ds }));
+    await ctx.close();
+  }
+  {
+    const { ctx, page } = await open(browser, `${CARD}?state=ok&life=0&openfail=1`, 420, 190, 1);
+    await page.click('#open');
+    await page.waitForTimeout(500);
+    const w = await page.evaluate(() => document.getElementById('warn').hidden ? '' : document.getElementById('warn').textContent);
+    const ds = await dismissals(page);
+    await page.screenshot({ path: path.join(OUT, 'card-openfail.png') });
+    check('card: an open that fails keeps the card up and says why in plain words', ds.length === 0 && /^Not opened: Windows has no app/.test(w), JSON.stringify({ w, ds }));
+    await ctx.close();
+  }
+  {
+    const { ctx, page } = await open(browser, `${CARD}?state=ok&life=0`, 420, 190, 1);
+    await page.click('#folder');
+    await page.waitForTimeout(450);
+    const f = await lastCall(page, 'screenshot.cardFolder');
+    let d = await lastCall(page, 'screenshot.cardDismiss');
+    check('card: Open folder asks main (this card) and the card goes', f && f.seq === 3 && d && d.why === 'folder' && d.seq === 3, JSON.stringify({ f, d }));
+    await page.evaluate((c) => window.__cardEmit('screenshot.card', c), card5(4));
+    await page.waitForTimeout(700);
+    await page.click('#dismiss');
+    await page.waitForTimeout(450);
+    d = await lastCall(page, 'screenshot.cardDismiss');
+    check('card: the X closes it, naming its own card', d && d.why === 'closed' && d.seq === 4, JSON.stringify(d));
+    await page.evaluate((c) => window.__cardEmit('screenshot.card', c), card5(5));
+    await page.waitForTimeout(700);
+    const walk = [];
+    for (let i = 0; i < 3; i++) { await page.keyboard.press('ArrowRight'); walk.push(await page.evaluate(() => document.activeElement && document.activeElement.id)); }
+    const held = await page.evaluate(() => window.__card.focus);
+    check('card: the arrows walk its controls from the first (picture, Copy path, Open folder); keyboard focus holds the timer', walk.join(',') === 'open,copy-path,folder' && held, JSON.stringify({ walk, held }));
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(450);
+    d = await lastCall(page, 'screenshot.cardDismiss');
+    check('card: Esc closes it', d && d.why === 'Esc' && d.seq === 5, JSON.stringify(d));
+    await ctx.close();
+  }
+  {
+    // A new capture's card arriving DURING the old card's slide-out stays up: the old dismiss is dropped.
+    const { ctx, page } = await open(browser, `${CARD}?state=ok&life=0`, 420, 190, 1);
+    await page.waitForTimeout(700);
+    await page.click('#dismiss');
+    await page.evaluate((c) => window.__cardEmit('screenshot.card', c), card5(9));
+    await page.waitForTimeout(600);
+    const ds = await dismissals(page);
+    const up = await page.evaluate(() => !document.getElementById('card').hidden && !window.__card.gone && document.getElementById('card').classList.contains('in'));
+    check('card: a card that arrives during the last one\'s slide-out stays up (no stale dismiss reaches main)', ds.length === 0 && up, JSON.stringify({ ds, up }));
+    await ctx.close();
+  }
 }
 
 /* 3. The sidecar's frame format, decoded by Chromium (synthetic pixels only). */

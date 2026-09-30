@@ -4,6 +4,7 @@
  *   ?state=ok | nosave | nocopy | neither     what happened to the capture
  *          text | notext | textfail            what happened to a Copy text capture
  *   ?life=0                                   never time out (for a still screenshot)
+ *   ?openfail=1                               opening the file fails (the card must stay and say why)
  */
 (function () {
   'use strict';
@@ -12,7 +13,12 @@
   var listeners = {};
   var mock = window.__mock = { calls: [] };
   window.mantle = {
-    call: function (name, args) { mock.calls.push({ name: name, args: args }); return Promise.resolve({ ok: true }); },
+    call: function (name, args) {
+      mock.calls.push({ name: name, args: args });
+      // ?openfail=1: main could not open the file (main sends the reason in plain words)
+      if (name === 'screenshot.cardOpen' && q.get('openfail') === '1') return Promise.resolve({ ok: false, reason: 'Windows has no app set to open PNG pictures' });
+      return Promise.resolve({ ok: true });
+    },
     on: function (name, cb) { (listeners[name] = listeners[name] || []).push(cb); return function () {}; },
     pathForFile: function () { return ''; },
   };
@@ -32,17 +38,17 @@
   window.addEventListener('load', function () {
     var st = q.get('state') || 'ok';
     var info = {
-      seq: 3, name: 'Screenshot 2026-09-24 143005.png', w: 1280, h: 720,
+      seq: 3, name: 'Screenshot 2026-09-24 143005.png', folderName: 'Screenshots', w: 1280, h: 720,
       path: 'C:\\Users\\user\\Pictures\\Screenshots\\Screenshot 2026-09-24 143005.png',
       url: thumb(), copied: st === 'ok' || st === 'nosave', lifeMs: q.get('life') === '0' ? 1e9 : 5000,
-      saveError: st === 'nosave' || st === 'neither' ? 'the Screenshots folder is read-only (Access to the path is denied)' : null,
-      copyError: st === 'nocopy' || st === 'neither' ? 'another app was holding the clipboard' : null,
+      saveError: st === 'nosave' || st === 'neither' ? 'Windows did not let Mantle save there: pick another folder in Mantle Settings > Screenshots' : null,
+      copyError: st === 'nocopy' || st === 'neither' ? 'another app was using the clipboard: take it again' : null,
     };
     if (info.saveError) info.path = null;
     // The Copy text card (states text | notext | textfail). The preview is made-up sample text.
     if (st === 'text') info = { seq: 3, kind: 'text', copied: true, lifeMs: info.lifeMs, text: { lines: 3, chars: 146, headline: 'Copied 3 lines', preview: 'Question 7: A train leaves the station at…' } };
     if (st === 'notext') info = { seq: 3, kind: 'text', copied: false, lifeMs: info.lifeMs, text: { lines: 0, chars: 0 } };
-    if (st === 'textfail') info = { seq: 3, kind: 'text', copied: false, lifeMs: info.lifeMs, textError: 'no OCR language is installed (Windows Settings > Time & language > Language & region)' };
+    if (st === 'textfail') info = { seq: 3, kind: 'text', copied: false, lifeMs: info.lifeMs, textError: 'Windows has no text recognition installed: add a language in Windows Settings > Time & language > Language & region' };
     (listeners['screenshot.card'] || []).forEach(function (cb) { cb(info); });
   });
   // shoot.js: push another card into the same page (one card window serves every capture).
