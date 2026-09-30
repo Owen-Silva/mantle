@@ -2,7 +2,7 @@
  * Electron (headless shots, ui/taskmgr/shoot.js). The real preload.js defines window.mantle first,
  * so under Electron this file does nothing. EVERY app, number and state here is MADE UP.
  *
- * Query: mock=apps (default) | expanded | game | protected | failed | confirm | startup | nobridge
+ * Query: mock=apps (default) | expanded | game | protected | failed | confirm | hung | menu | search | loading | error | nobridge
  * When the page has settled, <html data-ready="1">. window.__mockCalls lists every call made.
  */
 (function () {
@@ -25,7 +25,7 @@
     const count = (o && o.count) || 1;
     const members = Array.from({ length: count }, (_, i) => ({ pid: 1000 + n * 40 + i, file, mem: i === 0 ? Math.round(mem * 0.4) : Math.round((mem * 0.6) / Math.max(1, count - 1)), cpu: i === 1 ? cpu : 0, windows: i === 0 ? 1 : 0 }));
     return Object.assign({ key: `${1000 + n * 40}|1`, identity: `c:\\apps\\${file}`, name, file, mem, cpu, count, windows: 1, kind: 'app', protected: null, game: false, handledBy: null, elevated: false,
-      icon: null, iconWhy: 'mock: no icon', actions: { close: true, force: true, trim: true, why: null }, state: null, members }, o || {});
+      icon: null, iconWhy: 'No icon (made-up app)', canReveal: true, hung: false, actions: { close: true, force: true, trim: true, why: null }, state: null, members }, o || {});
   };
   const LOCKED = { close: false, force: false, trim: false };
   const apps = [
@@ -51,6 +51,7 @@
     grp('Service Host: Diagnostic Policy', 'svchost.exe', 24 * MB, 0, { windows: 0, kind: 'windows', protected: 'A Windows service: Windows needs it running', actions: LOCKED }),
   ];
   const mantleRow = grp('Mantle', 'electron.exe', 273 * MB, 0.6, { count: 9, windows: 0, kind: 'mantle', protected: 'Mantle itself: close Mantle from its tray menu', actions: LOCKED, icon: 'mantle:self', iconWhy: null });
+  if (mode === 'hung') apps[4].hung = true;
   if (mode === 'failed') {
     apps[1].state = { state: 'still-running', why: 'Its window closed but it kept running in the background (probably in the tray). Force close ends it.' };
     apps[3].state = { state: 'failed', why: 'Not closed: access denied: it runs as administrator or is protected' };
@@ -59,7 +60,9 @@
   const ticks = new Set(mode === 'game' ? ['c:\\apps\\chrome.exe', 'c:\\apps\\Discord.exe', 'c:\\apps\\Code.exe'] : []);
   const reopen = new Set(mode === 'game' ? ['c:\\apps\\Discord.exe', 'c:\\apps\\Code.exe'] : []);
   let auto = false;
-  const view = mode === 'game' ? 'game' : mode === 'startup' ? 'startup' : 'apps';
+  const view = mode === 'game' ? 'game' : 'apps';
+  // the last minute of CPU and memory: made-up, smooth
+  const hist = { cpu: Array.from({ length: 48 }, (_, i) => Math.round(18 + 14 * Math.sin(i / 5) + (i % 7) * 2)), mem: Array.from({ length: 48 }, (_, i) => 64 + Math.round(3 * Math.sin(i / 11))) };
   function model() {
     const all = apps.concat(background);
     const prep = all.map((g) => {
@@ -68,11 +71,11 @@
         elevated: g.elevated, icon: null, reopenWhy: g.name === 'Visual Studio Code' && reopen.has(g.identity) ? 'Cannot reopen: A Store app: Mantle cannot start it from its exe (open it from Start after the game)' : null };
     });
     return {
-      at: Date.now(), test: false, error: null, view, mem: { total: 16 * 1024 * MB, avail: 5.4 * 1024 * MB, used: 10.6 * 1024 * MB }, cpus: 16, mantle: { mem: mantleRow.mem, count: 9, cpu: 0.6 },
+      at: Date.now(), test: false, error: mode === 'error' ? 'Mantle could not read the list of running apps (made-up reason). Trying again.' : null, view, cpu: 23, hist, mem: { total: 16 * 1024 * MB, avail: 5.4 * 1024 * MB, used: 10.6 * 1024 * MB }, cpus: 16, mantle: { mem: mantleRow.mem, count: 9, cpu: 0.6 },
       apps, background, windows, mantleRow, recent: mode === 'failed' ? [{ name: 'Notepad', text: 'Closed · freed about 38 MB', ok: true }] : [],
       prep: { rows: prep, absent: mode === 'game' ? [{ identity: 'c:\\apps\\obs64.exe', name: 'OBS Studio', reopen: false }] : [], auto,
         lastFree: null, lastAuto: mode === 'game' ? { at: new Date(2026, 8, 27, 20, 5).getTime(), game: 'VALORANT', freed: 1260 * MB, results: [{ name: 'Google Chrome', state: 'closed' }, { name: 'Discord', state: 'still-running', why: 'Its window closed but it kept running in the background (probably in the tray). Force close ends it.' }], reopened: { results: [{ name: 'Discord', ok: true }] } } : null },
-      loaded: true,
+      loaded: mode !== 'loading' && mode !== 'error',
       look: { material: 'acrylic', icon: true, iconWhy: null, light: glass !== 'dark', lightWhy: glass === 'dark' ? "the glass is Windows' dark backdrop: the light frame was not set (mock)" : null },
     };
   }
@@ -91,7 +94,9 @@
           setTimeout(() => window.mantle.emit('taskmgr.model', model()), 10);
           return Promise.resolve({ ok: true });
         case 'taskmgr.auto': auto = !!args.on; setTimeout(() => window.mantle.emit('taskmgr.model', model()), 10); return Promise.resolve({ ok: true, auto });
-        case 'taskmgr.act': return Promise.resolve({ ok: true, dryRun: true });
+        case 'taskmgr.act': return new Promise((r) => setTimeout(() => r({ ok: true, dryRun: true }), 150));   // a real round trip takes a moment
+        case 'taskmgr.reveal': return Promise.resolve({ ok: true, dryRun: true, reason: 'Test Mantle: File Explorer was not opened.' });
+        case 'taskmgr.expand': setTimeout(() => window.mantle.emit('taskmgr.model', model()), 10); return Promise.resolve({ ok: true, key: args.key, open: !!args.open });
         case 'settings.open': return Promise.reject(new Error('no command "settings.open" (mock)'));
         default: return Promise.resolve({ ok: true });
       }
@@ -104,7 +109,8 @@
       if (mode === 'expanded') click(`[data-key="${apps[0].key}"] [data-act="expand"]`);
       if (mode === 'confirm') click(`[data-key="${apps[1].key}"] [data-act="force"]`);
       if (mode === 'protected') { click('.sect[data-s="windows"] [data-act="section"]'); setTimeout(() => { const b = document.querySelector('.sect[data-s="background"]'); if (b) b.scrollIntoView(); }, 50); }
-      if (mode === 'startup') click('#opensettings');
+      if (mode === 'menu') click(`[data-key="${apps[0].key}"] [data-act="menu"]`);
+      if (mode === 'search') { const i = document.getElementById('q'); i.value = 'zzz'; i.dispatchEvent(new Event('input', { bubbles: true })); }
       setTimeout(() => { document.documentElement.dataset.ready = '1'; document.documentElement.dataset.shot = '1'; }, 250);
     }, 80);
   });

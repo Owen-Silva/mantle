@@ -35,7 +35,11 @@ const SHOTS = [
   ['4-protected-rows', 'protected', 780, 640],
   ['5-failed-close', 'failed', 780, 640],
   ['6-force-confirm', 'confirm', 780, 640],
-  ['7-startup-tab', 'startup', 780, 480],
+  ['7-row-menu', 'menu', 780, 640],
+  ['7b-not-responding', 'hung', 780, 640],
+  ['7c-search-no-match', 'search', 780, 480],
+  ['7d-loading', 'loading', 780, 480],
+  ['7e-could-not-read', 'error', 780, 480],
   ['8-min-size', 'failed', 560, 420],
   // the glass (lane taskmgrfx): the mock's stand-in for Windows' acrylic, active / inactive / dark-frame fallback
   ['9-glass-inactive', 'apps&glass=inactive', 780, 640],

@@ -13,65 +13,71 @@
 <body>
 <!-- Mantle's task manager (lib/features/taskmgr.js), RAM first: one row per app, biggest first,
      Close / Force close / Trim with the outcome ON the row, and "Get ready to game". Everything on
-     screen comes from main's taskmgr.model; the page keeps only what is open, expanded or armed. -->
+     screen comes from main's taskmgr.model; the page keeps only what is open, selected, sorted,
+     searched or armed (sysmon 2026-09-29: search, sort, keyboard, the row menu, CPU + memory lines). -->
 <main class="app">
   <header class="head">
-    <div class="brand">Task manager</div>
+    <div class="brand">Task Manager</div>
     <nav class="tabs" role="tablist" aria-label="Views">
       <button class="tab" data-view="apps" role="tab" type="button">Apps</button>
-      <button class="tab" data-view="game" role="tab" type="button">Get ready to game</button>
-      <button class="tab" data-view="startup" role="tab" type="button">Startup apps</button>
+      <button class="tab" data-view="game" role="tab" type="button" title="Pick the apps to close before you play">Get ready to game</button>
     </nav>
     <div class="grow"></div>
-    <button id="wintm" class="btn quiet" type="button" title="Windows' own Task Manager">Open Windows Task Manager</button>
+    <label class="search" title="Search running apps (Ctrl+F)">
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><circle cx="5" cy="5" r="3.6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M7.7 7.7 10.8 10.8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+      <input id="q" type="text" placeholder="Search" aria-label="Search running apps (Ctrl+F)" spellcheck="false" autocomplete="off">
+      <button id="qx" class="qx" type="button" aria-label="Clear search (Esc)" title="Clear search (Esc)" hidden><svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+    </label>
+    <button id="more" class="ibtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="More" title="More: startup apps, Windows Task Manager"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="12.5" cy="8" r="1.2" fill="currentColor"/></svg></button>
     <div class="wc">
-      <button data-op="min" type="button" aria-label="Minimize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M1 5h8" stroke="currentColor" stroke-width="1.1"/></svg></button>
-      <button data-op="max" type="button" aria-label="Maximize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.1" fill="none"/></svg></button>
-      <button data-op="close" class="x" type="button" aria-label="Close"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.1"/></svg></button>
+      <button data-op="min" type="button" aria-label="Minimize" title="Minimize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M1 5h8" stroke="currentColor" stroke-width="1.1"/></svg></button>
+      <button data-op="max" type="button" aria-label="Maximize" title="Maximize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.1" fill="none"/></svg></button>
+      <button data-op="close" class="x" type="button" aria-label="Close" title="Close"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.1"/></svg></button>
     </div>
   </header>
 
-  <section class="ram" aria-label="Memory">
-    <div class="ramtop">
-      <span class="lbl">Memory</span>
-      <span id="ramtext" class="ramtext">Reading…</span>
-      <span class="grow"></span>
-      <span id="mantleuse" class="chip" title="Mantle's own processes: its Electron, its pages and its sidecar"></span>
+  <!-- the machine at a glance: CPU and memory now, and their last minutes as a line -->
+  <section class="stats" aria-label="This PC">
+    <div class="stat" id="s-cpu">
+      <div class="stop"><span class="lbl">CPU</span><span class="big" id="cpuv">—</span><span class="sub" id="cpus"></span></div>
+      <svg class="spark" id="cpuspark" viewBox="0 0 120 30" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/></svg>
     </div>
-    <div class="bar" role="img" id="rambar" aria-label="Memory in use"><i id="ramfill"></i></div>
+    <div class="stat" id="s-mem">
+      <div class="stop"><span class="lbl">Memory</span><span class="big" id="memv">—</span><span class="sub" id="ramtext">Reading…</span></div>
+      <svg class="spark" id="memspark" viewBox="0 0 120 30" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/></svg>
+    </div>
   </section>
 
   <div id="note" class="note" hidden></div>
   <div id="recent" class="recent" hidden></div>
 
   <section class="view" id="v-apps">
-    <div class="cols"><span class="c-name">Name</span><span class="c-mem">Memory</span><span class="c-cpu">CPU</span><span class="c-act"></span></div>
-    <div class="list" id="list"></div>
+    <div class="cols" role="row">
+      <button type="button" class="c-name" data-sort="name" title="Sort by name">Name<i></i></button>
+      <button type="button" class="c-mem" data-sort="mem" title="Sort by memory">Memory<i></i></button>
+      <button type="button" class="c-cpu" data-sort="cpu" title="Sort by CPU">CPU<i></i></button>
+      <span class="c-act"><span id="mantleuse" class="mantle-use" title="Mantle's own processes: its windows, its pages and its helper"></span></span>
+    </div>
+    <div id="liststate" class="liststate" hidden></div>
+    <div class="list" id="list" tabindex="0" role="list" aria-label="Running apps. Up and down to choose, Delete to close, Shift+Delete to force close, Enter to show processes, or right-click for more."></div>
   </section>
 
   <section class="view" id="v-game" hidden>
     <div class="gamehead">
       <div class="gtext">
-        <div class="gt">Close what you do not need while you play</div>
-        <div class="gs">Tick them once; Mantle remembers them by app. Free up RAM asks each to close, like its own close button.</div>
+        <div class="gt">Close apps before you play</div>
+        <div class="gs">Tick the apps you don't need while gaming. Free up RAM asks each one to close, like its own close button.</div>
       </div>
       <div class="gnum"><span id="gsum">0 MB</span><span class="gsl">ticked</span></div>
-      <button id="free" class="btn acc" type="button">Free up RAM</button>
+      <button id="free" class="btn acc" type="button" title="Close every ticked app now">Free up RAM</button>
     </div>
-    <label class="opt"><input type="checkbox" id="auto"><span><b>Also do it when a game starts</b> (off unless you turn it on). Only ticked apps close; an app that asks to save stays open and says so here.</span></label>
+    <label class="opt"><input type="checkbox" id="auto"><span><b>Free up RAM automatically when a game starts</b><span class="optsub">Only ticked apps close. An app with unsaved work stays open and says so here.</span></span></label>
     <div id="lastfree" class="lastfree" hidden></div>
-    <div class="cols"><span class="c-tick"></span><span class="c-name">App</span><span class="c-mem">Frees</span><span class="c-reopen">After the game</span></div>
+    <div class="cols gcols"><span class="c-tick"></span><span class="c-name">App</span><span class="c-mem">Frees</span><span class="c-reopen">After the game</span></div>
     <div class="list" id="prep"></div>
   </section>
 
-  <section class="view" id="v-startup" hidden>
-    <div class="startup">
-      <div class="gt">Startup apps live in Mantle Settings</div>
-      <div class="gs">Which apps start with Windows is one list, in one place: Mantle Settings, Startup apps.</div>
-      <button id="opensettings" class="btn acc" type="button">Open Mantle Settings</button>
-      <div id="settingsnote" class="info" hidden></div>
-    </div>
-  </section>
+  <div id="menu" class="menu" role="menu" hidden></div>
 </main>
 <script src="mock-mantle.js"></script>
 <script src="taskmgr.js"></script>
