@@ -1933,8 +1933,9 @@
       if (window.MantleTopbarHide) MantleTopbarHide.closed();
       if (window.MantleCorners) MantleCorners.closed();     // its push subscription stops
     }
+    var reChip = false;               // an idle-Spotify card closed: the chip re-decides (see mediaShown)
     if (popKey === 'media') {
-      mediaPaint = null; mediaNote = ''; mediaRoom = 0;
+      mediaPaint = null; mediaNote = ''; mediaRoom = 0; reChip = spotHeld;
       if (window.MantleSpotify) MantleSpotify.closed();   // its 8 s queue refresh stops, the keyboard goes back
     }
     if (popKey.indexOf('jl:') === 0 && window.MantleJumpList) MantleJumpList.closed();   // gives the keyboard back
@@ -1950,6 +1951,7 @@
     call('bar.popover', { open: false }).catch(function () {});   // shrink request; failure is reported on open, not here
     // the leave that was suppressed while the popover held the bar open (see mouseleave)
     if (!pointerIn) hover(false);
+    if (reChip) paintMediaChip();
   }
 
   /* Returns the bar.popover promise, so a popover that needs the grown window (the flyout's live
@@ -2852,7 +2854,30 @@
   };
   var VERB = { toggle: 'play/pause', play: 'play', pause: 'pause', next: 'next track', previous: 'previous track' };
 
-  function mediaShown() { return media && media.ok !== false && media.shown ? media.shown : null; }
+  /* NO SESSION, SPOTIFY READY (barfix lane, 2026-09-30). The media lane found "Play Liked Songs" was
+     reachable only while Windows listed a Spotify media session, and the Spotify Mantle starts
+     HIDDEN with nothing loaded has none, so the chip was gone and the card could not be opened. Now,
+     while Mantle's Spotify link says connected ('spotify.status') and Windows lists no session, the
+     chip and card show Spotify itself, idle: no play/pause or progress (there is no session for a
+     control to aim at), and ui/bar/spotify.js's section, whose first line is then "Play Liked Songs".
+     Once playback starts, Windows' own Spotify session arrives and takes over. An open idle card is
+     held while the link wavers (the section says what is wrong); the chip re-decides when it closes.
+     Idle cost: one listener on a push main replays on subscribe; nothing probes Spotify. */
+  var spotLive = false;          // Mantle's Spotify link is connected
+  var spotHeld = false;          // the chip / card is showing the idle Spotify right now
+  var SPOT_IDLE = { aumid: 'Spotify.exe', app: { name: 'Spotify', icon: null }, title: '', artist: '', status: 'ready', playing: false, idle: true };
+  function spotIcon() {
+    for (var i = 0; i < items.length; i++) {
+      if (items[i] && items[i].icon && /(^|\\)spotify\.exe$/i.test(String(items[i].exe || ''))) return items[i].icon;
+    }
+    return null;
+  }
+  function mediaShown() {
+    if (media && media.ok !== false && media.shown) return media.shown;
+    if (!window.MantleSpotify || !(spotLive || (spotHeld && popKey === 'media'))) return null;
+    SPOT_IDLE.app.icon = spotIcon();
+    return SPOT_IDLE;
+  }
   function mediaApp(s) { return (s && s.app && s.app.name) || (s && s.aumid) || 'this app'; }
   function mediaLine(s) {
     var t = s.title || mediaApp(s);
@@ -2867,6 +2892,7 @@
   /* {ok, why}: may this button be pressed for this session, and if not, why not, in words. */
   function mediaCan(s, action) {
     if (!s) return { ok: false, why: 'nothing is playing' };
+    if (s.idle) return { ok: false, why: 'nothing is playing in Spotify yet' };
     if (mediaGuarded(s)) return { ok: false, why: s.controls.reason || 'controls are off for this session' };
     var c = s.can;
     if (!c) return { ok: false, why: mediaApp(s) + ' did not say which buttons it accepts' };
@@ -2923,7 +2949,13 @@
     mediaAt = Date.now();
     if (media && media.ok === false) fail('media', 'Now playing not reading', media.reason || 'what is playing could not be read, and no reason was given', 'warn');
     else clearFail('media');
+    paintMediaChip();
+  }
+
+  /* The chip, from what is shown now: a push, the Spotify link changing, an idle card closing. */
+  function paintMediaChip() {
     var s = mediaShown();
+    spotHeld = !!(s && s.idle);
     el.media.hidden = !s;
     if (!s) {
       if (popKey === 'media') closePop();
@@ -2933,13 +2965,14 @@
     el.media.classList.toggle('paused', !s.playing);
     paintArt(el.mart, s);
     el.mtxt.textContent = mediaLine(s);
-    el.mchip.title = mediaLine(s) + '\n' + mediaApp(s) + ' · ' + mediaStatus(s) +
+    el.mchip.title = s.idle ? 'Spotify is ready, nothing is playing\nClick to play something'
+      : mediaLine(s) + '\n' + mediaApp(s) + ' · ' + mediaStatus(s) +
       (mediaGuarded(s) ? '\n' + s.controls.reason : '') + '\nClick for the media card';
     /* Under the LessonPlayer rule there is no glyph at all, not a greyed one: a button that is there
        invites exactly the stray click the rule exists to stop. The card says why. */
     var guarded = mediaGuarded(s);
-    el.mtog.hidden = guarded;
-    if (!guarded) {
+    el.mtog.hidden = guarded || !!s.idle;   // idle Spotify: nothing to play or pause until something is loaded
+    if (!el.mtog.hidden) {
       var can = mediaCan(s, 'toggle');
       var glyph = s.playing ? 'pause' : 'play';
       if (el.mtog.dataset.glyph !== glyph) { el.mtog.innerHTML = svg(MEDIA_SVG[glyph], 12); el.mtog.dataset.glyph = glyph; }
@@ -3020,6 +3053,7 @@
     }
 
     function paintProgress(s) {
+      if (s.idle) { prog.hidden = true; progWhy.hidden = true; return null; }
       var p = mediaPos(s);
       prog.hidden = !p;
       progWhy.hidden = !!p;
@@ -3080,11 +3114,13 @@
       var s = mediaShown();
       if (!s) return;
       paintArt(art, s);
-      title.textContent = s.title || mediaApp(s);
+      var idle = !!s.idle;
+      title.textContent = idle ? 'Nothing is playing' : s.title || mediaApp(s);
       title.title = s.title || '';
-      artist.textContent = s.artist ? (s.album ? s.artist + ' · ' + s.album : s.artist)
+      artist.textContent = idle ? 'Spotify is ready' : s.artist ? (s.album ? s.artist + ' · ' + s.album : s.artist)
         : (s.detailsReason ? 'no track details: ' + s.detailsReason : (s.title ? '' : 'no track details'));
-      artist.classList.toggle('why', !s.artist && !!s.detailsReason);
+      artist.classList.toggle('why', !idle && !s.artist && !!s.detailsReason);
+      app.style.display = idle ? 'none' : '';   // the lines above already say Spotify (.mc-app's display:flex beats [hidden])
       appTxt.textContent = mediaApp(s) + ' · ' + mediaStatus(s);
       if (appIco._src !== ((s.app && s.app.icon) || '')) {
         appIco._src = (s.app && s.app.icon) || '';
@@ -3095,9 +3131,10 @@
       paintProgress(s);
 
       var guarded = mediaGuarded(s);
-      ctl.hidden = guarded;
+      ctl.hidden = guarded || idle;   // idle: the Spotify section below is how something starts
       lock.hidden = !guarded;
-      if (guarded) {
+      if (idle) { /* no transport buttons to paint */ }
+      else if (guarded) {
         lockHead.textContent = s.controls.reason || 'controls are off for this session';
         // text nodes, with the --flag in a no-wrap span: the card must never split it at a hyphen
         lockHow.textContent = '';
@@ -3125,15 +3162,16 @@
       /* The source switcher: one row per app with a session, when there is more than one. Sessions
          are told apart by AUMID, which is all Windows gives a control to aim at; two sessions from
          one app (two browser tabs) share it, so they are one row, said out loud. */
+      var m = media || {};   // null while Windows has not been read (an idle Spotify card needs none)
       var seen = Object.create(null), rows = [], dup = 0;
-      (media.sessions || []).forEach(function (x) {
+      (m.sessions || []).forEach(function (x) {
         var k = srcKey(x.aumid);
         if (seen[k]) { dup++; return; }
         seen[k] = true;
         if (x.app && x.app.icon) srcIcons[k] = x.app.icon;
         rows.push(x);
       });
-      var pk = media.pick || {}, by = pk.by, wait = by === 'waiting' && pk.waiting ? pk.waiting : null;
+      var pk = m.pick || {}, by = pk.by, wait = by === 'waiting' && pk.waiting ? pk.waiting : null;
       // the pick main is HOLDING: the one row lit. None = Automatic is lit.
       var held = by === 'you' ? srcKey(s.aumid) : (wait ? srcKey(wait.aumid) : '');
       if (wait && !seen[held]) rows.push({ aumid: wait.aumid, app: { name: wait.name || wait.aumid, icon: srcIcons[held] || null }, gone: true });
@@ -3203,8 +3241,8 @@
       if (!held && pk.dropped && pk.dropped.reason) srcWhy.textContent += ' · ' + pk.dropped.reason;
       if (dup) srcWhy.textContent += ' · ' + dup + ' more from the same app' + (dup > 1 ? 's' : '') + ' (Windows gives them one address, so they share a row)';
 
-      foot.textContent = media.events === false
-        ? 'Updates every 10 s instead of live: ' + (media.eventsReason || 'the change events could not be hooked')
+      foot.textContent = m.events === false
+        ? 'Updates every 10 s instead of live: ' + (m.eventsReason || 'the change events could not be hooked')
         : '';
       foot.hidden = !foot.textContent;
 
@@ -3573,6 +3611,14 @@
     /* Now playing: pushed by main on every media change (and replayed on subscribe), so the chip
        is right from the first frame without a call of its own. */
     on('media', renderMedia);
+    /* Mantle's Spotify link (lib/features/spotify.js, replayed on subscribe): with no media session,
+       a connected Spotify still gets the chip, idle (see mediaShown). */
+    if (window.MantleSpotify) on('spotify.status', function (st) {
+      var live = !!(st && st.state === 'connected');
+      if (live === spotLive) return;
+      spotLive = live;
+      if (!(media && media.ok !== false && media.shown)) paintMediaChip();
+    });
     /* A pushed list CLEARS trayThrew (2026-09-22). The boot-time tray.list below can lose the race
        with the sidecar ("sidecar started, waiting for its ready line"), and trayThrew then stuck
        for the page's whole life: main's first real list arrived a few seconds later and was

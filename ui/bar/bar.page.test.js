@@ -335,6 +335,65 @@ async function run() {
       t.check('fit: no page errors', pg.errors.length === 0, pg.errors);
       await pg.close();
     }
+
+    /* ------------------------------------------ Spotify ready, no media session (barfix lane) */
+    /* The Spotify Mantle starts hidden with nothing loaded has no Windows media session. The chip
+       and card must still offer it (Play Liked Songs), and go the moment the link is gone. */
+    if (t.want('spotidle')) {
+      const IDLE = PILL + '&media=none&spq=idle';
+      // what the eye sees, not the attribute: a class's display rule can beat [hidden]
+      const hid = (pg, sel) => pg.eval((s) => { const e = document.querySelector(s); return !e || !e.offsetParent || !e.getClientRects().length; }, sel);
+      const pg = await open(IDLE, W);
+      await pg.wait(250);
+      t.check('spotidle: the chip shows with no media session', !(await hid(pg, '#media')));
+      t.check('spotidle: ...named Spotify, with its icon', (await pg.text('#mchip .mtxt')) === 'Spotify' && await pg.count('#mchip .mart img') === 1, await pg.text('#mchip .mtxt'));
+      t.check('spotidle: ...and no play/pause (nothing is loaded to play)', await hid(pg, '#mtog'));
+      const tip = await pg.eval(() => document.getElementById('mchip').title);
+      t.check('spotidle: its tooltip says nothing is playing and what a click does', /nothing is playing/i.test(tip) && /click to play/i.test(tip), tip);
+      await pg.reset();
+      await pg.click('#mchip', { wait: 400 });
+      t.check('spotidle: a click opens the card', /mcard/.test(await popKey(pg) || ''), await popKey(pg));
+      t.check('spotidle: the card says nothing is playing', (await pg.text('#pop .mc-title')) === 'Nothing is playing' && (await pg.text('#pop .mc-artist')) === 'Spotify is ready');
+      t.check('spotidle: no transport, no progress, no app line', await hid(pg, '#pop .mc-ctl') && await hid(pg, '#pop .mc-prog') && await hid(pg, '#pop .mc-progwhy') && await hid(pg, '#pop .mc-app'));
+      t.check('spotidle: the first thing offered is Play Liked Songs', (await pg.text('#pop .spq-idle')) === 'Play Liked Songs' && !(await hid(pg, '#pop .spq-idle .spq-btn')), await pg.text('#pop .spq-idle'));
+      const ct = await pg.text('#pop');
+      t.check('spotidle: no jargon on the card', !JARGON.test(ct), ct);
+      t.check('spotidle: opening it controlled nothing', (await pg.calls('media.control')).length === 0);
+      await pg.click('#pop .spq-idle .spq-btn', { wait: 700 });
+      const pu = await pg.calls('spotify.playUri');
+      t.check('spotidle: Play Liked Songs asks Spotify for Liked Songs', pu.length === 1 && pu[0].p.uri === 'spotify:collection:tracks', pu);
+      t.check('spotidle: ...the card stays open as the real session takes over', /mcard/.test(await popKey(pg) || ''), await popKey(pg));
+      t.check('spotidle: ...showing the track with its buttons', (await pg.text('#pop .mc-title')) !== 'Nothing is playing' && !(await hid(pg, '#pop .mc-ctl')) && !(await hid(pg, '#pop .mc-app')), await pg.text('#pop .mc-title'));
+      t.check('spotidle: ...and the chip gets its play/pause back', !(await hid(pg, '#mtog')));
+      t.check('spotidle: no page errors', pg.errors.length === 0, pg.errors);
+      await pg.close();
+
+      // the link wavers while the idle card is open: held (the section says why); gone once it closes
+      const p2 = await open(IDLE, W);
+      await p2.wait(250);
+      await p2.click('#mchip', { wait: 400 });
+      await p2.emit('spotify.status', { ok: false, state: 'notrunning', reason: 'Spotify is not running', port: 47292 });
+      await p2.wait(200);
+      t.check('spotidle: an open idle card is held when Spotify stops', /mcard/.test(await popKey(p2) || ''), await popKey(p2));
+      await p2.key('Escape'); await p2.wait(250);
+      const after = { pop: await popKey(p2), chipHidden: await hid(p2, '#media') };
+      // (the pointer is still where the chip was: a dock icon that slides under it may open its own previews)
+      t.check('spotidle: ...and once it closes, the chip goes', !/mcard/.test(after.pop || '') && after.chipHidden, after);
+      await p2.emit('spotify.status', { ok: true, state: 'connected', reason: null, port: 47292 });
+      await p2.wait(150);
+      t.check('spotidle: the chip comes back when Spotify is connected again', !(await hid(p2, '#media')));
+      await p2.emit('spotify.status', { ok: false, state: 'notrunning', reason: 'Spotify is not running', port: 47292 });
+      await p2.wait(150);
+      t.check('spotidle: ...and goes, with the card shut, when it is not', await hid(p2, '#media'));
+      t.check('spotidle: no page errors (link wavering)', p2.errors.length === 0, p2.errors);
+      await p2.close();
+
+      // a Spotify that Mantle cannot reach (the default: not started by Mantle) gets no chip of its own
+      const p3 = await open(PILL + '&media=none', W);
+      await p3.wait(250);
+      t.check('spotidle: no session and no Spotify link: no chip', await hid(p3, '#media'));
+      await p3.close();
+    }
   });
 }
 

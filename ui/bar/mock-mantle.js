@@ -975,8 +975,12 @@
          unwatched       the watch stopped (the foot says) openfail  a click's open fails (the note says why)
          test            a --test run (opens are dry runs) rest       resting while a game runs (commands throw)
          off             turned off in the tray: the button is hidden
+       The openfail / unwatched words are the feature's own (downloads.js openWhy() and WATCH_WORDS),
+       not Windows' raw sentence or the watch's error code: those stay in Mantle's log.
        Icons stand in for Windows' shell icons: a page with a coloured band (drawn here, never shipped). */
   var DL = q.get('dl') || 'some';
+  var DL_WATCH_WORDS = 'new downloads show up when you open this panel, not the moment they finish';
+  var DL_NOAPP_WORDS = 'Windows has no app set for this kind of file. Use Show in folder, then right-click it and choose Open with';
   function dlIcon(label, color) {
     var s = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>" +
       "<path d='M8 2.5h11l7 7v19a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-25a1 1 0 0 1 1-1z' fill='#fdfdfd' stroke='#a3abb5'/>" +
@@ -1013,7 +1017,7 @@
     if (DL === 'rest') return { on: true, ok: true, state: 'resting', reason: 'the Downloads shelf is resting while VALORANT.exe runs; it is back when the game exits', count: 0, newCount: 0, partial: 0, watching: false, rev: 1 };
     var bad = dlBad();
     if (bad) return { on: true, ok: false, state: bad.state, reason: bad.reason, count: 0, newCount: 0, partial: 0, watching: false, rev: 1 };
-    return { on: true, ok: true, state: 'ok', reason: null, count: DL === 'none' ? 0 : 12, newCount: dlNew, partial: DL === 'new' ? 1 : 0, watching: DL !== 'unwatched', rev: 1 };
+    return { on: true, ok: true, state: 'ok', reason: null, count: DL === 'none' ? 0 : 12, newCount: dlNew, partial: DL === 'new' ? 1 : 0, watching: DL !== 'unwatched', watchReason: DL === 'unwatched' ? DL_WATCH_WORDS : null, rev: 1 };
   }
   function dlList() {
     if (DL === 'rest') throw new Error('Downloads shelf (bar) is resting while VALORANT.exe runs; it is back when the game exits');
@@ -1023,14 +1027,14 @@
     return { ok: true, state: 'ok', reason: null, folder: 'C:\\Users\\user\\Downloads', via: DL === 'plain' ? 'plain read' : 'known folder', items: items,
       total: DL === 'none' ? 0 : 347, newCount: dlNew, partial: DL === 'new' ? 1 : 0, rev: 1, test: DL === 'test',
       detail: DL === 'plain' ? 'A plainer read (hidden files may show): the sidecar could not answer (the sidecar is not running).' : null,
-      watching: DL !== 'unwatched', watchReason: DL === 'unwatched' ? 'the folder watch stopped (EPERM); the list is re-read when you open it' : null, seenNote: null };
+      watching: DL !== 'unwatched', watchReason: DL === 'unwatched' ? DL_WATCH_WORDS : null, seenNote: null };
   }
   function dlCall(name, p) {
     if (DL === 'rest') throw new Error('Downloads shelf (bar) is resting while VALORANT.exe runs; it is back when the game exits');
     if (name === 'downloads.list') return dlList();
     if (name === 'downloads.seen') { dlNew = 0; setTimeout(function () { emit('downloads.state', dlState()); }, 5); return { ok: true, seenAt: Date.now(), note: null }; }
     if (DL === 'test') return { ok: true, dryRun: true, reason: 'test run: would ' + (name === 'downloads.reveal' ? 'show it selected in Explorer' : name === 'downloads.folder' ? 'open the Downloads folder' : 'open it with its default app') };
-    if (name === 'downloads.open' && DL === 'openfail') return { ok: false, reason: 'No application is associated with the specified file for this operation.' };
+    if (name === 'downloads.open' && DL === 'openfail') return { ok: false, reason: DL_NOAPP_WORDS };
     if (name === 'downloads.drag') return { ok: false, reason: 'mock: a real drag needs Electron (webContents.startDrag)' };
     return { ok: true };
   }
@@ -1066,6 +1070,9 @@
          long              connected: 12 queued + 20 next up, the list scrolls INSIDE the card
          empty | noplayer | loading (queue never answers) | error (queue read failed)
          internals (a Spotify update moved them) | portbusy | noinstall | off | searchbroken
+         idle              connected, NOTHING loaded (use with ?media=none: Windows lists no session, so
+                           the bar shows Spotify itself, idle); Play Liked Songs loads it and main then
+                           pushes a Spotify session, as the real one does a moment after playback starts
        The shots open the dropdown by clicking .spq-head. */
   var SPQ = q.get('spq') || 'noport';
   var SPQ_REASON = {
@@ -1094,6 +1101,7 @@
   /* spothide lane: the hidden app (?spq=hidefail: the hide did not take) */
   var SPQ_PLAYER = { paused: false, shuffle: true, repeat: 0, canShuffle: true, canRepeat: true, canRepeatTrack: true };
   var SPQ_SHOWN = false;
+  if (SPQ === 'idle') SPQ_PLAYER.hasItem = false;   // ?spq=idle: nothing loaded until Play Liked Songs
   function spqWin() {
     if (SPQ === 'hidefail') return { state: 'failed', reason: 'Could not hide Spotify’s window: Spotify took the hide (its window state is now 3), but its window is still showing', pid: 4242, source: 'the pinned icon' };
     return { state: SPQ_SHOWN ? 'shown' : 'hidden', how: 'Spotify’s own window-state service SetWindowState(HIDDEN)', pid: 4242, source: 'the pinned icon',
@@ -1128,7 +1136,7 @@
     return new Promise(function (res) {
       setTimeout(function () {
         res({ ok: true, state: 'connected', caps: { skipTo: true, next: true, remove: true, move: true, search: true },
-          current: SPQ === 'noplayer' ? null : { uri: 'spotify:track:MOCKnowxxxxxxxxxxxxxxxx', uid: 'now', name: SPOTIFY.title, artists: SPOTIFY.artist, where: 'current' },
+          current: SPQ === 'noplayer' || (SPQ === 'idle' && SPQ_PLAYER.hasItem === false) ? null : { uri: 'spotify:track:MOCKnowxxxxxxxxxxxxxxxx', uid: 'now', name: SPOTIFY.title, artists: SPOTIFY.artist, where: 'current' },
           queued: spqQ.queued.slice(), nextUp: spqQ.nextUp.slice(), totalQueued: spqQ.queued.length, totalNextUp: spqQ.nextUp.length, at: Date.now() });
       }, 40);
     });
@@ -1154,7 +1162,12 @@
           tracks: spqGroup('track', ['Can’t Hold Us', 'Thrift Shop', 'Downtown'], ['Macklemore & Ryan Lewis, Ray Dalton', 'Macklemore & Ryan Lewis, Wanz', 'Macklemore & Ryan Lewis, Eric Nally']),
           artists: spqGroup('artist', ['Macklemore'], ['']), albums: spqGroup('album', ['The Heist'], ['Macklemore & Ryan Lewis']),
           playlists: spqGroup('playlist', ['This Is Macklemore'], ['Spotify']) };
-      case 'spotify.playUri': return { ok: true, uri: payload && payload.uri, verified: true, player: SPQ_PLAYER, reason: null };
+      case 'spotify.playUri':
+        if (SPQ === 'idle' && SPQ_PLAYER.hasItem === false) {
+          SPQ_PLAYER.hasItem = true;
+          if (MEDIA === 'none' || !MEDIA) { MEDIA = 'playing'; setTimeout(function () { emit('media', mediaPayload()); }, 120); }
+        }
+        return { ok: true, uri: payload && payload.uri, verified: true, player: SPQ_PLAYER, reason: null };
       case 'spotify.shuffle': SPQ_PLAYER.shuffle = !!(payload && payload.on); return { ok: true, verified: true, player: SPQ_PLAYER, reason: null };
       case 'spotify.repeat': SPQ_PLAYER.repeat = payload && payload.mode; return { ok: true, verified: true, player: SPQ_PLAYER, reason: null };
       case 'spotify.openWindow': SPQ_SHOWN = true; return { ok: true, verified: true, via: 'FocusMainWindowAPI.focusMainWindow', reason: null };
