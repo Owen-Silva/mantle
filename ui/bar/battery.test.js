@@ -207,6 +207,10 @@ for (const [label, extra] of [
     const all = d.tip + '|' + d.footer;
     check('jargon never reaches the screen: ' + why.slice(0, 40), !/sidecar|npm|battery\.get|undefined|within \d+ms|EPIPE|Error:/.test(all) && /Mantle could not get the battery status/.test(d.footer), all);
   }
+  // A case-insensitive errno pattern once turned every word starting "e..." ("estimated", "Energy") into the fallback.
+  check('plain words starting with E survive ("estimated", "Energy saver")',
+    B.plain('Windows has not estimated the time left yet') === 'Windows has not estimated the time left yet' && B.plain('Energy saver is on') === 'Energy saver is on',
+    B.plain('Windows has not estimated the time left yet'));
   const u = B.describe(reading({ percent: null, ac: true, reason: 'Windows does not know the battery percentage yet' }));
   check('a reason that is already plain is kept word for word', /Windows does not know the battery percentage yet/.test(u.tip), u.tip);
   const words = [null, {}, { ok: false }, reading({}), reading({ percent: 255 }), reading({ ac: null }), reading({ ac: false, secondsLeft: -1 }), reading({ present: false })]

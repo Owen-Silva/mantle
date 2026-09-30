@@ -1452,8 +1452,18 @@
       /* A copy, taken now: the real bridge serialises the arguments the moment it is called, so a
          caller that deletes a password right after calling must not change what the mock gets. */
       payload = payload && typeof payload === 'object' ? structuredClone(payload) : payload;
+      /* TEST HOOKS (bar lane, 2026-09-29): the functional page tests (ui/bar/*.page.test.js) read
+         every call the page made from window.__MOCK_CALLS__, and may answer a channel themselves
+         through window.__MOCK_REPLY__(channel, payload) (return undefined to fall through to the
+         mock's own reply). Both are set by the test's init script; nothing sets them otherwise. */
+      if (Array.isArray(window.__MOCK_CALLS__)) window.__MOCK_CALLS__.push({ ch: channel, p: payload, t: Date.now() });
+      var over = typeof window.__MOCK_REPLY__ === 'function' ? window.__MOCK_REPLY__(channel, payload) : undefined;
+      /* A refusal the test hands back (a rejected promise) waits 30 ms like every reply; marked
+         handled now so the wait is not reported as an uncaught rejection. The caller still gets it. */
+      if (over && typeof over.then === 'function') over.then(null, function () {});
       return new Promise(function (resolve, reject) {
         setTimeout(function () {
+          if (over !== undefined) { resolve(over); return; }
           try { resolve(reply(channel, payload)); }
           catch (e) { console.warn('[mock] call rejected', channel, e.message); reject(e); }
         }, channel === 'qs.set' && QS_DELAY ? QS_DELAY : 30);
@@ -1483,6 +1493,10 @@
     /* The sessions change (?media= names): main pushes 'media'. mediapick shots: Spotify blinking
        out of the list and back while it is the pick. */
     media: function (name) { MEDIA = name; emit('media', mediaPayload()); },
+    /* Any push main can send, for the functional page tests (bar lane, 2026-09-29). */
+    emit: function (channel, payload) { emit(channel, payload); },
+    /* The same window list again, as main re-sends it after any window event. */
+    pushWindows: function () { emit('windows', flatWindows()); },
     reveal: function (why) { revealed = true; emit('bar.reveal', { why: why || 'mock: harness reveal', mode: MODE, ms: DUR_IN }); },
     hide: function (why) { revealed = false; emit('bar.hide', { why: why || 'mock: harness hide', ms: DUR_OUT }); },
     /* A plug, an unplug, a charge limit reached: main pushes the new reading, and the panel's

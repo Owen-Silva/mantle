@@ -72,13 +72,14 @@
      reason is shown as it is when it is already plain; a trailing technical bracket ("(GetSystemPowerStatus
      failed, Win32 error 5)") is dropped; anything still technical becomes one plain sentence. The
      full technical text is main's log line, never the tooltip. */
-  var JARGON = /sidecar|npm |\.exe\b|\bIPC\b|renderer|hwnd|dryRun|undefined|\bnull\b|\bNaN\b|\[object|\bE[A-Z]{3,}\b|^Error\b|HRESULT|0x[0-9a-f]{4,}|Win32|\berror \d|exception|battery\.get|window\.mantle|preload|\.js\b|timed? ?out|within \d+ ?ms/i;
+  var JARGON = /sidecar|npm |\.exe\b|\bIPC\b|renderer|hwnd|dryRun|undefined|\bnull\b|\bNaN\b|\[object|HRESULT|0x[0-9a-f]{4,}|Win32|\berror \d|exception|battery\.get|window\.mantle|preload|\.js\b|timed? ?out|within \d+ ?ms/i;
+  var ERRNO = /\bE[A-Z]{3,}\b|^Error\b/;         // case-sensitive: ENOENT, EPIPE, "Error: ..." (never "Energy")
   var PLAIN_FAIL = 'Mantle could not get the battery status from Windows. It updates by itself when Windows reports a change';
   function plain(reason) {
     var s = typeof reason === 'string' ? reason.trim() : '';
     if (!s) return '';
     s = s.replace(/\s*\([^()]*\b(?:error|Win32|HRESULT|0x[0-9a-f]+|failed)\b[^()]*\)/gi, '');
-    return JARGON.test(s) ? PLAIN_FAIL : s;
+    return JARGON.test(s) || ERRNO.test(s) ? PLAIN_FAIL : s;
   }
 
   /* The warning level: the plan's own "Low battery level" / "Critical battery level" (Battery.cs

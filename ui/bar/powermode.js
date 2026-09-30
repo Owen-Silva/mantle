@@ -44,8 +44,27 @@
   }
   function sentence(s) { s = String(s || ''); return /[.!?…]$/.test(s) ? s : s + '.'; }
 
+  /* PLAIN WORDS ON SCREEN (lane sysmon-power, 2026-09-29; the brief: no "sidecar", error codes,
+     "undefined", timeouts). A reason that is already plain is kept; a technical bracket ("(error 5)",
+     "(HRESULT 0x...)") is dropped; the passive test sidecar's refusal becomes "this is a test run";
+     anything still technical becomes one sentence that says what to do. */
+  var JARGON = /sidecar|\bIPC\b|renderer|hwnd|dryRun|undefined|\bnull\b|\bNaN\b|\[object|HRESULT|0x[0-9a-f]{4,}|Win32|\berror \d|exception|powermode\.\w+|window\.mantle|preload|\.js\b|answered with nothing|timed? ?out|within \d+ ?ms/i;
+  var ERRNO = /\bE[A-Z]{3,}\b|^Error\b/;         // case-sensitive: ENOENT, EPIPE, "Error: ..." (never "Energy")
+  var PLAIN_FAIL = 'Mantle could not reach Windows. Try again in a moment';
+  function plain(reason) {
+    var s = typeof reason === 'string' ? reason.trim() : reason && reason.message ? String(reason.message) : '';
+    if (!s) return '';
+    if (/^refused: sidecar is passive/.test(s)) return 'this is a test run, so Windows was not changed';
+    s = s.replace(/\s*\([^()]*\b(?:error|HRESULT|0x[0-9a-f]+)\b[^()]*\)/gi, '');
+    return JARGON.test(s) || ERRNO.test(s) ? PLAIN_FAIL : s;
+  }
+
+
   /* THE PURE HALF: what to draw from (state, the click in flight, the last refusal, and the plan
-     half's ui: {plan: the plan click in flight, planErr, plansOpen}). */
+     half's ui: {plan: the plan click in flight, planErr, plansOpen}).
+     2026-09-29: the line under a locked or unavailable switch is ONE short sentence (it used to be
+     Energy saver's four-clause paragraph); the whole explanation is its tooltip (`detail`). The fix for an
+     Energy saver lock is the Energy saver tile in the same panel, so no second button here. */
   function view(state, pending, err, ui) {
     ui = ui || {};
     var s = state || null;
@@ -53,29 +72,43 @@
     var live = ok && s.available !== false;
     // On Balanced but Windows will not take a mode now (2026-09-25: Energy saver, which pins Best
     // power efficiency - Settings says "Power mode cannot be set when energy saver is on"). The
-    // choice for this power source stays lit, muted, with the sidecar's reason under it.
+    // choice for this power source stays lit, muted, with the reason under it.
     var locked = live && s.settable === false;
     var shown = pending || (ok ? s.mode : null);
-    var sub, reason = null;
+    var sub, reason = null, detail = null;
     if (!s) { sub = 'Reading…'; }
-    else if (!ok) { sub = 'Unavailable'; reason = s.reason || 'the power mode could not be read, and no reason was given'; }
-    else if (!live) {
+    else if (!ok) {
+      sub = 'Unavailable';
+      reason = plain(s.reason) || 'Windows did not say which power mode is in use';
+    } else if (!live) {
       sub = 'Needs the Balanced plan';
-      reason = s.reason || 'Windows applies a power mode only on the Balanced power plan';
+      reason = 'Power modes work only on the Balanced power plan';
+      detail = plain(s.reason) || null;
     } else {
-      sub = (s.source === 'battery' ? 'On battery' : s.source === 'ac' ? 'Plugged in' : 'Power source unknown') +
-        (s.saver ? ' · Energy saver on' : '');
-      if (locked) reason = s.reason || 'Windows will not take a power mode right now, and gave no reason';
+      // The choice is made PER POWER SOURCE (Settings: "Power mode when plugged in" / "... on
+      // battery"), so the sub says which one this is: unplugging switches to the other choice.
+      sub = s.source === 'battery' ? 'When on battery' : s.source === 'ac' ? 'When plugged in' : 'Power source unknown';
+      if (locked && s.saver) {
+        reason = s.source === 'battery' && s.saverAt >= 100
+          ? 'Locked: Energy saver is on whenever this PC is unplugged'
+          : 'Locked while Energy saver is on';
+        detail = plain(s.reason) || null;
+      } else if (locked) {
+        reason = plain(s.reason) || 'Windows will not take a power mode change right now';
+      } else if (s.saver) sub += ' · Energy saver on';
     }
     // The mode Windows is actually running, when it differs from the choice and nothing above says why.
     var inForce = ok && !locked && s.inForce && s.inForce !== s.mode ? '; Windows reports ' + fullName(s.inForce) + ' in effect right now' : '';
+    var srcWords = ok && s.source === 'battery' ? ' on battery' : ok && s.source === 'ac' ? ' when plugged in' : '';
     var segs = MODES.map(function (m) {
       return {
         mode: m.mode, label: m.label,
         on: shown === m.mode,
         pending: pending === m.mode,
         disabled: !live || locked,
-        title: live && !locked ? m.full + (shown === m.mode ? ' (current' + inForce + ')' : '') : m.full + ' — ' + sentence(reason),
+        title: live && !locked
+          ? m.full + (shown === m.mode ? ' (current' + srcWords + inForce + ')' : ' — use' + srcWords)
+          : m.full + ' — ' + sentence(reason),
       };
     });
     var other = ok && live && !pending && MODES.every(function (m) { return m.mode !== s.mode; });
@@ -90,29 +123,30 @@
     var planShown = ui.plan || (activePlan ? activePlan.guid : null);
     var planRows = plans.map(function (p) {
       return {
-        guid: p.guid, name: p.name || p.guid, balanced: !!p.balanced,
+        guid: p.guid, name: p.name || 'Unnamed plan', balanced: !!p.balanced,
         on: planShown === p.guid, pending: ui.plan === p.guid,
-        title: (p.name || p.guid) + (p.active ? ' (current)' : '') + (p.balanced ? ' — power modes work on this plan' : ''),
+        title: (p.name || 'Unnamed plan') + (p.active ? ' (current)' : ' — switch to this plan') + (p.balanced ? '. Power modes work on this plan' : ''),
       };
     });
     var v = {
-      dead: !live || locked, sub: sub, reason: reason, head: 'Power mode',
-      note: err ? sentence('Power mode did not change: ' + err) : other ? sentence('Windows reports ' + fullName(s.mode) + '; pick one to replace it') : null,
+      dead: !live || locked, sub: sub, reason: reason, detail: detail, head: 'Power mode',
+      note: err ? sentence('Power mode did not change: ' + (plain(err) || 'Windows gave no reason')) : other ? sentence('Windows reports ' + fullName(s.mode) + '; pick one to replace it') : null,
       segs: segs,
       aria: locked ? 'Power mode: ' + fullName(shown) + ', locked: ' + reason
-        : live ? 'Power mode: ' + fullName(shown) : 'Power mode unavailable: ' + reason,
+        : live ? 'Power mode' + srcWords + ': ' + fullName(shown) : 'Power mode unavailable: ' + reason,
       pickPlan: pickPlan, plans: planRows,
       plansOpen: pickPlan || (live && !!ui.plansOpen && plans.length > 1),
       planToggle: live && plans.length > 1 ? (ui.plansOpen ? 'Hide power plans' : 'Plan: ' + ((activePlan && activePlan.name) || 'Balanced')) : null,
       hint: null,
-      planNote: ui.planErr ? sentence('Power plan did not change: ' + ui.planErr) : null,
+      planNote: ui.planErr ? sentence('Power plan did not change: ' + (plain(ui.planErr) || 'Windows gave no reason')) : null,
     };
     if (pickPlan) {
       v.dead = false;
       v.head = 'Power plan';
       v.sub = activePlan ? activePlan.name : 'Unknown plan';
-      v.hint = 'Power modes (Efficiency, Balanced, Performance) work only on the Balanced plan. Choose Balanced to use them.';
+      v.hint = 'Choose Balanced to use the power modes (Efficiency, Balanced, Performance).';
       v.aria = 'Power plan: ' + v.sub;
+      v.detail = null;
     }
     return v;
   }
@@ -224,6 +258,7 @@
       btns.forEach(function (b) { b.tabIndex = b === (focusable || btns[1]) ? 0 : -1; });
       why.textContent = v.hint || (v.dead && v.reason ? sentence(v.reason) : '');
       why.hidden = !(v.hint || (v.dead && v.reason));
+      why.title = v.detail ? sentence(v.detail) : '';        // the full explanation, on hover (2026-09-29)
       note.textContent = v.note || '';
       note.hidden = !v.note || v.pickPlan;
       // A switch that hid the focused plan list (Hone -> Balanced) hands the focus to the modes.
