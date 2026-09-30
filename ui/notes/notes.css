@@ -112,6 +112,22 @@ textarea {
   user-select: text; cursor: text;
   overflow-y: auto; overscroll-behavior: contain;
 }
+/* find's mark (notes.js layoutMark()): the match's paragraph laid out exactly like the text, under it.
+   Its words are invisible (the textarea draws them on top); only the match's wash + hairline show, so
+   the match stays marked while the keyboard is in the find box. No padding on the mark: nothing moves. */
+#text { position: relative; z-index: 1; }
+.hl { position: absolute; inset: 0; z-index: 0; overflow: hidden; border-radius: var(--lg-r); pointer-events: none; }
+.hl:not(.on) { visibility: hidden; }        /* still laid out: layoutMark() measures it */
+.mirror {
+  padding: 10px 12px;                  /* = the textarea's */
+  font-family: inherit; font-size: 13px; line-height: 1.5;
+  white-space: pre-wrap; overflow-wrap: break-word; color: transparent;
+}
+.mirror mark {
+  color: transparent; background: var(--lg-acc-soft);
+  border-radius: 2px; box-shadow: 0 0 0 1px var(--lg-acc);
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+}
 /* find's measuring twin (notes.js show()): the textarea's own type, never seen */
 textarea.twin { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; overflow: hidden; flex: none; min-height: 0; }
 textarea::placeholder { color: var(--lg-ink-3); }

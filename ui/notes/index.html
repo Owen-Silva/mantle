@@ -42,6 +42,9 @@
     </button>
   </div>
   <div class="sheet">
+    <!-- find's mark: the current match drawn BEHIND the text (a textarea paints no selection while the
+         find box has the keyboard). Only the match's own paragraph is copied here, never the note. -->
+    <div id="hl" class="hl" aria-hidden="true"><div id="mirror" class="mirror"></div></div>
     <textarea id="text" spellcheck="true" autocomplete="off" aria-label="Note text" placeholder="Type a note. It saves as you type."></textarea>
   </div>
   <footer id="foot" class="foot">

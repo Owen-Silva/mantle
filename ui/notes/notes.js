@@ -8,7 +8,7 @@
  *
  * Tabs (each note's first line; hover shows it whole), "+" / Ctrl+N a new note, Ctrl+Tab /
  * Ctrl+Shift+Tab switch, arrows move between tabs when a tab has the keyboard, Ctrl+F finds across
- * every note, Esc closes the find row first and then the pad (an empty extra note is dropped on
+ * every note (the match it steps to is marked even while the keyboard stays in the find box), Esc closes the find row first and then the pad (an empty extra note is dropped on
  * close, never the last one). Delete is ONE click and offers Undo for 8 s (quality pass 2026-09-29:
  * forgiving beats "are you sure"); the text also goes to deleted.md before it leaves notes.md.
  * The footer is quiet while all is well ("3 notes · Saved 9:14 PM"), says "Saving…" only when a
@@ -23,9 +23,11 @@
   const pad = $('pad'), tabsEl = $('tabs'), topEl = pad.querySelector('.top'), ta = $('text');
   const foot = $('foot'), statusEl = $('status'), noticeEl = $('notice'), delBtn = $('del'), addBtn = $('add'), undoBtn = $('undo');
   const findEl = $('find'), qEl = $('q'), countEl = $('count'), prevBtn = $('prev'), nextBtn = $('next'), fcloseBtn = $('fclose'), findBtn = $('findbtn');
+  const hlEl = $('hl'), mirrorEl = $('mirror');
 
   const DEBOUNCE_MS = 400, MAX_WAIT_MS = 3000, SLOW_MS = 700, UNDO_MS = 8000, CLICK_GAP_MS = 400, TAB_CHARS = 18;
-  const MAX_HITS = 999, TITLE_CHARS = 120;
+  // find's mark copies the match's paragraph (up to MARK_PARA characters before the match, MARK_TAIL after)
+  const MAX_HITS = 999, TITLE_CHARS = 120, MARK_PARA = 50000, MARK_TAIL = 400;
   const S = {
     loaded: false, notes: [], active: null, rev: 0,
     saved: { ok: true, at: null, reason: null, rev: 0 },
@@ -33,7 +35,7 @@
     lastDel: 0, deleting: false, delError: null, undo: null,
     carets: Object.create(null), wantFocus: false, error: null,
     firstDirty: 0, inflight: 0, inflightAt: 0,
-    find: { open: false, q: '', hits: [], cur: -1, per: Object.create(null) },
+    find: { open: false, q: '', hits: [], cur: -1, per: Object.create(null), mark: null },
   };
   let debounce = null, slowTimer = null, undoTimer = null, findTimer = null, seq = 0;
 
@@ -161,6 +163,7 @@
     S.delError = null;
     render();
     if (focus) ta.focus();
+    paintMark();                                          // back on the match's note: its mark again
   }
   function changed() {
     S.rev++;
@@ -311,8 +314,10 @@
       }
     }
     if (resetCur || !same || f.cur >= f.hits.length) f.cur = -1;
+    if (f.cur < 0) f.mark = null;                         // a new query: no match is "this one" yet
     renderFind();
     renderTabs();
+    paintMark();
   }
   function renderFind() {
     const f = S.find;
@@ -344,8 +349,9 @@
   function closeFind(focusText) {
     const f = S.find;
     if (!f.open) return;
-    f.open = false; f.q = ''; f.hits = []; f.per = Object.create(null); f.cur = -1;
+    f.open = false; f.q = ''; f.hits = []; f.per = Object.create(null); f.cur = -1; f.mark = null;
     clearTimeout(findTimer); findTimer = null;
+    paintMark();
     findEl.hidden = true;
     pad.classList.remove('finding');
     findBtn.classList.remove('on'); findBtn.setAttribute('aria-expanded', 'false');
@@ -371,23 +377,80 @@
     show(h.at, h.at + h.len);
     renderFind();
   }
-  /** Select [a, b) in the text and scroll it to about a third of the way down. */
+  /** Select [a, b) in the text, mark it, and scroll it to about a third of the way down. */
   function show(a, b) {
-    const v = ta.value;
     ta.setSelectionRange(a, b);
-    // the line of the hit: count wrapped rows up to it with a hidden twin of the textarea
-    const twin = show.twin || (show.twin = Object.assign(document.createElement('textarea'), { tabIndex: -1 }));
+    const m = S.find.mark = { id: S.active, a, b, text: ta.value.slice(a, b), w: 0, len: -1, rows: 0, y: -1 };
+    layoutMark(m);
+    // the hit's row: from the mark's layout, or (a paragraph too long to copy) the twin's row count
+    const y = m.y >= 0 ? m.y : twinHeight(ta.value.slice(0, a));
+    ta.scrollTop = Math.max(0, y - ta.clientHeight / 3);
+    S.carets[S.active] = [a, b, ta.scrollTop];
+    paintMark();
+  }
+  /** The height a textarea of the text's width and type needs for `s`: a hidden twin counts wrapped rows. */
+  function twinHeight(s) {
+    const twin = twinHeight.el || (twinHeight.el = Object.assign(document.createElement('textarea'), { tabIndex: -1 }));
     if (!twin.isConnected) {
       twin.className = 'twin'; twin.setAttribute('aria-hidden', 'true');
       ta.parentNode.appendChild(twin);
     }
     twin.style.width = ta.clientWidth + 'px';
-    twin.value = v.slice(0, a);
+    twin.value = s;
     twin.style.height = '0px';
-    const y = twin.scrollHeight;
+    const h = twin.scrollHeight;
     twin.value = '';
-    ta.scrollTop = Math.max(0, y - ta.clientHeight / 3);
-    S.carets[S.active] = [a, b, ta.scrollTop];
+    return h;
+  }
+  /**
+   * Find's mark. Chromium paints no selection in a textarea that does not have the keyboard, and while
+   * you step through matches the keyboard stays in the find box, so the match is drawn BEHIND the text:
+   * the match's paragraph is copied into #mirror (the textarea's padding, type and wrapping; its words
+   * invisible) with the match in a <mark>, shifted down by the wrapped rows above that paragraph. Only
+   * the paragraph is copied (up to MARK_PARA characters before the match, MARK_TAIL after it: what
+   * follows only matters for the match's own row), so a 3.8 MB note costs the one twin count show()
+   * always paid. m.rows = the paragraph's top offset; m.y = the bottom of the match's first row, both
+   * in the text's own (unscrolled) pixels; m.y = -1 when the paragraph is too long to copy (no mark).
+   */
+  function layoutMark(m) {
+    const v = ta.value;
+    m.w = ta.clientWidth; m.len = v.length; m.y = -1; m.rows = 0;
+    const ls = m.a > 0 ? v.lastIndexOf('\n', m.a - 1) + 1 : 0;
+    if (m.a - ls > MARK_PARA) { mirrorEl.textContent = ''; return; }
+    let le = v.indexOf('\n', m.b);
+    le = Math.min(le < 0 ? v.length : le, m.b + MARK_TAIL);
+    // the rows above the paragraph: a twin of everything before it (it ends in a newline, so it has one
+    // empty row more) less a twin of nothing (its padding and that one row). scrollHeight is a whole
+    // number and a row is 19.5 px, so snap to whole rows (unsnapped, the mark sat 1.3 px high).
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 19.5;
+    m.rows = ls ? Math.round((twinHeight(v.slice(0, ls)) - twinHeight('')) / lh) * lh : 0;
+    const mk = document.createElement('mark');
+    mk.textContent = v.slice(m.a, m.b);
+    // the rows above as a spacer IN the flow, and #hl scrolled like the text: the paragraph lands on the
+    // same fractional rows as the text's own (a moved or transformed box snapped its glyphs ~1 px off)
+    const gap = document.createElement('div');
+    gap.style.height = m.rows + 'px';
+    mirrorEl.replaceChildren(gap, document.createTextNode(v.slice(ls, m.a)), mk, document.createTextNode(v.slice(m.b, le)));
+    mirrorEl.style.width = m.w + 'px';
+    mirrorEl.style.minHeight = ta.scrollHeight + 'px';     // so #hl can scroll as far as the text does
+    const r = mk.getClientRects()[0];
+    if (r) m.y = r.bottom - mirrorEl.getBoundingClientRect().top;
+  }
+  /** Show the mark only while it is true: find open, the match's note open, the match still selected
+   *  and the text NOT focused (then Chromium paints the selection itself). A new width lays it out again. */
+  function paintMark() {
+    const m = S.find.mark;
+    const on = !!m && S.find.open && m.id === S.active && document.activeElement !== ta
+      && ta.selectionStart === m.a && ta.selectionEnd === m.b && ta.value.slice(m.a, m.b) === m.text;
+    if (on && (m.w !== ta.clientWidth || m.len !== ta.value.length)) layoutMark(m);
+    const vis = on && m.y >= 0;
+    if (vis) placeMark();
+    hlEl.classList.toggle('on', vis);
+    if (!m && mirrorEl.firstChild) mirrorEl.textContent = '';   // no copy of the text kept once find is done
+  }
+  function placeMark() {
+    const m = S.find.mark;
+    if (m) hlEl.scrollTop = ta.scrollTop;
   }
 
   /* ---- close ---- */
@@ -405,9 +468,15 @@
     if (!n) return;
     n.text = ta.value;
     S.delError = null;
+    if (S.find.mark) { S.find.mark = null; paintMark(); }   // the text moved under the match: no stale mark
     renderTabLabel();
     changed();
   });
+  // the mark follows the text as it scrolls; the text's own selection takes over while it has the keyboard
+  ta.addEventListener('scroll', () => { if (hlEl.classList.contains('on')) placeMark(); }, { passive: true });
+  ta.addEventListener('focus', paintMark);
+  ta.addEventListener('blur', paintMark);
+  window.addEventListener('resize', paintMark);
   tabsEl.addEventListener('mousedown', (e) => {
     const b = e.target.closest('.tab');
     if (!b || e.button !== 0) return;
@@ -472,7 +541,7 @@
         notes: S.notes.map((x) => ({ id: x.id, text: x.text })), saved: Object.assign({}, S.saved),
         footer: statusEl.textContent, warn: statusEl.classList.contains('warn'), notice: noticeEl.hidden ? '' : noticeEl.textContent,
         delDisabled: delBtn.disabled, readOnly: ta.readOnly, tabs: [...tabsEl.querySelectorAll('.tab')].map((b) => b.textContent),
-        find: { open: S.find.open, q: S.find.q, hits: S.find.hits.length, cur: S.find.cur, count: countEl.textContent },
+        find: { open: S.find.open, q: S.find.q, hits: S.find.hits.length, cur: S.find.cur, count: countEl.textContent, marked: hlEl.classList.contains('on') },
         sel: [ta.selectionStart, ta.selectionEnd], scrollTop: ta.scrollTop,
       };
     },
