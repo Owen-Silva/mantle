@@ -72,6 +72,11 @@ namespace Mantle {
     /// hardware actually settled on rather than what we asked for.
     /// setLevel/setMute are null when that half is not being changed.
     public static void Apply(int? setLevel, bool? setMute, out int level, out bool muted) {
+      // PASSIVE REFUSES A WRITE (2026-09-29, lane bar-qs): every other switch refused in passive, but
+      // `volume {level}` / `{muted}` went straight to CoreAudio, so a --test instance's slider (its
+      // sidecar is passive) moved Owen's real speaker. A read still works in passive.
+      if (Program.Passive && (setLevel.HasValue || setMute.HasValue))
+        throw new InvalidOperationException("refused: sidecar is passive (test mode): volume would change the live speaker");
       IMMDeviceEnumerator enumerator = null;
       IMMDevice device = null;
       IAudioEndpointVolume vol = null;
@@ -93,14 +98,17 @@ namespace Mantle {
         vol = (IAudioEndpointVolume)raw;
 
         Guid ctx = Guid.Empty;
+        // FAILED(hr) is hr < 0. SetMute answers S_FALSE (1) when the mute is already what was asked
+        // (measured 2026-09-29), and `hr != 0` turned that into "setting mute failed (HRESULT
+        // 0x00000001)" on a click that raced the panel's read.
         if (setLevel.HasValue) {
           int want = Math.Max(0, Math.Min(100, setLevel.Value));
           hr = vol.SetMasterVolumeLevelScalar(want / 100f, ref ctx);
-          if (hr != 0) throw new InvalidOperationException("setting the volume failed (HRESULT 0x" + hr.ToString("x8") + ")");
+          if (hr < 0) throw new InvalidOperationException("setting the volume failed (HRESULT 0x" + hr.ToString("x8") + ")");
         }
         if (setMute.HasValue) {
           hr = vol.SetMute(setMute.Value, ref ctx);
-          if (hr != 0) throw new InvalidOperationException("setting mute failed (HRESULT 0x" + hr.ToString("x8") + ")");
+          if (hr < 0) throw new InvalidOperationException("setting mute failed (HRESULT 0x" + hr.ToString("x8") + ")");
         }
 
         float scalar;
