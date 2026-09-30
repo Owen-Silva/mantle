@@ -49,6 +49,26 @@ const pick = (snap, pid) => snap.procs.find((p) => p.pid === pid);
     const self2 = pick(b, s.ready.pid);
     t.check('verify: EX2 PrivateWorkingSetSize within 4 MB of the snapshot for the sidecar', ex2 && self2 && Math.abs(ex2.pws - self2.pws) < 4 * 1048576, `${ex2 && ex2.pws} vs ${self2 && self2.pws}`);
 
+    // sysmon 2026-09-29: the whole machine's CPU (Idle's time) and "Not responding" (hung app windows).
+    t.check('snapshot: the Idle process\'s time is reported and only grows', a.idle > 0 && b.idle >= a.idle, `${a.idle} -> ${b.idle}`);
+    t.check('snapshot: every row says how many of its windows are not responding', b.procs.every((p) => Number.isInteger(p.hung) && p.hung >= 0 && p.hung <= p.windows));
+    {
+      // REFERENCE READ: Windows' own performance counter over the same ~3 s (typeperf, read-only).
+      const c0 = await s.call('taskmgr.snapshot', {}, 8000);
+      let ref = null;
+      try {
+        const out = cp.execFileSync('typeperf', ['\\Processor(_Total)\\% Processor Time', '-si', '1', '-sc', '3'], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
+        const vals = out.split(/\r?\n/).map((l) => l.match(/^"[^"]*","([\d.]+)"/)).filter(Boolean).map((m) => parseFloat(m[1]));
+        if (vals.length) ref = vals.reduce((x, y) => x + y, 0) / vals.length;
+      } catch (_) { ref = null; }
+      const c1 = await s.call('taskmgr.snapshot', {}, 8000);
+      const busy = 100 * (1 - (c1.idle - c0.idle) / ((c1.t - c0.t) * 10000 * c1.cpus));
+      t.check('cpu: the Idle-time total is a percentage', busy >= 0 && busy <= 100, busy.toFixed(1));
+      if (ref === null) t.check('cpu: typeperf reference read (counter names are English on this machine)', false, 'typeperf gave no number');
+      else t.check('cpu: total within 15 points of Windows\' own counter over the same seconds', Math.abs(busy - ref) <= 15, `${busy.toFixed(1)}% vs typeperf ${ref.toFixed(1)}%`);
+      console.log(`  (read-only) machine CPU ${busy.toFixed(1)}% vs typeperf ${ref === null ? 'n/a' : ref.toFixed(1) + '%'}`);
+    }
+
     const kid = pick(b, mine.pid);
     const orphan = b.procs.find((p) => p.ppid === starterPid && /node/i.test(p.file));
     t.check('the test child is in the table', !!kid);

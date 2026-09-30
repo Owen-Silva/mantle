@@ -72,6 +72,7 @@ namespace Mantle {
       [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX m);
       [DllImport("psapi.dll", SetLastError = true)] public static extern bool GetProcessMemoryInfo(IntPtr h, ref PMC_EX2 c, uint size);
       [DllImport("psapi.dll", SetLastError = true)] public static extern bool EmptyWorkingSet(IntPtr h);
+      [DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr hwnd);
     }
 
     const uint QUERY_LIMITED = 0x1000, SET_QUOTA = 0x0100, SYNCHRONIZE = 0x00100000, STILL_ACTIVE = 259;
@@ -257,8 +258,9 @@ namespace Mantle {
       var live = new HashSet<string>(StringComparer.Ordinal);
       var rows = new List<object>(procs.Count);
       int noPath = 0;
+      long idle = -1;
       foreach (Proc p in procs) {
-        if (p.Pid == 0) continue;
+        if (p.Pid == 0) { idle = p.Cpu; continue; }   // the Idle process: its time is every core's idle time
         string k = Key(p.Pid, p.Created);
         live.Add(k);
         string path;
@@ -267,16 +269,22 @@ namespace Mantle {
         List<IntPtr> w;
         int nwin = wins.TryGetValue(p.Pid, out w) ? w.Count : 0;
         string title = nwin > 0 ? Win32.GetWindowText(w[0]) : null;
+        // "Not responding": Windows' own test (the window has not taken a message for 5 s), the one
+        // Windows' Task Manager and the ghost window use. Asked only of the few app windows.
+        int hung = 0;
+        if (nwin > 0) foreach (IntPtr h in w) { try { if (N.IsHungAppWindow(h)) hung++; } catch (Exception) { } }
         rows.Add(Json.Obj("pid", (long)p.Pid, "ppid", (long)p.Ppid, "file", p.File, "created", Str(p.Created),
           "pws", p.Pws, "cpu", p.Cpu, "session", (long)p.Session, "path", path.Length > 0 ? path : null,
-          "desc", DescOf(path), "windows", nwin, "title", title));
+          "desc", DescOf(path), "windows", nwin, "title", title, "hung", hung));
       }
       // Forget the processes that are gone (the cache is keyed pid|created, so a reused pid is new).
       var dead = new List<string>();
       foreach (string k in _paths.Keys) if (!live.Contains(k)) dead.Add(k);
       foreach (string k in dead) _paths.Remove(k);
       if (_descs.Count > 2000) _descs.Clear();
-      result = Json.Obj("t", DateTime.UtcNow.Ticks / 10000.0, "cpus", Environment.ProcessorCount, "mem", memo,
+      // idle: the Idle process's CPU time (100 ns units, summed over cores): the machine's busy share is
+      // 1 - its growth / (elapsed x cores), the number Windows' Task Manager shows as CPU.
+      result = Json.Obj("t", DateTime.UtcNow.Ticks / 10000.0, "cpus", Environment.ProcessorCount, "mem", memo, "idle", idle,
         "procs", rows, "selfPid", (long)Program.OwnPid, "parentPid", (long)Program.ParentPid, "noPath", noPath,
         "method", "NtQuerySystemInformation(SystemProcessInformation).WorkingSetPrivateSize", "ms", sw.ElapsedMilliseconds);
       return null;
