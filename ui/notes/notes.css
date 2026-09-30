@@ -48,7 +48,7 @@ body {
   overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior: contain;
 }
 .tabs::-webkit-scrollbar { display: none; }
-.tab, .add, .del {
+.tab, .add, .ico, .undo {
   height: 22px; padding: 0 9px; border: 0; border-radius: var(--lg-r-ctl);
   background: transparent; color: var(--lg-ink-2); font: inherit; white-space: nowrap;
   display: inline-flex; align-items: center; flex: 0 0 auto;
@@ -56,15 +56,41 @@ body {
 .tab { max-width: 150px; }
 .tab .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab.empty { color: var(--lg-ink-3); }
-.tab:hover, .add:hover, .del:hover { background: var(--lg-hover); }
-.tab:active, .add:active, .del:active { background: var(--lg-press); }
+.tab:hover, .add:hover, .ico:hover, .undo:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.tab:active, .add:active, .ico:active, .undo:active { background: var(--lg-press); }
 /* the open note's tab is RAISED (Settings' segmented control, 377e901): a card face and its
    hairline, not a darker tint */
 .tab.on, .tab.on:hover { background: var(--lg-fill-strong); box-shadow: 0 0 0 1px var(--lg-edge-out); color: var(--lg-ink); }
 .tab.on.empty { color: var(--lg-ink-2); }
-.add { width: 24px; padding: 0; justify-content: center; }
-.add svg { display: block; }
-.tab:focus-visible, .add:focus-visible, .del:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
+.add, .ico { width: 24px; padding: 0; justify-content: center; }
+.add svg, .ico svg { display: block; }
+.tab:focus-visible, .add:focus-visible, .ico:focus-visible, .undo:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
+.ico.on, .ico.on:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.ico:disabled, .ico:disabled:hover { color: var(--lg-ink-3); background: transparent; opacity: .5; }
+/* find: tabs without a match step back, so the ones that hold it stand out */
+.tab.nohit { opacity: .45; }
+
+/* ---- find across notes (Ctrl+F): one slim row under the tabs ---- */
+.find {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 2px;
+  height: 26px; margin-top: 5px; padding: 0 2px 0 8px;
+  background-color: var(--lg-fill-strong);
+  border-radius: var(--lg-r-ctl);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+  color: var(--lg-ink-3);
+}
+.find[hidden] { display: none; }
+.find .glass { flex: 0 0 auto; margin-right: 4px; }
+.find input {
+  flex: 1 1 auto; min-width: 0; height: 100%; border: 0; outline: 0; margin: 0; padding: 0;
+  background: transparent; color: var(--lg-ink); caret-color: var(--lg-acc);
+  font: inherit; font-size: 12.5px; user-select: text;
+}
+.find input::placeholder { color: var(--lg-ink-3); }
+.find input::selection { background: var(--lg-acc-soft); color: var(--lg-ink); }
+.find:focus-within { box-shadow: inset 0 0 0 1px var(--lg-acc); }
+.count { flex: 0 0 auto; padding: 0 4px; font-size: 11.5px; color: var(--lg-ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.find.none .count { color: var(--lg-warn); }
 /* a hint that more tabs sit off to the side: a plain hairline, not a fade */
 .top.more-r .tabs { box-shadow: inset -1px 0 0 var(--lg-edge-out); }
 .top.more-l .tabs { box-shadow: inset 1px 0 0 var(--lg-edge-out); }
@@ -72,6 +98,7 @@ body {
 
 /* ---- the text ---- */
 .sheet {
+  position: relative;
   flex: 1 1 auto; min-height: 0; margin-top: 5px; display: flex;
   background-color: var(--lg-fill-strong);
   border-radius: var(--lg-r);          /* a Settings card: 8 px, one plain hairline */
@@ -85,6 +112,8 @@ textarea {
   user-select: text; cursor: text;
   overflow-y: auto; overscroll-behavior: contain;
 }
+/* find's measuring twin (notes.js show()): the textarea's own type, never seen */
+textarea.twin { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; overflow: hidden; flex: none; min-height: 0; }
 textarea::placeholder { color: var(--lg-ink-3); }
 textarea::selection { background: var(--lg-acc-soft); color: var(--lg-ink); }
 /* thin, and shown only while the pointer is over the text (Settings, 377e901); the transparent
@@ -123,10 +152,10 @@ textarea::-webkit-scrollbar-thumb:hover { background: var(--lg-press); backgroun
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
 }
 .notice.warn::before { top: .12em; }
-.del { color: var(--lg-ink-2); align-self: flex-start; margin-top: 1px; }
-/* armed ("click again"): the words in warn ink on the ordinary grey wash, not a tan block */
-.del.armed, .del.armed:hover { background: var(--lg-hover); color: var(--lg-warn); font-weight: 600; }
-.del:disabled { color: var(--lg-ink-3); background: transparent; }
+.del { align-self: flex-start; }
+/* Undo after a delete: the accent's words, no fill until hovered (a quiet, link-like action) */
+.undo { align-self: flex-start; color: var(--lg-acc); font-weight: 600; }
+.undo[hidden] { display: none; }
 
 /* ---- over file:// with mock-mantle.js: a made-up desktop and a strip standing in for the top bar ---- */
 body.mock { background: linear-gradient(160deg, #6d7fa6 0%, #b9c3d6 55%, #e7e2da 100%); }

@@ -1,39 +1,48 @@
 /* notes.js — the quick notes pad's page (lane tbnotes, 2026-09-27; main: lib/features/notes.js).
  *
- * THE TEXT STAYS HERE until main asks for it. Typing bumps `rev`; 400 ms after typing stops (and
- * on blur) the page calls notes.dirty {rev} — no text — and main PULLS the set through
- * window.__notesTake() (executeJavaScript) and writes it. So no note text ever travels as a
- * mantle.call argument, which main's call log could write to mantle.log. Text only arrives here in
- * notes.load's result and in the notes.open push (a reload after an outside change).
+ * THE TEXT STAYS HERE until main asks for it. Typing bumps `rev`; 400 ms after typing stops (and at
+ * most 3 s into a long burst, and on blur) the page calls notes.dirty {rev} — no text — and main
+ * PULLS the set through window.__notesTake() (executeJavaScript) and writes it. So no note text ever
+ * travels as a mantle.call argument, which main's call log could write to mantle.log. Text only
+ * arrives here in notes.load's result and in the notes.open push (a reload after an outside change).
  *
- * Tabs (each note's first line), "+" / Ctrl+N a new note, Ctrl+Tab / Ctrl+Shift+Tab switch, Esc
- * closes (an empty extra note is dropped on close, never the last one). Delete asks TWICE, each ask
- * times out after 4 s and clicks under 300 ms apart do not count. The footer says, in plain words,
- * saved / saving / NOT saved with the reason (and the path as its tooltip): nothing fails silently.
- * Timers: only the 400 ms debounce and the 4 s delete arm; main runs the 5 s retry while unsaved.
+ * Tabs (each note's first line; hover shows it whole), "+" / Ctrl+N a new note, Ctrl+Tab /
+ * Ctrl+Shift+Tab switch, arrows move between tabs when a tab has the keyboard, Ctrl+F finds across
+ * every note, Esc closes the find row first and then the pad (an empty extra note is dropped on
+ * close, never the last one). Delete is ONE click and offers Undo for 8 s (quality pass 2026-09-29:
+ * forgiving beats "are you sure"); the text also goes to deleted.md before it leaves notes.md.
+ * The footer is quiet while all is well ("3 notes · Saved 9:14 PM"), says "Saving…" only when a
+ * save takes longer than 0.7 s, and NOT saved with the reason (and the path as its tooltip) when a
+ * save fails: nothing fails silently. Timers: the debounce, the slow-save hint, the undo window;
+ * main runs the 5 s retry while unsaved.
  */
 (function () {
   'use strict';
   const mantle = window.mantle;
   const $ = (id) => document.getElementById(id);
   const pad = $('pad'), tabsEl = $('tabs'), topEl = pad.querySelector('.top'), ta = $('text');
-  const foot = $('foot'), statusEl = $('status'), noticeEl = $('notice'), delBtn = $('del'), addBtn = $('add');
+  const foot = $('foot'), statusEl = $('status'), noticeEl = $('notice'), delBtn = $('del'), addBtn = $('add'), undoBtn = $('undo');
+  const findEl = $('find'), qEl = $('q'), countEl = $('count'), prevBtn = $('prev'), nextBtn = $('next'), fcloseBtn = $('fclose'), findBtn = $('findbtn');
 
-  const DEBOUNCE_MS = 400, ARM_MS = 4000, CLICK_GAP_MS = 300, TAB_CHARS = 18;
+  const DEBOUNCE_MS = 400, MAX_WAIT_MS = 3000, SLOW_MS = 700, UNDO_MS = 8000, CLICK_GAP_MS = 400, TAB_CHARS = 18;
+  const MAX_HITS = 999, TITLE_CHARS = 120;
   const S = {
     loaded: false, notes: [], active: null, rev: 0,
     saved: { ok: true, at: null, reason: null, rev: 0 },
     file: '', folder: '', outside: null, loadError: null, rescued: [],
-    arm: 0, lastClick: 0, deleting: false, delError: null,
+    lastDel: 0, deleting: false, delError: null, undo: null,
     carets: Object.create(null), wantFocus: false, error: null,
+    firstDirty: 0, inflight: 0, inflightAt: 0,
+    find: { open: false, q: '', hits: [], cur: -1, per: Object.create(null) },
   };
-  let debounce = null, armTimer = null, seq = 0;
+  let debounce = null, slowTimer = null, undoTimer = null, findTimer = null, seq = 0;
 
   const cur = () => S.notes.find((n) => n.id === S.active) || null;
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
   // the clock the way the top bar and the timer's pop-up write it ("9:14 PM" here), not a 24-hour one
   const hhmm = (t) => { const d = new Date(t); try { return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch (_) { return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } };
   const base = (p) => String(p || '').split(/[\\/]/).pop();
+  const newId = () => `p${Date.now().toString(36)}${++seq}`;
 
   /** A tab's words: the note's first line with text, trimmed to ~18 characters. */
   function label(text) {
@@ -49,21 +58,38 @@
   }
 
   /* ---- render ---- */
+  /** The whole first line (up to TITLE_CHARS) for the tab's tooltip; '' when the label already shows it all. */
+  function fullTitle(text, words) {
+    if (!words.endsWith('…')) return '';
+    const s = String(text || '');
+    const i = s.search(/\S/);
+    const nl = s.indexOf('\n', i);
+    const line = s.slice(i, Math.min(nl < 0 ? s.length : nl, i + TITLE_CHARS + 1)).trimEnd();
+    return line.length > TITLE_CHARS ? line.slice(0, TITLE_CHARS - 1) + '…' : line;
+  }
+  function paintTab(b, n) {
+    const words = label(n.text);
+    b.classList.toggle('empty', !words);
+    b.firstChild.textContent = words || 'New note';
+    const t = fullTitle(n.text, words);
+    if (t) b.title = t; else b.removeAttribute('title');
+    const f = S.find;
+    b.classList.toggle('nohit', f.open && f.q !== '' && !f.per[n.id]);
+  }
   function renderTabs() {
     const frag = document.createDocumentFragment();
     for (const n of S.notes) {
       const b = document.createElement('button');
-      const words = label(n.text);
       b.type = 'button';
-      b.className = 'tab' + (n.id === S.active ? ' on' : '') + (words ? '' : ' empty');
+      b.className = 'tab' + (n.id === S.active ? ' on' : '');
       b.dataset.id = n.id;
       b.setAttribute('role', 'tab');
       b.setAttribute('aria-selected', n.id === S.active ? 'true' : 'false');
-      b.tabIndex = -1;
+      b.tabIndex = n.id === S.active ? 0 : -1;        // roving: Tab reaches the open note's tab, arrows move
       const s = document.createElement('span');
       s.className = 'lb';
-      s.textContent = words || 'New note';
       b.appendChild(s);
+      paintTab(b, n);
       frag.appendChild(b);
     }
     tabsEl.replaceChildren(frag);
@@ -84,22 +110,23 @@
     const n = cur();
     const b = n && tabsEl.querySelector(`.tab[data-id="${CSS.escape(n.id)}"]`);
     if (!b) return renderTabs();
-    const words = label(n.text);
-    b.classList.toggle('empty', !words);
-    b.firstChild.textContent = words || 'New note';
+    paintTab(b, n);
   }
 
   function renderFoot() {
     let words = '', warn = false;
     const n = S.notes.length;
+    const slow = S.inflight > 0 && Date.now() - S.inflightAt >= SLOW_MS;
     if (S.error) { words = S.error; warn = true; }
     else if (S.delError) { words = `Not deleted: ${S.delError}`; warn = true; }
     else if (!S.saved.ok) { words = `Not saved: ${S.saved.reason || 'Mantle did not say why'} · your text is kept here and saved again as you type`; warn = true; }
     else if (S.loadError) { words = `Could not read your notes: ${S.loadError}`; warn = true; }
     else if (!S.loaded) words = 'Opening…';
-    else if (S.rev > S.saved.rev) words = 'Saving…';
-    else if (S.saved.at) words = `Saved ${hhmm(S.saved.at)} · ${plural(n, 'note')}`;
-    else words = `All saved · ${plural(n, 'note')}`;
+    else if (S.deleting) words = 'Deleting…';
+    else if (S.undo) words = 'Note deleted';
+    else if (slow) words = 'Saving…';
+    else if (S.saved.at) words = `${plural(n, 'note')} · Saved ${hhmm(S.saved.at)}`;
+    else words = plural(n, 'note');
     statusEl.textContent = words;
     statusEl.classList.toggle('warn', warn);
     foot.title = S.file ? `${S.file}${S.saved.ok ? '' : '\n' + (S.saved.reason || '')}` : '';
@@ -111,9 +138,10 @@
     renderDel();
   }
   function renderDel() {
-    delBtn.disabled = !S.loaded || S.deleting || !!S.error;
-    delBtn.classList.toggle('armed', S.arm > 0);
-    delBtn.textContent = S.deleting ? 'Deleting…' : S.arm === 1 ? 'Delete this note?' : S.arm === 2 ? 'Sure? It goes to deleted.md' : 'Delete';
+    const n = cur();
+    const nothing = S.notes.length === 1 && (!n || n.text.trim() === '');   // one blank note: nothing to delete
+    delBtn.disabled = !S.loaded || S.deleting || !!S.error || nothing;
+    undoBtn.hidden = !S.undo;
   }
   function render() { renderTabs(); renderFoot(); }
 
@@ -130,29 +158,34 @@
     const c = S.carets[id];
     if (c) { ta.setSelectionRange(Math.min(c[0], ta.value.length), Math.min(c[1], ta.value.length)); ta.scrollTop = c[2]; }
     else { ta.setSelectionRange(ta.value.length, ta.value.length); ta.scrollTop = ta.scrollHeight; }
-    disarm();
     S.delError = null;
     render();
     if (focus) ta.focus();
   }
   function changed() {
     S.rev++;
+    const now = Date.now();
+    if (!S.firstDirty) S.firstDirty = now;
     renderFoot();
     clearTimeout(debounce);
-    debounce = setTimeout(sendDirty, DEBOUNCE_MS);
+    // 400 ms after the last key, but never later than 3 s after the first unsaved one (a long burst
+    // of typing is still on disk every few seconds if the machine dies mid-sentence).
+    debounce = setTimeout(sendDirty, Math.max(0, Math.min(DEBOUNCE_MS, S.firstDirty + MAX_WAIT_MS - now)));
+    if (S.find.open) findSoon();
   }
   function newNote() {
     if (!S.loaded || S.error) return;
-    const n = { id: `p${Date.now().toString(36)}${++seq}`, text: '' };
+    const n = { id: newId(), text: '' };
     const i = S.notes.findIndex((x) => x.id === S.active);
     S.notes.splice(i < 0 ? S.notes.length : i + 1, 0, n);
     activate(n.id, true);
     changed();
   }
-  function step(d) {
+  function step(d, focusTab) {
     if (S.notes.length < 2) return;
     const i = S.notes.findIndex((x) => x.id === S.active);
-    activate(S.notes[(i + d + S.notes.length) % S.notes.length].id, true);
+    activate(S.notes[(i + d + S.notes.length) % S.notes.length].id, !focusTab);
+    if (focusTab) { const b = tabsEl.querySelector('.tab.on'); if (b) b.focus(); }
   }
   /** Drop empty extra notes (never the last one). -> true if any went. */
   function prune() {
@@ -173,11 +206,19 @@
   /* ---- saving: tell main, it pulls ---- */
   function sendDirty() {
     clearTimeout(debounce); debounce = null;
+    S.firstDirty = 0;
     if (!mantle || !S.loaded) return;
     if (S.rev <= S.saved.rev && S.saved.ok) return;
+    if (!S.inflight) S.inflightAt = Date.now();
+    S.inflight++;
+    clearTimeout(slowTimer);
+    slowTimer = setTimeout(renderFoot, SLOW_MS + 20);     // "Saving…" only for a save that is slow
+    const settle = () => { S.inflight = Math.max(0, S.inflight - 1); if (!S.inflight) clearTimeout(slowTimer); };
     mantle.call('notes.dirty', { rev: S.rev }).then((r) => {
-      if (r && r.saved) applySaved(r.saved, r.outside);
+      settle();
+      if (r && r.saved) applySaved(r.saved, r.outside); else renderFoot();
     }, (e) => {
+      settle();
       S.saved = Object.assign({}, S.saved, { ok: false, reason: `Mantle did not answer (${e && e.message ? e.message : e})` });
       renderFoot();
     });
@@ -188,51 +229,172 @@
     renderFoot();
   }
 
-  /* ---- delete: asks twice ---- */
-  function disarm() { clearTimeout(armTimer); armTimer = null; S.arm = 0; }
+  /* ---- delete: one click, then Undo for 8 s ---- */
+  function dropUndo() { clearTimeout(undoTimer); undoTimer = null; S.undo = null; }
   function onDelete() {
     const now = Date.now();
-    const quick = now - S.lastClick < CLICK_GAP_MS;
-    S.lastClick = now;
-    if (quick || S.deleting || !S.loaded) return;       // a double click is not two answers
-    if (S.arm < 2) {
-      S.arm++;
-      clearTimeout(armTimer);
-      armTimer = setTimeout(() => { disarm(); renderDel(); }, ARM_MS);
-      renderDel();
-      return;
-    }
-    disarm();
+    if (now - S.lastDel < CLICK_GAP_MS) return;         // a double click deletes ONE note, not two
+    S.lastDel = now;
+    if (S.deleting || !S.loaded || delBtn.disabled) return;
     doDelete();
   }
   function doDelete() {
     const id = S.active;
     S.deleting = true; S.delError = null;
+    ta.readOnly = true;                                  // no keystroke lands in a note on its way out
     renderFoot();
     const done = (r) => {
       S.deleting = false;
+      ta.readOnly = !!S.error;
       if (r && r.ok) {
         const i = S.notes.findIndex((n) => n.id === id);
-        if (i >= 0) S.notes.splice(i, 1);
+        const gone = i >= 0 ? S.notes.splice(i, 1)[0] : null;
         delete S.carets[id];
-        if (!S.notes.length) S.notes.push({ id: `p${Date.now().toString(36)}${++seq}`, text: '' });
+        let filler = null;
+        if (!S.notes.length) { filler = { id: newId(), text: '' }; S.notes.push(filler); }
+        dropUndo();
+        if (gone && gone.text.trim() !== '') {
+          S.undo = { note: { id: gone.id, text: gone.text }, index: i, filler: filler && filler.id };
+          undoTimer = setTimeout(() => { dropUndo(); renderFoot(); }, UNDO_MS);
+        }
         S.active = null;
         activate(S.notes[Math.max(0, i - 1)].id, true);
         if (r.saved) applySaved(r.saved);
         S.rev++;
         sendDirty();
+        if (S.find.open) runFind(false);
       } else {
-        S.delError = (r && r.reason) || 'Mantle did not say why';
+        // main already says "not deleted: <why>"; the footer adds its own "Not deleted:" (said once)
+        S.delError = String((r && r.reason) || 'Mantle did not say why').replace(/^not deleted:\s*/i, '');
         renderFoot();
       }
     };
     mantle.call('notes.delete', { id }).then(done, (e) => done({ ok: false, reason: e && e.message ? e.message : String(e) }));
   }
+  function undoDelete() {
+    const u = S.undo;
+    if (!u || !S.loaded || S.error) return;
+    dropUndo();
+    // the blank note that stood in for the last one goes again, unless something was typed into it
+    if (u.filler) {
+      const k = S.notes.findIndex((n) => n.id === u.filler);
+      if (k >= 0 && S.notes[k].text.trim() === '' && S.notes.length === 1) S.notes.splice(k, 1);
+    }
+    const note = S.notes.some((n) => n.id === u.note.id) ? { id: newId(), text: u.note.text } : u.note;
+    S.notes.splice(Math.min(Math.max(0, u.index), S.notes.length), 0, note);
+    activate(note.id, true);
+    changed();
+  }
+
+  /* ---- find across every note (Ctrl+F): the text never leaves this page ---- */
+  function findSoon() { clearTimeout(findTimer); findTimer = setTimeout(() => runFind(false), 120); }
+  /** Every hit of the query in every note (case-insensitive), in tab order; capped at MAX_HITS. */
+  function runFind(resetCur) {
+    clearTimeout(findTimer); findTimer = null;
+    const f = S.find;
+    const q = qEl.value;
+    const same = q === f.q;
+    f.q = q;
+    f.hits = []; f.per = Object.create(null);
+    const needle = q.toLocaleLowerCase();
+    if (needle) {
+      for (const n of S.notes) {
+        const hay = n.text.toLocaleLowerCase();
+        if (hay.length !== n.text.length) {             // a case fold changed lengths (rare scripts): search as typed
+          let at = n.text.indexOf(q);
+          while (at >= 0 && f.hits.length < MAX_HITS) { f.hits.push({ id: n.id, at, len: q.length }); f.per[n.id] = (f.per[n.id] || 0) + 1; at = n.text.indexOf(q, at + Math.max(1, q.length)); }
+        } else {
+          let at = hay.indexOf(needle);
+          while (at >= 0 && f.hits.length < MAX_HITS) { f.hits.push({ id: n.id, at, len: needle.length }); f.per[n.id] = (f.per[n.id] || 0) + 1; at = hay.indexOf(needle, at + Math.max(1, needle.length)); }
+        }
+        if (f.hits.length >= MAX_HITS) break;
+      }
+    }
+    if (resetCur || !same || f.cur >= f.hits.length) f.cur = -1;
+    renderFind();
+    renderTabs();
+  }
+  function renderFind() {
+    const f = S.find;
+    const n = f.hits.length, notes = Object.keys(f.per).length;
+    let words = '';
+    if (f.q && !n) words = 'No matches';
+    else if (n && f.cur >= 0) words = `${f.cur + 1} of ${n >= MAX_HITS ? MAX_HITS + '+' : n}`;
+    else if (n) words = `${n >= MAX_HITS ? MAX_HITS + '+' : n} in ${plural(notes, 'note')}`;
+    countEl.textContent = words;
+    findEl.classList.toggle('none', !!f.q && !n);
+    prevBtn.disabled = nextBtn.disabled = !n;
+  }
+  function openFind() {
+    if (!S.loaded || S.error) return;
+    const f = S.find;
+    if (!f.open) {
+      f.open = true;
+      findEl.hidden = false;
+      pad.classList.add('finding');
+      findBtn.classList.add('on'); findBtn.setAttribute('aria-expanded', 'true');
+      // a short one-line selection in the text is what you want to find
+      const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+      if (sel && sel.length <= 100 && !/\n/.test(sel)) qEl.value = sel;
+      runFind(true);
+    }
+    qEl.focus();
+    qEl.select();
+  }
+  function closeFind(focusText) {
+    const f = S.find;
+    if (!f.open) return;
+    f.open = false; f.q = ''; f.hits = []; f.per = Object.create(null); f.cur = -1;
+    clearTimeout(findTimer); findTimer = null;
+    findEl.hidden = true;
+    pad.classList.remove('finding');
+    findBtn.classList.remove('on'); findBtn.setAttribute('aria-expanded', 'false');
+    renderTabs();
+    if (focusText) ta.focus();
+  }
+  /** Go to the next (d=1) or previous (d=-1) hit: its tab opens, the hit is selected and scrolled to. */
+  function jump(d) {
+    const f = S.find;
+    if (findTimer || qEl.value !== f.q) runFind(false);
+    if (!f.hits.length) return;
+    if (f.cur < 0) {
+      // the first Enter: the first hit at or after the caret in the open note, else the first one after it
+      const order = S.notes.map((n) => n.id);
+      const ai = order.indexOf(S.active);
+      const caret = ta.selectionStart;
+      let k = f.hits.findIndex((h) => { const hi = order.indexOf(h.id); return hi > ai || (hi === ai && h.at >= caret); });
+      if (d < 0) { k = (k < 0 ? f.hits.length : k) - 1; if (k < 0) k = f.hits.length - 1; }
+      f.cur = k < 0 ? 0 : k;
+    } else f.cur = (f.cur + d + f.hits.length) % f.hits.length;
+    const h = f.hits[f.cur];
+    if (h.id !== S.active) activate(h.id, false);
+    show(h.at, h.at + h.len);
+    renderFind();
+  }
+  /** Select [a, b) in the text and scroll it to about a third of the way down. */
+  function show(a, b) {
+    const v = ta.value;
+    ta.setSelectionRange(a, b);
+    // the line of the hit: count wrapped rows up to it with a hidden twin of the textarea
+    const twin = show.twin || (show.twin = Object.assign(document.createElement('textarea'), { tabIndex: -1 }));
+    if (!twin.isConnected) {
+      twin.className = 'twin'; twin.setAttribute('aria-hidden', 'true');
+      ta.parentNode.appendChild(twin);
+    }
+    twin.style.width = ta.clientWidth + 'px';
+    twin.value = v.slice(0, a);
+    twin.style.height = '0px';
+    const y = twin.scrollHeight;
+    twin.value = '';
+    ta.scrollTop = Math.max(0, y - ta.clientHeight / 3);
+    S.carets[S.active] = [a, b, ta.scrollTop];
+  }
 
   /* ---- close ---- */
   function close() {
-    disarm();
-    renderDel();
+    dropUndo();
+    closeFind(false);
+    renderFoot();
     clearTimeout(debounce); debounce = null;
     if (mantle) mantle.call('notes.close', { refocus: true }).catch(() => {});
   }
@@ -243,29 +405,48 @@
     if (!n) return;
     n.text = ta.value;
     S.delError = null;
-    if (S.arm) disarm();
     renderTabLabel();
     changed();
   });
   tabsEl.addEventListener('mousedown', (e) => {
     const b = e.target.closest('.tab');
-    if (!b) return;
+    if (!b || e.button !== 0) return;
     e.preventDefault();                                   // keep the caret in the text
     if (b.dataset.id !== S.active) activate(b.dataset.id, true); else ta.focus();
+  });
+  tabsEl.addEventListener('keydown', (e) => {
+    if (!e.target.closest('.tab') || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.key === 'ArrowRight') { e.preventDefault(); step(1, true); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1, true); }
+    else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      if (S.notes.length) { activate(S.notes[e.key === 'Home' ? 0 : S.notes.length - 1].id, false); const b = tabsEl.querySelector('.tab.on'); if (b) b.focus(); }
+    } else if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); ta.focus(); }
   });
   tabsEl.addEventListener('wheel', (e) => {
     if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { tabsEl.scrollLeft += e.deltaY; e.preventDefault(); }
   }, { passive: false });
   tabsEl.addEventListener('scroll', edges, { passive: true });
-  addBtn.addEventListener('mousedown', (e) => e.preventDefault());
+  for (const b of [addBtn, findBtn, delBtn, undoBtn, prevBtn, nextBtn, fcloseBtn]) b.addEventListener('mousedown', (e) => e.preventDefault());
   addBtn.addEventListener('click', newNote);
-  delBtn.addEventListener('mousedown', (e) => e.preventDefault());
   delBtn.addEventListener('click', onDelete);
+  undoBtn.addEventListener('click', undoDelete);
+  prevBtn.addEventListener('click', () => jump(-1));
+  nextBtn.addEventListener('click', () => jump(1));
+  fcloseBtn.addEventListener('click', () => closeFind(true));
+  findBtn.addEventListener('click', () => { if (S.find.open) closeFind(true); else openFind(); });
+  qEl.addEventListener('input', () => { S.find.cur = -1; findSoon(); });
+  qEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); jump(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFind(true); }
+  });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); if (S.find.open) closeFind(true); else close(); return; }
+    if (e.key === 'F3' && S.find.open) { e.preventDefault(); jump(e.shiftKey ? -1 : 1); return; }
     if (e.ctrlKey && !e.altKey && !e.metaKey) {
       if (e.key === 'Tab') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return; }
-      if ((e.key === 'n' || e.key === 'N') && !e.shiftKey) { e.preventDefault(); newNote(); }
+      if ((e.key === 'n' || e.key === 'N') && !e.shiftKey) { e.preventDefault(); newNote(); return; }
+      if ((e.key === 'f' || e.key === 'F') && !e.shiftKey) { e.preventDefault(); openFind(); }
     }
   });
   window.addEventListener('blur', () => { if (S.rev > S.saved.rev) sendDirty(); });
@@ -287,10 +468,12 @@
   Object.defineProperty(window, '__notes', {
     get() {
       return {
-        loaded: S.loaded, rev: S.rev, active: S.active, arm: S.arm, deleting: S.deleting,
+        loaded: S.loaded, rev: S.rev, active: S.active, deleting: S.deleting, undo: !!S.undo,
         notes: S.notes.map((x) => ({ id: x.id, text: x.text })), saved: Object.assign({}, S.saved),
         footer: statusEl.textContent, warn: statusEl.classList.contains('warn'), notice: noticeEl.hidden ? '' : noticeEl.textContent,
-        del: delBtn.textContent, tabs: [...tabsEl.querySelectorAll('.tab')].map((b) => b.textContent),
+        delDisabled: delBtn.disabled, readOnly: ta.readOnly, tabs: [...tabsEl.querySelectorAll('.tab')].map((b) => b.textContent),
+        find: { open: S.find.open, q: S.find.q, hits: S.find.hits.length, cur: S.find.cur, count: countEl.textContent },
+        sel: [ta.selectionStart, ta.selectionEnd], scrollTop: ta.scrollTop,
       };
     },
   });
@@ -314,9 +497,9 @@
     pad.classList.remove('anim');
     void pad.offsetWidth;                                 // restart the entrance
     pad.classList.add('anim');
-    disarm();
     S.delError = null;
     if (p && p.reload && Array.isArray(p.reload.notes) && p.reload.notes.length) {
+      dropUndo();
       S.notes = p.reload.notes.map((n) => ({ id: String(n.id), text: String(n.text) }));
       S.carets = Object.create(null);
       S.rev = Number(p.reload.rev) || 0;

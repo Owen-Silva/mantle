@@ -2,7 +2,10 @@
  * Electron (headless shots). The real preload.js defines window.mantle first, so under Electron this
  * file does nothing. Every note, time and path here is MADE UP: nothing is read from Owen's notes.
  *
- * Query: mock=3notes (default) | empty | failed | armed | armed2 | many | outside | long | nobridge
+ * Query: mock=3notes (default) | empty | failed | undo (armed, armed2: the same) | find | slow | many |
+ *        outside | long | nobridge
+ * Page tests steer it with window.__mockFail (a save fails with that reason), __mockDelay (ms a save
+ * takes), __mockDelFail / __mockDelDelay (the delete); window.__mockSaved = the set "main" pulled last.
  *        busy=1 (a hard striped "app" behind the glass)  dark=1 (a dark desktop)
  * When the page has settled, <html data-ready="1">. window.__mockCalls lists every call made.
  */
@@ -51,10 +54,19 @@
         case 'notes.load': return Promise.resolve({ ok: true, notes: notes.map((n) => Object.assign({}, n)), active, file: FILE, folder: FOLDER, saved, outside, loadError, dirty, rescued: [] });
         case 'notes.dirty': {
           const t = window.__notesTake && window.__notesTake();
-          if (mode === 'failed') return Promise.resolve({ ok: true, rev: t && t.rev, saved: { ok: false, at, reason: FAIL, rev: 0 }, outside: null });
-          return Promise.resolve({ ok: true, rev: t && t.rev, saved: { ok: true, at: Date.now(), reason: null, rev: t ? t.rev : 0 }, outside });
+          window.__mockSaved = t;                                  // what "main" pulled last (page tests read it)
+          const fail = mode === 'failed' || window.__mockFail;
+          const ans = fail ? { ok: true, rev: t && t.rev, saved: { ok: false, at, reason: window.__mockFail || FAIL, rev: 0 }, outside: null }
+            : { ok: true, rev: t && t.rev, saved: { ok: true, at: Date.now(), reason: null, rev: t ? t.rev : 0 }, outside };
+          const wait = mode === 'slow' ? 1500 : Number(window.__mockDelay) || 0;
+          return wait ? new Promise((r) => setTimeout(() => r(ans), wait)) : Promise.resolve(ans);
         }
-        case 'notes.delete': return Promise.resolve({ ok: true, deleted: args.id, keptIn: FOLDER + '\\deleted.md', saved: { ok: true, at: Date.now(), reason: null, rev: 0 } });
+        case 'notes.delete': {
+          const wait = Number(window.__mockDelDelay) || 0;
+          const ans = window.__mockDelFail ? { ok: false, reason: 'not deleted: could not keep the note in C:\\Users\\you\\Documents\\Mantle Notes\\deleted.md: the disk is full' }
+            : { ok: true, deleted: args.id, keptIn: FOLDER + '\\deleted.md', saved: { ok: true, at: Date.now(), reason: null, rev: 0 } };
+          return wait ? new Promise((r) => setTimeout(() => r(ans), wait)) : Promise.resolve(ans);
+        }
         default: return Promise.resolve({ ok: true });
       }
     },
@@ -63,10 +75,17 @@
     setTimeout(() => {
       window.mantle.emit('notes.open', { focus: true, reload: null, via: 'mock' });
       const del = document.getElementById('del');
-      const click = () => del.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      if (mode === 'armed' || mode === 'armed2') click();
+      // armed / armed2 are the old two-step delete's shot names (ui/topbar/shoot.js): both now show
+      // the one-click delete's "Note deleted · Undo" footer
+      if (mode === 'armed' || mode === 'armed2' || mode === 'undo') del.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      if (mode === 'find') {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true }));
+        const q = document.getElementById('q');
+        q.value = 'the';
+        q.dispatchEvent(new Event('input', { bubbles: true }));
+        setTimeout(() => q.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })), 200);
+      }
       setTimeout(() => {
-        if (mode === 'armed2') click();
         document.documentElement.dataset.ready = '1';
       }, 350);
     }, 60);

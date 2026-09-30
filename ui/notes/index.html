@@ -12,25 +12,47 @@
 </head>
 <body>
 <!-- Quick notes (lib/features/notes.js): drops down from the top bar like one of its menus.
-     Tabs = the notes (each one's first line), "+" = a new note, the text, and a footer that says in
-     plain words whether it is saved, and if not, why and where. The text never leaves this page
-     except when main asks for it (window.__notesTake); nothing here sends text in a call. -->
+     Tabs = the notes (each one's first line), "+" = a new note, an optional find row (Ctrl+F), the
+     text, and a footer that says in plain words whether it is saved, and if not, why and where. The
+     text never leaves this page except when main asks for it (window.__notesTake); nothing here sends
+     text in a call. -->
 <main id="pad" class="pad" aria-label="Quick notes">
   <div class="top">
     <div id="tabs" class="tabs" role="tablist" aria-label="Notes"></div>
+    <!-- find's way in for the mouse (and where its shortcut is shown) -->
+    <button id="findbtn" class="ico" type="button" title="Find in all notes (Ctrl+F)" aria-label="Find in all notes" aria-controls="find" aria-expanded="false">
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><circle cx="5.2" cy="5.2" r="3.4" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M7.8 7.8l2.7 2.7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+    </button>
     <button id="add" class="add" type="button" title="New note (Ctrl+N)" aria-label="New note">
       <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M6 1.5v9M1.5 6h9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" fill="none"/></svg>
     </button>
   </div>
+  <div id="find" class="find" role="search" hidden>
+    <svg class="glass" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><circle cx="5.2" cy="5.2" r="3.4" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M7.8 7.8l2.7 2.7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+    <input id="q" type="text" spellcheck="false" autocomplete="off" placeholder="Find in all notes" aria-label="Find in all notes">
+    <span id="count" class="count" aria-live="polite"></span>
+    <button id="prev" class="ico" type="button" title="Previous match (Shift+Enter)" aria-label="Previous match">
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2.5 7.5L6 4l3.5 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+    </button>
+    <button id="next" class="ico" type="button" title="Next match (Enter)" aria-label="Next match">
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+    </button>
+    <button id="fclose" class="ico" type="button" title="Close find (Esc)" aria-label="Close find">
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" fill="none"/></svg>
+    </button>
+  </div>
   <div class="sheet">
-    <textarea id="text" spellcheck="true" autocomplete="off" aria-label="Note text" placeholder="Type a note"></textarea>
+    <textarea id="text" spellcheck="true" autocomplete="off" aria-label="Note text" placeholder="Type a note. It saves as you type."></textarea>
   </div>
   <footer id="foot" class="foot">
     <div class="words">
       <div id="status" class="status" role="status" aria-live="polite"></div>
       <div id="notice" class="notice" hidden></div>
     </div>
-    <button id="del" class="del" type="button">Delete</button>
+    <button id="undo" class="undo" type="button" hidden>Undo</button>
+    <button id="del" class="ico del" type="button" title="Delete this note" aria-label="Delete this note">
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2 3.2h8M4.8 3.2V2.1h2.4v1.1M3.1 3.2l.5 6.9h4.8l.5-6.9M5 5.2v3M7 5.2v3" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+    </button>
   </footer>
 </main>
 <script src="mock-mantle.js"></script>
