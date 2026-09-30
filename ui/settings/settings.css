@@ -110,16 +110,6 @@ body.maxed .winbtn .g-max { display: none; }
 /* a section that is DOWN, or Mantle with a feature that is really not healthy (settings.js renderNav) */
 .nav-i .ndot { margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: var(--lg-warn); }
 
-.allwin {
-  display: flex; align-items: center; justify-content: space-between;
-  height: 36px; margin-top: 8px; padding: 0 12px;
-  border: 0; border-radius: var(--lg-r-ctl);
-  background: transparent; color: var(--lg-ink-2);
-  box-shadow: 0 -1px 0 var(--lg-sunk);
-}
-.allwin:hover { background: var(--lg-sunk); color: var(--lg-ink); }
-.allwin:active { background: var(--lg-press); }
-
 /* ---------------------------------------------------------------- the content */
 .scroller { flex: 1 1 auto; min-width: 0; overflow-y: auto; overflow-x: hidden; }
 .scroller::-webkit-scrollbar { width: 8px; }
