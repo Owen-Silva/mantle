@@ -1,17 +1,21 @@
-/* spotify.css - the "Up next" queue in the now-playing card (ui/bar/spotify.js, spotq lane, then
-   the spotapp lane's desktop-app rebuild, 2026-09-25). One Theme: glass-light.css --lg-* tokens only, and the rows are the card's own
-   source-list rows (.mc-s in bar.css) so the two lists read as one family. No glow. */
+/* spotify.css - the Spotify section of the now-playing card (ui/bar/spotify.js: spotq lane, the
+   spotapp lane's desktop-app rebuild 2026-09-25, the media-ui lane's quality pass 2026-09-29).
+   One Theme: glass-light.css --lg-* tokens only; no glow (the accent is for the selected tab's tick,
+   the playing row's tick, "on" toggles, the heart and focus). The card's own rhythm: 4/8 spacing,
+   8 px row corners, one hairline above the section. Hover/pressed are steps(2) like the rest of the
+   bar (two paints, not a ramp); movement (the chevrons) is on the Northwind curve; reduced motion = none. */
 
 .spq { margin-top: 10px; padding-top: 7px; border-top: 1px solid var(--lg-edge-out); }
-.spq[hidden], .spq-body[hidden], .spq-state[hidden], .spq-list[hidden], .spq-add[hidden], .spq-note[hidden],
-.spq-clear[hidden], .spq .spq-msg[hidden] { display: none; }
+.spq[hidden], .spq [hidden] { display: none !important; }
 
+/* ---------------------------------------------------------------- the head (shut / open) */
 .spq-head {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 8px;
+  height: 30px;
+  padding: 0 8px;
   border: 0;
   border-radius: var(--lg-r-ctl);
   background: transparent;
@@ -22,51 +26,55 @@
   transition: background-color 120ms steps(2), color 120ms steps(2);
 }
 .spq-head:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.spq-head:active { background: var(--lg-press); }
 .spq-head:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
 .spq-ico { flex: 0 0 16px; display: grid; place-items: center; color: var(--lg-ink-2); }
 .spq-label { flex: 0 0 auto; color: var(--lg-ink); }
 .spq-hint { flex: 1 1 auto; min-width: 0; text-align: right; color: var(--lg-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spq-hint.warn { color: var(--lg-warn); }
-.spq-chev { flex: 0 0 14px; display: grid; place-items: center; color: var(--lg-ink-3); transition: transform 150ms steps(2); }
-.spq.open .spq-chev { transform: rotate(180deg); }
+.spq-chev { flex: 0 0 auto; display: grid; place-items: center; color: var(--lg-ink-3); transition: transform 150ms var(--lg-ease); }
+.spq.open > .spq-head .spq-chev, .spq-more-btn[aria-expanded="true"] .spq-chev { transform: rotate(180deg); }
 
-.spq-body { margin-top: 4px; }
-/* the part that scrolls: its max-height is set by spotify.js fit() so the whole card fits main's room */
-.spq-scroll { max-height: 244px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--lg-edge-in) transparent; }
-.spq-list { display: flex; flex-direction: column; gap: 1px; }
+/* CONTRACT feature 2: nothing loaded -> one button, open or shut */
+.spq-idle { padding: 6px 0 2px; }
 
-.spq-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  min-width: 0;
-  padding: 4px 8px;
+.spq-body { margin-top: 2px; }
+
+/* a window that could not be hidden: the warn glyph, one line, its fix */
+.spq-warn { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 8px; color: var(--lg-warn); font-size: 12px; line-height: 1.4; }
+.spq-wico { flex: 0 0 12px; display: grid; place-items: center; }
+.spq-wtxt { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spq-warn .spq-link { flex: 0 0 auto; }
+
+/* ---------------------------------------------------------------- the player row */
+.spq-bar { display: flex; align-items: center; gap: 2px; padding: 4px 0 6px; }
+.spq-seg { display: flex; gap: 2px; }
+.spq-tab {
+  position: relative;
+  height: 26px;
+  padding: 0 8px;
   border: 0;
   border-radius: var(--lg-r-ctl);
   background: transparent;
   color: var(--lg-ink-2);
   font: inherit;
-  text-align: left;
   cursor: default;
   transition: background-color 120ms steps(2), color 120ms steps(2);
 }
-.spq-row:hover { background: var(--lg-hover); color: var(--lg-ink); }
-.spq-row:active { background: var(--lg-press); }
-/* a queue row = the play button + its tools (move up / down, remove), which show on hover or
-   keyboard focus but always keep their room, so the title never re-flows under the pointer */
-.spq-item { position: relative; display: flex; align-items: center; min-width: 0; border-radius: var(--lg-r-ctl); }
-.spq-item .spq-row { flex: 1 1 auto; }
-.spq-item.busy { opacity: .55; }
-.spq-item:hover { background: var(--lg-hover); }
-.spq-item .spq-row, .spq-item .spq-row:hover { background: transparent; }
-.spq-item:hover .spq-row { color: var(--lg-ink); }
-.spq-item .spq-row:active { background: var(--lg-press); }
-.spq-tools { flex: 0 0 auto; display: flex; gap: 1px; padding-right: 4px; opacity: 0; transition: opacity 120ms steps(2); }
-.spq-item:hover .spq-tools, .spq-item:focus-within .spq-tools { opacity: 1; }
+.spq-tab:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.spq-tab:active { background: var(--lg-press); }
+.spq-tab:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+/* the selected tab: a quiet wash and the accent tick (the Settings recipe), never a coloured block */
+.spq-tab.on { background: var(--lg-hover); color: var(--lg-ink); }
+.spq-tab.on::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: 2px; height: 2px; border-radius: 1px; background: var(--lg-acc); }
+.spq-gap { flex: 1 1 auto; }
+
+/* ---------------------------------------------------------------- icon buttons */
 .spq-tool {
-  width: 20px;
-  height: 22px;
+  position: relative;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -75,17 +83,62 @@
   background: transparent;
   color: var(--lg-ink-3);
   cursor: default;
+  transition: background-color 120ms steps(2), color 120ms steps(2);
 }
-.spq-tool:hover { background: var(--lg-press); color: var(--lg-ink); }
+.spq-tool.big { width: 28px; height: 26px; color: var(--lg-ink-2); }
+.spq-tool:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.spq-tool:active { background: var(--lg-press); }
 .spq-tool:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
-.spq-tool:disabled { opacity: .35; background: transparent; color: var(--lg-ink-3); }
-.spq-sec { padding: 6px 8px 2px; color: var(--lg-ink-3); font-size: 11px; letter-spacing: .02em; }
-.spq-sec:first-child { padding-top: 2px; }
+.spq-tool:disabled, .spq-tool:disabled:hover { opacity: .38; background: transparent; color: var(--lg-ink-3); }
+.spq-tool.on, .spq-tool.on:hover { color: var(--lg-acc); }
+.spq-tool.busy { opacity: .6; }
+.spq-tool.one::after { content: '1'; position: absolute; right: 3px; bottom: 2px; font-size: 8px; font-weight: 600; line-height: 1; color: var(--lg-acc); }
+
+/* ---------------------------------------------------------------- the list */
+/* the part that scrolls: its max-height is set by spotify.js fit() so the whole card fits main's room */
+.spq-scroll { max-height: 244px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--lg-edge-in) transparent; }
+.spq-list { display: flex; flex-direction: column; gap: 1px; }
+.spq-sec { padding: 8px 8px 3px; color: var(--lg-ink-3); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.spq-list > .spq-sec:first-child { padding-top: 2px; }
+
+/* a row = the play button + its tools (move up / down, remove), which show on hover or keyboard
+   focus but always keep their room, so the title never re-flows under the pointer */
+.spq-item { position: relative; display: flex; align-items: center; min-width: 0; border-radius: 8px; transition: background-color 120ms steps(2); }
+.spq-item:hover { background: var(--lg-hover); }
+.spq-item:has(.spq-row:active) { background: var(--lg-press); }
+.spq-item:has(.spq-row:focus-visible) { box-shadow: inset 0 0 0 1px var(--lg-acc); }
+.spq-item.busy { opacity: .55; }
+/* the one that is playing (Library): the wash and the accent tick */
+.spq-item.cur { background: var(--lg-hover); }
+.spq-item.cur::before { content: ''; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 2px; background: var(--lg-acc); }
+.spq-row {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lg-ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.spq-row:focus-visible { outline: none; }
+.spq-item:hover .spq-row { color: var(--lg-ink); }
+.spq-tools { flex: 0 0 auto; display: flex; gap: 1px; padding-right: 6px; opacity: 0; transition: opacity 120ms steps(2); }
+.spq-item:hover .spq-tools, .spq-item:focus-within .spq-tools { opacity: 1; }
+/* the queue-add tool on a song result stays visible: it is the only way to queue from search */
+.spq-tools.keep { opacity: 1; }
 .spq-art {
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
-  border-radius: 5px;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--lg-r-ctl);
   overflow: hidden;
   display: grid;
   place-items: center;
@@ -93,25 +146,90 @@
   color: var(--lg-ink-3);
   box-shadow: inset 0 0 0 1px var(--lg-edge-out);
 }
-.spq-art img { width: 32px; height: 32px; object-fit: cover; display: block; }
-.spq-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
-.spq-t { color: var(--lg-ink); line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.spq-a { color: var(--lg-ink-3); font-size: 12px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.spq-tag { flex: 0 0 auto; padding: 2px 7px; border-radius: var(--lg-r-ctl); background: var(--lg-sunk); color: var(--lg-ink-2); font-size: 11.5px; }
-.spq-row.done .spq-tag { background: var(--lg-acc-soft); color: var(--lg-acc); }
+.spq-art img { width: 36px; height: 36px; object-fit: cover; display: block; }
+.spq-art.round { border-radius: 50%; }
+.spq-art.liked { background: var(--lg-acc-soft); color: var(--lg-acc); box-shadow: none; }
+.spq-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.spq-t { color: var(--lg-ink); line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spq-a { color: var(--lg-ink-3); font-size: 11.5px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spq-item.cur .spq-t { color: var(--lg-acc); }
+
+/* loading: rows of the same size, so nothing jumps when the real ones arrive (no shimmer: nothing
+   moves at rest) */
+.spq-skel { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 8px; }
+.spq-skel .spq-art { box-shadow: none; background: var(--lg-sunk); }
+.spq-sk1, .spq-sk2 { display: block; height: 8px; border-radius: 4px; background: var(--lg-sunk); }
+.spq-sk1 { width: 62%; }
+.spq-sk2 { width: 38%; margin-top: 5px; }
+.spq-skel + .spq-skel .spq-sk1 { width: 48%; }
+.spq-skel + .spq-skel + .spq-skel .spq-sk1 { width: 70%; }
+
+/* ---------------------------------------------------------------- empty / error / not-connected */
+.spq-empty { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 14px 16px 12px; text-align: center; }
+.spq-eico { display: grid; place-items: center; width: 32px; height: 32px; margin-bottom: 4px; border-radius: 50%; background: var(--lg-sunk); color: var(--lg-ink-3); }
+.spq-empty.bad .spq-eico { background: var(--lg-warn-soft); color: var(--lg-warn); }
+.spq-ehead { color: var(--lg-ink); font-weight: 600; line-height: 1.4; }
+.spq-empty.dim .spq-ehead { color: var(--lg-ink-2); font-weight: 400; }
+.spq-eline { max-width: 236px; color: var(--lg-ink-3); font-size: 12px; line-height: 1.45; }
+.spq-empty .spq-btn { margin-top: 8px; }
+.spq-empty .spq-link.act { margin: 6px 0 0; }
+.spq-empty .spq-fine { padding: 4px 0 0; }
 
 .spq-msg { padding: 4px 8px; line-height: 1.45; color: var(--lg-ink-2); }
-.spq-msg.dim { color: var(--lg-ink-3); }
 .spq-msg.bad { color: var(--lg-warn); }
-.spq-lede { padding: 2px 8px 4px; color: var(--lg-ink); line-height: 1.45; }
-.spq-fine[hidden] { display: none; }
 .spq-fine { padding: 4px 8px 0; color: var(--lg-ink-3); line-height: 1.45; font-size: 11.5px; }
-.spq-note { padding: 5px 8px 0; color: var(--lg-ink-2); line-height: 1.45; }
+.spq-pad { padding: 6px 8px 2px; }
+.spq-bad { color: var(--lg-warn); }
+.spq-note { padding: 6px 8px 0; color: var(--lg-ink-2); font-size: 12px; line-height: 1.45; }
 .spq-note.bad { color: var(--lg-warn); }
+
+/* ---------------------------------------------------------------- buttons */
+/* the ONE primary action of a state: the accent, a verb */
+.spq-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-acc);
+  color: var(--lg-acc-on);
+  font: inherit;
+  cursor: default;
+  transition: opacity 120ms steps(2), background-color 120ms steps(2);
+}
+.spq-btn.wide { width: 100%; }
+.spq-btn:hover { opacity: .92; }
+.spq-btn:active { opacity: .8; }
+.spq-btn:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 2px; }
+.spq-btn.busy, .spq-btn:disabled { opacity: .6; }
+.spq-bico { display: grid; place-items: center; }
+/* armed (Restart): the next click stops the music, so it reads as a warning */
+.spq-btn.armed, .spq-btn.armed:hover { background: var(--lg-warn-soft); color: var(--lg-warn); opacity: 1; }
+
+/* a quiet secondary action (More: Open Spotify / Hide window / Quit Spotify) */
+.spq-sbtn {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk);
+  color: var(--lg-ink);
+  font: inherit;
+  cursor: default;
+  transition: background-color 120ms steps(2), color 120ms steps(2);
+}
+.spq-sbtn:hover { background: var(--lg-press); }
+.spq-sbtn:active { background: var(--lg-press); opacity: .85; }
+.spq-sbtn:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: 1px; }
+.spq-sbtn.armed, .spq-sbtn.armed:hover { background: var(--lg-warn-soft); color: var(--lg-warn); }
 
 .spq-link {
   padding: 0;
   border: 0;
+  border-radius: 2px;
   background: transparent;
   color: var(--lg-acc);
   font: inherit;
@@ -121,42 +239,29 @@
   cursor: default;
 }
 .spq-link:hover { text-decoration-color: currentColor; }
+.spq-link:active { opacity: .75; }
+.spq-link:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: 2px; }
 .spq-link.act { display: inline-block; margin: 2px 8px 2px; }
-.spq-chip, .spq-btn {
-  flex: 0 0 auto;
-  padding: 4px 10px;
-  border: 0;
-  border-radius: var(--lg-r-ctl);
-  background: var(--lg-sunk);
-  color: var(--lg-ink);
-  font: inherit;
-  cursor: default;
-  transition: background-color 120ms steps(2);
-}
-.spq-chip:hover, .spq-btn:hover { background: var(--lg-press); }
-.spq-btn { background: var(--lg-acc); color: var(--lg-acc-on); }
-.spq-btn:hover { background: var(--lg-acc); opacity: .9; }
-.spq-state .spq-btn { display: block; margin: 4px 8px 2px; }
-.spq-btn.armed, .spq-btn.armed:hover { background: var(--lg-warn-soft); color: var(--lg-warn); opacity: 1; }
-.spq-why { padding-top: 0; }
 
+/* ---------------------------------------------------------------- search */
+.spq-add { position: relative; display: flex; align-items: center; margin: 6px 0 0; }
 .spq-input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 5px 8px;
+  height: 30px;
+  padding: 0 28px;
   border: 1px solid var(--lg-edge-out);
   border-radius: var(--lg-r-ctl);
   background: var(--lg-sunk);
   color: var(--lg-ink);
   font: inherit;
   outline: none;
+  transition: border-color 120ms steps(2);
 }
 .spq-input::placeholder { color: var(--lg-ink-3); }
+.spq-input:hover { border-color: var(--lg-edge-in); }
 .spq-input:focus { border-color: var(--lg-acc); }
-
-.spq-add { position: relative; display: flex; align-items: center; margin: 6px 0 0; }
 .spq-sico { position: absolute; left: 9px; display: grid; place-items: center; color: var(--lg-ink-3); pointer-events: none; }
-.spq-add .spq-input { padding-left: 28px; padding-right: 28px; }
 .spq-clear {
   position: absolute;
   right: 4px;
@@ -171,36 +276,47 @@
   cursor: default;
 }
 .spq-clear:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.spq-clear:active { background: var(--lg-press); }
+.spq-clear:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
 
-/* no room for both: the card's source switcher folds away while Up next is open (spotify.js fit) */
+/* no room for both: the card's source switcher folds away while the list is open (spotify.js fit) */
 .pop.spq-squeeze .mc-src { display: none; }
 
-/* spothide lane (2026-09-26): Spotify runs hidden and is played from here. Same tokens, same rows. */
-.spq-app[hidden], .spq-tabs[hidden] { display: none; }
-.spq-app { padding: 0 8px 4px; }
-.spq-appmain { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
-.spq-apptxt { flex: 1 1 auto; min-width: 0; color: var(--lg-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.spq-app .spq-fine { padding: 2px 0 0; }
-.spq-bad { color: var(--lg-warn); }
-.spq-link.warn { color: var(--lg-warn); text-decoration-color: var(--lg-warn-soft); }
-.spq-tabs { display: flex; align-items: center; gap: 4px; padding: 2px 4px 6px 8px; }
-.spq-tabs .spq-chip { padding: 3px 10px; background: transparent; color: var(--lg-ink-2); }
-.spq-tabs .spq-chip:hover { background: var(--lg-hover); color: var(--lg-ink); }
-.spq-tabs .spq-chip.on { background: var(--lg-sunk); color: var(--lg-ink); }
-.spq-tabs .spq-chip:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
-.spq-gap { flex: 1 1 auto; }
-.spq-tabs .spq-tool { position: relative; }
-.spq-tool.on { color: var(--lg-acc); }
-.spq-tool.one::after { content: '1'; position: absolute; right: 1px; bottom: 0; font-size: 8px; line-height: 1; color: var(--lg-acc); }
-.spq-art.round { border-radius: 50%; }
-.spq-art.liked { background: var(--lg-acc-soft); color: var(--lg-acc); }
-/* the queue-add tool on a song result stays visible: it is the only way to queue from search */
-.spq-tools.keep { opacity: 1; }
-/* spotdeath lane: "Restart Spotify after games" */
-.spq-opt { display: flex; align-items: center; gap: 6px; padding: 4px 8px 0; color: var(--lg-ink-3); font-size: 11.5px; line-height: 1.45; cursor: pointer; }
-.spq-opt:hover { color: var(--lg-ink-2); }
-.spq-opt input { margin: 0; accent-color: var(--lg-acc); }
-.spq-opt input:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: 1px; }
-/* spotgame lane: "Close Spotify while I game" beside "Restart Spotify after games"; wraps when narrow */
-.spq-opts { display: flex; flex-wrap: wrap; column-gap: 2px; }
-.spq-opts .spq-opt + .spq-opt { padding-top: 1px; }
+/* ---------------------------------------------------------------- More (shut by default) */
+.spq-more-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  margin: 6px 0 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: default;
+  transition: background-color 120ms steps(2), color 120ms steps(2);
+}
+.spq-more-btn:hover { background: var(--lg-hover); color: var(--lg-ink-2); }
+.spq-more-btn:active { background: var(--lg-press); }
+.spq-more-btn:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+/* something in there needs a look: a small warn dot, said in the tooltip too */
+.spq-more-btn.flag::after { content: ''; width: 6px; height: 6px; margin-left: 2px; border-radius: 50%; background: var(--lg-warn); }
+.spq-more { padding: 2px 8px 2px; }
+.spq-mline { display: flex; min-width: 0; padding-top: 2px; }
+.spq-apptxt { flex: 1 1 auto; min-width: 0; color: var(--lg-ink-2); line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spq-macts { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.spq-more .spq-fine { padding: 4px 0 0; }
+.spq-opts { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.spq-opt { display: flex; align-items: center; gap: 8px; min-height: 24px; color: var(--lg-ink-2); font-size: 12px; line-height: 1.4; cursor: default; }
+.spq-opt:hover { color: var(--lg-ink); }
+.spq-opt input { flex: 0 0 auto; width: 14px; height: 14px; margin: 0; accent-color: var(--lg-acc); }
+.spq-opt input:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: 2px; }
+.spq-opt input:disabled + span { opacity: .6; }
+
+@media (prefers-reduced-motion: reduce) {
+  .spq *, .spq *::after, .spq *::before { transition: none !important; }
+}
