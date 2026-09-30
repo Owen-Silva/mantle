@@ -349,7 +349,8 @@ namespace Mantle {
       if (w.Shell) return "that is part of Windows' desktop, taskbar or Start, which Mantle leaves where Windows puts it";
       if (w.Hung) return w.Name + " is not responding, so it was left where it is";
       if (w.Elevation == 1)
-        return w.Name + " runs as administrator, and Windows does not let Mantle (which does not) move its windows (UIPI)";
+        // plain words on screen (lane windows-layouts, 2026-09-29): no "UIPI", no API names or error numbers
+        return w.Name + " runs as administrator, so Windows doesn't let Mantle move it";
       return null;
     }
 
@@ -449,13 +450,13 @@ namespace Mantle {
     static string Placement(IntPtr hwnd, int showCmd, SnapRect normalWindow, long ex, Mon target) {
       var pl = new N.WINDOWPLACEMENT();
       pl.length = Marshal.SizeOf(typeof(N.WINDOWPLACEMENT));
-      if (!N.GetWindowPlacement(hwnd, ref pl)) return "Windows would not say where the window is (GetWindowPlacement error " + Marshal.GetLastWin32Error() + ")";
+      if (!N.GetWindowPlacement(hwnd, ref pl)) return "Windows would not say where the window is";
       pl.flags = WPF_ASYNCWINDOWPLACEMENT;
       pl.showCmd = showCmd;
       pl.rcNormalPosition = ScreenToWorkspace(normalWindow, ex, target);
       if (!N.SetWindowPlacement(hwnd, ref pl)) {
         int err = Marshal.GetLastWin32Error();
-        return err == 5 ? "access denied (it runs above Mantle, UIPI)" : "SetWindowPlacement error " + err;
+        return err == 5 ? "it runs as administrator, or is protected" : "Windows would not change it";
       }
       return null;
     }
@@ -465,7 +466,9 @@ namespace Mantle {
       IntPtr hwnd = Json.GetHwnd(req, "hwnd");
       if (hwnd == IntPtr.Zero || !Win32.IsWindow(hwnd)) return "that window has closed";
       string state = Json.GetString(req, "state") ?? "normal";
-      if (state != "normal" && state != "max") return "layouts.place state must be 'normal' or 'max'";
+      // 'min' (lane windows-layouts, 2026-09-29): Undo puts a window that was minimised back minimised,
+      // with frame as its restore spot
+      if (state != "normal" && state != "max" && state != "min") return "layouts.place state must be 'normal', 'max' or 'min'";
       SnapRect target;
       if (!FrameArg(req, "frame", out target)) return "layouts.place needs frame {x, y, w, h} in physical pixels";
       bool dry = Json.GetBool(req, "dryRun", false);
@@ -480,7 +483,9 @@ namespace Mantle {
       Mon mon = MonFor(target, mons);
       if (dry || (Program.Passive && !w.Ours)) {
         if (!dry) return FeatureTable.PassiveRefusal + ": layouts would move a window on the live desktop (a test may only move a window its own harness started)";
-        string would = state == "max"
+        string would = state == "min"
+          ? (from == "min" ? "nothing (it is already minimised)" : "minimise it, with its restore spot at " + target.ToString())
+          : state == "max"
           ? (from == "max" && w.Monitor != null && mon != null && w.Monitor.H == mon.H ? "nothing (it is already maximised there)" : "maximise it on the monitor at " + (mon != null ? mon.Bounds.ToString() : "?"))
           : (from == "normal" && Near(w.Frame, target, TOL) ? "nothing (it is already there)" : "put its frame at " + target.ToString() + (from != "normal" ? " (restored from " + from + ")" : ""));
         result = Json.Obj("hwnd", hs, "dryRun", true, "from", from, "state", state, "would", would, "refuse", w.Refuse,
@@ -490,10 +495,29 @@ namespace Mantle {
       if (w.Refuse != null) return w.Refuse;
       UIntPtr res;
       if (N.SendMessageTimeoutW(hwnd, 0 /* WM_NULL */, UIntPtr.Zero, IntPtr.Zero, 0x0002 /* SMTO_ABORTIFHUNG */, 250, out res) == IntPtr.Zero)
-        return w.Name + " did not answer within 250 ms (busy or hung), so it was left where it is";
+        return w.Name + " did not answer right away (busy, or not responding), so it was left where it is";
       int dpi = mon != null ? mon.Dpi : w.Dpi;
       int moves = 0;
       SnapRect before = w.Frame;
+
+      if (state == "min") {
+        if (w.Min) {
+          result = Json.Obj("hwnd", hs, "placed", true, "already", true, "state", "min", "from", from,
+                            "moves", 0, "ms", sw.ElapsedMilliseconds);
+          return null;
+        }
+        SnapMargins mm;
+        if (w.Max || !Measured(w.Rect, w.Frame, w.Dpi, out mm)) mm = Standard(dpi);
+        string merr = Placement(hwnd, 7 /* SW_SHOWMINNOACTIVE */, Grow(target, mm), w.Ex, mon);
+        if (merr != null) return "Windows refused to minimise " + w.Name + " (" + merr + ")";
+        if (!WaitFor(delegate { return !Win32.IsWindow(hwnd) || Win32.IsIconic(hwnd); }, 1500) || !Win32.IsWindow(hwnd)) {
+          if (!Win32.IsWindow(hwnd)) return "that window closed while it was being placed";
+          return "Windows accepted the change, but " + w.Name + " did not minimise (the app may not allow it)";
+        }
+        result = Json.Obj("hwnd", hs, "placed", true, "already", false, "state", "min", "from", from,
+                          "moves", 1, "ms", sw.ElapsedMilliseconds);
+        return null;
+      }
 
       if (state == "max") {
         bool there = w.Max && w.Monitor != null && mon != null && w.Monitor.H == mon.H;
@@ -563,8 +587,8 @@ namespace Mantle {
       }
       bool exact = Near(got, target, TOL);
       if (!exact && Near(got, before, 1) && lastErr != 0)
-        return lastErr == 5 ? w.Name + " runs above Mantle, and Windows refused the move (access denied, UIPI)"
-                            : "Windows refused to move " + w.Name + " (SetWindowPos error " + lastErr + ")";
+        return lastErr == 5 ? w.Name + " runs as administrator (or is protected), so Windows refused the move"
+                            : "Windows refused to move " + w.Name + " (it may be closing, or protected)";
       if (!exact && Near(got, before, 1))
         return "Windows accepted the move, but " + w.Name + " stayed where it was (the app may position itself)";
       string note = null;

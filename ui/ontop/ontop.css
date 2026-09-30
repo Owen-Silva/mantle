@@ -88,6 +88,7 @@ body[data-below] { align-items: flex-start; }
   overflow: hidden;
 }
 .why:empty { display: none; }
+.why.hint { color: var(--lg-ink-3); }
 /* a refusal or failure: Settings' warn line (glyph + words in warn ink); the words still wrap to two lines */
 .toast[data-tone="warn"] .why { color: var(--lg-warn); padding-left: 17px; position: relative; }
 .toast[data-tone="warn"] .why::before {

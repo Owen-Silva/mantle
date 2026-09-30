@@ -41,7 +41,8 @@
     }
     // the tooltip: bar.js keeps the base text in b._tip and blanks b.title while the flyout is up
     if (typeof b._tip === 'string' && !b._fly) {
-      var extra = on ? '\n(kept on top · right-click: Stop keeping on top)' : err && b._ontopWins.length ? '\n(keep on top: ' + err + ')' : '';
+      // the state and how to change it, with the shortcut (discoverable)
+      var extra = on ? '\nKept on top · right-click or Win+Ctrl+T to stop' : err && b._ontopWins.length ? '\nKeep on top: ' + err : '';
       var want = b._tip + extra;
       if (b.title !== want) b.title = want;
     }
@@ -61,11 +62,16 @@
     repaintAll();
   }
 
+  // plain words (lane windows-layouts, 2026-09-29): this text reaches the tooltip and the right-click menu
+  var CANT = 'the bar can’t show which windows are kept on top right now (restart Mantle to fix it)';
   var mantle = window.mantle;
   if (!mantle || typeof mantle.on !== 'function') {
-    err = 'the bar has no window.mantle.on, so it cannot show which windows are kept on top';
+    err = CANT;
   } else {
-    try { mantle.on('ontop.state', apply); } catch (e) { err = 'subscribing to ontop.state threw: ' + ((e && e.message) || e); }
+    try { mantle.on('ontop.state', apply); } catch (e) {
+      err = CANT;
+      try { console.warn('ontop: subscribing to ontop.state threw', e && e.message); } catch (_) { /* no console */ }
+    }
   }
 
   window.MantleOnTop = {

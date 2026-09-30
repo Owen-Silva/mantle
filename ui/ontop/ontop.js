@@ -20,8 +20,9 @@
     p = p || {};
     clearTimeout(timer); clearTimeout(fadeTimer);
     text.textContent = p.text || '';
-    why.textContent = p.reason || '';
-    box.dataset.did = p.did || '';
+    // a reason (refusal / failure) wins; else a quiet hint ("Win+Ctrl+T again to stop")
+    why.textContent = p.reason || p.hint || '';
+    if (!p.reason && p.hint) why.classList.add('hint'); else why.classList.remove('hint');    box.dataset.did = p.did || '';
     box.dataset.tone = p.tone || '';
     if (p.below) document.body.setAttribute('data-below', ''); else document.body.removeAttribute('data-below');
     box.classList.remove('fading');
@@ -35,7 +36,7 @@
   }
 
   if (!mantle || typeof mantle.on !== 'function') {
-    show({ text: 'Keep on top', reason: 'this pop-up has no bridge to Mantle (window.mantle is missing)', tone: 'warn' });
+    show({ text: 'Keep on top', reason: 'this pop-up could not connect to Mantle: restart Mantle to fix it', tone: 'warn' });
     return;
   }
   mantle.on('ontop.toast', show);

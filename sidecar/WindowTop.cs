@@ -202,7 +202,7 @@ namespace Mantle {
       if (!f.Visible || f.Cloaked) return f.Name + " is not showing (hidden, or on another desktop)";
       if (f.Hung) return f.Name + " is not responding, so Windows cannot move it right now";
       if (f.Elevation == 1)
-        return f.Name + " runs as administrator, and Windows does not let Mantle (which does not) change its windows (UIPI)";
+        return f.Name + " runs as administrator, so Windows doesn't let Mantle keep it on top";
       return null;
     }
 
@@ -308,8 +308,8 @@ namespace Mantle {
       if (now != on) {
         if (!Win32.IsWindow(hwnd)) return "that window closed while it was being changed";
         if (!ok && err == ERROR_ACCESS_DENIED)
-          return f.Name + " runs above Mantle (as administrator, or protected), and Windows refused the change (access denied, UIPI)";
-        if (!ok) return "Windows refused to change " + f.Name + " (SetWindowPos error " + err + ")";
+          return f.Name + " runs as administrator (or is protected), so Windows refused the change";
+        if (!ok) return "Windows refused to change " + f.Name + " (it may be closing, or protected)";
         return "Windows accepted the change, but " + f.Name + (on ? " is still not on top" : " is still on top") +
                " after " + tries + " tries (the app may put its own z-order back)";
       }

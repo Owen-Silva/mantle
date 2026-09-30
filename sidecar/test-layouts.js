@@ -217,6 +217,20 @@ async function main() {
     const b1 = byName(mine, 'Bravo') || {};
     t.check('min -> normal: restored into the spot', r.ok && b1.state === 'normal' && near(b1.frame, spotB, 3),
       `${JSON.stringify(r).slice(0, 160)} state ${b1.state} frame ${R(b1.frame)}`);
+    // state 'min' (lane windows-layouts, 2026-09-29): Undo puts a minimised window back minimised
+    r = await send('layouts.place', { hwnd: fx.hwnd.Bravo, pid: fx.pid, frame: spotB, state: 'min', dryRun: true });
+    t.check('normal -> min: a dry run only describes it', r.ok && r.result.dryRun === true && /minimise it/.test(r.result.would || ''), JSON.stringify(r).slice(0, 160));
+    r = await send('layouts.place', { hwnd: fx.hwnd.Bravo, pid: fx.pid, frame: spotB, state: 'min' });
+    mine = await listMine();
+    t.check('normal -> min: minimised', r.ok && r.result.placed && r.result.state === 'min' && (byName(mine, 'Bravo') || {}).state === 'min',
+      `${JSON.stringify(r).slice(0, 160)} state ${(byName(mine, 'Bravo') || {}).state}`);
+    r = await send('layouts.place', { hwnd: fx.hwnd.Bravo, pid: fx.pid, frame: spotB, state: 'min' });
+    t.check('min again: "already", no move', r.ok && r.result.already === true && r.result.moves === 0, JSON.stringify(r).slice(0, 160));
+    r = await send('layouts.place', { hwnd: fx.hwnd.Bravo, pid: fx.pid, frame: spotB, state: 'normal' });
+    mine = await listMine();
+    t.check('min -> normal: back in its spot (the restore spot was kept)', r.ok && near((byName(mine, 'Bravo') || {}).frame, spotB, 3), R((byName(mine, 'Bravo') || {}).frame));
+    r = await send('layouts.place', { hwnd: fx.hwnd.Bravo, pid: fx.pid, frame: spotB, state: 'sideways' });
+    t.check('a bad state is refused in words', !r.ok && /state must be/.test(r.error), JSON.stringify(r).slice(0, 160));
 
     /* ---- a minimum size: placed, with the reason it is not exact ---- */
     r = await send('layouts.place', { hwnd: fx.hwnd.Delta, pid: fx.pid, frame: { x: -7600, y: -4700, w: 200, h: 150 }, state: 'normal' });
@@ -281,8 +295,19 @@ async function main() {
       `Alpha ${R(byName(mine, 'Alpha').frame)} Bravo ${R(byName(mine, 'Bravo').frame)}`);
     t.check('engine: Charlie maximised again, Delta back', byName(mine, 'Charlie').state === 'max' && near(byName(mine, 'Delta').frame, spots.Delta, 3),
       `Charlie ${byName(mine, 'Charlie').state} Delta ${R(byName(mine, 'Delta').frame)}`);
+    const firstUndo = out.undo || [];
     out = await run.restore(layout, deps);
     t.check('engine: a second restore finds all four already in place', out.ok && /already in place/.test(out.text), out.text);
+    t.check('undo: a restore that moved nothing has nothing to undo', Array.isArray(out.undo) && out.undo.length === 0, JSON.stringify(out.undo));
+    // UNDO (lane windows-layouts, 2026-09-29): the first restore's windows go back where they stood
+    t.check('undo: the first restore remembers the four windows it moved', firstUndo.length === 4, String(firstUndo.length));
+    const un = await run.undo('E2E', firstUndo, { send: fake });
+    mine = await listMine();
+    const backOk = firstUndo.every((u) => { const w = mine.find((x) => x.hwnd === u.hwnd); return w && w.state === 'normal' && near(w.frame, u.frame, 3); });
+    t.check('undo: all four are back where they stood before the restore (Charlie un-maximised)', un.ok && un.back === 4 && backOk,
+      `${un.text} | ${firstUndo.map((u) => { const w = mine.find((x) => x.hwnd === u.hwnd) || {}; return `${w.state} ${R(w.frame)} want ${R(u.frame)}`; }).join(' / ')}`);
+    out = await run.restore(layout, deps);
+    t.check('undo: ... and the layout can be put back again', out.ok && out.counts.placed === 4 && byName(await listMine(), 'Charlie').state === 'max', out.text);
 
     // Delta closed: the layout starts the fixture's exe, and places ITS Delta when it appears;
     // plus an app that is not installed and one that only a host exe runs
