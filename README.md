@@ -129,7 +129,9 @@ confirm** — and print one line saying so, or the failure and the recovery
 command. The sixth needs nothing of Mantle to be working at all.
 
 1. **Ctrl+Alt+Shift+Backspace** — the kill switch. Restores, then quits.
-2. The **tray menu** — *Put Windows back (keep Mantle open)*, or *Quit Mantle*.
+2. The **tray menu** (left or right click the icon) — *Put Windows back (keep Mantle open)*, or *Quit Mantle*.
+   After *Put Windows back* Mantle is paused: it changes nothing of Windows' again, even if its
+   link to Windows restarts, until *Restart Mantle to resume*.
 3. `electron . --quit` / `npm run quit` from any terminal or script.
 4. `mantle.call('shell.restore')` from any Mantle page (Mantle keeps running).
 5. **Killing Mantle.** The sidecar watches its parent pid and its own stdin; when
@@ -179,10 +181,28 @@ an empty list and a source row that says which lane owns it; a missing sidecar
 exe is built once from `sidecar/build.ps1` and, if it still is not there, becomes
 `sidecar: down` with the path in the reason while everything else keeps running.
 
+## The tray menu
+
+The first row says how Mantle is (*running normally*, *N things need a look*, *Paused*), with one
+short line per cause under it; a link to Windows that gave up restarting gets *Reconnect Mantle to
+Windows* right there. Then *Open launcher* (Alt+Space), *Open Mantle Settings* (Win+I), *Wallpapers…*,
+*Features ▸* (every switch), *Copy diagnostic report*, *Restart Mantle*, *Put Windows back*, *Quit Mantle*
+(Ctrl+Alt+Shift+Backspace).
+
+**Copy diagnostic report** puts one paste on the clipboard: build, uptime, displays and scale,
+memory, what Mantle says is wrong, the link to Windows, features, and the last 15 warnings. The user
+name, PC name and home folder are left out (the same scrubber `--log` files get).
+
+**After a crash** Mantle puts Windows back, writes `<userData>/crash.json`, and starts itself again the
+way *Restart Mantle* does, at most 3 times in 10 minutes; it exits with code 1 so the logon task
+records the failure. The next start says *Restarted by itself after an error at HH:MM* for an hour.
+
 ## The bridge
 
 Pages run with `contextIsolation` and `sandbox` on — no `require`, no node.
-`preload.js` exposes exactly one object:
+`preload.js` exposes exactly one object, and main answers it only for pages loaded from `ui/`: no
+Mantle window can navigate away from `ui/` or open a window of its own, `open` takes Windows Settings
+pages and web links only, and a failed call's log line never repeats the caller's own words.
 
 ```js
 mantle.call(name, args) -> Promise<result>   // rejects with an Error in plain words
@@ -198,10 +218,12 @@ mantle.on(event, cb)    -> unsubscribe()
 | `bar.popover` | `{open, height, key}`: borrow up to 320px of extra window height so a popover is not clipped by the 44px bar. Grows away from the bar's screen edge; `{open:false}` gives it back |
 | `apps.index` `apps.search` `apps.launch` | the launcher's index (`lib/launcher-index.js`) |
 | `volume.get` `volume.set` | `{level, muted}` |
-| `open` | `{target}`: http(s) goes to Owen's browser, `scheme:` to the shell, a path to the shell |
+| `open` | `{target}`: `ms-settings:*` (Mantle Settings when it has the page), `ms-availablenetworks:`, or an http(s) link (Owen's browser); anything else is refused. A --test run opens nothing |
 | `sys.stats` | `{cpu, memUsed, memTotal, battery}` |
 | `tray.list` `tray.click` | the Windows notification area, mirrored |
-| `shell.restore` `shell.quit` | |
+| `shell.restore` `shell.quit` `shell.restart` | restore pauses Mantle until a restart |
+| `shell.reconnect` | start the link to Windows again after it gave up restarting |
+| `diag.report` | `{text}`: the diagnostic report the tray copies |
 | `net.probe` | `{url}` → `{ok, reason}`, loopback only (the desktop uses it for Mission Control) |
 
 Events: `windows`, `state`, `launcher:visible`, `tray`. `windows` and `state`

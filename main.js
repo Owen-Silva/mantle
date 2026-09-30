@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFileSync } = require('child_process');
-const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, screen, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, screen, shell, powerMonitor } = require('electron');
 
 const { parseArgs, ArgError } = require('./lib/args');
 const { ShellState } = require('./lib/state');
@@ -204,6 +204,7 @@ function makeLogTee(fs, file, opts) {
   // Raw bytes, stamped one line at a time. '\n' is one byte that never occurs inside a UTF-8
   // sequence, so splitting the Buffer on it cannot cut a character in half.
   function put(chunk) {
+    if (typeof chunk === 'string' && o.scrub) { try { chunk = o.scrub(chunk); } catch (_) { /* the line as it was */ } }
     const buf = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : Buffer.from(chunk);
     const parts = [];
     let i = 0;
@@ -272,6 +273,39 @@ function makeLogTee(fs, file, opts) {
     get size() { return size; },
   };
 }
+
+/*
+ * THE LOG FILE NAMES NEITHER THE PERSON NOR THE PC (lane core-main, 2026-09-29). Every path under
+ * the home folder is written from %USERPROFILE% (the one form that still works pasted into Run or
+ * cmd, which matters for the recovery line), the user name anywhere else in a path as <user>, and
+ * the computer's name as <pc>. It runs on every line the file gets, so a stack trace, a page's
+ * console error and a lane's new log line are covered the day they are written; the lines that
+ * carried a caller's own words (a Wi-Fi name, a file name) are fixed where they are written.
+ * The terminal copy is left as it was: it is on screen, not on disk.
+ */
+function makeScrubber(who) {
+  const w = who || {};
+  const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rules = [];
+  const home = typeof w.home === 'string' && w.home.length > 3 ? w.home.replace(/[\\/]+$/, '') : '';
+  if (home) {
+    const parts = home.split(/[\\/]+/).filter(Boolean);
+    const sep = '(?:\\\\\\\\|\\\\|/)';                      // \\ (inside JSON), \ or /
+    const forms = [parts.map(esc).join(sep)];
+    const enc = parts.map((p) => encodeURI(p));
+    if (enc.join('/') !== parts.join('/')) forms.push(enc.map(esc).join('/'));   // file:///C:/Users/Jo%20Smith
+    for (const f of forms) rules.push([new RegExp(`${f}(?![A-Za-z0-9_.-])`, 'gi'), '%USERPROFILE%']);
+  }
+  const user = typeof w.user === 'string' && w.user.length >= 2 ? w.user : '';
+  if (user) rules.push([new RegExp(`([\\\\/])${esc(user)}(?=[\\\\/"'\\s:;,)]|$)`, 'gi'), '$1<user>']);
+  const host = typeof w.host === 'string' && w.host.length >= 3 ? w.host : '';
+  if (host) rules.push([new RegExp(`(^|[^A-Za-z0-9_-])${esc(host)}(?![A-Za-z0-9_-])`, 'gi'), '$1<pc>']);
+  return (text) => {
+    let s = String(text);
+    for (const [re, to] of rules) s = s.replace(re, to);
+    return s;
+  };
+}
 // </mainrel:logtee>
 (function teeLogToFile() {
   const arg = process.argv.slice(1).find((a) => typeof a === 'string' && a.startsWith('--log='));
@@ -282,7 +316,11 @@ function makeLogTee(fs, file, opts) {
   let tee = null;
   try {
     fs.mkdirSync(require('path').dirname(file), { recursive: true });
-    tee = makeLogTee(fs, file, { say: (s) => { try { sayErr(s); } catch (_) {} } });
+    let user = '';
+    try { user = os.userInfo().username; } catch (_) { user = process.env.USERNAME || ''; }
+    let host = '';
+    try { host = os.hostname(); } catch (_) { host = process.env.COMPUTERNAME || ''; }
+    tee = makeLogTee(fs, file, { say: (s) => { try { sayErr(s); } catch (_) {} }, scrub: makeScrubber({ home: os.homedir(), user, host }) });
     tee.start(`===== mantle start ${new Date().toISOString()} pid ${process.pid}: ${process.argv.slice(1).join(' ')}\n`);
   } catch (err) {
     process.stderr.write(`mantle: --log=${file} cannot be written (${err && err.message ? err.message : err}); logging to the terminal only\n`);
@@ -3699,7 +3737,10 @@ sidecar.on('status', ({ status, reason }) => {
 function needHwnd(args) {
   const h = args && args.hwnd;
   if (h === undefined || h === null || h === '') throw new Error('that command needs a window handle (hwnd)');
-  return String(h);
+  // The sidecar reads anything else as window 0 (Json.GetHwnd's TryParse), so it stops here.
+  const s = hwndArg(h);
+  if (!s) throw new Error('that is not a window handle (a positive whole number)');
+  return s;
 }
 
 /*
@@ -3755,6 +3796,46 @@ async function restartPlan(opts) {
     return { via: 'relaunch', args, why: `this Mantle was not started by the "Mantle" task (its parent is ${name || `pid ${process.ppid}, which tasklist could not name`})` };
   }
   return helper('started by the "Mantle" logon task');
+}
+
+/*
+ * Arrange for Mantle to come back once this process exits (restartPlan says how), without quitting.
+ * {ok, via, why} or {ok:false, reason}: a way back that cannot be arranged is said, and the caller
+ * decides (shell.restart does not quit; a crash still quits, since staying up is the worse choice).
+ */
+async function arrangeRestart() {
+  const plan = await restartPlan();
+  if (flags.test) {
+    // The live road is never taken from a test run; its exact command line is logged instead,
+    // so it can be read and checked without schtasks /Run ever being called.
+    const dry = await restartPlan({ assumeTask: true });
+    process.stdout.write(`mantle: restart dry run: a task-started live Mantle would spawn (detached): ${dry.file} ${dry.args.map((x) => (/\s/.test(x) ? `"${x}"` : x)).join(' ')}\n`);
+  }
+  if (plan.via === 'task') {
+    const { spawn } = require('child_process');
+    const started = await new Promise((resolve) => {
+      let child;
+      try {
+        child = spawn(plan.file, plan.args, { detached: true, stdio: 'ignore', windowsHide: true });
+      } catch (err) {
+        resolve({ ok: false, reason: err.message });
+        return;
+      }
+      child.once('error', (err) => resolve({ ok: false, reason: err.message }));
+      child.once('spawn', () => { child.unref(); resolve({ ok: true, pid: child.pid }); });
+    });
+    if (!started.ok) {
+      return { ok: false, reason: `Mantle was not restarted, and is still running: the helper that brings it back through the "Mantle" task would not start (${started.reason})` };
+    }
+    process.stdout.write(`mantle: restart helper pid ${started.pid} is waiting for pid ${process.pid} to exit, then runs the "Mantle" task\n`);
+  } else {
+    try {
+      app.relaunch({ args: plan.args });
+    } catch (err) {
+      return { ok: false, reason: `Mantle was not restarted, and is still running: Electron would not arrange the relaunch (${err.message})` };
+    }
+  }
+  return { ok: true, via: plan.via, why: plan.why || null };
 }
 
 const COMMANDS = {
@@ -3827,8 +3908,8 @@ const COMMANDS = {
   },
 
   'bar.window': async (a) => {
-    const hwnd = a && a.hwnd !== undefined && a.hwnd !== null ? String(a.hwnd) : '';
-    if (!hwnd) return { ok: false, reason: 'bar.window needs a window handle (hwnd)' };
+    const hwnd = a && a.hwnd !== undefined && a.hwnd !== null ? hwndArg(a.hwnd) || '' : '';
+    if (!hwnd) return { ok: false, reason: 'bar.window needs a window handle (hwnd), a positive whole number' };
     const action = String((a && a.action) || '');
     if (!['focus', 'minimize', 'close', 'toggle'].includes(action)) {
       return { ok: false, reason: `bar.window does not know the action "${action}" (it does focus, minimize, close and toggle)` };
@@ -4039,7 +4120,7 @@ const COMMANDS = {
     const res = await require(modulePathFor(ROOT)).openFile(a, { dryRun: !!flags.test });
     if (flags.test && res) {
       res.dryRun = true;
-      process.stdout.write(`mantle: launcher.openFile dry run (--test): ${res.reason || (res.ok ? 'nothing opened' : 'refused')}\n`);
+      process.stdout.write(`mantle: launcher.openFile dry run (--test): ${logSafe(a, res.reason) || (res.ok ? 'nothing opened' : 'refused')}\n`);
     }
     if (res && res.ok && !res.dryRun) hideLauncher();
     return res;
@@ -4175,7 +4256,7 @@ const COMMANDS = {
     const pending = qsMore('wlan', args, `Mantle could not connect to "${ssid || 'that network'}"`, QS_MORE_MS.connect);
     delete args.password;                  // already serialized by sidecar.call
     const r = await pending;
-    if (qsWatching) qsPush(`Wi-Fi ${r.ok ? 'joined' : 'did not join'} ${ssid || hex}`);
+    if (qsWatching) qsPush(`Wi-Fi ${r.ok ? 'joined' : 'did not join'} a network`);
     return r;
   },
 
@@ -4235,10 +4316,24 @@ const COMMANDS = {
   'qs.keyboard': async (a) => qsKeyboard(!!(a && a.on)),
 
   // ms-settings: links from the bar open MANTLE Settings (lib/open-route.js; lane barfiles, 2026-09-29)
-  'open': async (a) => openRouted(a && a.target, { launch: (item, o) => require('./lib/launcher-index').launch(item, o), openTarget, dryRun: !!flags.test }),
+  // Only Settings pages, the Wi-Fi list and web links (openTargetVerdict): a page cannot use this to
+  // start a program or open a file. --test never opens anything of Windows' (it said so in a line).
+  'open': async (a) => {
+    const bad = openTargetVerdict(a && a.target);
+    if (bad) return { ok: false, reason: bad };
+    const target = String(a.target).trim();
+    const dryOpen = async (t) => {
+      const scheme = (/^([a-z][a-z0-9+.-]*):/i.exec(t) || [])[1] || 'an';
+      process.stdout.write(`mantle: open dry run (--test): would open a ${scheme.toLowerCase()}: address\n`);
+      return { ok: true, dryRun: true, reason: 'dry run (--test): nothing was opened' };
+    };
+    return openRouted(target, { launch: (item, o) => require('./lib/launcher-index').launch(item, o), openTarget: flags.test ? dryOpen : openTarget, dryRun: !!flags.test });
+  },
 
   'shell.restore': async () => {
+    shellPaused = { at: Date.now(), why: 'a window asked for it' };
     await restoreShell('a window asked for it');
+    updateTray();
     return state.get();
   },
   'shell.quit': async () => {
@@ -4255,44 +4350,34 @@ const COMMANDS = {
    * If the way back cannot be arranged this answers ok:false with the reason and does NOT quit:
    * half a restart is a quit Owen did not ask for.
    */
-  'shell.restart': async () => {
+  'shell.restart': async (a) => {
     if (shuttingDown) return { ok: false, reason: 'Mantle is already shutting down' };
-    const plan = await restartPlan();
-    if (flags.test) {
-      // The live road is never taken from a test run; its exact command line is logged instead,
-      // so it can be read and checked without schtasks /Run ever being called.
-      const dry = await restartPlan({ assumeTask: true });
-      process.stdout.write(`mantle: restart dry run: a task-started live Mantle would spawn (detached): ${dry.file} ${dry.args.map((x) => (/\s/.test(x) ? `"${x}"` : x)).join(' ')}\n`);
-    }
-    if (plan.via === 'task') {
-      const { spawn } = require('child_process');
-      const started = await new Promise((resolve) => {
-        let child;
-        try {
-          child = spawn(plan.file, plan.args, { detached: true, stdio: 'ignore', windowsHide: true });
-        } catch (err) {
-          resolve({ ok: false, reason: err.message });
-          return;
-        }
-        child.once('error', (err) => resolve({ ok: false, reason: err.message }));
-        child.once('spawn', () => { child.unref(); resolve({ ok: true, pid: child.pid }); });
-      });
-      if (!started.ok) {
-        return { ok: false, reason: `Mantle was not restarted, and is still running: the helper that brings it back through the "Mantle" task would not start (${started.reason})` };
-      }
-      process.stdout.write(`mantle: restart helper pid ${started.pid} is waiting for pid ${process.pid} to exit, then runs the "Mantle" task\n`);
-    } else {
-      try {
-        app.relaunch({ args: plan.args });
-      } catch (err) {
-        return { ok: false, reason: `Mantle was not restarted, and is still running: Electron would not arrange the relaunch (${err.message})` };
-      }
-    }
-    process.stdout.write(`mantle: restart requested from the bar menu (via ${plan.via})${plan.why ? `: ${plan.why}` : ''}\n`);
+    // Who asked, for the log: the bar menu by default, the tray menu says so (its own words only).
+    const from = a && a.via === 'the tray menu' ? 'the tray menu' : 'the bar menu';
+    const r = await arrangeRestart();
+    if (!r.ok) return { ok: false, reason: r.reason };
+    process.stdout.write(`mantle: restart requested from ${from} (via ${r.via})${r.why ? `: ${r.why}` : ''}\n`);
     // Answer first, quit on the next tick (same reason as shell.quit).
-    setTimeout(() => shutdown('a restart was requested from the bar menu'), 0);
-    return { ok: true, reason: null, via: plan.via };
+    setTimeout(() => shutdown(`a restart was requested from ${from}`), 0);
+    return { ok: true, reason: null, via: r.via };
   },
+
+  // The way back when the link to Windows (the sidecar) stopped and gave up restarting on its own
+  // (lib/sidecar.js retry(): a fresh budget and one more start). The tray offers it right under the
+  // fault; a page may offer it too. Once it says hello, applyMode puts the shell pieces back.
+  'shell.reconnect': async () => {
+    if (shuttingDown) return { ok: false, reason: 'Mantle is shutting down' };
+    if (shellPaused) return { ok: false, reason: 'Mantle is paused because Windows was put back: restart Mantle to use it again' };
+    if (sidecar.status === 'ok') return { ok: true, reason: 'Mantle is already connected to Windows' };
+    let started = false;
+    try { started = await sidecar.retry(); } catch (err) { return { ok: false, reason: `it did not start: ${err.message}` }; }
+    process.stdout.write(`mantle: reconnect to Windows asked for: ${started ? 'the link started again' : 'it did not start'}\n`);
+    if (started) return { ok: true, reason: null };
+    return { ok: false, reason: shortReason((state.get().sidecar || {}).reason, 140) || 'it did not start, and gave no reason' };
+  },
+
+  // The same text "Copy diagnostic report" puts on the clipboard, for a page that wants to show it.
+  'diag.report': async () => ({ ok: true, reason: null, text: await diagnosticReport() }),
 
   'sys.stats': async () => stats(batteryLatest),
 
@@ -4305,13 +4390,17 @@ const COMMANDS = {
     return lastTray;
   },
   'tray.click': async (a) => {
-    if (!a || !a.id) throw new Error('tray.click needs the id of a notification-area item');
+    if (!a || !a.id || typeof a.id !== 'string' || a.id.length > 400) throw new Error('tray.click needs the id of a notification-area item');
+    if (a.button !== undefined && !['left', 'right', 'middle', 'double'].includes(a.button)) throw new Error('tray.click clicks with the left or right button only');
     /* An icon the sidecar already said it cannot click (a hidden one, in Windows' hidden-icons
        flyout) is refused HERE with the sidecar's own reason, which names the Settings switch that
        fixes it, instead of being sent down to fail more vaguely. */
     const known = (lastTray || []).find((t) => t && t.id === a.id);
     if (known && known.clickable === false) {
-      throw new Error(known.reason || `${known.title || a.id} cannot be clicked from Mantle, and the sidecar did not say why`);
+      const err = new Error(known.reason || `${known.title || 'that icon'} cannot be clicked from Mantle, and Windows did not say why`);
+      // The bar shows the icon's name; the log gets no tooltip text (an app's tooltip can carry an account or network name).
+      err.logText = 'a notification-area icon Mantle cannot click (the bar shows which, and why)';
+      throw err;
     }
     // `icon`, NOT `id` (fixed 2026-09-22): `id` is the sidecar protocol's request id. Sent as
     // `id`, the icon's id overwrote the request's own, the reply came back under an id nobody
@@ -4386,22 +4475,184 @@ const callLog = createCallLog({
 });
 const qsSetLog = createSetLog({ write: (line) => process.stdout.write(line + '\n') });
 
-ipcMain.handle('mantle:call', async (_e, name, args) => {
-  const fn = COMMANDS[name];
-  if (!fn) return { ok: false, error: `Mantle has no command called "${name}"` };
+const nodeUrl = require('url');
+// <mainrel:ipcguard> (lib/main-rel.test.js runs this region with fake events and contents: no outside names in it but path and nodeUrl)
+/*
+ * WHO MAY ASK MAIN FOR ANYTHING, AND WHAT THEY MAY ASK (lane core-main, 2026-09-29).
+ *
+ * window.mantle (preload.js) is handed to every page that loads with the preload, and until this
+ * was written main answered ANY caller: it never looked at who was asking. The question it now
+ * asks is "what can a page that has been fooled -- a window title or file name that got rendered
+ * as HTML, a page that navigated itself somewhere -- make Mantle do?", and the answers are:
+ *   - only Mantle's OWN pages are answered: a frame whose address is a file inside <ROOT>/ui.
+ *     A page that navigated to the web (or anywhere else) is refused, and no Mantle window can be
+ *     navigated away from ui/ or open a new window in the first place (guardContents, below).
+ *     MEASURED before: the desktop page mounts Mission Control (http://127.0.0.1:7373) in an
+ *     iframe with no sandbox, and a frame like that can navigate the top window once it has had
+ *     a click -- which would have handed that page window.mantle.
+ *   - `open` opens Windows Settings pages and web links, nothing else. It used to hand any
+ *     string to shell.openExternal / shell.openPath: any protocol handler, any program on disk,
+ *     any file on a network share (\\host\share\x.exe) was one call away.
+ *   - a window handle is a positive whole number or it is refused here, before the sidecar.
+ * And the log never carries a caller's own words (logSafe): a failure's reason often repeats
+ * what the page sent -- a Wi-Fi name, a file path -- and call-log.js only masks the ARGUMENTS.
+ */
+function isMantlePage(pageUrl, uiDir) {
+  const u = typeof pageUrl === 'string' ? pageUrl : '';
+  if (!uiDir || !/^file:\/\/\//i.test(u)) return false;       // file:///C:/...; file://host/share is a network path
+  let p;
+  try { p = nodeUrl.fileURLToPath(u); } catch (_) { return false; }   // encoded '/' or '\' is refused by Node itself
+  const rel = path.relative(path.resolve(uiDir), path.resolve(p));  // case-insensitive on Windows
+  return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/** A main-frame navigation a Mantle window may make: to another ui/ page (a reload), or DevTools. */
+function navigationVerdict(toUrl, uiDir) {
+  const u = typeof toUrl === 'string' ? toUrl : '';
+  if (isMantlePage(u, uiDir) || /^devtools:/i.test(u)) return { ok: true, why: null };
+  const scheme = (/^([a-z][a-z0-9+.-]*):/i.exec(u) || [])[1];
+  return { ok: false, why: `a Mantle window tried to leave its own page for ${scheme ? `a ${scheme.toLowerCase()}: address` : 'an address with no scheme'}, and was kept where it was` };
+}
+
+// ms-settings:<page>[?query], the Windows Wi-Fi list, and web links (lib/open-target.js opens those in
+// Owen's own browser). Everything the bar and its panels open is one of these (ui/bar/*.js, 2026-09-29).
+const OPEN_ALLOWED = [/^ms-settings:[a-z0-9-]*(\?[a-z0-9=&%._-]*)?$/i, /^ms-availablenetworks:$/i, /^https?:\/\/[^\s"'<>\\]+$/i];
+function openTargetVerdict(target) {
+  const t = typeof target === 'string' ? target.trim() : '';
+  if (!t) return 'nothing to open: no address was given';
+  if (t.length > 2048) return 'that address is too long to be a Settings page or a web link';
+  if (OPEN_ALLOWED.some((re) => re.test(t))) return null;
+  return 'Mantle only opens Windows Settings pages and web links from here, and this was neither';
+}
+
+/** A window handle as the sidecar reads it (decimal text), or null when it is not one. */
+function hwndArg(v) {
+  if (typeof v === 'number') return Number.isSafeInteger(v) && v > 0 ? String(v) : null;
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return /^[0-9]{1,19}$/.test(s) && /[1-9]/.test(s) ? s.replace(/^0+/, '') : null;
+}
+
+/*
+ * The log's copy of a reason, with every string the CALLER sent replaced by its length. A search
+ * text, a Wi-Fi name, a file path: whatever a page passed in comes back inside "could not connect
+ * to <name>" and "it is gone from disk: <path>", and the page may show that, the log may not.
+ * Keys whose values are Mantle's own words (a mode, an action) stay, as in lib/call-log.js.
+ */
+const LOG_SAFE_KEYS = new Set(['mode', 'kind', 'action', 'lane', 'corner', 'combo', 'side', 'state', 'level', 'what', 'via', 'verb', 'url', 'part', 'op', 'button', 'who', 'key']);
+function logSafe(args, text) {
+  let s = typeof text === 'string' ? text : (text === undefined || text === null ? '' : String(text));
+  if (!s || !args || typeof args !== 'object') return s;
+  const vals = [];
+  const walk = (o, depth) => {
+    for (const k of Object.keys(o)) {
+      const v = o[k];
+      if (typeof v === 'string') { if (v.length >= 3 && !LOG_SAFE_KEYS.has(k)) vals.push(v); }
+      else if (v && typeof v === 'object' && depth < 2) walk(v, depth + 1);
+    }
+  };
+  try { walk(args, 0); } catch (_) { return s; }
+  vals.sort((a, b) => b.length - a.length);                    // "C:\a\b.txt" before "b.txt"
+  for (const v of vals) s = s.split(v).join(`<${v.length} chars>`);
+  return s;
+}
+/** What call-log.js gets to see of a result: the same object, its reason made log-safe. */
+function logView(args, result) {
+  if (!result || typeof result !== 'object' || result.ok !== false || typeof result.reason !== 'string') return result;
+  return Object.assign({}, result, { reason: logSafe(args, result.reason) });
+}
+
+/*
+ * Every Mantle window, whoever creates it (main.js, lib/windows.js, lib/features/*, lib/wallpaper.js,
+ * lib/switcher.js): its main frame stays on Mantle's own pages and it opens no windows of its own.
+ * Several feature windows already did this for themselves; this makes it true of all of them,
+ * including the bar, the launcher and the desktop, which did not. `say` gets one line per refusal
+ * (the scheme only, never the address).
+ */
+function guardContents(contents, uiDir, say) {
+  if (!contents || typeof contents.on !== 'function') return false;
+  let type = 'window';
+  try { if (typeof contents.getType === 'function') type = contents.getType(); } catch (_) { /* treat as a window */ }
+  if (type !== 'window') return false;                          // the PDF viewer's guest, DevTools' own frames
+  contents.on('will-navigate', (e, maybeUrl) => {
+    const to = typeof maybeUrl === 'string' ? maybeUrl : (e && e.url) || '';
+    const v = navigationVerdict(to, uiDir);
+    if (v.ok) return;
+    try { e.preventDefault(); } catch (_) { /* nothing to stop */ }
+    say(`mantle: ${v.why}\n`);
+  });
+  contents.on('will-redirect', (e, maybeUrl, _inPlace, mainArg) => {
+    const to = typeof maybeUrl === 'string' ? maybeUrl : (e && e.url) || '';
+    const main = e && typeof e.isMainFrame === 'boolean' ? e.isMainFrame : mainArg !== false;
+    if (!main) return;                                          // an iframe's own redirects are its business
+    const v = navigationVerdict(to, uiDir);
+    if (v.ok) return;
+    try { e.preventDefault(); } catch (_) { /* nothing to stop */ }
+    say(`mantle: ${v.why} (a redirect)\n`);
+  });
+  if (typeof contents.setWindowOpenHandler === 'function') {
+    contents.setWindowOpenHandler((d) => {
+      const scheme = (/^([a-z][a-z0-9+.-]*):/i.exec((d && d.url) || '') || [])[1];
+      say(`mantle: a Mantle page asked to open a new window (${scheme ? `${scheme.toLowerCase()}:` : 'no address'}); Mantle pages open none\n`);
+      return { action: 'deny' };
+    });
+  }
+  return true;
+}
+
+/** Is this IPC event from one of Mantle's own pages? {ok, why}; why names the scheme, never the address. */
+function callerVerdict(e, uiDir) {
+  const frame = e && e.senderFrame;
+  let u = '';
+  try { u = frame ? String(frame.url || '') : ''; } catch (_) { u = ''; }
+  if (!frame) return { ok: false, why: 'the page that asked is already gone' };
+  if (isMantlePage(u, uiDir)) return { ok: true, why: null };
+  const scheme = (/^([a-z][a-z0-9+.-]*):/i.exec(u) || [])[1];
+  return { ok: false, why: `Mantle only answers its own pages, and this one is ${scheme ? `a ${scheme.toLowerCase()}: page` : 'not a page Mantle loaded'}` };
+}
+// </mainrel:ipcguard>
+
+const UI_DIR = path.join(ROOT, 'ui');
+const refusedCallers = new Set();       // one line per refused caller kind, not one per call
+function refuseCaller(v, what) {
+  const key = `${what}|${v.why}`;
+  if (refusedCallers.has(key) || refusedCallers.size > 50) return;
+  refusedCallers.add(key);
+  process.stderr.write(`mantle: refused ${what}: ${v.why}\n`);
+}
+app.on('web-contents-created', (_e, contents) => {
+  guardContents(contents, UI_DIR, (line) => process.stderr.write(line));
+});
+
+ipcMain.handle('mantle:call', async (e, name, args) => {
+  const who = callerVerdict(e, UI_DIR);
+  if (!who.ok) {
+    refuseCaller(who, 'a call');
+    return { ok: false, error: who.why };
+  }
+  if (typeof name !== 'string') return { ok: false, error: 'Mantle was asked for a command with no name' };
+  const fn = Object.prototype.hasOwnProperty.call(COMMANDS, name) ? COMMANDS[name] : null;
+  if (typeof fn !== 'function') return { ok: false, error: `Mantle has no command called "${name.slice(0, 60)}"` };
+  const a = args && typeof args === 'object' ? args : {};
   try {
-    const result = await fn(args || {});
-    callLog.result(name, args, result);
+    const result = await fn(a);
+    callLog.result(name, a, logView(a, result));
     return { ok: true, result };
   } catch (err) {
-    callLog.threw(name, args, err);
-    return { ok: false, error: err && err.message ? err.message : String(err) };
+    const msg = err && err.message ? err.message : String(err);
+    callLog.threw(name, a, { message: logSafe(a, err && typeof err.logText === 'string' ? err.logText : msg) });
+    return { ok: false, error: msg };
   }
 });
 
 // mantle.on('state'|'windows'|...) replays the current value on subscribe, so a
 // page never renders an empty first frame while it waits for a push.
-ipcMain.handle('mantle:replay', async (_e, name) => {
+ipcMain.handle('mantle:replay', async (e, name) => {
+  const who = callerVerdict(e, UI_DIR);
+  if (!who.ok) {
+    refuseCaller(who, 'a replay');
+    return { has: false };
+  }
   switch (name) {
     case 'state': return { has: true, payload: state.get() };
     case 'windows': return { has: true, payload: lastWindows };
@@ -5278,7 +5529,51 @@ async function armTrayWatch(attempt = 0) {
 // restarted its sidecar five times re-placed the bar five times per display change.
 let rePlaceBar = null;
 
+// <mainrel:burst> (lib/main-rel.test.js runs this region with a fake clock: no outside names in it)
+/*
+ * Leading + trailing coalescing for events that come in bursts (display changes): the first runs
+ * at once (the bar never waits), anything more inside quietMs becomes ONE more run after the burst,
+ * with every reason it swallowed. A DPI change used to re-place the bar once per event.
+ */
+function makeBurst(run, o) {
+  const quiet = (o && o.quietMs) || 400;
+  let timer = null;
+  let pending = [];
+  let hot = false;
+  function settle() {
+    timer = null;
+    if (pending.length) {
+      const why = pending.length === 1 ? pending[0] : `${pending.length} changes: ${Array.from(new Set(pending)).join(', ')}`;
+      pending = [];
+      try { run(why); } catch (_) { /* the next event tries again */ }
+      timer = o.setTimeout(settle, quiet);         // stay hot until a full quiet gap with nothing new
+      return;
+    }
+    hot = false;
+  }
+  return function fire(why) {
+    if (!hot) {
+      hot = true;
+      try { run(why); } catch (_) { /* the trailing run tries again */ }
+      timer = o.setTimeout(settle, quiet);
+      return 'now';
+    }
+    pending.push(why);
+    if (timer) o.clearTimeout(timer);
+    timer = o.setTimeout(settle, quiet);
+    return 'later';
+  };
+}
+// </mainrel:burst>
+
 async function applyLive() {
+  // PAUSED ("Put Windows back (keep Mantle open)"): Windows stays Windows' until a restart, even
+  // when the link to Windows comes back on its own. Before this, a sidecar that died and restarted
+  // after a "Put Windows back" quietly took the taskbar, the Win key and Alt+Tab back.
+  if (shellPaused) {
+    process.stdout.write(`mantle: the link to Windows is up, but Mantle is paused (${shellPaused.why} put Windows back), so nothing of Windows' was changed\n`);
+    return;
+  }
   // 0. Is the exe even new enough to be trusted with the shell? The old one
   //    answers `taskbar` by looking for a `show` key, and what it does without
   //    one is not something to discover on Owen's live desktop.
@@ -5719,9 +6014,13 @@ function restoreShell(why) {
   return restoreChain;
 }
 
-function shutdown(why) {
+// opts.exitCode: 1 after a crash, so the logon task records a failure; opts.before: a promise the
+// exit waits for (the crash's restart being arranged), inside the same 12 s hard stop.
+function shutdown(why, opts) {
   if (shuttingDown) return;
   shuttingDown = true;
+  const exitCode = opts && Number.isInteger(opts.exitCode) ? opts.exitCode : 0;
+  const before = opts && opts.before ? Promise.resolve(opts.before).catch(() => {}) : Promise.resolve();
   process.stdout.write(`mantle: shutting down (${why})\n`);
   qsSetLog.flushAll();          // a slider dragged just before quitting still gets its summary line
   stopTrayPoll();
@@ -5755,17 +6054,17 @@ function shutdown(why) {
   const hardStop = setTimeout(() => {
     process.stderr.write(`mantle: the restore did not finish in 12s, leaving anyway. If the taskbar looks wrong:\n    ${RECOVERY_CMD}\n`);
     try { sidecar.stop(); } catch (_) {}
-    app.exit(0);
+    app.exit(exitCode);
   }, 12000);
   if (hardStop.unref) hardStop.unref();
 
-  restoreShell(why).finally(() => {
+  restoreShell(why).finally(() => before).finally(() => {
     clearTimeout(hardStop);
     try { sidecar.stop(); } catch (_) {}
     try { if (tray) tray.destroy(); } catch (_) {}
     // exit() rather than quit(): quit() would re-enter before-quit and we have
     // already done every piece of cleanup there is.
-    app.exit(0);
+    app.exit(exitCode);
   });
 }
 
@@ -5800,6 +6099,24 @@ app.on('second-instance', (_event, argv) => {
       process.stdout.write(`mantle: state (${tag}): ${name}: ${p.ok ? 'healthy' : 'NOT healthy'}${p.resting ? ' RESTING' : ''}${p.stopped ? ' STOPPED' : ''}: ${p.reason} | ${p.keysReason}\n`);
     }
     process.stdout.write(`mantle: state (${tag}): Win key: ${st.hotkey && st.hotkey.reason} | Alt+Tab: ${st.switcher && st.switcher.reason} | windows: ${pageNames().join(', ')}\n`);
+    return;
+  }
+  // TEST ONLY (lane core-main): `--test-report` runs the tray's "Copy diagnostic report" (a test run
+  // writes it to its own profile, never the clipboard); `--test-tray` logs the tray menu's rows;
+  // `--test-crash` throws an uncaught exception on the next tick, to prove the crash road end to end.
+  if (flags.test && Array.isArray(argv) && argv.includes('--test-report')) {
+    copyDiagnosticReport('a second instance (test)').catch((err) => process.stdout.write(`mantle: test-report failed: ${err.message}\n`));
+    return;
+  }
+  if (flags.test && Array.isArray(argv) && argv.includes('--test-tray')) {
+    const shown = (items, depth) => items.map((i) => (i.type === 'separator' ? `${depth}---` : `${depth}${i.label}${i.accelerator ? ` [${i.accelerator}]` : ''}${i.enabled === false ? ' (text)' : ''}${i.submenu ? ` (${i.submenu.length} inside)` : ''}`)).join(' | ');
+    const o = lastTrayView;
+    process.stdout.write(`mantle: test-tray: ${o ? shown(trayTemplate(o), '') : 'the tray was never built'}\n`);
+    return;
+  }
+  if (flags.test && Array.isArray(argv) && argv.includes('--test-crash')) {
+    process.stdout.write('mantle: test-crash: throwing an uncaught exception on the next tick (test mode)\n');
+    setTimeout(() => { throw new Error('test crash asked for by a second instance'); }, 0);
     return;
   }
   // TEST ONLY (lane ramdiet): `electron . --test --profile-name=<x> --test-unload` unloads every
@@ -5847,63 +6164,423 @@ app.on('will-quit', (e) => {
 });
 app.on('window-all-closed', () => shutdown('every window was closed'));
 
+// <mainrel:crash> (lib/main-rel.test.js runs this region with a fake clock: no outside names in it)
+/*
+ * A CRASH BRINGS MANTLE BACK, BUT NOT FOREVER (lane core-main, 2026-09-29).
+ *
+ * An uncaught exception has always meant "put Windows back and go" (a shell in an unknown state is
+ * worse than no shell). But it went with exit code 0, so the logon task's RestartOnFailure
+ * (tools/mantle-logon-task.xml) never saw a failure, and one bad moment left Owen with no bar and
+ * no launcher until he noticed and started Mantle by hand. Now the crash is written down
+ * (<userData>/crash.json), Mantle arranges its own way back exactly as "Restart Mantle" does
+ * (arrangeRestart), and exits with code 1 so the task records the failure too. At most 3 of those
+ * in 10 minutes: the 4th crash stays down, and says why, rather than flicker the taskbar forever.
+ * The next start says it happened, on the tray menu and in the diagnostic report (recoveryLine).
+ */
+const CRASH_WINDOW_MS = 10 * 60 * 1000;
+const CRASH_MAX_RESTARTS = 3;
+function crashPlan(history, now) {
+  const recent = (Array.isArray(history) ? history : []).filter((t) => typeof t === 'number' && t <= now && now - t < CRASH_WINDOW_MS);
+  const all = recent.concat([now]);
+  if (all.length > CRASH_MAX_RESTARTS) {
+    return { restart: false, history: all.slice(-10), recent: all.length, why: `stopped with an error ${all.length} times in 10 minutes, so it was not started again` };
+  }
+  return { restart: true, history: all.slice(-10), recent: all.length,
+    why: all.length === 1 ? 'stopped with an error, so it is starting again' : `stopped with an error (${all.length} times in 10 minutes), so it is starting again` };
+}
+/** The line the NEXT start shows (tray menu, report) for a crash under an hour old; null otherwise. */
+function recoveryLine(rec, now, fmtTime) {
+  if (!rec || typeof rec.at !== 'number' || rec.at > now || now - rec.at > 60 * 60 * 1000) return null;
+  const t = fmtTime(rec.at);
+  return rec.restarted ? `Restarted by itself after an error at ${t}` : `Stopped after repeated errors at ${t}`;
+}
+/** The error's first line, short: the file and the report never get a stack (paths live there). */
+function crashWhat(err) {
+  const m = err && err.message ? String(err.message) : String(err);
+  const line = m.split(/\r?\n/)[0].replace(/\s+/g, ' ').trim();
+  return line.length > 160 ? `${line.slice(0, 159)}…` : (line || 'no message');
+}
+/** Unhandled rejections: every distinct one is written; a repeat only at the 10th, 100th, 1000th... */
+function makeRejectionLog(write, maxKeys) {
+  const seen = new Map();
+  return (err) => {
+    const key = crashWhat(err);
+    const n = (seen.get(key) || 0) + 1;
+    seen.delete(key);
+    seen.set(key, n);
+    while (seen.size > (maxKeys || 100)) seen.delete(seen.keys().next().value);
+    if (n === 1) write(`mantle: unhandled promise rejection: ${err && err.stack ? err.stack : err}\n`);
+    else if (/^10+$/.test(String(n))) write(`mantle: the same unhandled promise rejection has now happened ${n} times: ${key}\n`);
+    return n;
+  };
+}
+// </mainrel:crash>
+
+let crashing = false;
+function crashFile() { return path.join(app.getPath('userData'), 'crash.json'); }
 process.on('uncaughtException', (err) => {
   process.stderr.write(`mantle: uncaught exception: ${err && err.stack ? err.stack : err}\n`);
-  // A shell in an unknown state is worse than no shell: put Windows back and go.
-  shutdown('an uncaught exception');
+  // Already on the way out (the hard stop still ends it), or a second throw mid-crash: nothing more.
+  if (shuttingDown || crashing) return;
+  crashing = true;
+  // A shell in an unknown state is worse than no shell: put Windows back and go -- and come back.
+  let plan = { restart: false, why: 'stopped with an error, and the crash could not be written down, so it was not started again' };
+  try {
+    let prev = {};
+    try { prev = JSON.parse(fs.readFileSync(crashFile(), 'utf8')) || {}; } catch (_) { prev = {}; }
+    const now = Date.now();
+    plan = crashPlan(prev.history, now);
+    fs.mkdirSync(path.dirname(crashFile()), { recursive: true });
+    fs.writeFileSync(crashFile(), JSON.stringify({ history: plan.history, last: { at: now, what: crashWhat(err), restarted: plan.restart } }));
+  } catch (e) {
+    plan = { restart: false, why: `stopped with an error, and the crash could not be written down (${e.message}), so it was not started again` };
+  }
+  process.stderr.write(`mantle: Mantle ${plan.why}\n`);
+  const back = plan.restart
+    ? arrangeRestart().then((r) => { if (!r.ok) process.stderr.write(`mantle: ${r.reason}\n`); }, (e) => process.stderr.write(`mantle: the restart after the error could not be arranged: ${e && e.message}\n`))
+    : null;
+  shutdown('an uncaught exception', { exitCode: 1, before: back });
 });
+const rejectionLog = makeRejectionLog((line) => process.stderr.write(line));
 process.on('unhandledRejection', (err) => {
-  // Not fatal, but it is never nothing. It goes where someone will see it.
-  process.stderr.write(`mantle: unhandled promise rejection: ${err && err.stack ? err.stack : err}\n`);
+  // Not fatal, but it is never nothing. It goes where someone will see it -- once, not once a second.
+  rejectionLog(err);
 });
+
+/** The tray's recovery line for this start, from the last crash on record (null when there is none). */
+function loadRecoveryNote() {
+  try {
+    const rec = JSON.parse(fs.readFileSync(crashFile(), 'utf8'));
+    const two = (n) => String(n).padStart(2, '0');
+    return recoveryLine(rec && rec.last, Date.now(), (t) => { const d = new Date(t); return `${two(d.getHours())}:${two(d.getMinutes())}`; });
+  } catch (_) { return null; }
+}
+let recoveryNote = null;
 
 // ---------------------------------------------------------------------------
 // The tray icon: the escape hatch that does not need a keyboard.
 // ---------------------------------------------------------------------------
+// <mainrel:tray> (lib/main-rel.test.js runs this region with fake problems and items: no outside names in it)
+/*
+ * THE TRAY MENU, AS WORDS AND ORDER ONLY (lane core-main, 2026-09-29). Owen: "minimalistic and
+ * super easy to use and obvious what to do". Before: 30+ rows -- a "Mantle — live" title, the
+ * health as internal piece names ("2 things to look at: sidecar, edge clip"), two switches and
+ * a reason line for Alt+Tab, a switch and often a reason for each of 20 features -- then the
+ * two ways out at the very bottom, with no shortcut shown for either and no way to restart.
+ * Now: what state Mantle is in, in words (and what is wrong, one short line each); the things
+ * people open (launcher, Settings, Wallpapers) with their shortcuts; the feature switches one
+ * level down; and the ways out -- report, restart, put Windows back, quit -- with the kill
+ * switch's keys on Quit, which is what that chord does.
+ * The menu is rebuilt only when this template changes (menuSignature): state changes many times a
+ * minute (the bar's reveal alone), and every one used to rebuild all 30 rows.
+ */
+const PIECE_WORDS = {
+  sidecar: "Mantle's link to Windows", taskbar: 'Taskbar auto-hide', 'screen space': 'Room for the bar',
+  'desktop layer': 'Desktop', 'Win key': 'Win key', tray: 'Notification-area icons', 'taskbar watch': 'Keeping the taskbar tucked away',
+  'edge clip': 'Bottom-edge guard', 'taskbar hiding': 'Hiding the Windows taskbar', 'window glass': 'Glass effect',
+  shortcuts: 'Keyboard shortcuts', notifications: 'Notifications', 'Alt+Tab': 'Alt+Tab',
+};
+function pieceWords(piece) {
+  const p = String(piece || '');
+  if (PIECE_WORDS[p]) return PIECE_WORDS[p];
+  const bd = /^(.+) backdrop$/.exec(p);
+  if (bd) return `${bd[1].charAt(0).toUpperCase()}${bd[1].slice(1)} background`;
+  return p ? p.charAt(0).toUpperCase() + p.slice(1) : 'Something';
+}
+/** One short line: the first clause of a reason, capped (a menu row is not a paragraph). */
+function shortReason(text, max) {
+  const n = max || 70;
+  let s = String(text || '').replace(/\s+/g, ' ').trim().replace(/\b(the )?sidecar\b/gi, "Mantle's link to Windows");
+  const cut = s.search(/(; |\. | -- | \()/);
+  if (cut > 12) s = s.slice(0, cut);
+  s = s.replace(/[.;:,]$/, '');
+  return s.length > n ? `${s.slice(0, n - 1).replace(/\s+\S*$/, '')}…` : s;
+}
+/** {head, lines, tip}: the menu's first row, the rows under it, and the icon's hover text. */
+function trayHealth(problems, o) {
+  const opt = o || {};
+  const list = Array.isArray(problems) ? problems : [];
+  const name = opt.test ? 'Mantle (test run)' : 'Mantle';
+  if (opt.paused) {
+    return { head: 'Paused: Windows is back to normal', lines: ['Restart Mantle to use it again'], tip: `${name}\nPaused: Windows is back to normal` };
+  }
+  if (!list.length) return { head: 'Mantle is running normally', lines: [], tip: `${name}\nRunning normally` };
+  // ONE cause, one line: while the link to Windows is down, every piece that needs it says so with
+  // the same reason tacked on (sidecarUnavailable), and seven lines of one fault read as seven faults.
+  const root = list.find((p) => p.piece === 'sidecar');
+  const rootWhy = root ? String(root.reason || '') : '';
+  const waiting = root && rootWhy ? list.filter((p) => p !== root && String(p.reason || '').endsWith(rootWhy)) : [];
+  const rest = list.filter((p) => p !== root && !waiting.includes(p));
+  const sc = opt.sidecar || {};
+  const rootLine = root
+    ? `Mantle's link to Windows ${sc.status === 'starting' ? 'is starting' : sc.gaveUp ? 'stopped' : 'stopped; trying again'}${waiting.length ? ` (${waiting.length} ${waiting.length === 1 ? 'thing waits' : 'things wait'} on it)` : ''}`
+    : null;
+  const count = (root ? 1 : 0) + rest.length;
+  const head = `${count} ${count === 1 ? 'thing needs' : 'things need'} a look`;
+  const shown = (rootLine ? [rootLine] : []).concat(rest.slice(0, rootLine ? 3 : 4).map((p) => `${pieceWords(p.piece)}: ${shortReason(p.reason, 64)}`));
+  const hidden = count - shown.length;
+  if (hidden > 0) shown.push(`…and ${hidden} more, listed in Mantle Settings`);
+  const names = (root ? ["Mantle's link to Windows"] : []).concat(rest.map((p) => pieceWords(p.piece))).join(', ');
+  const tip = `${name}\n${head}: ${names}`;
+  return { head, lines: shown, tip: tip.length > 120 ? `${tip.slice(0, 119)}…` : tip };
+}
+/*
+ * The template, with ids where main attaches the clicks. o: {test, paused, problems, recovery,
+ * shortcuts:{launcher, killSwitch}, hasSettings, featureItems}. featureItems arrive ready-made from
+ * lib/switcher.js and lib/features.js (their own clicks) and go one level down, under "Features".
+ */
+function trayTemplate(o) {
+  const h = trayHealth(o.problems, o);
+  const out = [{ label: h.head, enabled: false }];
+  for (const l of h.lines) out.push({ label: `    ${l}`, enabled: false });
+  // The way back sits right under the fault it fixes: the link gave up restarting on its own.
+  if (!o.paused && o.sidecar && o.sidecar.gaveUp) out.push({ id: 'retry', label: 'Reconnect Mantle to Windows' });
+  if (o.recovery) out.push({ label: `    ${o.recovery}`, enabled: false });
+  out.push({ type: 'separator' });
+  const keys = o.shortcuts || {};
+  out.push(Object.assign({ id: 'launcher', label: 'Open launcher' }, keys.launcher ? { accelerator: 'Alt+Space', registerAccelerator: false } : {}));
+  if (o.hasSettings) out.push({ id: 'settings', label: 'Open Mantle Settings', accelerator: 'Super+I', registerAccelerator: false });
+  out.push({ id: 'wallpapers', label: 'Wallpapers…' });
+  const feats = Array.isArray(o.featureItems) ? o.featureItems : [];
+  if (feats.length) out.push({ label: 'Features', submenu: feats });
+  out.push({ type: 'separator' });
+  out.push({ id: 'report', label: 'Copy diagnostic report' });
+  out.push({ id: 'restart', label: o.paused ? 'Restart Mantle to resume' : 'Restart Mantle' });
+  // No "hide the Windows taskbar" item, ever: that item called the command behind the 2026-09-21
+  // reboot, and a menu entry whose only job is a state Mantle must be alive to undo has no place here.
+  if (!o.paused) out.push({ id: 'restore', label: 'Put Windows back (keep Mantle open)' });
+  out.push({ type: 'separator' });
+  out.push(Object.assign({ id: 'quit', label: 'Quit Mantle' }, keys.killSwitch ? { accelerator: 'Ctrl+Alt+Shift+Backspace', registerAccelerator: false } : {}));
+  return out;
+}
+/** What the menu LOOKS like (functions dropped): equal signatures need no rebuild. */
+function menuSignature(items) {
+  return JSON.stringify(items, (k, v) => (typeof v === 'function' ? undefined : v));
+}
+/** Attach a click from `handlers` to every item whose id has one (submenus included). */
+function wireTray(items, handlers) {
+  for (const it of items) {
+    if (it && it.id && typeof handlers[it.id] === 'function') it.click = handlers[it.id];
+    if (it && Array.isArray(it.submenu)) wireTray(it.submenu, handlers);
+  }
+  return items;
+}
+// </mainrel:tray>
+
+let trayMenuSig = '';
+let trayTipText = '';
+let shellPaused = null;        // {at, why} once "Put Windows back" ran and Mantle is still up
+function trayFeatureItems() {
+  const out = [];
+  try { out.push(...switcher.trayItems()); } catch (err) { out.push({ label: `Alt+Tab switches could not be listed: ${err.message}`, enabled: false }); }
+  if (features && features.size) {
+    if (out.length) out.push({ type: 'separator' });
+    try { out.push(...features.trayItems()); } catch (err) { out.push({ label: `The features could not be listed: ${err.message}`, enabled: false }); }
+  }
+  return out;
+}
 function updateTray() {
   if (!tray || tray.isDestroyed()) return;
-  const problems = state.problems();
-  const summary = problems.length
-    ? `${problems.length} thing${problems.length === 1 ? '' : 's'} to look at: ${problems.map((p) => p.piece).join(', ')}`
-    : 'everything is as it should be';
+  const st = state.get();
+  const o = {
+    test: flags.test,
+    paused: !!shellPaused,
+    problems: state.problems(),
+    recovery: recoveryNote,
+    sidecar: { status: sidecar.status, gaveUp: !!sidecar.gaveUp },
+    shortcuts: st.shortcuts || {},
+    hasSettings: typeof COMMANDS['settings.open'] === 'function',
+    featureItems: trayFeatureItems(),
+  };
+  const items = trayTemplate(o);
+  const tip = trayHealth(o.problems, o).tip;
+  lastTrayView = o;
+  if (tip !== trayTipText) {
+    try { tray.setToolTip(tip); trayTipText = tip; } catch (_) { /* the icon went away */ }
+  }
+  const sig = menuSignature(items);
+  if (sig === trayMenuSig) return;
   try {
-    tray.setToolTip(`Mantle (${MODE})\n${summary}`);
-  } catch (_) {}
-  try {
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: `Mantle — ${MODE}`, enabled: false },
-      { label: summary, enabled: false },
-      { type: 'separator' },
-      // The desktop layer never gets a click (it is under the icons), so its wallpaper is chosen here
-      // or from the launcher's "Wallpapers" entry.
-      { label: 'Wallpapers…', click: () => { wallpaper.openLibrary(); } },
-      { type: 'separator' },
-      // Alt+Tab and Win+N / Win+A: the off switches (off = Windows' own), each with the
-      // state piece's sentence under it, so "why is it Windows' Alt+Tab" is answered right here.
-      ...switcher.trayItems(),
-      // One checkbox per feature (lib/features/*.js), with the reason under any that is on and not working.
-      ...(features && features.size ? [{ type: 'separator' }, ...features.trayItems()] : []),
-      { type: 'separator' },
-      // Two items, and neither of them can make things worse. There is
-      // deliberately NO "hide the Windows taskbar" any more: that item called the
-      // command that caused the 2026-09-21 reboot, and a menu entry whose only
-      // job is to put the shell into a state Mantle has to be alive to undo has
-      // no business existing.
-      {
-        label: 'Put Windows back (keep Mantle open)',
-        click: () => { restoreShell('the tray menu asked for it'); },
-      },
-      { type: 'separator' },
-      { label: 'Quit Mantle', click: () => shutdown('the tray menu') },
-    ]));
+    tray.setContextMenu(Menu.buildFromTemplate(wireTray(items, TRAY_ACTIONS)));
+    trayMenuSig = sig;
   } catch (err) {
     process.stderr.write(`mantle: could not build the tray menu: ${err.message}\n`);
   }
+}
+/** A tray action that failed says so on screen (a Windows notification from the icon), not only in the log. */
+function trayNotice(title, content) {
+  process.stdout.write(`mantle: tray: ${title}: ${content}\n`);
+  try { if (tray && !tray.isDestroyed()) tray.displayBalloon({ title, content, iconType: 'warning', noSound: true }); } catch (_) { /* the log line stands */ }
+}
+const TRAY_ACTIONS = {
+  launcher: () => { try { showLauncher(); } catch (err) { trayNotice('The launcher did not open', err.message); } },
+  settings: () => {
+    const open = COMMANDS['settings.open'];
+    if (typeof open !== 'function') { trayNotice('Mantle Settings did not open', 'the Settings feature is turned off'); return; }
+    Promise.resolve(open({ via: 'the tray menu' })).then((r) => {
+      if (r && r.ok === false) trayNotice('Mantle Settings did not open', r.reason || 'no reason was given');
+    }, (err) => trayNotice('Mantle Settings did not open', err.message));
+  },
+  wallpapers: () => { try { wallpaper.openLibrary(); } catch (err) { trayNotice('Wallpapers did not open', err.message); } },
+  report: () => { copyDiagnosticReport('the tray menu').catch((err) => trayNotice('The report was not copied', err.message)); },
+  restart: () => {
+    COMMANDS['shell.restart']({ via: 'the tray menu' }).then((r) => {
+      if (r && r.ok === false) trayNotice('Mantle did not restart', r.reason || 'no reason was given');
+    }, (err) => trayNotice('Mantle did not restart', err.message));
+  },
+  restore: () => {
+    shellPaused = { at: Date.now(), why: 'the tray menu' };
+    restoreShell('the tray menu asked for it').finally(() => updateTray());
+  },
+  retry: () => {
+    COMMANDS['shell.reconnect']().then((r) => {
+      if (r && r.ok === false) trayNotice('Mantle could not reconnect to Windows', r.reason || 'no reason was given');
+    }, (err) => trayNotice('Mantle could not reconnect to Windows', err.message));
+  },
+  quit: () => shutdown('the tray menu'),
+};
+let lastTrayView = null;       // what the tray last showed, for the diagnostic report
+
+// <mainrel:report> (lib/main-rel.test.js runs this region with a made-up snapshot: no outside names in it)
+/*
+ * "COPY DIAGNOSTIC REPORT" (tray menu; lane core-main, 2026-09-29). When something is off, the
+ * question is always the same handful -- which build, how long up, what does Mantle itself say is
+ * wrong, what went wrong lately -- and the answers were spread over a 5 MB log and the Settings
+ * page. This is all of it in one paste, safe to put in a chat or an issue: no window titles, no
+ * file or device names (the health lines are Mantle's own words, the recent lines are Mantle's own
+ * log lines), and the user name, PC name and home folder removed by the log's own scrubber.
+ * snap: {when, version, commit, electron, windows, mode, uptimeS, displays:[{w,h,scale,primary}],
+ * memMB:{main, all, processes}, health:{head, lines}, paused, recovery, features:{on, off, down:[]},
+ * link:{status, restarts, gaveUp}, recent:[lines]}.
+ */
+function buildReport(snap, scrub) {
+  const s = snap || {};
+  const out = [];
+  const dur = (sec) => {
+    const n = Math.max(0, Math.round(Number(sec) || 0));
+    const h = Math.floor(n / 3600);
+    const m = Math.floor((n % 3600) / 60);
+    return h ? `${h} h ${m} min` : `${m} min`;
+  };
+  out.push('Mantle diagnostic report');
+  out.push(`Made ${s.when || 'at an unknown time'}. User name, PC name and home folder are left out; read it before you share it.`);
+  out.push('');
+  out.push(`Mantle ${s.version || '?'}${s.commit ? ` (${s.commit})` : ''}, ${s.mode === 'test' ? 'a test run' : 'running live'}, up ${dur(s.uptimeS)}`);
+  out.push(`Windows ${s.windows || '?'}, Electron ${s.electron || '?'}`);
+  const ds = Array.isArray(s.displays) ? s.displays : [];
+  out.push(`Displays: ${ds.length ? ds.map((d) => `${d.w}x${d.h} at ${Math.round((Number(d.scale) || 1) * 100)}%${d.primary ? ' (main)' : ''}`).join(', ') : 'none reported'}`);
+  if (s.memMB) out.push(`Memory: ${s.memMB.all} MB in ${s.memMB.processes} processes (Mantle's main process ${s.memMB.main} MB)`);
+  out.push('');
+  const h = s.health || {};
+  out.push(`Health: ${h.head || 'not known'}`);
+  for (const l of h.lines || []) out.push(`  - ${l}`);
+  if (s.recovery) out.push(`  - ${s.recovery}`);
+  const l = s.link || {};
+  out.push(`Link to Windows: ${l.status || '?'}${l.gaveUp ? ', gave up restarting' : ''}${l.restarts ? `, ${l.restarts} restart(s) in a row` : ''}`);
+  const f = s.features || {};
+  out.push(`Features: ${f.on || 0} on, ${f.off || 0} off${(f.down || []).length ? `; not working: ${f.down.join(', ')}` : ''}`);
+  const recent = Array.isArray(s.recent) ? s.recent : [];
+  out.push('');
+  out.push(recent.length ? `Last ${recent.length} warnings and errors this run, oldest first:` : 'No warnings or errors this run.');
+  for (const r of recent) out.push(`  ${r}`);
+  const text = out.join('\n') + '\n';
+  return typeof scrub === 'function' ? scrub(text) : text;
+}
+/** A bounded list of the last `max` lines written to stderr, each stamped HH:MM:SS and cut to 240 chars. */
+function makeRecentLines(max, now) {
+  const lines = [];
+  const two = (n) => String(n).padStart(2, '0');
+  return {
+    add(chunk) {
+      const d = now();
+      const t = `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+      for (const raw of String(chunk).split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        lines.push(`${t} ${line.length > 240 ? `${line.slice(0, 239)}…` : line}`);
+        if (lines.length > max) lines.shift();
+      }
+    },
+    list() { return lines.slice(); },
+  };
+}
+// </mainrel:report>
+
+const recentProblems = makeRecentLines(15, () => new Date());
+(function keepRecentProblems() {
+  const orig = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk, ...rest) => {
+    try { recentProblems.add(chunk); } catch (_) { /* never in the way of a write */ }
+    return orig(chunk, ...rest);
+  };
+})();
+let reportScrub = null;
+function scrubForReport(text) {
+  if (!reportScrub) {
+    let user = '';
+    try { user = os.userInfo().username; } catch (_) { user = process.env.USERNAME || ''; }
+    let host = '';
+    try { host = os.hostname(); } catch (_) { host = process.env.COMPUTERNAME || ''; }
+    reportScrub = makeScrubber({ home: os.homedir(), user, host });
+  }
+  return reportScrub(text);
+}
+async function diagnosticReport() {
+  const two = (n) => String(n).padStart(2, '0');
+  const d = new Date();
+  let version = '?';
+  try { version = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version || '?'; } catch (_) { /* '?' */ }
+  const commit = await new Promise((resolve) => {
+    require('child_process').execFile('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, windowsHide: true, timeout: 3000 }, (err, out) => resolve(err ? '' : String(out || '').trim()));
+  });
+  let displays = [];
+  try {
+    const primary = screen.getPrimaryDisplay().id;
+    displays = screen.getAllDisplays().map((x) => ({ w: x.size.width, h: x.size.height, scale: x.scaleFactor, primary: x.id === primary }));
+  } catch (_) { /* none reported */ }
+  let memMB = null;
+  try {
+    const m = app.getAppMetrics();
+    const kb = (p) => (p.memory && (p.memory.privateBytes || p.memory.workingSetSize)) || 0;
+    const main = m.find((p) => p.type === 'Browser');
+    memMB = { all: Math.round(m.reduce((t, p) => t + kb(p), 0) / 1024), processes: m.length, main: main ? Math.round(kb(main) / 1024) : '?' };
+  } catch (_) { /* left out */ }
+  const st = state.get();
+  const feats = Object.values(st.features || {});
+  const view = lastTrayView || { problems: state.problems(), paused: !!shellPaused, test: flags.test, sidecar: { status: sidecar.status, gaveUp: !!sidecar.gaveUp } };
+  const health = trayHealth(view.problems, view);
+  return buildReport({
+    when: `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`,
+    version, commit, electron: process.versions.electron, windows: os.release(), mode: MODE,
+    uptimeS: process.uptime(), displays, memMB, health, paused: !!shellPaused, recovery: recoveryNote,
+    features: { on: feats.filter((p) => p && p.on).length, off: feats.filter((p) => p && !p.on).length,
+      down: feats.filter((p) => p && p.on && p.ok === false && !p.resting).map((p) => p.label || 'a feature') },
+    link: { status: sidecar.status, restarts: sidecar.restarts || 0, gaveUp: !!sidecar.gaveUp },
+    recent: recentProblems.list(),
+  }, scrubForReport);
+}
+/** The tray item: onto the clipboard, and a notice that says it happened. A test run writes a file instead. */
+async function copyDiagnosticReport(via) {
+  const text = await diagnosticReport();
+  if (flags.test) {
+    // Never Owen's clipboard from a test run: the report goes into the test profile instead.
+    const file = path.join(app.getPath('userData'), 'diagnostic-report.txt');
+    fs.writeFileSync(file, text);
+    process.stdout.write(`mantle: diagnostic report (${text.split('\n').length} lines, asked from ${via}) written to the test profile, not the clipboard (test run)\n`);
+    return { ok: true, dryRun: true, lines: text.split('\n').length };
+  }
+  require('electron').clipboard.writeText(text);
+  process.stdout.write(`mantle: diagnostic report copied to the clipboard (${text.split('\n').length} lines, asked from ${via})\n`);
+  try { if (tray && !tray.isDestroyed()) tray.displayBalloon({ title: 'Diagnostic report copied', content: 'Paste it wherever you need it. Your user name, PC name and home folder were left out.', iconType: 'info', noSound: true }); } catch (_) { /* the log line stands */ }
+  return { ok: true };
 }
 
 function createTray() {
   try {
     tray = new Tray(trayImage());
+    // A left click opens the same menu as a right click: the icon's one job is that menu, and a
+    // first click that does nothing reads as broken.
+    tray.on('click', () => { try { tray.popUpContextMenu(); } catch (_) { /* the right click still works */ } });
     updateTray();
   } catch (err) {
     // No tray means no mouse-driven escape hatch, which the keyboard kill switch
@@ -6639,7 +7316,14 @@ function watchPage(win, label) {
     const bad = typeof level === 'string' ? (level === 'error' || level === 'warning') : level >= 2;
     // Renderer errors belong where a human running Mantle from a terminal sees
     // them; the pages show their own state, this is the developer's copy.
-    if (bad) process.stderr.write(`mantle: [${label}] ${message} (${source}:${line})\n`);
+    // The source as Mantle's own relative path (ui/bar/bar.js), not a file:// address with the
+    // home folder in it; and one screenful at most, so a page dumping an object cannot flood the file.
+    if (!bad) return;
+    const src = String(source || '').replace(/\\/g, '/');
+    const at = src.lastIndexOf('/ui/');
+    const where = at >= 0 ? src.slice(at + 1) : (src.split('/').pop() || 'the page');
+    const text = String(message);
+    process.stderr.write(`mantle: [${label}] ${text.length > 600 ? `${text.slice(0, 597)}...` : text} (${where}:${line})\n`);
   });
 }
 
@@ -6770,6 +7454,8 @@ app.whenReady().then(() => {
   // state to build its menu, and test mode's four "deliberately not done" reasons
   // are true from the first frame, not from whenever the sidecar answers.
   if (flags.test) testShellBaseline();
+  recoveryNote = loadRecoveryNote();
+  if (recoveryNote) process.stdout.write(`mantle: ${recoveryNote} (the tray menu says so for the next hour)\n`);
   registerShortcuts();
   createTray();
   apps.startRefresh();
@@ -6777,11 +7463,26 @@ app.whenReady().then(() => {
   // ONE display listener for the whole process, calling whatever "put the bar
   // back" means right now. applyLive re-runs on every sidecar restart and used to
   // add another listener each time it did.
-  screen.on('display-metrics-changed', () => {
-    if (rePlaceBar) rePlaceBar('display metrics changed');
+  // A monitor plugged in or out, and waking from sleep (monitors re-enumerate, the main one may be
+  // another one now), are the same "put the bar back" as a scale change -- and none of them was
+  // listened for (lane core-main, 2026-09-29). One 125% -> 150% change fires metrics-changed 3-6
+  // times: the first runs at once, the rest become one run when the burst is over (makeBurst).
+  const displayBurst = makeBurst((why) => {
+    if (rePlaceBar) rePlaceBar(why);
     // The desktop layer's picture is the wallpaper, which a resolution or scale
     // change reflows. It is a still, so this is the only thing that redates it.
-    reshootDesktopBackdrop('the display metrics changed').catch(() => {});
+    reshootDesktopBackdrop(why).catch(() => {});
+  }, { quietMs: 400, setTimeout, clearTimeout });
+  screen.on('display-metrics-changed', () => displayBurst('display metrics changed'));
+  screen.on('display-added', () => displayBurst('a display was connected'));
+  screen.on('display-removed', () => displayBurst('a display was disconnected'));
+  let sleptAt = 0;
+  powerMonitor.on('suspend', () => { sleptAt = Date.now(); process.stdout.write('mantle: the PC is going to sleep\n'); });
+  powerMonitor.on('resume', () => {
+    process.stdout.write(`mantle: the PC woke up${sleptAt ? ` after ${Math.round((Date.now() - sleptAt) / 60000)} min asleep` : ''}; the bar is put back in 1.5 s\n`);
+    sleptAt = 0;
+    const t = setTimeout(() => displayBurst('the PC woke from sleep'), 1500);
+    if (t.unref) t.unref();
   });
 
   if (flags.dock) {
