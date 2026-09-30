@@ -18,7 +18,10 @@
   const gb = (b) => (b / 1073741824).toFixed(1) + ' GB';
   const pct = (x) => (x >= 0 ? (x < 10 ? x.toFixed(1) : Math.round(x)) + '%' : '');
   const LOCK = '<svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><rect x="2.5" y="5.5" width="7" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>';
-  const CHEV = '<svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true"><path d="M3.5 2l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
+  // the warn glyph: every reason something went wrong is this + one line of --lg-warn words (no pill)
+  const WARN = '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M6 1.6 11 10.4H1z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M6 5v2.6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><circle cx="6" cy="9" r=".6" fill="currentColor"/></svg>';
+  const warnLine = (cls, text) => `<span class="${cls}">${WARN}<span>${esc(text)}</span></span>`;
+  const CHEV ='<svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true"><path d="M3.5 2l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
 
   const P = { m: null, view: 'apps', open: new Set(), confirm: null, collapsed: new Set(['windows']), note: null, icons: new Map(), hover: false };
 
@@ -29,7 +32,7 @@
   }
   function stateLine(g) {
     if (P.confirm === g.key) {
-      return `<div class="st bad"><span>Force close ${esc(g.name)}? It ends at once and anything unsaved in it is lost.</span><span class="grow"></span>` +
+      return `<div class="st ask"><span>Force close ${esc(g.name)}? It ends at once and anything unsaved in it is lost.</span><span class="grow"></span>` +
         `<button type="button" class="go" data-act="force-yes">Force close</button><button type="button" data-act="force-no">Cancel</button></div>`;
     }
     const s = g.state;
@@ -45,21 +48,40 @@
     };
     const [text, cls] = map[s.state] || [s.why || s.state, ''];
     const force = s.state === 'still-running' && g.actions && g.actions.force ? '<span class="grow"></span><button type="button" data-act="force">Force close</button>' : '';
-    return `<div class="st ${cls}" role="status"><span>${esc(text)}</span>${force}</div>`;
+    return `<div class="st ${cls}" role="status">${cls === 'bad' ? warnLine('', text) : `<span>${esc(text)}</span>`}${force}</div>`;
   }
+  /* The words under a row: why it cannot be closed, or may not be. */
+  function whyOf(g) {
+    const a = g.actions || {};
+    return g.protected || (g.game && a.why) || (g.elevated ? 'Runs as administrator: Mantle may not be allowed to close it' : null);
+  }
+  /* Every reason at least 3 rows of a section share: said ONCE, in full, under the section's header
+     (most rows first) instead of under every row. Each of those rows still names its reason on its own
+     line: the lock and the reason's short name (the words before its colon), or its admin/game tag. */
+  function sharedWhy(rows) {
+    const n = new Map(), locked = new Set();
+    for (const g of rows) { const w = whyOf(g); if (w) { n.set(w, (n.get(w) || 0) + 1); if (g.protected) locked.add(w); } }
+    const out = new Map();
+    for (const [w, c] of Array.from(n).sort((x, y) => y[1] - x[1])) if (c >= 3) out.set(w, { c, lock: locked.has(w) });
+    return out.size ? out : null;
+  }
+  const shortWhy = (w) => { const i = w.indexOf(':'); return i > 0 && i <= 40 ? w.slice(0, i) : ''; };
   /* The parts of a row that change only when its meaning changes (not every tick). */
-  function staticHtml(g) {
+  function staticHtml(g, shared) {
     const a = g.actions || {};
     const btns = [];
     if (a.trim) btns.push('<button type="button" data-act="trim" title="Hand its idle memory back to Windows (EmptyWorkingSet)">Trim</button>');
     if (a.close) btns.push('<button type="button" data-act="close" title="Ask it to close, like its own close button">Close</button>');
     if (a.force) btns.push('<button type="button" class="danger" data-act="force" title="End it now (asks first)">Force close</button>');
     const tags = [g.game ? '<span class="tag">game</span>' : '', g.handledBy === 'spotify' ? '<span class="tag">Spotify card</span>' : '', g.elevated ? '<span class="tag" title="Windows would not let Mantle read it: it runs as administrator or another user">admin</span>' : ''].join('');
-    const why = g.protected || (g.game && a.why) || (g.elevated ? 'Runs as administrator: Mantle may not be allowed to close it' : null);
+    const why0 = whyOf(g);
+    const said = !!(why0 && shared && shared.has(why0));   // the section header says it once
+    const why = said ? null : why0;
+    const lk = said && g.protected ? `<span class="lk" title="${esc(why0)}">${LOCK}<span>${esc(shortWhy(why0))}</span></span>` : '';
     return `<div class="rmain">` +
       (g.count > 1 ? `<button type="button" class="chev" data-act="expand" aria-label="Show its ${g.count} processes" aria-expanded="${P.open.has(g.key)}">${CHEV}</button>` : '<span></span>') +
       icon(g) +
-      `<div class="nm"><span class="n" title="${esc(g.title || g.name)}">${esc(g.name)}</span>${g.count > 1 ? `<span class="k">(${g.count})</span>` : ''}${tags}</div>` +
+      `<div class="nm"><span class="n" title="${esc(g.title || g.name)}">${esc(g.name)}</span>${g.count > 1 ? `<span class="k">(${g.count})</span>` : ''}${tags}${lk}</div>` +
       `<span class="mem"></span><span class="cpu"></span><div class="acts">${btns.join('')}</div>` +
       (why ? `<div class="why">${g.protected ? LOCK : ''}<span>${esc(why)}</span></div>` : '') +
       `</div><div class="stw"></div><div class="mw"></div>`;
@@ -91,8 +113,8 @@
     }
     for (const el of have.values()) el.remove();
   }
-  function buildRow(el, g) {
-    const s = staticHtml(g);
+  function buildRow(el, g, shared) {
+    const s = staticHtml(g, shared);
     if (el._s !== s) {
       el.innerHTML = s; el._s = s;
       el._mem = el.querySelector('.mem'); el._cpu = el.querySelector('.cpu'); el._sw = el.querySelector('.stw'); el._mm = el.querySelector('.mw');
@@ -116,10 +138,12 @@
       host.appendChild(head); host.appendChild(box);
     }
     const coll = P.collapsed.has(id);
-    const h = `<button type="button" data-act="section" aria-expanded="${!coll}">${coll ? '▸' : '▾'}</button><span>${esc(title)} (${rows.length})</span>`;
+    const shared = coll ? null : sharedWhy(rows);
+    const h = `<button type="button" data-act="section" aria-expanded="${!coll}">${coll ? '▸' : '▾'}</button><span>${esc(title)} (${rows.length})</span>` +
+      (shared ? Array.from(shared, ([w, v]) => `<span class="sect-why">${v.lock ? LOCK : ''}<span>${esc(w)} (${v.c} below)</span></span>`).join('') : '');
     if (head._h !== h) { head.innerHTML = h; head._h = h; }
     box.hidden = coll;
-    patchList(box, coll ? [] : rows, buildRow);
+    patchList(box, coll ? [] : rows, buildRow, shared);
   }
 
   function renderApps(m) {
@@ -128,6 +152,14 @@
     section(host, 'apps', 'Apps', apps);
     section(host, 'background', 'Background', m.background);
     section(host, 'windows', 'Windows processes', m.windows);
+  }
+
+  /* Outcomes that failed for the same reason: the reason said once, after every app it hit
+     ("Discord, Steam: <why>"), in the order they came. Plain text; warnLine escapes it. */
+  function grouped(list, whyFn) {
+    const by = new Map();
+    for (const r of list) { const w = whyFn(r); if (!by.has(w)) by.set(w, []); by.get(w).push(r.name); }
+    return Array.from(by, ([w, names]) => `${names.join(', ')}: ${w}`);
   }
 
   function renderGame(m) {
@@ -140,14 +172,14 @@
     const lines = [];
     if (lf) {
       lines.push(`<span class="h">${lf.dryRun ? 'Dry run (test Mantle): nothing was closed' : 'Free up RAM'} · ${lf.none ? esc(lf.none) : `freed about ${mb(lf.freed)} so far`}</span>`);
-      for (const r of lf.results || []) if (!r.ok) lines.push(`<span class="bad">${esc(r.name)}: ${esc(r.why)}</span>`);
-      for (const r of lf.reopen || []) lines.push(r.can ? `<span>${esc(r.name)} reopens after your next game${r.why ? ' (' + esc(r.why) + ')' : ''}</span>` : `<span class="bad">${esc(r.name)} will not reopen: ${esc(r.why)}</span>`);
+      for (const t of grouped((lf.results || []).filter((r) => !r.ok), (r) => r.why)) lines.push(warnLine('bad', t));
+      for (const r of lf.reopen || []) lines.push(r.can ? `<span>${esc(r.name)} reopens after your next game${r.why ? ' (' + esc(r.why) + ')' : ''}</span>` : warnLine('bad', `${r.name} will not reopen: ${r.why}`));
     }
     if (la && la.at) {
       const when = new Date(la.at).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
       lines.push(`<span class="h">When ${esc(la.game || 'a game')} started (${esc(when)}): ${la.none ? esc(la.none) : `freed about ${mb(la.freed)}`}</span>`);
-      for (const r of la.results || []) if (r.state !== 'closed') lines.push(`<span class="bad">${esc(r.name)}: ${esc(r.why || r.state || 'not closed')}</span>`);
-      if (la.reopened) for (const r of la.reopened.results || []) lines.push(r.ok ? `<span>${esc(r.name)} was started again after the game</span>` : `<span class="bad">${esc(r.name)} was not started again: ${esc(r.why)}</span>`);
+      for (const t of grouped((la.results || []).filter((r) => r.state !== 'closed'), (r) => r.why || r.state || 'not closed')) lines.push(warnLine('bad', t));
+      if (la.reopened) for (const r of la.reopened.results || []) lines.push(r.ok ? `<span>${esc(r.name)} was started again after the game</span>` : warnLine('bad', `${r.name} was not started again: ${r.why}`));
     }
     $('lastfree').hidden = !lines.length;
     $('lastfree').innerHTML = lines.join('');
@@ -163,7 +195,7 @@
         (r.absent ? '<span class="ic tile">·</span>' : icon(r)) +
         `<span class="n">${esc(r.name)}</span><span class="mem">${r.mem >= 0 ? mb(r.mem) : ''}</span>` +
         (r.tickable && r.ticked ? `<label class="reo"><input type="checkbox" data-act="reopen" ${r.reopen ? 'checked' : ''}>Reopen it</label>` : '<span></span>') +
-        (why ? `<div class="pwhy${bad ? ' bad' : ''}">${esc(why)}</div>` : '') + '</div>';
+        (why ? (bad ? `<div class="pwhy bad">${WARN}<span>${esc(why)}</span></div>` : `<div class="pwhy">${esc(why)}</div>`) : '') + '</div>';
       if (el._s !== s) { el.innerHTML = s; el._s = s; el.className = ''; }
     });
   }
@@ -190,13 +222,14 @@
     // the glass: Windows' dark backdrop under this light page reads grey, so without the light frame the page keeps its solid ground
     const frame = look.light === false ? 'dark' : 'light';
     if (document.documentElement.dataset.frame !== frame) document.documentElement.dataset.frame = frame;
-    const notes = [m.error, P.note, look.iconWhy ? `This window's own icon: ${look.iconWhy}.` : null, look.lightWhy ? `Glass: ${look.lightWhy}; the window stays solid.` : null,
-      m.test ? 'Test Mantle: every Close, Force close and Trim is a dry run.' : null].filter(Boolean);
-    $('note').hidden = !notes.length;
-    setText($('note'), notes.join(' · '));
+    // one line each: a warning is the warn glyph + its words; the test-Mantle line is quiet ink
+    const notes = [m.error, P.note, look.iconWhy ? `This window's own icon: ${look.iconWhy}.` : null, look.lightWhy ? `Glass: ${look.lightWhy}; the window stays solid.` : null].filter(Boolean);
+    const lines = notes.map((t) => warnLine('nl', t)).concat(m.test ? ['<span class="nl quiet"><span>Test Mantle: every Close, Force close and Trim is a dry run.</span></span>'] : []);
+    $('note').hidden = !lines.length;
+    setHtml($('note'), lines.join(''));
     const rec = (m.recent || []).slice(0, 3);
     $('recent').hidden = !rec.length;
-    setHtml($('recent'), rec.map((r) => `<span class="${r.ok ? '' : 'bad'}">${esc(r.name)}: ${esc(r.text)}</span>`).join(''));
+    setHtml($('recent'), rec.map((r) => r.ok ? `<span>${esc(r.name)}: ${esc(r.text)}</span>` : warnLine('bad', `${r.name}: ${r.text}`)).join(''));
     if (P.view === 'apps') renderApps(m);
     if (P.view === 'game') renderGame(m);
     document.documentElement.dataset.ready = '1';
@@ -265,8 +298,8 @@
     try {
       const r = await call('settings.open', { section: 'apps', row: 'apps.startup', via: 'the task manager' });
       n.hidden = !(r && r.ok === false);
-      n.textContent = r && r.ok === false ? `Mantle Settings did not open: ${r.reason}` : '';
-    } catch (e) { n.hidden = false; n.textContent = `Mantle Settings did not open: ${e.message}`; }
+      n.innerHTML = r && r.ok === false ? `${WARN}<span>${esc(`Mantle Settings did not open: ${r.reason}`)}</span>` : '';
+    } catch (e) { n.hidden = false; n.innerHTML = `${WARN}<span>${esc(`Mantle Settings did not open: ${e.message}`)}</span>`; }
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && P.confirm) { P.confirm = null; render(); } });
 

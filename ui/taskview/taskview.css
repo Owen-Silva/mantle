@@ -3,13 +3,23 @@
  * GEOMETRY IS SHARED WITH layout.js: .strip is L.stripH tall, .search L.searchH, a tile's padding
  * is L.inset and its caption L.capH. The page positions tiles with layout.js numbers and measures
  * each .pv for main, so a CSS change here that moves a .pv moves the live picture with it.
+ *
+ * THE CALM PASS (lane looktask, 2026-09-29; the Settings recipe, commit 377e901, adapted to a full-screen
+ * overlay). The sidecar's acrylic accent carries its default tint (60% black, sidecar/Glass.cs), and the old
+ * --lg-fill frost over it read as muddy mid-grey. Now:
+ *  - ONE light surface: body carries the card fill twice and the chip recess over them (Settings' html +
+ *    body pair, here all on body), ~.92 white over the blur, whatever is behind. No backdrop-filter.
+ *  - The window pictures are the hero: tiles and desktop cards are one plain hairline, 8 px radius, no
+ *    lip; the desktop strip has no slab of its own. The current desktop is the accent tick, not a ring.
+ *  - Reasons are words: the warn glyph + one line in --lg-warn (strip, preview boxes, foot, toast, the
+ *    "Not responding" caption), no filled pills; the foot says each reason on its own line.
  */
 :root {
   --strip-h: 148px;
   --search-h: 48px;
   --inset: 8px;
   --cap-h: 36px;
-  --tile-r: 12px;
+  --tile-r: 8px;
 }
 
 html, body {
@@ -25,8 +35,8 @@ html, body {
 }
 /* The window is transparent with the sidecar's blur-behind; this light fill is the frost over it.
    Without the blur (no-glass) a much thicker fill carries the page on its own, honestly. */
-body { background: var(--lg-fill); }
-body.no-glass { background: var(--lg-fill-strong); }
+body { background: linear-gradient(var(--lg-sunk), var(--lg-sunk)), linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)) var(--lg-fill-strong); }
+body.no-glass { background: var(--lg-ground); }
 body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale on the next open */
 
 /* ---------------------------------------------------------------- the desktop strip */
@@ -35,8 +45,6 @@ body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale 
   height: var(--strip-h);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 8px;
-  box-shadow: inset 0 -1px 0 var(--lg-edge-out);
-  background: var(--lg-sunk);
 }
 .desks { display: flex; gap: 12px; align-items: stretch; max-width: calc(100% - 96px); overflow: hidden; padding: 4px; }
 .desk {
@@ -46,19 +54,19 @@ body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale 
   padding: 10px 12px;
   border-radius: var(--tile-r);
   background: var(--lg-fill-strong);
-  box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-lip-up);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
   display: flex; flex-direction: column; justify-content: space-between;
   transition: background-color 90ms steps(2);
 }
-.desk:hover { background: var(--lg-fill-strong); box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-lip-up), inset 0 0 0 100px var(--lg-hover); }
-.desk.is-cur { box-shadow: inset 0 0 0 2px var(--lg-acc), var(--lg-lip-up); }
+.desk:hover { background: var(--lg-fill-strong); box-shadow: inset 0 0 0 1px var(--lg-edge-out), inset 0 0 0 100px var(--lg-sunk); }
+/* the desktop you are on: the accent tick under its card, never a coloured ring */
+.desk.is-cur::after { content: ''; position: absolute; left: 50%; bottom: 3px; width: 20px; height: 3px; margin-left: -10px; border-radius: 2px; background: var(--lg-acc); }
 .desk.is-focus { outline: 2px solid var(--lg-ink-2); outline-offset: 2px; }
 .desk.is-drop { background: var(--lg-acc-soft); box-shadow: inset 0 0 0 2px var(--lg-acc); }
 .desk.is-ro { opacity: .92; }
 /* the miniature: one bar per window on that desktop (up to 8), a glance at how busy it is */
 .mini { display: flex; gap: 3px; flex-wrap: wrap; height: 30px; align-content: flex-start; overflow: hidden; }
 .mini i { display: block; width: 22px; height: 13px; border-radius: 3px; background: var(--lg-tile); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
-.desk.is-cur .mini i { background: var(--lg-acc-soft); }
 .desk-name { font-size: 12.5px; font-weight: 600; color: var(--lg-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .desk-meta { font-size: 11px; color: var(--lg-ink-3); white-space: nowrap; }
 .desk-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
@@ -90,7 +98,9 @@ body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale 
 .desk-add.is-focus { outline: 2px solid var(--lg-ink-2); outline-offset: 2px; }
 .desk-add.is-drop { background: var(--lg-acc-soft); box-shadow: inset 0 0 0 2px var(--lg-acc); }
 .desk-add svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.6; fill: none; stroke-linecap: round; }
-.strip-why { font-size: 11.5px; color: var(--lg-warn); max-width: 900px; text-align: center; padding: 0 24px; }
+.strip-why { font-size: 12px; color: var(--lg-ink-3); max-width: 900px; padding: 0 24px; display: flex; align-items: flex-start; gap: 6px; }
+.strip-why.warn { color: var(--lg-warn); }
+.warn-ico { flex: 0 0 12px; margin-top: 2px; }
 .strip-why:empty { display: none; }
 
 /* ---------------------------------------------------------------- type to filter */
@@ -105,7 +115,7 @@ body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale 
   padding: 0 14px;
   border-radius: var(--lg-r-pill);
   background: var(--lg-fill-strong);
-  box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-lip-up);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
 }
 .glass-ico { width: 14px; height: 14px; flex: none; stroke: var(--lg-ink-3); stroke-width: 1.5; fill: none; stroke-linecap: round; }
 .q { color: var(--lg-ink); font-size: 13px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
@@ -124,13 +134,13 @@ body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale 
   padding: var(--inset) var(--inset) 0;
   border-radius: var(--tile-r);
   background: var(--lg-fill);
-  box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-lip-up);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
   pointer-events: auto;
   transition: background-color 90ms steps(2);
 }
 .tile:hover { background: var(--lg-fill-strong); }
 /* the selection ring is an INSET shadow, not a border: a border would move the .pv by 2px */
-.tile.is-sel { background: var(--lg-fill-strong); box-shadow: inset 0 0 0 2px var(--lg-acc), var(--lg-lip-up); }
+.tile.is-sel { background: var(--lg-fill-strong); box-shadow: inset 0 0 0 2px var(--lg-acc); }
 .tile.is-dragging { opacity: .55; }
 .pv {
   position: relative;
@@ -146,10 +156,11 @@ body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale 
 .pv .big.letter { display: grid; place-items: center; border-radius: 12px; background: var(--lg-tile); color: var(--lg-ink-2); font-size: 22px; font-weight: 600; opacity: .7; }
 .pv-why {
   position: absolute; left: 8px; right: 8px; bottom: 8px;
-  font-size: 11.5px; color: var(--lg-ink-2); text-align: center;
-  padding: 4px 8px; border-radius: var(--lg-r-ctl);
+  font-size: 11.5px; color: var(--lg-ink-3);
+  padding: 4px 8px;
+  display: flex; justify-content: center; align-items: flex-start; gap: 6px;
 }
-.pv-why:not(:empty) { background: var(--lg-fill-strong); }
+.pv-why.warn { color: var(--lg-warn); }
 .cap {
   height: var(--cap-h);
   display: flex; align-items: center; gap: 8px;
@@ -165,7 +176,8 @@ body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale 
   flex: none; font-size: 10.5px; padding: 1px 6px; border-radius: var(--lg-r-pill);
   background: var(--lg-tile); color: var(--lg-ink-2);
 }
-.chip.warn { background: var(--lg-warn); color: var(--lg-acc-on); }
+.chip.warn { display: flex; align-items: center; gap: 5px; padding: 0; background: transparent; color: var(--lg-warn); font-size: 11.5px; }
+.chip.warn .warn-ico { margin-top: 0; }
 .x { right: 4px; top: 6px; }
 .tile:hover .x, .tile.is-sel .x { opacity: 1; }
 
@@ -177,16 +189,20 @@ body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale 
 .empty:empty { display: none; }
 .foot {
   position: absolute; left: 0; right: 0; bottom: 10px;
-  text-align: center; font-size: 11.5px; color: var(--lg-ink-3);
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  font-size: 12px; color: var(--lg-ink-3);
 }
+.foot > div { display: flex; align-items: flex-start; gap: 6px; max-width: 900px; padding: 0 24px; }
+.foot > .warn { color: var(--lg-warn); }
 .foot:empty { display: none; }
 .toast {
   position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%);
   max-width: 720px; padding: 10px 16px; border-radius: var(--lg-r);
   background: var(--lg-fill-strong); color: var(--lg-ink);
-  box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
   font-size: 12.5px; display: none;
 }
+.toast .warn-ico { display: inline-block; vertical-align: -1px; margin: 0 6px 0 0; color: var(--lg-warn); }
 .toast.on { display: block; }
 .toast b { color: var(--lg-warn); font-weight: 600; }
 .chip-drag {

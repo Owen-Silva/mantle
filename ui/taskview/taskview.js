@@ -31,6 +31,16 @@
   };
 
   var X_SVG = '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg>';
+  // the warn glyph: a reason something is off is this + its words in --lg-warn, never a filled pill
+  var WARN_SVG = '<svg class="warn-ico" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M6 1.6 11 10.4H1z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M6 5v2.6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><circle cx="6" cy="9" r=".6" fill="currentColor"/></svg>';
+  /** Put words in el: with the warn glyph in front when warn (text only ever goes in as text). */
+  function says(el, text, warn) {
+    el.textContent = '';
+    el.classList.toggle('warn', !!(warn && text));
+    if (!text) return;
+    if (warn) el.insertAdjacentHTML('beforeend', WARN_SVG);
+    var sp = document.createElement('span'); sp.textContent = text; el.appendChild(sp);
+  }
   var PLUS_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11"/></svg>';
 
   function call(name, args) {
@@ -73,9 +83,9 @@
     var d = S.desktops;
     var list = deskList();
     var rw = canWrite();
-    stripWhy.textContent = !d ? 'Reading the desktops...' :
+    says(stripWhy, !d ? 'Reading the desktops...' :
       !d.ok ? 'Desktops are unavailable: ' + (d.reason || 'no reason was given') :
-      !rw ? 'Switching, adding, removing and renaming desktops is off: ' + (d.writeReason || d.reason || 'no reason was given') : '';
+      !rw ? 'Switching, adding, removing and renaming desktops is off: ' + (d.writeReason || d.reason || 'no reason was given') : '', !!d);
     for (var i = 0; i < list.length; i++) {
       var dk = list[i];
       var el = document.createElement('div');
@@ -146,6 +156,7 @@
   function renderGrid() {
     var W = window.innerWidth, H = window.innerHeight;
     var lay = Lay.layout(S.shown.length, W, H);
+    var shThumb = sharedThumbWhy();
     S.lay = lay;
     S.first = Lay.firstRowFor(lay, S.sel, S.first);
     var pos = Lay.place(lay, S.first);
@@ -169,7 +180,7 @@
       var why = document.createElement('div');
       why.className = 'pv-why';
       var th = S.thumbs[it.hwnd];
-      why.textContent = th && !th.ok ? 'No preview: ' + th.reason : (it.minimized || (th && th.minimized)) ? 'Minimized' : '';
+      says(why, pvWords(it, th, shThumb), !!(th && !th.ok));
       pv.appendChild(why);
       t.appendChild(pv);
       var cap = document.createElement('div');
@@ -178,7 +189,7 @@
       var ttl = document.createElement('span');
       ttl.className = 'ttl'; ttl.textContent = it.title; ttl.title = it.title;
       cap.appendChild(ttl);
-      if (it.hung) { var c = document.createElement('span'); c.className = 'chip warn'; c.textContent = 'Not responding'; cap.appendChild(c); }
+      if (it.hung) { var c = document.createElement('span'); c.className = 'chip'; says(c, 'Not responding', true); cap.appendChild(c); }
       var x = document.createElement('button');
       x.className = 'x'; x.innerHTML = X_SVG; x.title = 'Close ' + it.title; x.dataset.act = 'close';
       cap.appendChild(x);
@@ -196,13 +207,33 @@
     renderFoot();
   }
 
+  /** A preview reason 3+ windows share is said ONCE, in the foot; their boxes say only 'No preview'. */
+  function sharedThumbWhy() {
+    var n = {}, best = null, most = 2;
+    for (var i = 0; i < S.shown.length; i++) {
+      var th = S.thumbs[S.shown[i].hwnd];
+      if (!th || th.ok) continue;
+      var r = String(th.reason || ''); n[r] = (n[r] || 0) + 1;
+      if (n[r] > most) { most = n[r]; best = r; }
+    }
+    return best === null ? null : { why: best, count: most };
+  }
+  function pvWords(it, th, shared) {
+    if (th && !th.ok) return shared && String(th.reason || '') === shared.why ? 'No preview' : 'No preview: ' + th.reason;
+    return (it && it.minimized) || (th && th.minimized) ? 'Minimized' : '';
+  }
+
   function renderFoot() {
+    // one line per reason (warn glyph + words), the scroll position last in quiet ink
     var parts = [];
     if (S.glass && !S.glass.ok) parts.push('No blur: ' + (S.glass.reason || 'the blur-behind could not be applied'));
     if (S.thumbsWhy) parts.push('No live previews: ' + S.thumbsWhy);
+    var sh = sharedThumbWhy();
+    if (sh) parts.push('No preview for ' + sh.count + ' windows: ' + (sh.why || 'no reason was given'));
     if (S.desktops && S.desktops.ok && S.desktops.windowsReason) parts.push(S.desktops.windowsReason);
-    if (foot.dataset.scroll) parts.push(foot.dataset.scroll);
-    foot.textContent = parts.join('  ·  ');
+    foot.textContent = '';
+    for (var i = 0; i < parts.length; i++) { var l = document.createElement('div'); says(l, parts[i], true); foot.appendChild(l); }
+    if (foot.dataset.scroll) { var sc = document.createElement('div'); says(sc, foot.dataset.scroll, false); foot.appendChild(sc); }
   }
 
   /** Measure the visible preview boxes and hand them to main (it draws DWM's pictures there). */
@@ -235,7 +266,7 @@
   // ------------------------------------------------------------------ actions
 
   function showToast(text) {
-    toast.innerHTML = '';
+    toast.innerHTML = WARN_SVG;
     var b = document.createElement('b'); b.textContent = 'Could not do that. ';
     toast.appendChild(b);
     toast.appendChild(document.createTextNode(text));
@@ -496,11 +527,12 @@
     });
     // Only the words under a picture change; the boxes do not move, so no second report.
     if (changed) {
+      var shThumb = sharedThumbWhy();
       var tiles = grid.querySelectorAll('.tile');
       for (var i = 0; i < tiles.length; i++) {
         var th = S.thumbs[tiles[i].dataset.hwnd];
         var it = S.shown[Number(tiles[i].dataset.i)];
-        tiles[i].querySelector('.pv-why').textContent = th && !th.ok ? 'No preview: ' + th.reason : ((it && it.minimized) || (th && th.minimized)) ? 'Minimized' : '';
+        says(tiles[i].querySelector('.pv-why'), pvWords(it, th, shThumb), !!(th && !th.ok));
       }
     }
     renderFoot();

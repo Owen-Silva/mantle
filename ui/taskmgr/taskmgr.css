@@ -5,7 +5,17 @@
  * panes are the popover glass (--lg-fill-strong, the white lip, one .10 hairline) for readable rows.
  * No CSS backdrop-filter (a large one measured 27% of a core). If the light frame could not be set
  * (data-frame=dark: Windows' dark backdrop under a light page reads grey) the ground comes back. Plain hairlines, dark
- * ink, NO glow: the accent marks the active tab, focus and the one primary button, nothing else. */
+ * ink, NO glow: the accent marks the active tab, focus and the one primary button, nothing else.
+ *
+ * THE CALM PASS (lane looktask, 2026-09-29; the Settings recipe, commit 377e901). The --lg-fill wash
+ * alone read mid-grey over a dark window behind, with white panes floating on it. Now:
+ *  - ONE light window: html carries the card fill and .app the chip recess over the card fill again
+ *    (Settings' html + body pair; body itself stays clear), still DWM's acrylic, no backdrop-filter.
+ *  - Cards are one plain hairline, 8 px radius, no lip; row dividers are the lighter --lg-sunk line.
+ *  - The chosen tab is a quiet ink wash with the accent tick under it, never a tinted block.
+ *  - Warnings are words: a small warn glyph and one line in --lg-warn, no filled pills. Rows that
+ *    share one reason say it ONCE under their section header (each keeps its lock or tag).
+ *  - Thin hover-only scrollbars on the lists. */
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
 body {
@@ -18,22 +28,27 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--lg-acc); ou
 .grow { flex: 1 1 auto; }
 [hidden] { display: none !important; }
 
-.app { display: flex; flex-direction: column; height: 100%; background: var(--lg-fill); }
-:root[data-frame="dark"] .app { background: var(--lg-ground); }
+html { background: var(--lg-fill-strong); }
+.app { display: flex; flex-direction: column; height: 100%; background: linear-gradient(var(--lg-sunk), var(--lg-sunk)) var(--lg-fill-strong); }
+:root[data-frame="dark"], :root[data-frame="dark"] .app { background: var(--lg-ground); }
 
 /* ---- header: the drag strip, tabs, window buttons ---- */
 .head {
   flex: 0 0 auto; height: 40px; display: flex; align-items: center; gap: 6px; padding: 0 0 0 14px;
-  -webkit-app-region: drag; border-bottom: 1px solid var(--lg-edge-out);
+  -webkit-app-region: drag;
 }
 .head button, .head .tabs { -webkit-app-region: no-drag; }
 .brand { font-weight: 600; margin-right: 10px; }
 .tabs { display: flex; gap: 2px; }
 .tab {
-  height: 26px; padding: 0 11px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; color: var(--lg-ink-2); white-space: nowrap;
+  position: relative;
+  height: 30px; padding: 0 12px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; color: var(--lg-ink-2); white-space: nowrap;
 }
-.tab:hover { background: var(--lg-hover); }
-.tab.on { background: var(--lg-acc-soft); color: var(--lg-acc); font-weight: 600; }
+.tab:hover { background: var(--lg-sunk); color: var(--lg-ink); }
+.tab:active { background: var(--lg-press); }
+/* the open view: Windows 11's shape, a quiet ink wash and the accent tick, never a coloured block */
+.tab.on { background: var(--lg-hover); color: var(--lg-ink); font-weight: 600; }
+.tab.on::after { content: ''; position: absolute; left: 50%; bottom: 2px; width: 16px; height: 3px; margin-left: -8px; border-radius: 2px; background: var(--lg-acc); }
 .wc { display: flex; flex: 0 0 auto; height: 100%; margin-left: 4px; }
 #wintm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tabs { flex: 0 0 auto; }
@@ -41,7 +56,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--lg-acc); ou
 .wc button:hover { background: var(--lg-hover); }
 .wc .x:hover { background: var(--lg-warn); color: var(--lg-acc-on); }
 
-.btn { height: 28px; padding: 0 12px; border-radius: var(--lg-r-ctl); border: 1px solid var(--lg-edge-out); background: var(--lg-fill-strong); box-shadow: var(--lg-lip-up); white-space: nowrap; }
+.btn { height: 28px; padding: 0 12px; border-radius: var(--lg-r-ctl); border: 1px solid var(--lg-edge-out); background: var(--lg-fill-strong); white-space: nowrap; }
 .btn:hover { background: var(--lg-hover); }
 .btn:active { background: var(--lg-press); }
 .btn.quiet { border-color: transparent; background: transparent; box-shadow: none; color: var(--lg-ink-2); }
@@ -51,28 +66,40 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--lg-acc); ou
 .btn:disabled { opacity: .5; }
 
 /* ---- the RAM bar ---- */
-.ram { flex: 0 0 auto; margin: 10px 12px 6px; padding: 9px 12px 10px; background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); box-shadow: var(--lg-lip-up); }
-.ramtop { display: flex; align-items: baseline; gap: 10px; margin-bottom: 7px; }
-.lbl { font-weight: 600; }
+.ram { flex: 0 0 auto; margin: 6px 14px 10px; padding: 10px 14px 12px; background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); }
+.ramtop { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.lbl { font-weight: 600; font-size: 14px; }
 .ramtext { color: var(--lg-ink-2); font-variant-numeric: tabular-nums; }
 .chip { padding: 2px 8px; border-radius: var(--lg-r-pill); background: var(--lg-sunk); color: var(--lg-ink-2); font-variant-numeric: tabular-nums; }
 .bar { height: 8px; border-radius: 4px; background: var(--lg-sunk); overflow: hidden; }
 .bar i { display: block; height: 100%; width: 100%; background: var(--lg-ink-2); transform: scaleX(0); transform-origin: left center; transition: transform 400ms var(--lg-ease); }
 .bar.hi i { background: var(--lg-warn); }
 
-.note, .recent { flex: 0 0 auto; margin: 0 12px 6px; padding: 7px 10px; border-radius: var(--lg-r-ctl); font-size: 12px; }
-.note { background: var(--lg-warn-soft); color: var(--lg-warn); }
-.recent { background: var(--lg-sunk); color: var(--lg-ink-2); display: flex; flex-direction: column; gap: 2px; }
-.recent .bad { color: var(--lg-warn); }
+/* what the window itself needs said, and the last few outcomes: lines of words on the window, no box.
+   A warning is the warn glyph + its words in --lg-warn; the test-Mantle line and outcomes are quiet ink. */
+.note, .recent { flex: 0 0 auto; margin: -2px 16px 10px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.4; }
+.note .nl, .recent .bad, .lastfree .bad, .st.bad > span:first-child, .pwhy.bad, .info { display: flex; align-items: flex-start; gap: 6px; color: var(--lg-warn); }
+.note .nl svg, .recent .bad svg, .lastfree .bad svg, .st.bad svg, .pwhy.bad svg, .info svg { flex: 0 0 12px; margin-top: 2px; }
+.note .nl.quiet { color: var(--lg-ink-3); }
+.recent { color: var(--lg-ink-2); }
 
 /* ---- the list ---- */
-.view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin: 0 12px 12px; background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); box-shadow: var(--lg-lip-up); }
-.cols { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 84px 58px 210px; gap: 8px; padding: 7px 12px 6px 40px; color: var(--lg-ink-3); font-size: 11.5px; border-bottom: 1px solid var(--lg-edge-out); }
+.view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin: 0 14px 14px; background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); }
+.cols { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 84px 58px 210px; gap: 8px; padding: 8px 12px 7px 40px; color: var(--lg-ink-3); font-size: 11.5px; border-bottom: 1px solid var(--lg-sunk); }
 .cols .c-mem, .cols .c-cpu { text-align: right; }
 .list { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: 2px 0 6px; }
-.sect { display: flex; align-items: center; gap: 6px; padding: 9px 12px 3px 14px; color: var(--lg-ink-3); font-size: 11.5px; font-weight: 600; }
-.sect button { border: 0; background: transparent; color: inherit; padding: 0 4px; border-radius: 4px; }
-.sect button:hover { background: var(--lg-hover); }
+/* a long list scrolls with a thin thumb that shows only while the pointer is over it (no grey gutter) */
+.list::-webkit-scrollbar { width: 6px; }
+.list::-webkit-scrollbar-button { display: none; height: 0; }
+.list::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+.list:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); }
+.sect { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; padding: 14px 12px 5px 10px; color: var(--lg-ink); font-size: 14px; font-weight: 600; }
+.sect button { width: 20px; height: 20px; border: 0; background: transparent; color: var(--lg-ink-3); padding: 0; border-radius: 4px; font-size: 11px; }
+.sect button:hover { background: var(--lg-hover); color: var(--lg-ink); }
+/* the one reason most rows of a section share, said once under its header (taskmgr.js section()) */
+.sect .sect-why { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; padding: 2px 0 1px 26px; color: var(--lg-ink-3); font-size: 11.5px; font-weight: 400; }
+.sect-why svg, .nm .lk { flex: 0 0 auto; color: var(--lg-ink-3); }
+.nm .lk { align-self: center; display: flex; align-items: center; gap: 4px; font-size: 11.5px; white-space: nowrap; }
 
 /* off-screen rows skip style, layout and paint (a long list was ~40 ms of layout a tick) */
 .row { border-top: 1px solid var(--lg-sunk); content-visibility: auto; contain-intrinsic-size: auto 35px; }
@@ -98,34 +125,36 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--lg-acc); ou
 .acts .danger:hover { color: var(--lg-warn); }
 .why { grid-column: 3 / -1; color: var(--lg-ink-3); font-size: 11.5px; padding: 0 0 7px; margin-top: -3px; display: flex; gap: 6px; align-items: center; }
 .why svg { flex: 0 0 auto; }
-.st { margin: 0 12px 7px 56px; padding: 5px 9px; border-radius: var(--lg-r-ctl); font-size: 12px; background: var(--lg-sunk); color: var(--lg-ink-2); display: flex; align-items: center; gap: 8px; }
-.st.bad { background: var(--lg-warn-soft); color: var(--lg-warn); }
-.st.good { background: var(--lg-acc-soft); color: var(--lg-ink); }
+/* a row's outcome: one line of words under it (a warn glyph when it went wrong), no pill. Only the
+   Force close question is a box: a hairline card, since it waits for an answer. */
+.st { margin: -2px 12px 7px 64px; min-height: 24px; font-size: 12px; line-height: 1.4; color: var(--lg-ink-2); display: flex; align-items: center; gap: 8px; }
+.st.ask { margin-top: 0; padding: 6px 8px 6px 10px; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); background: var(--lg-fill-strong); }
 .st .grow { flex: 1 1 auto; }
 .st button { white-space: nowrap; height: 24px; padding: 0 10px; border-radius: var(--lg-r-ctl); border: 1px solid var(--lg-edge-out); background: var(--lg-fill-strong); }
 .st button.go { background: var(--lg-warn); border-color: var(--lg-warn); color: var(--lg-acc-on); font-weight: 600; }
-.members { margin: 0 12px 6px 56px; border-left: 1px solid var(--lg-edge-out); }
+.members { margin: 0 12px 6px 56px; border-left: 1px solid var(--lg-tile); }
 .mrow { display: grid; grid-template-columns: 1fr 84px 58px 210px; gap: 8px; padding: 3px 0 3px 12px; color: var(--lg-ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .mrow span:nth-child(2), .mrow span:nth-child(3) { text-align: right; }
 .row.mantle .rmain { background: var(--lg-sunk); }
 
 /* ---- get ready to game ---- */
-.gamehead { flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 12px 14px 10px; border-bottom: 1px solid var(--lg-edge-out); }
+.gamehead { flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 12px 14px 10px; border-bottom: 1px solid var(--lg-sunk); }
 .gtext { flex: 1 1 auto; min-width: 0; }
-.gt { font-weight: 600; font-size: 13.5px; }
+.gt { font-weight: 600; font-size: 14px; }
 .gs { color: var(--lg-ink-2); margin-top: 2px; }
 .gnum { display: flex; flex-direction: column; align-items: flex-end; }
 .gnum span:first-child { white-space: nowrap; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .gsl { color: var(--lg-ink-3); font-size: 11px; }
-.opt { flex: 0 0 auto; display: flex; gap: 9px; align-items: flex-start; padding: 9px 14px; border-bottom: 1px solid var(--lg-edge-out); color: var(--lg-ink-2); }
+.opt { flex: 0 0 auto; display: flex; gap: 9px; align-items: flex-start; padding: 9px 14px; border-bottom: 1px solid var(--lg-sunk); color: var(--lg-ink-2); }
 .opt input { margin: 2px 0 0; accent-color: var(--lg-acc); }
 .opt b { color: var(--lg-ink); font-weight: 600; }
-.lastfree { flex: 0 0 auto; margin: 8px 14px 0; padding: 7px 10px; border-radius: var(--lg-r-ctl); background: var(--lg-sunk); color: var(--lg-ink-2); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+/* the last Free up RAM / game start: a few lines of words under the option, no box */
+.lastfree { flex: 0 0 auto; padding: 9px 14px; border-bottom: 1px solid var(--lg-sunk); color: var(--lg-ink-2); font-size: 12px; line-height: 1.4; display: flex; flex-direction: column; gap: 3px; }
 .lastfree .h { color: var(--lg-ink); font-weight: 600; }
-.lastfree .bad { color: var(--lg-warn); }
 #v-game .cols { grid-template-columns: 22px 1fr 84px 150px; padding-left: 14px; }
 .prow { display: grid; grid-template-columns: 22px 20px 1fr 84px 150px; gap: 8px; align-items: center; min-height: 34px; padding: 0 12px 0 14px; border-top: 1px solid var(--lg-sunk); }
 .prow:hover { background: var(--lg-hover); }
+#prep > :first-child > .prow { border-top: 0; }   /* the column header already draws that line */
 .prow input { margin: 0; accent-color: var(--lg-acc); }
 .prow .lock { color: var(--lg-ink-3); display: grid; place-items: center; }
 .prow .reo { display: flex; align-items: center; gap: 6px; color: var(--lg-ink-2); font-size: 12px; }
@@ -135,7 +164,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--lg-acc); ou
 
 .startup { padding: 22px 20px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .startup .btn { margin-top: 8px; }
-.info { color: var(--lg-warn); background: var(--lg-warn-soft); padding: 6px 9px; border-radius: var(--lg-r-ctl); }
+.info { font-size: 12px; }
 .empty { padding: 18px 14px; color: var(--lg-ink-3); }
 
 @media (max-width: 640px) {

@@ -21,9 +21,11 @@
  *
  * The rest of the rules, so a later edit does not quietly break them:
  *  - Colour ONLY through var(--lg-…). No hex, no rgb(), no rgba(), no hsl() here.
- *  - The fill is --lg-fill (.45) while a backdrop is showing and --lg-fill-fb (.62) when there is
- *    none (body.no-backdrop) — an honest fallback, not a guess: with nothing blurred underneath
- *    the tint has to carry the pane alone.
+ *  - The fill is --lg-fill-strong twice under --lg-sunk while a backdrop is showing (~234 over a
+ *    dark desktop, the Settings window's tint) and one layer thicker when there is none
+ *    (body.no-backdrop): with nothing blurred underneath the tint has to carry the pane alone.
+ *  - Warnings are words, not fills: a small warn glyph (a CSS mask, below) and the words in
+ *    --lg-warn; an armed power row is the selection wash with a warn tick, not a tan block.
  *  - NO text-shadow. On light glass the ink carries itself.
  *  - Nothing animates at rest. There is exactly ONE animation in this file: the ENTER, run when
  *    the window becomes visible (main hides it instantly, so there is no exit). No keyframes, no
@@ -73,9 +75,8 @@ html, body {
   border-radius: var(--panel-r);
   overflow: hidden;                 /* clips the backdrop image and the rows to the radius */
 
-  /* the fill, handed to the tint layer below. .45 over a real blur; the thicker fallback when
-     there is nothing blurred under it. */
-  --pane-fill: var(--lg-fill);
+  /* the fill, handed to the tint layer below: the popovers' surface, laid twice (see ::after) */
+  --pane-fill: var(--lg-fill-strong);
 
   /* .panel itself paints NOTHING but the drop shadow: a background-color here would be buried
      under the backdrop <img>. The shadow is Northwind's own stack, the way up: this panel floats
@@ -94,8 +95,7 @@ html, body {
 }
 body.up .panel { opacity: 1; transform: translateY(0) scale(1); }
 
-/* No backdrop has arrived yet, or it was just cleared: the tint goes up to the fallback fill. */
-body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
+/* No backdrop has arrived yet, or it was just cleared: the tint goes up a layer (::after below). */
 
 /* THE TINT, and the only place the two hairlines live. It sits inside the same radius, so the 1px
    border is drawn once, on top of the blurred backdrop, with background-clip:padding-box keeping
@@ -109,10 +109,22 @@ body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
   pointer-events: none;
   border: 1px solid var(--lg-edge-out);
   border-radius: inherit;
+  /* THE CALM PASS (lane lookpanels, 2026-09-29, the Settings recipe of 377e901): ONE light surface
+     over anything. .45 alone let a dark desktop through as mid-grey (133 measured on the mock over
+     a dark terminal, the 139 Owen called out on Settings). So the pane is the popover fill twice
+     and the glass fill once (~.96 white; Settings needs one layer less because DWM's acrylic
+     brings its own light tint, this photo does not) under the chip recess (--lg-sunk): measured
+     on the mock ~234 over a dark terminal and ~243 over a white window, Settings' own numbers, the
+     blur still showing the colour behind as a breath. */
   background-color: var(--pane-fill);
+  background-image: linear-gradient(var(--lg-sunk), var(--lg-sunk)), linear-gradient(var(--pane-fill), var(--pane-fill)), linear-gradient(var(--lg-fill), var(--lg-fill));
   background-clip: padding-box;
   box-shadow: var(--lg-lip-up);
   transition: background-color var(--in) var(--lg-ease);
+}
+/* no photo under the glass: the desktop would show through SHARP, so the tint is thicker (~.98) */
+body.no-backdrop .panel::after {
+  background-image: linear-gradient(var(--lg-sunk), var(--lg-sunk)), linear-gradient(var(--pane-fill), var(--pane-fill)), linear-gradient(var(--pane-fill), var(--pane-fill));
 }
 
 /* ---- the backdrop ------------------------------------------------------
@@ -197,15 +209,16 @@ body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
   overscroll-behavior: contain;
   padding: 6px;
   outline: 0;
-  /* ink at low alpha, never white: a white thumb on a white-tinted pane is invisible */
-  scrollbar-width: thin;
-  scrollbar-color: var(--lg-press) transparent;
 }
-.results::-webkit-scrollbar { width: 8px; }
-.results::-webkit-scrollbar-thumb {
-  background: var(--lg-tile);
-  border-radius: 4px;
-}
+/* a thin thumb that shows only while the pointer is over the list (Settings' sidebar, 377e901):
+   never Chromium's arrowed grey gutter. Ink at low alpha, never white: a white thumb on a
+   white-tinted pane is invisible. (No scrollbar-width/-color here: setting either makes Chromium
+   ignore every ::-webkit-scrollbar rule below.) */
+.results::-webkit-scrollbar { width: 6px; }
+.results::-webkit-scrollbar-button { display: none; height: 0; }
+.results::-webkit-scrollbar-track { background: transparent; }
+.results::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+.results:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); }
 .results::-webkit-scrollbar-thumb:hover { background: var(--lg-press); }
 
 /* the rows are the bar's cells: ink washes at low alpha for hover and press, and the same wash
@@ -233,19 +246,22 @@ body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
    whether a press reads on the row the keyboard is already on. It has to. */
 .row:active { background: var(--lg-press); }
 
-/* the 2px accent bar on the selected row */
+/* the accent tick on the selected row: Windows 11's (and Settings' sidebar) 3px, short and round,
+   on the grey wash; never a coloured block */
 .row.is-sel .row-main::before {
   content: "";
   position: absolute;
-  left: 0; top: 7px; bottom: 7px;
-  width: 2px;
-  border-radius: 1px;
+  left: 0; top: 13px; bottom: 13px;
+  width: 3px;
+  border-radius: 2px;
   background: var(--lg-acc);
 }
 
 /* the icon cell: a real 32px bitmap when the sidecar gave us one, otherwise a letter tile (apps)
-   or a drawn glyph (command / setting / url). --lg-sunk rather than the bar's --lg-tile because
-   here the tile can land ON a selected row, and two equal washes would merge into one square. */
+   or a drawn glyph (command / setting / url). Only the LETTER keeps a tile (Settings' rows): a
+   bitmap or a glyph stands plain on the row. --lg-sunk rather than the bar's --lg-tile because
+   the letter tile can land ON a selected row, and two equal washes would merge into one square. */
+.ico:not(.is-letter) { background: transparent; }
 .ico {
   flex: none;
   width: 28px; height: 28px;
@@ -294,12 +310,31 @@ body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
 }
 .why.is-ok { color: var(--lg-ink-2); }
 
+/* EVERY warning line (a failed launch, a source's reason in the footer, the Files group's reason,
+   the sidecar notice, a dead index): a small warn glyph and the words in --lg-warn, no fill. The
+   glyph is Settings' triangle (settings.js ICON.warn) drawn as a mask in the words' own colour, so
+   it needs no markup and no script; the words wrap under themselves, never under the glyph. The
+   mask's 'black' is not a colour on screen: a mask reads only its alpha. */
+.why:not(.is-ok), .src-error, .grp-status.is-error, .notice, .empty.is-bad {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.why:not(.is-ok)::before, .src-error::before, .grp-status.is-error::before, .notice::before, .empty.is-bad::before {
+  content: "";
+  flex: 0 0 12px;
+  width: 12px; height: 12px;
+  margin-top: .15em;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
+}
+
 /* AN ARMED POWER ROW: Restart, Shut down or Sign out after the first Enter. The row itself says
    "Press Enter again to …" (launcher.js swaps the text), and it wears the warn tokens so it reads
-   as a question, not as the selection: the warn wash under it, the warn ink on the words, the
-   selection bar and the glyph in warn too. AFTER .is-sel on purpose, so it wins on the one row
-   that is both. No glow, no pulse - a hairline running out is the only motion. */
-.row.is-armed { background: var(--lg-warn-soft); }
+   as a question, not as the selection: the warn ink on the words, the tick and the glyph in warn
+   too, on the selection's own grey wash (no tan block: lane lookpanels). AFTER .is-sel on
+   purpose, so it wins on the one row that is both. No glow, no pulse - a hairline running out is
+   the only motion. */
 .row.is-armed .name { color: var(--lg-warn); font-weight: 600; }
 .row.is-armed .sub { color: var(--lg-warn); }
 .row.is-armed .ico { color: var(--lg-warn); }
@@ -323,15 +358,14 @@ body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
 
 /* ---- groups (Win+S, 2026-09-24) ------------------------------------------
    A header per kind of result, so "blue" reads as an app, a Settings page and some files rather
-   than one undifferentiated list. Quiet on purpose: small caps-ish label in --lg-ink-3, no rule,
-   no fill - the rows carry the weight, the header only says what they are. */
+   than one undifferentiated list. A section header as Settings sets one (377e901), scaled to a
+   pop-up: the name in semibold ink, sentence case, no rule, no fill - the rows carry the weight,
+   the header only says what they are. */
 .grp {
-  padding: 10px 12px 4px;
-  font-size: 11px;
+  padding: 10px 12px 3px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  color: var(--lg-ink-3);
+  color: var(--lg-ink);
   user-select: none;
 }
 .grp:first-child { padding-top: 4px; }

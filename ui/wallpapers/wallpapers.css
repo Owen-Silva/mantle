@@ -9,8 +9,8 @@
 
   THE MATERIAL, the bar's three layers:
       .ground (z0)   the wallpaper on the desktop right now, blurred 12px / saturated 150%
-      tint    (z1)   --lg-fill-fb over the whole window (.ground::after)
-      panes   (z2)   --lg-fill-strong: these panes carry LISTS, so they get the popovers' surface
+      tint    (z1)   one light surface over the whole window (.ground::after; lane lookpanels)
+      panes   (z2)   no fill of their own: the window is one piece, one hairline between the panes
   The window is ordinary and frameless, so there is nothing of the screen behind it to photograph;
   the picture under the glass is the wallpaper the window is about, which is the point of it.
 
@@ -60,11 +60,21 @@ button, select, input { font: inherit; color: inherit; }
   visibility: hidden;
 }
 .ground img.on { visibility: visible; }
+/* THE TINT (lane lookpanels, 2026-09-29, the Settings recipe of 377e901): ONE light surface
+   whatever the wallpaper is. --lg-fill-fb alone let a night wallpaper through as a grey-blue fog
+   under two floating white slabs. Now the popover fill twice and the glass fill once (~.96 white;
+   no DWM tint under a photo, so one layer more than Settings) under the chip recess --lg-sunk: ~234
+   over a dark wallpaper, ~243 over a pale one on the mock, Settings' own numbers, the wallpaper's
+   colour still coming through as a breath. The panes stand on it with no fill of their own. */
 .ground::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: var(--lg-fill-fb);
+  background:
+    linear-gradient(var(--lg-sunk), var(--lg-sunk)),
+    linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)),
+    linear-gradient(var(--lg-fill), var(--lg-fill)),
+    var(--lg-fill-strong);
 }
 
 .head, .notice, .body { position: relative; z-index: 2; }
@@ -88,7 +98,7 @@ button, select, input { font: inherit; color: inherit; }
 .head-title h1 {
   margin: 0;
   font-family: 'Segoe UI Variable Display', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
-  font-size: 17px;
+  font-size: 20px;              /* Settings' titles are 26 px in the page; this one sits in the title bar */
   font-weight: 600;
   color: var(--lg-ink);
 }
@@ -153,8 +163,8 @@ button, select, input { font: inherit; color: inherit; }
   color: var(--lg-ink);
   line-height: 1.5;
 }
-.notice.bad { border-color: var(--lg-warn-soft); background: var(--lg-fill-strong); }
-.notice.bad .notice-text b { color: var(--lg-warn); }
+/* a problem is a hairline card with the words in warn ink behind the warn glyph, never a tinted bar */
+.notice.bad .notice-text, .notice.bad .notice-text b { color: var(--lg-warn); }
 .notice[hidden] { display: none; }
 .notice-text { flex: 1; min-width: 0; }
 .notice-text ul { margin: 4px 0 0; padding-left: 18px; }
@@ -164,24 +174,22 @@ button, select, input { font: inherit; color: inherit; }
 
 /* ---- the two panes ------------------------------------------------------ */
 
+/* ONE window, not two slabs on a fog (lane lookpanels): the grid and the side pane stand on the
+   window's own tint with no fill, border, corner, shadow or gap of their own; one hairline divides
+   them, the way Settings' sidebar meets its page. */
 .body {
   flex: 1;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 14px;
-  padding: 14px;
 }
 
 .pane {
   position: relative;
   min-height: 0;
-  border: 1px solid var(--lg-edge-out);
-  border-radius: 16px;
-  background: var(--lg-fill-strong);
-  box-shadow: var(--lg-lip-up), var(--lg-shadow);
   overflow: hidden;
 }
+.pane + .pane { border-left: 1px solid var(--lg-edge-out); }
 
 .grid-pane { display: flex; flex-direction: column; }
 
@@ -196,8 +204,11 @@ button, select, input { font: inherit; color: inherit; }
   padding: 16px;
 }
 
-.grid::-webkit-scrollbar, .side::-webkit-scrollbar { width: 8px; }
-.grid::-webkit-scrollbar-thumb, .side::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 4px; }
+/* thin, and only while the pointer is over the list (Settings, 377e901): no arrowed grey gutter */
+.grid::-webkit-scrollbar, .side::-webkit-scrollbar { width: 6px; }
+.grid::-webkit-scrollbar-button, .side::-webkit-scrollbar-button { display: none; height: 0; }
+.grid::-webkit-scrollbar-thumb, .side::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+.grid:hover::-webkit-scrollbar-thumb, .side:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); }
 .grid::-webkit-scrollbar-thumb:hover, .side::-webkit-scrollbar-thumb:hover { background: var(--lg-press); }
 .grid::-webkit-scrollbar-track, .side::-webkit-scrollbar-track { background: transparent; }
 
@@ -215,8 +226,9 @@ button, select, input { font: inherit; color: inherit; }
   background: transparent;
   text-align: left;
 }
-.card:hover { background: var(--lg-hover); }
-.card.is-focus { background: var(--lg-tile); border-color: var(--lg-edge-out); }
+/* hover a whisper, the card the side pane shows a quiet grey wash: never a bordered block */
+.card:hover { background: var(--lg-sunk); }
+.card.is-focus { background: var(--lg-hover); }
 
 .thumb {
   position: relative;
@@ -284,13 +296,26 @@ button, select, input { font: inherit; color: inherit; }
 .card-state { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .card-bad {
   display: grid;
-  grid-template-columns: 7px 1fr;
-  gap: 7px;
+  grid-template-columns: 12px 1fr;
+  gap: 6px;
   font-size: 11.5px;
   line-height: 1.45;
   color: var(--lg-warn);
 }
-.pip { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--lg-warn); }
+/* EVERY warning line: Settings' warn triangle (settings.js ICON.warn) drawn as a mask in the words'
+   own warn ink, then the words, which wrap under themselves. The card's .pip span IS the glyph;
+   the other lines get it as ::before (no markup, no script). The mask's 'black' is not a colour
+   on screen: a mask reads only its alpha. */
+.pip, .notice.bad::before, .d-state.bad::before, .play-line.bad::before, .prop-err:not(:empty)::before, .report .r-bad::before {
+  content: '';
+  flex: 0 0 12px;
+  width: 12px; height: 12px;
+  margin-top: .2em;
+  background-color: var(--lg-warn);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
+}
+.d-state.bad, .play-line.bad, .prop-err:not(:empty), .report .r-bad { display: flex; align-items: flex-start; gap: 6px; }
+.notice.bad::before { margin-top: .3em; }
 
 /* ---- the side pane ------------------------------------------------------- */
 
@@ -327,9 +352,9 @@ button, select, input { font: inherit; color: inherit; }
 .confirm {
   margin: 8px 0 0;
   padding: 10px 12px;
-  border: 1px solid var(--lg-warn-soft);
+  border: 1px solid var(--lg-edge-out);
   border-radius: var(--lg-r);
-  background: var(--lg-sunk);
+  background: var(--lg-fill-strong);
   line-height: 1.5;
 }
 .confirm .d-actions { margin-bottom: 0; }
@@ -343,13 +368,12 @@ button, select, input { font: inherit; color: inherit; }
   justify-content: space-between;
   margin: 0 0 8px;
 }
+/* section headers as Settings sets them (377e901): 14 px semibold ink, sentence case */
 .props-head h2, .sect summary {
   margin: 0;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: .09em;
-  text-transform: uppercase;
-  color: var(--lg-ink-3);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--lg-ink);
 }
 .link {
   border: 0;
@@ -456,4 +480,5 @@ button, select, input { font: inherit; color: inherit; }
 /* a narrow window: the side pane goes under the grid rather than squeezing it */
 @media (max-width: 880px) {
   .body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .pane + .pane { border-left: 0; border-top: 1px solid var(--lg-edge-out); }
 }

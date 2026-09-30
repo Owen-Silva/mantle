@@ -3,7 +3,8 @@
  * the top bar's dropdowns (ui/topbar/topbar.css .dd): popover glass, 1px lip, 10px radius, the
  * downward shadow, square to the bar. Light frost, dark ink, plain hairlines, NO glow.
  * The window is the pad plus room for its shadow (notes.js WIN_W/WIN_H: 16 px each side, 24 below).
- * The writing surface is a second layer of the same popover fill: .72 over .72 reads as paper over
+ * The pad is one light surface (the popover fill three times, lane lookpanels) and the writing
+ * surface a Settings card on it (the popover fill once more, one hairline): paper over
  * whatever app is behind, so the text never fights the screen under it. */
 :root { --pad-w: 380px; --pad-h: 340px; --side: 16px; }
 * { box-sizing: border-box; }
@@ -20,7 +21,16 @@ body {
   position: absolute; left: var(--side); top: 0; width: var(--pad-w); height: var(--pad-h);
   display: flex; flex-direction: column;
   padding: 5px;
-  background-color: var(--lg-fill-strong);
+  /* ONE light surface over anything (lane lookpanels, 2026-09-29, the Settings recipe of 377e901).
+     Nothing is blurred behind this window, so .72 alone let a dark desktop through SHARP (~180 grey
+     with its lines of text striping the pad on the mock). The popover fill three times (~.98 white)
+     under the chip recess --lg-sunk: ~238 over a dark terminal, ~243 over a white window (Settings:
+     ~234 / ~242); the sheet is a card on it. */
+  background:
+    linear-gradient(var(--lg-sunk), var(--lg-sunk)),
+    linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)),
+    linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)),
+    var(--lg-fill-strong);
   border: 1px solid var(--lg-edge-in);
   border-radius: 10px;
   box-shadow: inset 0 1px 0 var(--lg-edge-in), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
@@ -48,7 +58,9 @@ body {
 .tab.empty { color: var(--lg-ink-3); }
 .tab:hover, .add:hover, .del:hover { background: var(--lg-hover); }
 .tab:active, .add:active, .del:active { background: var(--lg-press); }
-.tab.on { background: var(--lg-press); color: var(--lg-ink); }
+/* the open note's tab is RAISED (Settings' segmented control, 377e901): a card face and its
+   hairline, not a darker tint */
+.tab.on, .tab.on:hover { background: var(--lg-fill-strong); box-shadow: 0 0 0 1px var(--lg-edge-out); color: var(--lg-ink); }
 .tab.on.empty { color: var(--lg-ink-2); }
 .add { width: 24px; padding: 0; justify-content: center; }
 .add svg { display: block; }
@@ -62,7 +74,7 @@ body {
 .sheet {
   flex: 1 1 auto; min-height: 0; margin-top: 5px; display: flex;
   background-color: var(--lg-fill-strong);
-  border-radius: var(--lg-r-ctl);
+  border-radius: var(--lg-r);          /* a Settings card: 8 px, one plain hairline */
   box-shadow: inset 0 0 0 1px var(--lg-edge-out);
 }
 textarea {
@@ -75,8 +87,12 @@ textarea {
 }
 textarea::placeholder { color: var(--lg-ink-3); }
 textarea::selection { background: var(--lg-acc-soft); color: var(--lg-ink); }
-textarea::-webkit-scrollbar { width: 10px; }
-textarea::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 5px; border: 3px solid transparent; background-clip: content-box; }
+/* thin, and shown only while the pointer is over the text (Settings, 377e901); the transparent
+   border keeps the thumb off the sheet's hairline and rounded corner */
+textarea::-webkit-scrollbar { width: 8px; }
+textarea::-webkit-scrollbar-button { display: none; height: 0; }
+textarea::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; border: 2px solid transparent; background-clip: content-box; }
+textarea:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); background-clip: content-box; }
 textarea::-webkit-scrollbar-thumb:hover { background: var(--lg-press); background-clip: content-box; }
 
 /* ---- footer: saved / not saved (and why), Delete ---- */
@@ -87,16 +103,29 @@ textarea::-webkit-scrollbar-thumb:hover { background: var(--lg-press); backgroun
 }
 .words { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; padding: 2px 0; }
+/* not saved (and why): a small warn glyph and the words in warn ink, no fill (Settings' reasons,
+   377e901). The glyph sits in the left padding, so the line clamp still works on the words. */
 .status.warn {
-  color: var(--lg-warn); background: var(--lg-warn-soft); border-radius: var(--lg-r-ctl);
-  padding: 3px 7px; white-space: normal; line-height: 1.35;
+  position: relative;
+  color: var(--lg-warn);
+  padding: 2px 0 2px 18px; white-space: normal; line-height: 1.35;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden;
 }
 .notice { line-height: 1.35; color: var(--lg-ink-2); }
-.notice.warn { color: var(--lg-warn); }
+.notice.warn { position: relative; padding-left: 18px; color: var(--lg-warn); }
+.status.warn::before, .notice.warn::before {
+  /* Settings' warn triangle (settings.js ICON.warn) as a mask in the words' own colour; the mask's
+     'black' is not a colour on screen, a mask reads only its alpha */
+  content: '';
+  position: absolute; left: 0; top: calc(2px + .12em);
+  width: 12px; height: 12px;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
+}
+.notice.warn::before { top: .12em; }
 .del { color: var(--lg-ink-2); align-self: flex-start; margin-top: 1px; }
-.del.armed { background: var(--lg-warn-soft); color: var(--lg-warn); }
-.del.armed:hover { background: var(--lg-warn-soft); }
+/* armed ("click again"): the words in warn ink on the ordinary grey wash, not a tan block */
+.del.armed, .del.armed:hover { background: var(--lg-hover); color: var(--lg-warn); font-weight: 600; }
 .del:disabled { color: var(--lg-ink-3); background: transparent; }
 
 /* ---- over file:// with mock-mantle.js: a made-up desktop and a strip standing in for the top bar ---- */

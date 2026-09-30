@@ -45,6 +45,9 @@
   const windows = [
     grp('Desktop Window Manager', 'dwm.exe', 120 * MB, 1.1, { windows: 0, kind: 'windows', protected: 'Part of Windows: Windows needs it running', actions: LOCKED }),
     grp('Windows Explorer', 'explorer.exe', 164 * MB, 0.4, { windows: 1, kind: 'windows', protected: "Windows' shell (Explorer): closing it takes the desktop and file windows with it", actions: LOCKED }),
+    // a real machine has dozens of these: rows sharing one reason (the page says it once, under the header)
+    grp('Service Host: Windows Audio', 'svchost.exe', 31 * MB, 0.2, { windows: 0, kind: 'windows', protected: 'A Windows service: Windows needs it running', actions: LOCKED }),
+    grp('Service Host: Network Service', 'svchost.exe', 28 * MB, 0, { windows: 0, kind: 'windows', protected: 'A Windows service: Windows needs it running', actions: LOCKED }),
     grp('Service Host: Diagnostic Policy', 'svchost.exe', 24 * MB, 0, { windows: 0, kind: 'windows', protected: 'A Windows service: Windows needs it running', actions: LOCKED }),
   ];
   const mantleRow = grp('Mantle', 'electron.exe', 273 * MB, 0.6, { count: 9, windows: 0, kind: 'mantle', protected: 'Mantle itself: close Mantle from its tray menu', actions: LOCKED, icon: 'mantle:self', iconWhy: null });
