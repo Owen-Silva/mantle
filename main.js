@@ -658,20 +658,55 @@ function dirtyStartGuard() {
     process.stderr.write(`mantle: ${dirtyStartNote}\n`);
   }
 }
-const apps = new Apps({
-  modulePath: modulePathFor(ROOT),
-  // The index module asks us for icons; we ask the sidecar. A sidecar that is
-  // down means "no icon", not "no index" -- a launcher list without pictures is
-  // still a launcher list.
-  icon: async (p) => {
+// <mainrel:appicon> (lib/main-guard.test.js runs this region with a fake sidecar)
+/*
+ * THE LAUNCHER'S ICON RESOLVER. The index module asks us for icons; we ask the sidecar. A sidecar
+ * that is down means "no icon", not "no index" -- a launcher list without pictures is still a
+ * launcher list.
+ * STORE APPS (core-needs, 2026-09-30): a Store app's row (Calculator, Notepad, Terminal, Photos...)
+ * asks for 'shell:AppsFolder\<app id>'. That used to go to the sidecar's `icon` command, which reads
+ * FILES: "no such file", a warning in the log, and the index then stopped asking the rest
+ * (lib/launcher-index.js fillStoreIcons probes one first), so every Store app wore a letter tile.
+ * The sidecar's `app` command is the one that asks the shell for an app id's picture (the pinned
+ * list already uses it, lib/pinned.js); a Store path goes there now. Only a well-formed package app
+ * id is sent -- the same shape the index keeps (PackageFamily_publisherid!App) -- so a crafted row
+ * cannot hand the shell an arbitrary parsing name.
+ */
+const APPS_FOLDER = 'shell:appsfolder\\';
+const STORE_AUMID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}_[A-Za-z0-9]{8,20}![A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const PNG_URL = 'data:image/png;base64,';
+/**
+ * 'shell:AppsFolder\<id>' -> the id; null when it is not such a path; false when it is but the id is
+ * not a package app id. A prefix test, not a regex with (.+): an id with a line break in it must
+ * not fall through to `icon`.
+ */
+function storeAumidOf(p) {
+  const s = p == null ? '' : String(p);
+  if (s.slice(0, APPS_FOLDER.length).toLowerCase() !== APPS_FOLDER) return null;
+  const id = s.slice(APPS_FOLDER.length);
+  return STORE_AUMID_RE.test(id) ? id : false;
+}
+/** A Store app's picture out of the `app` reply, or null. */
+function appReplyPng(r) {
+  return r && r.ok !== false && typeof r.iconPng === 'string' && r.iconPng.startsWith(PNG_URL) ? r.iconPng : null;
+}
+function makeIconResolver(sc) {
+  return async (p) => {
+    const s = p == null ? '' : String(p);
+    if (!s) return null;
+    const store = storeAumidOf(s);
     try {
-      const r = await sidecar.call('icon', { path: p });
+      if (store === false) return null;
+      if (store) return appReplyPng(await sc.call('app', { aumid: store }, 4000));
+      const r = await sc.call('icon', { path: s });
       return r && r.icon ? r.icon : null;
     } catch (_) {
       return null;
     }
-  },
-});
+  };
+}
+// </mainrel:appicon>
+const apps = new Apps({ modulePath: modulePathFor(ROOT), icon: makeIconResolver(sidecar) });
 
 let barWin = null;
 let launcherWin = null;
@@ -2333,11 +2368,22 @@ async function iconFor(candidates, index) {
     const blocked = sidecar.blockedReason();
     if (blocked) return { icon: null, reason: `no icon: the sidecar cannot be asked (${blocked})` };
     let entry;
+    // A Store app's id (a pin or a running app that has no exe picture) asks `app`, the way the
+    // launcher does (makeIconResolver); an id that is not a package app id is not sent at all.
+    const store = storeAumidOf(p);
     try {
-      const r = await sidecar.call('icon', idx ? { path: p, index: idx } : { path: p }, 4000);
-      entry = r && r.icon
-        ? { icon: r.icon, reason: null }
-        : { icon: null, reason: 'Windows had no icon for it' };
+      if (store === false) {
+        entry = { icon: null, reason: 'not an app id Mantle asks Windows about' };
+      } else if (store) {
+        const r = await sidecar.call('app', { aumid: store }, 4000);
+        const png = appReplyPng(r);
+        entry = png ? { icon: png, reason: null } : { icon: null, reason: r && r.ok === false ? 'Windows does not know that app' : 'Windows had no icon for it' };
+      } else {
+        const r = await sidecar.call('icon', idx ? { path: p, index: idx } : { path: p }, 4000);
+        entry = r && r.icon
+          ? { icon: r.icon, reason: null }
+          : { icon: null, reason: 'Windows had no icon for it' };
+      }
     } catch (err) {
       entry = { icon: null, reason: err.message };
     }
@@ -2404,7 +2450,7 @@ function markMantleApp(w) {
   if (!key) return w;
   const a = mantleApps.APPS[key];
   const own = w.icon && w.iconFrom === 'window';
-  const file = own ? null : mantleApps.iconOf(key, 32);
+  const file = own ? null : mantleApps.iconOf(key, 64);   // 64 like every other app's (sidecar Icons.cs): sharp at 200 %
   return Object.assign({}, w, {
     aumid: w.aumid || a.aumid,
     mantleApp: key,
@@ -2561,7 +2607,7 @@ async function buildPinned() {
       if (claimed.has('a:' + mine)) continue;
       claimAumid(mine);
       const g = byAumid.get(mine) || null;
-      const ico = mantleApps.iconOf(stand, 32);
+      const ico = mantleApps.iconOf(stand, 64);
       const avail = mantleApps.availability(stand, featureList);
       const id = String(pin.id || pin.lnkPath || pin.name || `pin:${items.length}`);
       // a Mantle app's own pin has no Windows shortcut (its target is electron.exe): Windows' own = windowsTarget
@@ -2594,7 +2640,8 @@ async function buildPinned() {
     claimAumid(pinAumid);
     claimExe(exe);
     if (g) { claimAumid(g.aumid); claimExe(g.exe); }
-    const ico = pin.iconPng ? { icon: pin.iconPng, reason: null } : await iconFor([pin.iconPath, pin.target, pin.exe, g && g.exeRaw], pin.iconIndex);
+    // last: the pin's Store app id (lib/pinned.js asks `app` already; this covers a pin it could not)
+    const ico = pin.iconPng ? { icon: pin.iconPng, reason: null } : await iconFor([pin.iconPath, pin.target, pin.exe, g && g.exeRaw, pin.aumid ? APPS_FOLDER + pin.aumid : null], pin.iconIndex);
     const id = String(pin.id || pin.lnkPath || pin.name || `pin:${items.length}`);
     pinById.set(id, pin);
     /*
@@ -2624,7 +2671,7 @@ async function buildPinned() {
     if (isClaimed(g)) continue;
     // Mantle's app windows (markMantleApp): never electron.exe's icon, and named as themselves
     const ico = g.icon ? { icon: g.icon, reason: null }
-      : g.mantleApp ? { icon: null, reason: g.iconReason || 'Mantle\'s icon file is missing' } : await iconFor([g.exeRaw]);
+      : g.mantleApp ? { icon: null, reason: g.iconReason || 'Mantle\'s icon file is missing' } : await iconFor([g.exeRaw, g.aumid ? APPS_FOLDER + g.aumid : null]);
     items.push(Object.assign({
       id: `running:${key}`,
       name: g.mantleApp ? mantleApps.APPS[g.mantleApp].title : nameForExe(g.exeRaw, g.title),
@@ -5710,24 +5757,13 @@ async function applyLive() {
   }
 
   // 3. Put the desktop layer under the wallpaper.
-  if (!desktopWin || desktopWin.isDestroyed()) {
+  if (!flags.desktop) {
     state.set('desktop', { attached: false, mode: null, reason: '--no-desktop: the desktop layer was not created' });
-  } else {
-    try {
-      const r = await sidecar.call('desktop', { hwnd: hwndOf(desktopWin) });
-      const mode = (r && r.mode) || null;
-      state.set('desktop', {
-        attached: true,
-        mode,
-        reason: mode === 'progman-front'
-          ? 'the desktop layer is behind the icons and in front of the wallpaper, including a video wallpaper (progman-front)'
-          : `the desktop layer is under the wallpaper (${mode || 'mode not reported'})`,
-      });
-      armDesktopRecheck(mode);
-    } catch (err) {
-      state.set('desktop', { attached: false, mode: null, reason: `the desktop layer could not go under the wallpaper, so it is floating as an ordinary window: ${err.message}` });
-    }
+  } else if (desktopWin && !desktopWin.isDestroyed()) {
+    await attachDesktop();
   }
+  // (else: Explorer took the layer down with it and desktopGone is making a new one, which
+  // attaches itself; its state line already says so)
 
   // 4. The solo-Win-tap hook that opens the launcher (not while Mantle rests for a game: the
   // launcher window is closed then, and the Win key is Windows' Start until the game exits).
@@ -5794,6 +5830,206 @@ function armDesktopRecheck(mode) {
     }
   }, DESKTOP_RECHECK_MS);
   if (desktopRecheckTimer.unref) desktopRecheckTimer.unref();
+}
+
+/** Put the desktop layer under the wallpaper (applyLive, and a layer made again). Never throws. */
+async function attachDesktop() {
+  const win = desktopWin;
+  if (!win || win.isDestroyed()) return { ok: false, reason: 'the desktop layer is not there' };
+  try {
+    const r = await sidecar.call('desktop', { hwnd: hwndOf(win) });
+    const mode = (r && r.mode) || null;
+    state.set('desktop', {
+      attached: true,
+      mode,
+      reason: mode === 'progman-front'
+        ? 'the desktop layer is behind the icons and in front of the wallpaper, including a video wallpaper (progman-front)'
+        : `the desktop layer is under the wallpaper (${mode || 'mode not reported'})`,
+    });
+    armDesktopRecheck(mode);
+    showDesktopWhenReady(win);   // a layer made again waits hidden for this (makeDesktopWindow holdShow)
+    return { ok: true, mode };
+  } catch (err) {
+    // a layer made again is held hidden until it is in place, so it is NOT floating (makeDesktopWindow holdShow)
+    const held = !!(desktopShowGate && desktopShowGate.win === win && !desktopShowGate.cleared);
+    state.set('desktop', { attached: false, mode: null, reason: held
+      ? `the new desktop layer is waiting, hidden, to go under the icons (trying again): ${err.message}`
+      : `the desktop layer could not go under the wallpaper, so it is floating as an ordinary window: ${err.message}` });
+    return { ok: false, reason: err.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A NEW DESKTOP LAYER AFTER AN EXPLORER RESTART (core-needs, 2026-09-30).
+//
+// The layer lives inside Explorer's desktop window (Progman). When Explorer restarts (a crash, or
+// Task Manager's "Restart"), Windows can destroy our window along with its parent. Before, that was
+// the end of it: desktopWin was gone, the 30 s recheck stopped itself, lib/wallpaper.js kept a dead
+// window, and the desktop stayed on Windows' own picture until Mantle was restarted. Now a layer
+// that closes while Mantle runs (not quitting, not after "Put Windows back") is made again: a new
+// window, handed to the wallpaper (setDesktopWin) and put under the icons. It stays HIDDEN until it
+// is attached -- a full-screen layer shown before the new Progman exists would sit over Owen's
+// windows -- and attaching is retried with a back-off, because Explorer takes a few seconds to make
+// its new desktop. One that keeps dying is not remade forever (desktopRemakeVerdict).
+// (A layer that SURVIVES as an orphan is the recheck's job: sidecar Desktop.cs Recheck rejoins it.)
+// ---------------------------------------------------------------------------
+// <mainrel:desktopremake> (lib/main-guard.test.js runs this region: no outside names in it)
+const DESKTOP_REMAKE_MAX = 5;                          // remakes allowed in DESKTOP_REMAKE_SPAN_MS
+const DESKTOP_REMAKE_SPAN_MS = 10 * 60 * 1000;
+const DESKTOP_ATTACH_BACKOFF_MS = [1500, 3000, 5000, 8000, 12000, 20000];   // ~50 s in all
+/**
+ * Should a desktop layer that just closed be made again? o: {shuttingDown, paused, at (times of
+ * earlier remakes), now}. -> {remake, at (the list to keep), reason (the state line)}.
+ */
+function desktopRemakeVerdict(o) {
+  const now = o.now;
+  const at = (Array.isArray(o.at) ? o.at : []).filter((t) => now - t < DESKTOP_REMAKE_SPAN_MS);
+  if (o.shuttingDown) return { remake: false, at, reason: null };
+  if (o.paused) return { remake: false, at, reason: 'the desktop layer closed while Windows was put back; restart Mantle to bring it back' };
+  if (at.length >= DESKTOP_REMAKE_MAX) {
+    return { remake: false, at, reason: `the desktop layer closed ${at.length + 1} times in ten minutes, so Mantle stopped making it again; restart Mantle to bring it back` };
+  }
+  return { remake: true, at: at.concat([now]), reason: 'the desktop layer closed (Explorer restarted?); Mantle is making a new one' };
+}
+/** After attach attempt n (0-based) on a layer made again: 'done', 'retry' or 'give-up'. Never "show it anyway". */
+function desktopAttachNext(ok, n) {
+  if (ok) return 'done';
+  return n + 1 < DESKTOP_ATTACH_BACKOFF_MS.length ? 'retry' : 'give-up';
+}
+/*
+ * OUT OF TRIES: the layer is CLOSED, never shown (review of inc-3, 2026-09-30). It is full-screen,
+ * transparent and cannot take focus; shown without a place under the icons it can sit ABOVE Owen's
+ * windows and eat every click -- the stuck-screen failure this shell has had before. So the window
+ * goes (d.clear() first, so its 'closed' is not read as one more Explorer restart), the wallpaper
+ * lets go of it, and Windows' own wallpaper shows. The state line says why and what to do.
+ * d: {win, clear(), releaseWallpaper(), stopRecheck(), setState(v), log(line), tries, why}.
+ */
+function desktopGiveUp(d) {
+  d.clear();
+  d.stopRecheck();
+  try { d.releaseWallpaper(); } catch (_) { /* the wallpaper keeps a dead window: it checks before sending */ }
+  let closed = false;
+  try { if (d.win && !d.win.isDestroyed()) { d.win.destroy(); closed = true; } } catch (_) { /* already gone */ }
+  const reason = `the desktop layer could not go back under the icons after Explorer restarted (${d.tries} tries: ${d.why || 'no reason given'}), so Windows' own wallpaper shows; restart Mantle to bring it back`;
+  d.setState({ attached: false, mode: null, reason });
+  d.log(`desktop layer: made again but could not go under the icons after ${d.tries} tries, so it was closed (never shown over the apps): ${d.why || 'no reason given'}`);
+  return { closed, reason };
+}
+// </mainrel:desktopremake>
+const desktopRemake = { at: [], timer: null, made: 0 };
+let desktopShowGate = null;   // {win, ready, cleared, why}: the layer is shown once ready AND cleared
+
+/** Make the desktop layer's window. holdShow: stay hidden until showDesktopWhenReady(win) clears it. */
+function makeDesktopWindow(why, holdShow) {
+  const desktop = createDesktop({ root: ROOT, test: flags.test });
+  const win = desktop.win;
+  desktopWin = win;
+  watchPage(win, 'The desktop layer');
+  desktopShowGate = { win, ready: false, cleared: !holdShow, why };
+  // One capture of the wallpaper BEFORE the layer covers the screen. It is
+  // still hidden here, so there is nothing to exclude from the shot, and the
+  // picture it gets is the only thing behind it that will ever be there.
+  win.once('ready-to-show', () => {
+    if (desktopShowGate && desktopShowGate.win === win) { desktopShowGate.ready = true; showDesktopGated(); }
+  });
+  win.on('closed', () => desktopGone(win));
+  if (!desktop.load.loaded) process.stderr.write(`mantle: ${desktop.load.reason}\n`);
+  return win;
+}
+function showDesktopGated() {
+  const g = desktopShowGate;
+  if (!g || !g.ready || !g.cleared) return;
+  desktopShowGate = null;
+  desktopBackdrop.once(g.why)
+    .catch(() => {})
+    .then(() => { if (desktopWin === g.win && !g.win.isDestroyed()) g.win.showInactive(); });
+}
+function showDesktopWhenReady(win) {
+  if (desktopShowGate && desktopShowGate.win === win) { desktopShowGate.cleared = true; showDesktopGated(); }
+}
+
+function desktopGone(win) {
+  if (desktopWin !== win) return;          // a window already replaced
+  desktopWin = null;
+  if (desktopShowGate && desktopShowGate.win === win) desktopShowGate = null;
+  stopDesktopRecheck();
+  const v = desktopRemakeVerdict({ shuttingDown, paused: !!shellPaused, at: desktopRemake.at, now: Date.now() });
+  desktopRemake.at = v.at;
+  if (!v.reason) return;                   // quitting: nothing to say
+  state.set('desktop', { attached: false, mode: null, reason: v.reason });
+  process.stdout.write(`mantle: desktop layer: it closed while Mantle runs: ${v.remake ? `making a new one (${v.at.length} of ${DESKTOP_REMAKE_MAX} in ten minutes)` : v.reason}\n`);
+  if (v.remake) scheduleDesktopAttach(0, true);
+}
+
+/** Attempt `n`: make the window (first attempt only) and try to put it under the icons. */
+function scheduleDesktopAttach(n, make) {
+  if (desktopRemake.timer) clearTimeout(desktopRemake.timer);
+  desktopRemake.timer = setTimeout(() => {
+    desktopRemake.timer = null;
+    remakeDesktop(n, make).catch((err) => process.stderr.write(`mantle: desktop layer: making it again failed: ${err.message}\n`));
+  }, DESKTOP_ATTACH_BACKOFF_MS[Math.min(n, DESKTOP_ATTACH_BACKOFF_MS.length - 1)]);
+}
+async function remakeDesktop(n, make) {
+  if (shuttingDown || shellPaused) return;
+  if (make || !desktopWin || desktopWin.isDestroyed()) {
+    const win = makeDesktopWindow('Explorer restarted: a new desktop layer', !flags.test);
+    desktopRemake.made++;
+    try { wallpaper.setDesktopWin(win); } catch (err) { process.stderr.write(`mantle: desktop layer: the wallpaper could not be handed the new layer: ${err.message}\n`); }
+    if (flags.test) {
+      // A test run never touches the shell: the new layer is made and handed over, never attached.
+      state.set('desktop', { attached: false, mode: null, reason: 'test run: the desktop layer was made again after it closed (not attached: a test run never touches the shell)' });
+      win.webContents.once('did-finish-load', () => process.stdout.write(`mantle: desktop layer: made again (${desktopRemake.made}); its page loaded and the wallpaper has it\n`));
+      return;
+    }
+  }
+  const r = await attachDesktop();
+  const next = desktopAttachNext(r.ok, n);
+  if (next === 'done') {
+    process.stdout.write(`mantle: desktop layer: made again and back under the icons (${r.mode || 'mode not reported'}) on attempt ${n + 1}\n`);
+    return;
+  }
+  if (next === 'retry') { scheduleDesktopAttach(n + 1, false); return; }
+  // Out of tries: closed, NEVER shown over the apps (desktopGiveUp says why).
+  const win = desktopWin;
+  desktopGiveUp({
+    win,
+    clear: () => { if (desktopWin === win) desktopWin = null; if (desktopShowGate && desktopShowGate.win === win) desktopShowGate = null; },
+    releaseWallpaper: () => wallpaper.setDesktopWin(null),
+    stopRecheck: stopDesktopRecheck,
+    setState: (v) => state.set('desktop', v),
+    log: (line) => process.stderr.write(`mantle: ${line}\n`),
+    tries: n + 1,
+    why: r.reason,
+  });
+}
+
+/* TEST ONLY: --test-apps-icons rebuilds the index 25 s after start and logs how many rows have a picture, Store
+   apps counted apart: the Electron proof that Store apps get theirs (makeIconResolver). Counts only. */
+function armAppsIconsTest() {
+  if (!flags.test || !ARGV.includes('--test-apps-icons')) return;
+  const t = setTimeout(() => {
+    apps.index({ refresh: true }).then((idx) => {   // a rebuild: the first one may predate the Store list
+      const rows = idx.items.filter(Boolean);
+      const store = rows.filter((i) => i.aumid);
+      const pic = (i) => typeof i.icon === 'string' && i.icon.startsWith('data:image/');
+      process.stdout.write(`mantle: --test-apps-icons: ${rows.length} launcher rows, ${rows.filter(pic).length} with a picture; Store apps ${store.length}, ${store.filter(pic).length} with a picture\n`);
+    }).catch((err) => process.stdout.write(`mantle: --test-apps-icons: the index failed: ${err.message}\n`));
+  }, 25000);
+  if (t.unref) t.unref();
+}
+
+/* TEST ONLY: --test-desktop-gone=MS destroys the desktop layer MS after start, the way Explorer's
+   restart can, so a --test run proves it is made again (Explorer itself is never touched). */
+function armDesktopGoneTest() {
+  const arg = flags.test && ARGV.find((x) => typeof x === 'string' && x.startsWith('--test-desktop-gone='));
+  const ms = arg ? Number(arg.slice('--test-desktop-gone='.length)) : NaN;
+  if (!Number.isFinite(ms) || ms < 0) return;
+  const t = setTimeout(() => {
+    if (!desktopWin || desktopWin.isDestroyed()) return;
+    process.stdout.write('mantle: desktop layer: --test-desktop-gone: destroying it the way an Explorer restart can\n');
+    desktopWin.destroy();
+  }, ms);
+  if (t.unref) t.unref();
 }
 
 // ---------------------------------------------------------------------------
@@ -6287,10 +6523,45 @@ function pieceWords(piece) {
   if (bd) return `${bd[1].charAt(0).toUpperCase()}${bd[1].slice(1)} background`;
   return p ? p.charAt(0).toUpperCase() + p.slice(1) : 'Something';
 }
+/*
+ * PLAIN WORDS FOR EVERY LINE ON THE MENU (core-needs, 2026-09-30). Reasons are written for the log
+ * ("the sidecar did not install the Win key hook"). The health rows had "sidecar" swapped out, but
+ * "hook" got through, and the reason lines under Features (lib/switcher.js, lib/features.js) and a
+ * failed action's balloon went on screen untouched. One pass, for every line a person reads here.
+ */
+const TRAY_WORDS = [
+  [/\b(?:the )?sidecar's\b/gi, "Mantle's"],
+  [/\b(?:the )?sidecar\b/gi, "Mantle's link to Windows"],
+  [/\b(the )?(?:low-level )?keyboard hooks?\b/gi, (_m, the) => `${the || ''}keyboard watcher`],
+  [/\bWin[- ]key hooks?\b/gi, 'Win key watcher'],
+  [/\bhooks?\b/gi, 'keyboard watcher'],
+  [/\s*\((?:HRESULT |error )?0x[0-9a-f]{8}\)/gi, ''],
+  [/\b(?:HRESULT )?0x[0-9a-f]{8}\b/gi, 'an error'],
+  [/\bhwnd\b/gi, 'window'],
+  [/\brenderer\b/gi, 'page'],
+  [/\bAUMID\b/gi, 'app id'],
+  [/\bdryRun\b/g, 'test run'],
+];
+function trayWords(text) {
+  let s = String(text == null ? '' : text);
+  for (const [re, to] of TRAY_WORDS) s = s.replace(re, to);
+  return s;
+}
+/** Every label under Features, in place: the switches and their reason lines (submenus too). */
+function plainMenu(items) {
+  for (const it of Array.isArray(items) ? items : []) {
+    if (!it) continue;
+    if (typeof it.label === 'string') it.label = trayWords(it.label);
+    if (typeof it.sublabel === 'string') it.sublabel = trayWords(it.sublabel);
+    if (typeof it.toolTip === 'string') it.toolTip = trayWords(it.toolTip);
+    if (Array.isArray(it.submenu)) plainMenu(it.submenu);
+  }
+  return items;
+}
 /** One short line: the first clause of a reason, capped (a menu row is not a paragraph). */
 function shortReason(text, max) {
   const n = max || 70;
-  let s = String(text || '').replace(/\s+/g, ' ').trim().replace(/\b(the )?sidecar\b/gi, "Mantle's link to Windows");
+  let s = trayWords(String(text || '').replace(/\s+/g, ' ').trim());
   const cut = s.search(/(; |\. | -- | \()/);
   if (cut > 12) s = s.slice(0, cut);
   s = s.replace(/[.;:,]$/, '');
@@ -6341,7 +6612,7 @@ function trayTemplate(o) {
   out.push(Object.assign({ id: 'launcher', label: 'Open launcher' }, keys.launcher ? { accelerator: 'Alt+Space', registerAccelerator: false } : {}));
   if (o.hasSettings) out.push({ id: 'settings', label: 'Open Mantle Settings', accelerator: 'Super+I', registerAccelerator: false });
   out.push({ id: 'wallpapers', label: 'Wallpapers…' });
-  const feats = Array.isArray(o.featureItems) ? o.featureItems : [];
+  const feats = plainMenu(Array.isArray(o.featureItems) ? o.featureItems : []);
   if (feats.length) out.push({ label: 'Features', submenu: feats });
   out.push({ type: 'separator' });
   out.push({ id: 'report', label: 'Copy diagnostic report' });
@@ -6409,8 +6680,8 @@ function updateTray() {
 }
 /** A tray action that failed says so on screen (a Windows notification from the icon), not only in the log. */
 function trayNotice(title, content) {
-  process.stdout.write(`mantle: tray: ${title}: ${content}\n`);
-  try { if (tray && !tray.isDestroyed()) tray.displayBalloon({ title, content, iconType: 'warning', noSound: true }); } catch (_) { /* the log line stands */ }
+  process.stdout.write(`mantle: tray: ${title}: ${content}\n`);   // the log keeps the exact words
+  try { if (tray && !tray.isDestroyed()) tray.displayBalloon({ title: trayWords(title), content: trayWords(content), iconType: 'warning', noSound: true }); } catch (_) { /* the log line stands */ }
 }
 const TRAY_ACTIONS = {
   launcher: () => { try { showLauncher(); } catch (err) { trayNotice('The launcher did not open', err.message); } },
@@ -7416,18 +7687,8 @@ app.whenReady().then(() => {
   }
 
   if (flags.desktop) {
-    const desktop = createDesktop({ root: ROOT, test: flags.test });
-    desktopWin = desktop.win;
-    watchPage(desktopWin, 'The desktop layer');
-    // One capture of the wallpaper BEFORE the layer covers the screen. It is
-    // still hidden here, so there is nothing to exclude from the shot, and the
-    // picture it gets is the only thing behind it that will ever be there.
-    desktopWin.once('ready-to-show', () => {
-      desktopBackdrop.once('the desktop layer is starting')
-        .catch(() => {})
-        .then(() => { if (desktopWin && !desktopWin.isDestroyed()) desktopWin.showInactive(); });
-    });
-    if (!desktop.load.loaded) process.stderr.write(`mantle: ${desktop.load.reason}\n`);
+    makeDesktopWindow('the desktop layer is starting');
+    armDesktopGoneTest();
   } else {
     state.set('desktop', { attached: false, mode: null, reason: '--no-desktop: the desktop layer was not created' });
   }
@@ -7459,6 +7720,7 @@ app.whenReady().then(() => {
   registerShortcuts();
   createTray();
   apps.startRefresh();
+  armAppsIconsTest();
 
   // ONE display listener for the whole process, calling whatever "put the bar
   // back" means right now. applyLive re-runs on every sidecar restart and used to
