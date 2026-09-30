@@ -89,7 +89,7 @@ namespace Mantle {
             if (d != null) { it.Src = Json.GetString(d, "src"); it.Dest = Json.GetString(d, "dest") ?? dest; it.Name = Json.GetString(d, "name"); }
             else { it.Src = o as string; it.Dest = dest; }
             if (it.Src == null || it.Dest == null) return "files.op " + op + ": every item needs a source and a dest folder";
-            if (it.Name != null && !FilesGuard.PlainName(it.Name)) return "files.op " + op + ": an item's new name is not a plain file name";
+            if (it.Name != null && !FilesGuard.PlainName(it.Name)) return "files.op " + op + ": " + FilesGuard.NameProblem(it.Name);
             oj.Items.Add(it);
           }
           break;
@@ -116,13 +116,13 @@ namespace Mantle {
           if (!many && oj.Items.Count != 1) return "files.op rename takes exactly one path (or items:[{src, name}])";
           foreach (OpItem it in oj.Items) {
             if (it.Src == null) return "files.op rename: every item needs its path";
-            if (!FilesGuard.PlainName(it.Name)) return "files.op rename: a name is not a plain file name";
+            if (!FilesGuard.PlainName(it.Name)) return "files.op rename: " + FilesGuard.NameProblem(it.Name);
           }
           break;
         }
         case "newfolder": case "newfile": {
           if (dest == null) return "files.op " + op + " needs dest: the parent folder";
-          if (!FilesGuard.PlainName(name)) return "files.op " + op + ": name is not a plain file name";
+          if (!FilesGuard.PlainName(name)) return "files.op " + op + ": " + FilesGuard.NameProblem(name);
           var it = new OpItem(); it.Dest = dest; it.Name = name; oj.Items.Add(it);
           break;
         }
@@ -140,8 +140,11 @@ namespace Mantle {
         } else if (op == "recycle" || op == "delete") {
           touched.Add(it.Src);
         } else if (op == "rename") {
+          // The new name's parent comes from the NORMALISED source (a raw "C:/x/../y" or a path
+          // past 260 characters would give Path.GetDirectoryName the wrong answer or an exception).
+          string ns = FilesGuard.Normalise(it.Src);
           touched.Add(it.Src);
-          touched.Add(Join(ParentOf(it.Src), it.Name));
+          touched.Add(ns == null ? null : Join(FilesGuard.Parent(ns), it.Name));
         } else {
           touched.Add(it.Dest); touched.Add(Join(it.Dest, it.Name));
         }
@@ -153,20 +156,44 @@ namespace Mantle {
       foreach (OpItem it in oj.Items) {
         if (op == "copy" || op == "move") { it.Src = full[k]; it.Dest = full[k + 1]; k += 3; }
         else if (op == "recycle" || op == "delete") { it.Src = full[k]; k += 1; }
-        else if (op == "rename") { it.Src = full[k]; k += 2; }
+        else if (op == "rename") { it.Src = full[k]; it.Dst = full[k + 1]; k += 2; }
         else { it.Dest = full[k]; k += 2; }
+      }
+
+      // Rename onto a DIFFERENT existing item: the engine would open Windows' replace dialog (on a
+      // test sidecar that is a modal on Owen's screen; live it offers to overwrite the other file).
+      // Refused up front, in words, like File Explorer's own "already exists". A case-only rename
+      // (a.txt -> A.txt) is the same item and goes ahead.
+      if (op == "rename") {
+        foreach (OpItem it in oj.Items) {
+          bool same = string.Equals(it.Dst, it.Src, StringComparison.OrdinalIgnoreCase);
+          if (!same && FilesGuard.Attrs(it.Dst) != FN.INVALID_FILE_ATTRIBUTES)
+            return "files.op rename: a file or folder with that name already exists there (0x800700B7)";
+          it.Dst = null;
+        }
       }
 
       uint flags = FOF_SILENT | FOF_NOCONFIRMMKDIR;
       if (op == "copy" || op == "move") {
         if (conflict == "replace") flags |= FOF_NOCONFIRMATION;
         else if (conflict == "keepboth") flags |= FOF_RENAMEONCOLLISION;
+        // A replace onto an existing FOLDER merges into it: in passive the whole existing tree it
+        // writes into must be free of links (FilesGuard.CheckSubtree; proven hole 2026-09-29).
+        if (conflict == "replace" && Program.Passive) {
+          foreach (OpItem it in oj.Items) {
+            string dst = Join(it.Dest, it.Name ?? LeafName(it.Src));
+            uint da = FilesGuard.Attrs(dst);
+            if (da == FN.INVALID_FILE_ATTRIBUTES || (da & FN.FILE_ATTRIBUTE_DIRECTORY) == 0) continue;
+            string serr = FilesGuard.CheckSubtree(dst);
+            if (serr != null) return serr;
+          }
+        }
         if (conflict == "skip" || (conflict == "ask" && Program.Passive)) {
           int clashes = 0;
           foreach (OpItem it in oj.Items) {
             string dst = Join(it.Dest, it.Name ?? LeafName(it.Src));
             if (string.Equals(dst, it.Src, StringComparison.OrdinalIgnoreCase)) continue;
-            if (FN.GetFileAttributesW(dst) == FN.INVALID_FILE_ATTRIBUTES) continue;
+            if (FilesGuard.Attrs(dst) == FN.INVALID_FILE_ATTRIBUTES) continue;
             clashes++;
             if (conflict == "skip") { it.Skipped = true; it.Dst = dst; it.Why = "skipped: already exists"; }
           }

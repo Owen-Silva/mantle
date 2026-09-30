@@ -136,6 +136,8 @@ const now = () => process.hrtime.bigint();
   fs.mkdirSync(W, { recursive: true });
   fs.mkdirSync(OUTSIDE, { recursive: true });
   if (!fs.existsSync(path.join(OUTSIDE, 'keep.txt'))) fs.writeFileSync(path.join(OUTSIDE, 'keep.txt'), 'harmless outside scratch\n');
+  fs.mkdirSync(path.join(OUTSIDE, 'jt'), { recursive: true });
+  if (!fs.existsSync(path.join(OUTSIDE, 'jt', 'keep2.txt'))) fs.writeFileSync(path.join(OUTSIDE, 'jt', 'keep2.txt'), 'keep2\n');
   const outsideBefore = snapshot(OUTSIDE);
   fs.mkdirSync(BIG, { recursive: true });
   if (fs.readdirSync(BIG).length < 10000) {
@@ -428,6 +430,61 @@ const now = () => process.hrtime.bigint();
     t.check('guard: overwriting a hard link to an outside file is refused', r.reply && refused(r.reply));
     fs.unlinkSync(path.join(W, 'hardlink.txt'));
 
+    // 2026-09-29 adversarial pass (files-sc): each of these was PROVEN to write outside on the old build.
+    // A folder MERGE (copy replace onto an existing folder) must not write through a junction or a hard
+    // link hidden deeper in the existing destination tree.
+    {
+      const OJ = path.join(OUTSIDE, 'jt');
+      fs.mkdirSync(OJ, { recursive: true });
+      if (!fs.existsSync(path.join(OJ, 'keep2.txt'))) fs.writeFileSync(path.join(OJ, 'keep2.txt'), 'keep2\n');
+      fs.mkdirSync(path.join(W, 'msrc', 'inner'), { recursive: true });
+      fs.writeFileSync(path.join(W, 'msrc', 'inner', 'keep2.txt'), 'THROUGH-JUNCTION\n');
+      fs.writeFileSync(path.join(W, 'msrc', 'keep.txt'), 'THROUGH-HARDLINK\n');
+      fs.mkdirSync(path.join(W, 'mdst', 'msrc'), { recursive: true });
+      const NJ = path.join(W, 'mdst', 'msrc', 'inner');
+      fs.symlinkSync(OJ, NJ, 'junction');
+      try {
+        r = await op({ op: 'copy', items: [path.join(W, 'msrc')], dest: path.join(W, 'mdst'), conflict: 'replace' });
+        t.check('guard: a merge through a junction deep in the destination is refused', r.reply && refused(r.reply) &&
+          fs.readFileSync(path.join(OJ, 'keep2.txt'), 'utf8') === 'keep2\n', r.reply && r.reply.error);
+        r = await op({ op: 'move', items: [path.join(W, 'msrc')], dest: path.join(W, 'mdst'), conflict: 'replace' });
+        t.check('guard: a move-merge through a junction deep in the destination is refused', r.reply && refused(r.reply) && fs.existsSync(path.join(W, 'msrc')));
+      } finally { fs.rmdirSync(NJ); }
+      fs.linkSync(path.join(OUTSIDE, 'keep.txt'), path.join(W, 'mdst', 'msrc', 'keep.txt'));
+      r = await op({ op: 'copy', items: [path.join(W, 'msrc')], dest: path.join(W, 'mdst'), conflict: 'replace' });
+      t.check('guard: a merge onto a hard link deep in the destination is refused', r.reply && refused(r.reply), r.reply && r.reply.error);
+      fs.unlinkSync(path.join(W, 'mdst', 'msrc', 'keep.txt'));
+      r = await op({ op: 'copy', items: [path.join(W, 'msrc')], dest: path.join(W, 'mdst'), conflict: 'replace' });
+      t.check('a merge into a plain existing folder still works', r.done && r.done.ok && fs.readFileSync(path.join(W, 'mdst', 'msrc', 'keep.txt'), 'utf8') === 'THROUGH-HARDLINK\n',
+        JSON.stringify(r.reply.error || (r.done && r.done.reason)));
+    }
+    // Names Windows reserves, or that end in a space / dot, make files most apps cannot open or delete.
+    for (const nm of ['CON', 'aux.txt', 'COM1', 'lpt9.log', 'CONIN$', 'x.', 'x ']) {
+      r = await op({ op: 'newfile', dest: W, name: nm });
+      t.check(`names: newfile ${JSON.stringify(nm)} is refused in words`, r.reply && !r.reply.ok && /reserved by Windows|space or a dot/.test(r.reply.error) &&
+        !fs.readdirSync(W).some((f) => f.toLowerCase() === nm.trim().replace(/\.$/, '').toLowerCase()), r.reply && (r.reply.error || 'it ran'));
+    }
+    r = await op({ op: 'rename', items: [path.join(W, 'a.txt')], name: 'NUL' });
+    t.check('names: rename to NUL is refused in words', r.reply && !r.reply.ok && /reserved by Windows/.test(r.reply.error) && fs.existsSync(path.join(W, 'a.txt')), r.reply && r.reply.error);
+    // Rename onto a different existing item: refused in words, never a Windows replace dialog.
+    fs.writeFileSync(path.join(W, 'clash.txt'), 'other\n');
+    r = await op({ op: 'rename', items: [path.join(W, 'a.txt')], name: 'clash.txt' });
+    t.check('rename onto an existing name is refused with "already exists"', r.reply && !r.reply.ok && /already exists/.test(r.reply.error) &&
+      fs.readFileSync(path.join(W, 'clash.txt'), 'utf8') === 'other\n', r.reply && r.reply.error);
+    r = await op({ op: 'rename', items: [path.join(W, 'clash.txt')], name: 'CLASH.txt' });
+    t.check('a case-only rename still works', r.done && r.done.ok && fs.readdirSync(W).includes('CLASH.txt'), JSON.stringify(r.reply.error || (r.done && r.done.reason)));
+    // A path past 260 characters is a real path, not "not an absolute path".
+    {
+      let deep = path.join(W, 'deep');
+      while (deep.length < 300) deep = path.join(deep, 'd'.repeat(40));
+      fs.mkdirSync(deep, { recursive: true });
+      r = await op({ op: 'newfolder', dest: deep, name: 'inside-long' });
+      t.check('long path: the guard accepts a path over 260 characters', r.reply && r.reply.ok, r.reply && r.reply.error);
+      t.check('long path: newfolder at depth reports in words', r.done && (r.done.ok || /\w/.test(String(r.done.reason).replace(/\(0x[0-9A-F]+\)/, ''))),
+        JSON.stringify(r.done && { ok: r.done.ok, reason: r.done.reason }));
+      perf.longPath = r.done ? (r.done.ok ? 'newfolder at ' + (deep.length + 12) + ' chars: ok' : 'newfolder at depth: ' + r.done.reason) : 'refused';
+    }
+
     // always refused in passive, each sent with arguments a broken guard would still reject
     for (const [cmd, args] of [['files.verb', {}], ['files.openwith', {}], ['files.openwithdialog', {}], ['files.clip.set', {}], ['files.recycle.empty', {}]]) {
       const x = await s.send(cmd, args, 4000);
@@ -455,6 +512,31 @@ const now = () => process.hrtime.bigint();
       } finally {
         process.env.MANTLE_FILES_SANDBOX = saved;
         if (s2) await s2.stop();
+      }
+    }
+    // The sandbox root itself a junction NAMED sandbox that points at another temp folder (outside\tgt):
+    // accepted before 2026-09-29, and the write landed in outside\tgt.
+    {
+      const TGT = path.join(OUTSIDE, 'tgt');
+      const JR = path.join(W, 'jroot');
+      const JRS = path.join(JR, 'sandbox');
+      fs.mkdirSync(TGT, { recursive: true });
+      fs.mkdirSync(JR, { recursive: true });
+      fs.symlinkSync(TGT, JRS, 'junction');
+      const saved = process.env.MANTLE_FILES_SANDBOX;
+      process.env.MANTLE_FILES_SANDBOX = JRS;
+      let s2 = null;
+      try {
+        s2 = await T.startPassive();
+        const a = await s2.send('files.op', { op: 'newfile', dest: JRS, name: 'probe.txt', job: 'g3' }, 8000);
+        if (a.ok) await s2.waitEvent('files.opdone', 20000, (e) => e.job === 'g3').catch(() => null);
+        t.check('guard: a sandbox root that is a junction to a non-sandbox folder is refused', refused(a) && !fs.existsSync(path.join(TGT, 'probe.txt')), a.error || 'accepted');
+      } finally {
+        process.env.MANTLE_FILES_SANDBOX = saved;
+        if (s2) await s2.stop();
+        fs.rmdirSync(JRS);
+        try { fs.unlinkSync(path.join(TGT, 'probe.txt')); } catch (_) { /* never written */ }
+        fs.rmdirSync(TGT);
       }
     }
   } catch (e) {
