@@ -17,6 +17,9 @@
      is frameless and opaque, so the header strip below is its title bar. Everything that cannot act
      says so in words next to the control (settings.js); this page never logs. -->
 <header class="head">
+  <button class="winbtn backbtn" id="backbtn" type="button" data-act="back" title="Back (Alt+Left)" aria-label="Back" disabled>
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M13 8H3.5M7.5 4L3.5 8l4 4" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
   <div class="head-title">Mantle Settings<span id="testchip" class="testchip" hidden>Test run</span></div>
   <div class="winbtns">
     <button class="winbtn" type="button" data-act="win-op" data-op="minimize" title="Minimise" aria-label="Minimise">

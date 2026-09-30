@@ -212,8 +212,8 @@ const SHOTS = [
     check('07: switching background recording on in a test run is a dry run and springs back OFF', /Test run, nothing changed/.test(t) && await on(p, 'gaming.captures.background') === 'false', t);
   }],
   ['game-08-failing', PG('captures', '&gm=fail'), async (p) => {
-    check('08: the rows say why they could not be read', /Game settings could not be read: gaming\.get failed/.test(await rowText(p, 'gaming.captures.background') || '') &&
-      /gaming\.get failed/.test(await rowText(p, 'gaming.captures.folder') || ''));
+    check('08: the rows say why they could not be read', /Game settings could not be read: (Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(await rowText(p, 'gaming.captures.background') || '') &&
+      /could not be read/.test(await rowText(p, 'gaming.captures.folder') || '') && !/gaming\.get failed|sidecar/.test(await rowText(p, 'gaming.captures.folder') || ''), await rowText(p, 'gaming.captures.folder'));
     check('08: nothing threw while drawing', !/could not be drawn/.test(await p.textContent('#page')));
   }],
   ['game-09-custom', PG('captures', '&gm=custom'), async (p) => {

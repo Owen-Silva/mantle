@@ -249,7 +249,7 @@ const SHOTS = [
     check('09: zoom 200%, increment 100%', await p.$eval(sel(A('magnifier.zoom')) + ' input', (i) => i.value) === '200' && await p.$eval(sel(A('magnifier.increment')) + ' select', (s) => s.value) === '100');
   }],
   ['acc-10-failing', PG('keyboard', '&acc=fail'), async (p) => {
-    check('10: the switches say why they could not be read', /These settings could not be read: access\.settings failed/.test(await rowText(p, A('keyboard.sticky')) || ''));
+    check('10: the switches say why they could not be read', /These settings could not be read: (Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(await rowText(p, A('keyboard.sticky')) || ''));
     check('10: nothing threw while drawing', !/could not be drawn/.test(await p.textContent('#page')));
   }],
   ['acc-11-audio', PG('audio'), async (p) => {

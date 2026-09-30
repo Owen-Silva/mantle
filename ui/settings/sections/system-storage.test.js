@@ -161,7 +161,8 @@ function FAKE() {
     switch (a.what) {
       case 'storage': return later(20, JSON.parse(JSON.stringify(G)));
       case 'storageAdvanced': return later(40, JSON.parse(JSON.stringify(ADV)));
-      case 'storageTemp': return later(60, JSON.parse(JSON.stringify(TEMP)));
+      case 'storageTemp':
+        return later(60, JSON.parse(JSON.stringify(TEMP)));
       case 'storageRecommend': return later(20, JSON.parse(JSON.stringify(REC)));
       case 'storageScan':
         [0, 1, 5, 9].forEach((d, i) => emit('settings.system.storage', { ev: 'sysstorage', what: 'progress', scan: 'scan-1', drive: 'C:', done: d, total: 14, bytes: d * 10 * GB, files: d * 1e4, category: ['apps', 'documents', 'temp', 'system'][i] }, 60 + i * 60));
@@ -331,7 +332,7 @@ const SHOTS = [
   }],
   ['sto-08-failing', PG + '&sto=fail', async (p) => {
     await p.waitForTimeout(300);
-    check('08: the drives say why they could not be read', /The drives could not be read: sysstorage\.storage failed/.test(await p.textContent('#page')));
+    check('08: the drives say why they could not be read', /The drives could not be read: (Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(await p.textContent('#page')));
     check('08: Storage Sense says why', /Storage Sense could not be read/.test(await rowText(p, 'system.storage.sense') || ''));
     check('08: temporary files say why, and Review is off', /The temporary files could not be read/.test(await rowText(p, 'system.storage.temp.review') || ''));
     check('08: advanced says why', /Advanced storage settings could not be read/.test(await rowText(p, 'system.storage.disks') || ''));

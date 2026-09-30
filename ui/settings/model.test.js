@@ -225,6 +225,13 @@ t('plain: a thrown section command and raw values', () => {
   eq(M.plain('system.get failed (TypeError: Cannot read properties of undefined)'), 'Something went wrong inside Mantle. Try again; if it keeps happening, restart Mantle');
   eq(M.plain('Could not change it: Windows answered 0x80070005'), 'Could not change it: Windows did not allow it: it needs administrator rights');
   eq(M.plain('[object Object]'), 'Something went wrong inside Mantle. Try again; if it keeps happening, restart Mantle');
+  // r3: what still reached Home's tiles as it was
+  eq(M.plain('Windows would not report the power status (GetSystemPowerStatus failed, Win32 error 5)'), 'Windows would not report the power status');
+  eq(M.plain('Mantle\'s features could not be read: settings.mantle: the settings feature is not running (it failed to start: the feature seam threw)'),
+    'Mantle\'s features could not be read: this part of Mantle did not start. Restart Mantle to try again');
+  eq(M.plain('Windows says no (the service is stopped)'), 'Windows says no (the service is stopped)');
+  eq(M.plain('see notes.txt: it is there'), 'see notes.txt: it is there');
+  eq(M.plain('The updates could not be read: update.list failed (the sidecar is not running)'), 'The updates could not be read: Mantle\'s connection to Windows is restarting. Try again in a moment');
   ok(!/sidecar|"|0x/i.test(M.plain('The list failed: the sidecar sent "x.y" 0x8007000E back')), M.plain('The list failed: the sidecar sent "x.y" 0x8007000E back'));
 });
 

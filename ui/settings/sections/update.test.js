@@ -77,6 +77,15 @@ async function nodeTests() {
   elev.length = 0;
   await main.commands.activeHours({ start: 9, end: 2 }, L);
   check('live: active hours becomes ONE prompt for update.activeHours', elev.length === 1 && elev[0][0] === 'update.activeHours' && elev[0][1].start === 9 && elev[0][1].end === 2, JSON.stringify(elev));
+  // history: a code becomes words in main (the page shows `why`, never 0x...); an unknown code gets null
+  const HI = { id: 'update', test: false, log() {}, push() {}, sidecar: { on: () => () => {}, send: async () => ({ ok: true, result: { total: 4, items: [
+    { title: 'A', ok: false, result: 'Failed', code: '0x800F0922' }, { title: 'B', ok: false, result: 'Failed', code: '0x8024402c' },
+    { title: 'C', ok: false, result: 'Failed', code: '0x81234567' }, { title: 'D', ok: true, result: 'Succeeded', code: null }] } }) } };
+  const hx = await main.commands.history({}, HI);
+  const hw = (hx.items || []).map((x) => x.why);
+  check('main: history codes become words (known, lower-case too), unknown and succeeded = null, the code never in words',
+    hx.ok && /system reserved partition/.test(hw[0]) && /could not reach the update service/.test(hw[1]) && hw[2] === null && hw[3] === null && !hw.some((w) => w && /0x/i.test(w)), JSON.stringify(hw));
+  check('main: every mapped reason is a sentence without a code', Object.values(main.WHY).every((w) => /^[A-Z]/.test(w) && !/0x|HRESULT/i.test(w)), '');
   sent.length = 0;
   const bads = await Promise.all([main.commands.pause({ weeks: 6 }, L), main.commands.pause({ weeks: '1' }, L), main.commands.activeHours({ start: 8 }, L), main.commands.activeHours({ start: 8, end: 24 }, L)]);
   check('main: bad arguments are refused before the sidecar', bads.every((r) => r.ok === false) && sent.length === 0, JSON.stringify(bads));
@@ -133,8 +142,9 @@ function FAKE() {
     if (SCN === 'fail') return no('update.history failed (the sidecar is not running)');
     return { ok: true, total: 923, items: [
       { title: 'Made-up Security Intelligence Update (KB0000002)', date: now - 3600e3, op: 'install', result: 'Succeeded', ok: true, code: null },
-      { title: 'Made-up Cumulative Update (KB0000003)', date: now - 86400e3, op: 'install', result: 'Failed', ok: false, code: '0x800F0922' },
-      { title: 'Made-up Driver Update', date: now - 5 * 86400e3, op: 'install', result: 'Succeeded', ok: true, code: null }] };
+      { title: 'Made-up Cumulative Update (KB0000003)', date: now - 86400e3, op: 'install', result: 'Failed', ok: false, code: '0x800F0922',
+        why: 'Windows could not finish it (often too little space in the system reserved partition, or the network dropped)' },
+      { title: 'KB0000004', date: now - 5 * 86400e3, op: 'install', result: 'Succeeded', ok: true, code: null, why: null }] };
   }
   function write(name, a) {
     if (TEST) return later(30, { ok: true, dryRun: true, reason: 'Test run, nothing changed: Mantle would ' + (name === 'settings.update.check' ? 'search Windows Update online' : 'ask for administrator permission, then change it') });
@@ -205,7 +215,9 @@ const SHOTS = [
   ['upd-07-advanced', PG('advanced'), async (p) => {
     await p.waitForTimeout(250);
     check('07: active hours read 09:00 – 02:00', /09:00 – 02:00/.test(await rowText(p, 'update.advanced.active-hours') || ''));
-    check('07: every switch is read-only WITH the reason', /Read only here: Mantle changes only pause and active hours so far/.test(await rowText(p, 'update.advanced.latest') || '') && /Off/.test(await rowText(p, 'update.advanced.metered') || ''));
+    check('07: the switches say Off/On; the read-only reason is said ONCE for the card, not on every row',
+      !/Read only here/.test(await rowText(p, 'update.advanced.latest') || '') && /Off/.test(await rowText(p, 'update.advanced.metered') || '') &&
+      (await p.textContent('#page')).split('Read only here: Mantle changes only pause and active hours so far').length === 2);
     check('07: one optional driver', await p.locator('[data-row^="update.advanced.optional."]').count() === 1);
     check('07: delivery optimization says why it could not be read', /NETWORK SERVICE/.test(await rowText(p, 'update.advanced.delivery') || ''));
     await p.selectOption(sel('update.advanced.active-end') + ' select', '5');
@@ -216,13 +228,15 @@ const SHOTS = [
   ['upd-08-history', PG('history'), async (p) => {
     check('08: 923 in the history', /923/.test(await rowText(p, 'update.history.count') || ''));
     const t = await p.$$eval('[data-row^="update.history.list."]', (l) => l.map((x) => x.textContent));
-    check('08: three entries, the failed one with its code', t.length === 3 && /Failed/.test(t[1]) && /0x800F0922/.test(t[1]), t.join(' | '));
+    check('08: three entries, the failed one says why in words, never its code', t.length === 3 && /Failed/.test(t[1]) && /Windows could not finish it/.test(t[1]) && !/Failed: /.test(t[1]) && !/0x/i.test(t.join(' ')), t.join(' | '));
+    check('08: a title that is only a KB number reads as a Windows update', /Windows update KB0000004/.test(t[2]), t[2]);
   }],
   ['upd-09-insider', PG('insider'), async (p) => {
     check('09: not joined, read-only with the reason', /Not joined/.test(await rowText(p, 'update.insider.state') || '') && /Read only here: Joining or leaving/.test(await rowText(p, 'update.insider.state') || ''));
   }],
   ['upd-10-failing', PG('windows-update', '&wu=fail'), async (p) => {
-    check('10: the rows say why they could not be read', /Windows Update could not be read: update\.status failed/.test(await rowText(p, 'update.main.status') || '') && /update\.list failed/.test(await p.textContent('#page')));
+    check('10: the rows say why they could not be read', /Windows Update could not be read: Mantle's connection to Windows is restarting/.test(await rowText(p, 'update.main.status') || '') &&
+      /The updates could not be read: Mantle's connection to Windows is restarting/.test(await p.textContent('#page')) && !/update\.(status|list) failed|sidecar/.test(await p.textContent('#page')), (await p.textContent('#page')).slice(0, 300));
     check('10: nothing threw while drawing', !/could not be drawn/.test(await p.textContent('#page')));
   }],
   ['upd-11-restart', PG('windows-update', '&wu=restart'), async (p) => {

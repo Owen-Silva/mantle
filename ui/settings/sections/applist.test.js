@@ -303,7 +303,7 @@ const SHOTS = [
     check('13: says entries are never deleted', /never deletes one/.test(await rowText(p, 'apps.startup.count') || ''));
   }],
   ['app-14-failing', PG('installed', '&ap=fail'), async (p) => {
-    check('14: the count row says why it could not be read', /The installed apps could not be read: apps\.installed failed/.test(await rowText(p, 'apps.installed.count') || ''));
+    check('14: the count row says why it could not be read', /The installed apps could not be read: (Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(await rowText(p, 'apps.installed.count') || ''));
     check('14: nothing threw while drawing', !/could not be drawn/.test(await p.textContent('#page')));
   }],
   ['app-15-policy', PG('advanced', '&ap=policy'), async (p) => {

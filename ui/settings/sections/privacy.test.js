@@ -237,7 +237,7 @@ const SHOTS = [
     check('09: a declined prompt springs back', /You said no/.test(await rowText(p, 'privacy.developers.mode') || '') && await p.$eval(sw('privacy.developers.mode'), (b) => b.getAttribute('aria-checked')) === 'false');
   }],
   ['priv-10-failing', PG('camera', '&priv=fail'), async (p) => {
-    check('10: the switches say why they could not be read', /This permission could not be read: privacy\.cap failed/.test(await rowText(p, 'privacy.camera.user') || ''));
+    check('10: the switches say why they could not be read', /This permission could not be read: (Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(await rowText(p, 'privacy.camera.user') || ''));
     check('10: nothing threw while drawing', !/could not be drawn/.test(await p.textContent('#page')));
   }],
   ['priv-11-searching', PG('searching-windows'), async (p) => {

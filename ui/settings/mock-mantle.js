@@ -14,6 +14,10 @@
  *          btoff     the Bluetooth radio is off
  *          nobridge  no window.mantle at all: the page must say it cannot reach Mantle
  *        taskmgr=on | off | rest   Mantle's task manager feature (absent by default)
+ *        real=1   load the REAL category files (sections/<id>.js, the eleven Windows categories) instead of
+ *                 fixtures: the whole app as a person sees it. Their settings.<id>.* reads are NOT played
+ *                 (each answers ok:false with a made-up reason), so every page shows its error state;
+ *                 each category's own page test plays its data (sections/*.test.js)
  *        glass=acrylic   what main puts in the URL when it asked DWM for acrylic (lib/features/settings.js)
  *        glassok=1 | 0 | wait   DWM's read-back: acrylic + light frame / refused with a made-up reason / not yet
  *        desk=1   paints a MADE-UP desktop behind the clear page, blurred and tinted the way DWM's light
@@ -44,6 +48,7 @@
     const put = () => { document.body.prepend(tint); document.body.prepend(desk); };
     if (document.body) put(); else document.addEventListener('DOMContentLoaded', put);
   }
+  const REAL = q.get('real') === '1' ? ['system', 'devices', 'internet', 'personalization', 'applist', 'accounts', 'time', 'gaming', 'accessibility', 'privacy', 'update'] : [];
   const SECS = (q.get('sections') || '').split(',').filter(Boolean);
   const now = Date.now();
   const SIDECAR = 'the sidecar is restarting (it exited with code 1 a moment ago)';
@@ -257,7 +262,8 @@
       case 'settings.hello': return { ok: true, section: q.get('section') || 'home', page: q.get('page') || null, row: q.get('row') || null, query: q.get('q') || null, test: TEST, glass: GLASS };
       // section modules: ?sections=a,b loads the FIXTURES in test-sections/ (never sections/, which
       // belongs to the category lanes); an id ending in "!" is DOWN on the main side
-      case 'settings.sections': return { ok: true, reason: null, sections: SECS.map((id) => (id.endsWith('!')
+      case 'settings.sections': if (REAL.length) return { ok: true, reason: null, sections: REAL.map((id) => ({ id, file: 'sections/' + id + '.js', down: null, main: null })) };
+        return { ok: true, reason: null, sections: SECS.map((id) => (id.endsWith('!')
         ? { id: id.slice(0, -1), file: null, down: 'lib/features/_settings-sections/' + id.slice(0, -1) + '.js did not load (mock: main-side boom)', main: { ok: false, reason: 'mock: main-side boom', commands: [] } }
         : { id, file: 'test-sections/' + id + '.js', down: null, main: null })) };
       case 'settings.pickPath': return TEST ? { ok: false, reason: 'a test run never opens a folder dialog', path: null, cancelled: false } : later(200, { ok: true, cancelled: false, reason: null, path: 'D:\\Made-up folder' });
@@ -372,6 +378,7 @@
       default:
         // a fixture section's main-side command: settings.<id>.<name> answers with what it was sent
         if (/^settings\.[a-z][a-z0-9-]*\.[A-Za-z]\w*$/.test(name)) {
+          if (REAL.length) return later(60, { ok: false, reason: 'made up: this category\'s data is not played on the overview mock' });
           if (/\.fail$/.test(name)) return later(120, { ok: false, reason: 'mock: this switch cannot move (the service is stopped)' });
           if (/\.admin$/.test(name)) return later(120, { ok: false, reason: 'Mantle cannot ask for administrator rights yet' });
           return later(120, Object.assign({ ok: true, reason: null, dryRun: TEST || undefined }, a && 'value' in a ? { value: a.value } : {}, TEST ? { reason: 'test run: nothing was changed' } : {}));

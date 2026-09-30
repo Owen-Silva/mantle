@@ -264,7 +264,7 @@ const SHOTS = [
     check('10: applying says why it is read-only', /Read only here: Windows applies a whole theme only through its own theme service/.test(await p.textContent('#page')));
   }],
   ['perso-11-failing', PG('background', '&perso=fail'), async (p) => {
-    check('11: the rows say why they could not be read', /Windows' background could not be read: perso\.background failed/.test(await rowText(p, 'personalization.background.fit') || ''));
+    check('11: the rows say why they could not be read', /Windows' background could not be read: (Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(await rowText(p, 'personalization.background.fit') || ''));
     check('11: nothing threw while drawing', !/could not be drawn/.test(await p.textContent('#page')));
   }],
   ['perso-12-usage', PG('device-usage'), async (p) => {

@@ -30,7 +30,9 @@
     gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/>',
     flask: '<path d="M6 1.8h4M6.6 1.8v4.4L2.8 13a1 1 0 0 0 .9 1.4h8.6a1 1 0 0 0 .9-1.4L9.4 6.2V1.8"/><path d="M4.6 10h6.8"/>',
   };
-  const items = (list) => (list || []).map((u) => ({ key: keyOf(u.uid || u.title), label: u.title || 'Update',
+  // A title that is only a KB number still gets a name a person can read.
+  const named = (t) => (!t ? 'Windows update' : /^\s*KB\d+\s*$/i.test(t) ? 'Windows update ' + t.trim().toUpperCase() : t);
+  const items = (list) => (list || []).map((u) => ({ key: keyOf(u.uid || u.title), label: named(u.title),
     help: [u.kb && u.kb.length ? u.kb.join(', ') : null, size(u.size), u.downloaded ? 'Downloaded' : null].filter(Boolean).join(' · ') || null, value: KIND[u.kind] || 'Update' }));
 
   // ============================================================== Windows Update
@@ -113,9 +115,10 @@
       if (!r || r.ok === false) { const why = bad(r, 'The update history could not be read'); count.set({ value: '—', reason: why }); return list.set({ items: [], empty: why }); }
       const failed = r.items.filter((h) => !h.ok).length;
       count.set({ value: String(r.total), help: 'The newest ' + r.items.length + ' are listed' + (failed ? ', ' + failed + ' did not succeed' : ''), reason: null });
-      list.set({ empty: 'Windows has no update history yet', items: r.items.map((h, i) => ({ key: 'h' + i + keyOf(h.title + h.date), label: h.title,
+      // Words only: main turns the failure's code into words (lib/features/_settings-sections/update.js WHY); the code never shows.
+      list.set({ empty: 'Windows has no update history yet', items: r.items.map((h, i) => ({ key: 'h' + i + keyOf(h.title + h.date), label: named(h.title),
         help: (h.date ? when(h.date) : 'No date') + (h.op === 'uninstall' ? ' · removed' : ''), value: h.result,
-        reason: h.ok ? null : 'Windows Update reports ' + h.result.toLowerCase() + (h.code ? ' (' + h.code + ')' : '') })) });
+        reason: h.ok ? null : h.why || 'Windows Update did not give a reason' })) });
     }
     return read().then(() => ({ update: read, dispose() {} }));
   }
@@ -128,16 +131,17 @@
     ['restartNotify', 'update.advanced.restart-notify', 'Notify me when a restart is required to finish updating', 'A notice before Windows restarts']];
   function renderAdvanced(el, kit) {
     const H = Array.from({ length: 24 }, (_, h) => ({ value: h, label: hour(h) }));
-    const hrs = kit.status({ row: 'update.advanced.active-hours', label: 'Active hours', help: 'Windows Update does not restart this PC during these hours', value: 'Reading…' });
     const S = { h: null };
+    const hrs = kit.status({ row: 'update.advanced.active-hours', label: 'Active hours', help: 'Windows Update does not restart this PC during these hours', value: 'Reading…' });
     const setHours = (start, end) => C(kit, 'activeHours', { start, end }).then((r) => { if (r.ok && !r.dryRun) setTimeout(read, 300); return r; });
     const start = kit.choice({ row: 'update.advanced.active-start', label: 'Start time', admin: HOURS_DOES, style: 'dropdown', options: H, value: 8, onChange: (v) => setHours(v, S.h ? S.h.end : 17) });
     const end = kit.choice({ row: 'update.advanced.active-end', label: 'End time', admin: HOURS_DOES, style: 'dropdown', options: H, value: 17, onChange: (v) => setHours(S.h ? S.h.start : 8, v) });
     const flags = {};
     for (const [k, row, label, help] of FLAGS) flags[k] = kit.status({ row, label, help, value: '' });
+    const flagWhy = kit.h('div', {});
     const opt = kit.list({ row: 'update.advanced.optional', items: [], empty: 'Reading the optional updates…' });
     const dlv = kit.status({ row: 'update.advanced.delivery', label: 'Allow downloads from other PCs', help: 'Delivery Optimization shares update downloads between PCs', value: 'Reading…' });
-    el.append(kit.group('Active hours'), kit.card(hrs, start, end), kit.group('Options'), kit.card(...FLAGS.map(([k]) => flags[k])),
+    el.append(kit.group('Active hours'), kit.card(hrs, start, end), kit.group('Options'), kit.card(...FLAGS.map(([k]) => flags[k]), flagWhy),
       kit.group('Optional updates'), kit.card(kit.reason(INSTALL_WHY, { info: true }), opt), kit.group('Delivery Optimization'), kit.card(dlv));
     async function read() {
       const r = await C(kit, 'status');
@@ -153,8 +157,9 @@
       const f = r.flags || {};
       for (const [k] of FLAGS) {
         const v = f[k] || {};
-        flags[k].set({ value: v.on ? 'On' : 'Off', tone: v.on ? 'ok' : null, info: 'Read only here: ' + (f.why || 'Windows keeps this') + (v.set ? '' : ' (not set: Windows\' default applies)') });
+        flags[k].set({ value: v.on ? 'On' : 'Off', tone: v.on ? 'ok' : null, info: v.set ? null : 'Not set: Windows\' default applies' });
       }
+      flagWhy.replaceChildren(kit.reason('Read only here: ' + (f.why || 'Windows keeps these'), { info: true }));
       const d = r.delivery || {};
       dlv.set({ value: d.words || 'Not readable', tone: d.words ? 'info' : null, reason: d.words ? null : d.why || 'Windows did not say', info: 'Read only here: ' + (d.readOnly || 'Windows keeps this') });
     }

@@ -54,8 +54,9 @@ async function nodeTests() {
   check('main: every display reading is a real SysDisplay command', readNames.length === 3 && readNames.every((c) => cmds.has(c)), readNames.filter((c) => !cmds.has(c)).join(' '));
   check('main: every display change is a real SysDisplay command', writeNames.every((c) => cmds.has(c)), writeNames.filter((c) => !cmds.has(c)).join(' '));
   const reachable = new Set(readNames.concat(writeNames));
-  const missing = [...cmds].filter((c) => c !== 'sysdisplay.decide' && !reachable.has(c));
-  check('main: every SysDisplay command but the pure planner can be reached', !missing.length, missing.join(' '));
+  const missing = [...cmds].filter((c) => c !== 'sysdisplay.decide' && c !== 'sysdisplay.testArm' && !reachable.has(c));
+  check('main: every SysDisplay command but the pure planner and the test-only arm can be reached', !missing.length, missing.join(' '));
+  check('main: the test-only sysdisplay.testArm can NOT be reached from the page', !reachable.has('sysdisplay.testArm'));
   check('main: the GPU scheduling administrator action is SysDisplay\'s [Elevated] one', elevated.has('sysdisplay.gpuScheduling') && Object.prototype.hasOwnProperty.call(main.ADMIN, 'sysdisplay.gpuScheduling'));
 
   // a test run: every display write is a dry run; keep and revert never reach the sidecar
@@ -132,6 +133,7 @@ async function nodeTests() {
 function FAKE() {
   const q = new URLSearchParams(location.search);
   const TEST = q.get('test') === '1', SCN = q.get('disp') || 'two';
+  const KEEPMS = Number(q.get('keepms')) || 15000, STALE = q.get('stale') === '1';   // the keep window; keep/revert find nothing waiting
   const later = (ms, v) => new Promise((res) => setTimeout(() => res(v), ms));
   const emit = (ev, p) => setTimeout(() => window.__mockEmit && window.__mockEmit(ev, p), 20);
   const modes = (list) => list.flatMap(([w, h, hzs, nat]) => hzs.map((hz) => ({ width: w, height: h, hz, native: !!nat })));
@@ -175,11 +177,15 @@ function FAKE() {
     if (a.what === 'gpu') return later(30, JSON.parse(JSON.stringify(GPU)));
     return later(10, no(`fake: no reading "${a.what}"`));
   }
+  let timer = null;
   function arm(kind) {
-    F.pending = { token: 'tok-' + Math.random().toString(36).slice(2, 7), kind, revertsInMs: 15000 };
-    until = Date.now() + 15000;
-    emit('settings.system.display', { ev: 'sysdisplay', what: 'pending', token: F.pending.token, kind, keepWithinMs: 15000 });
-    return { ok: true, changed: true, pending: true, token: F.pending.token, keepWithinMs: 15000, note: 'not saved yet' };
+    const tok = 'tok-' + Math.random().toString(36).slice(2, 7);
+    F.pending = { token: tok, kind, revertsInMs: KEEPMS };
+    until = Date.now() + KEEPMS;
+    clearTimeout(timer);
+    timer = setTimeout(() => { if (F.pending && F.pending.token === tok) { F.pending = null; emit('settings.system.display', { ev: 'sysdisplay', what: 'reverted', token: tok, kind, why: 'timeout', ok: true }); } }, KEEPMS);
+    emit('settings.system.display', { ev: 'sysdisplay', what: 'pending', token: tok, kind, keepWithinMs: KEEPMS });
+    return { ok: true, changed: true, pending: true, token: tok, keepWithinMs: KEEPMS, note: 'not saved yet' };
   }
   function write(a) {
     if (TEST) {
@@ -187,6 +193,9 @@ function FAKE() {
       return later(30, { ok: true, dryRun: true, reason: `test run: nothing was changed (would write: ${a.what === 'displayMode' ? `ChangeDisplaySettingsEx ${a.width} x ${a.height}` : a.what})` });
     }
     const d = F.displays.find((x) => x.display === a.display);
+    if (F.pending && ['displayMode', 'topology', 'primary', 'arrange'].includes(a.what)) return later(30, no(`a display change is still waiting to be kept or reverted (${Math.ceil(Math.max(0, until - Date.now()) / 1000)} s left); keep or revert it first`));
+    // stale: the change ended elsewhere, so Windows has nothing waiting any more (the next read says so too)
+    if (STALE && (a.what === 'displayKeep' || a.what === 'displayRevert')) return (F.pending = null), later(20, no('no display change is waiting with that token (it was already kept or reverted)'));
     switch (a.what) {
       case 'displayMode': if (d) { d.resolution = { width: a.width, height: a.height }; if (a.hz) d.refreshHz = a.hz; if (a.orientation) d.orientation = a.orientation; } return later(60, arm('mode'));
       case 'topology': F.topology.current = a.mode; return later(60, arm('topology'));
@@ -234,6 +243,7 @@ const shown = (p, row) => p.evaluate((s) => { const e = document.querySelector(s
 const scrollTo = (p, row) => p.evaluate((s) => { const e = document.querySelector(s); if (e) e.scrollIntoView({ block: 'start' }); }, sel(row));
 const calls = (p, name) => p.evaluate((n) => (window.__mockCalls || []).filter((c) => c.name === n), name);
 const PG = '?section=system&page=display';
+const KEPT_HIDE = 6000;   // system.js KEPT_HIDE_MS
 
 const SHOTS = [
   ['disp-01-top', PG + '&disp=pending', async (p) => {
@@ -315,11 +325,45 @@ const SHOTS = [
     await scrollTo(p, 'display.monitors');
   }],
   ['disp-08-failing', PG + '&disp=fail', async (p) => {
-    check('08: the displays say why they could not be read', /The displays could not be read: sysdisplay\.get failed/.test(await rowText(p, 'system.display.resolution') || ''));
+    check('08: the displays say why they could not be read', /The displays could not be read: (Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(await rowText(p, 'system.display.resolution') || ''));
     check('08: the night light schedule says why', /could not be read/.test(await rowText(p, 'system.display.nightlight.schedule') || ''));
     check('08: graphics says why', /could not be read/.test(await rowText(p, 'system.display.gpu.scheduling') || ''));
     check('08: brightness still works (its own backend)', /66%/.test(await rowText(p, 'display.brightness') || ''));
     check('08: nothing threw while drawing', !/could not be drawn/.test(await p.textContent('#page')));
+  }],
+  ['disp-09-locked', PG + '&disp=pending', async (p) => {
+    const dis = (row) => p.$eval(sel(row) + ' select, ' + sel(row) + ' button', (e) => e.disabled);
+    check('09: while a change waits, the resolution row is locked and says why', await dis('system.display.resolution.2') && /Keep or revert the display change above first/.test(await rowText(p, 'system.display.resolution.2') || ''), await rowText(p, 'system.display.resolution.2'));
+    check('09: ... and so are refresh rate, orientation, main display and Multiple displays', await dis('system.display.refresh.2') && await dis('system.display.orientation.2') && await dis('system.display.primary.2') && await dis('system.display.topology'));
+    check('09: scale stays free (it has no countdown)', !(await dis('system.display.scale.2')));
+    await p.click(sel('system.display.keep.no') + ' button');
+    await p.waitForTimeout(500);
+    check('09: after Revert the rows unlock and the line is gone', !(await dis('system.display.resolution.2')) && !(await dis('system.display.topology')) && !/Keep or revert the display change/.test(await p.textContent('#page')));
+  }],
+  ['disp-10-timeout', PG + '&keepms=1500', async (p) => {
+    await p.selectOption(sel('system.display.resolution.2') + ' select', '2560x1440');
+    await p.waitForTimeout(350);
+    check('10: the countdown uses the change\'s own time', /Going back in [12] s/.test(await rowText(p, 'system.display.keep') || ''), await rowText(p, 'system.display.keep'));
+    check('10: the other rows are locked meanwhile', await p.$eval(sel('system.display.refresh.2') + ' select', (e) => e.disabled));
+    await p.waitForTimeout(2200);
+    const t = await rowText(p, 'system.display.keep');
+    check('10: not kept in time: put back by itself, and the page says why', /Put back/.test(t) && /not kept in time/.test(t) && !(await shown(p, 'system.display.keep.yes')), t);
+    check('10: the rows unlock', !(await p.$eval(sel('system.display.refresh.2') + ' select', (e) => e.disabled)));
+    await p.waitForTimeout(KEPT_HIDE + 400);
+    check('10: a timed-out change stays explained (it is not hidden)', await shown(p, 'system.display.keep'));
+  }],
+  ['disp-11-stale', PG + '&disp=pending&stale=1', async (p) => {
+    await p.click(sel('system.display.keep.yes') + ' button');
+    await p.waitForTimeout(450);
+    const t = await rowText(p, 'system.display.keep');
+    check('11: Keep on a change that already ended says so, no dead buttons', /No longer waiting/.test(t) && !(await shown(p, 'system.display.keep.yes')) && !(await shown(p, 'system.display.keep.no')), t);
+  }],
+  ['disp-12-kept-hides', PG + '&disp=pending', async (p) => {
+    await p.click(sel('system.display.keep.yes') + ' button');
+    await p.waitForTimeout(450);
+    check('12: Kept shows at once', /Kept/.test(await rowText(p, 'system.display.keep') || ''));
+    await p.waitForTimeout(KEPT_HIDE + 400);
+    check('12: ... and the note goes by itself once it is settled', !(await shown(p, 'system.display.keep')));
   }],
 ];
 

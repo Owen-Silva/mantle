@@ -12,6 +12,17 @@
 'use strict';
 delete process.env.MANTLE_ELEVATE_TEST;
 const T = require('./test-lib');
+const { execFileSync } = require('child_process');
+
+/** One registry value through reg.exe (an independent, read-only reader): a number, a string, or null. */
+function regq(key, name) {
+  try {
+    const out = execFileSync('C:\\Windows\\System32\\reg.exe', ['query', key, '/v', name], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const m = new RegExp('^\\s*' + name + '\\s+(REG_\\w+)\\s+(.*?)\\s*$', 'm').exec(out);
+    if (!m) return null;
+    return m[1] === 'REG_DWORD' ? parseInt(m[2], 16) : m[2];
+  } catch (_) { return null; }
+}
 
 (async () => {
   const t = T.checker('SYSTIME');
@@ -119,6 +130,28 @@ const T = require('./test-lib');
       r = await send(cmd, args);
       t.check(`${cmd} real: passive refusal`, refused(r), errOf(r));
     }
+    // The plans, value by value, against where Windows keeps each (read back with reg.exe).
+    r = await send('systime.setAutoSync', { on: !A.on, dryRun: true });
+    let w = (res(r) && res(r).writes) || [];
+    t.check('setAutoSync plan: W32Time Parameters Type = NTP/NoSync (REG_SZ), before = what reg.exe reads', dry(r) && w.length === 1 && w[0].hive === 'HKLM' &&
+      w[0].key === 'SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters' && w[0].name === 'Type' && w[0].type === 'REG_SZ' && w[0].value === (!A.on ? 'NTP' : 'NoSync') &&
+      w[0].before === regq('HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters', 'Type') && JSON.stringify(res(r).elevate.args) === JSON.stringify({ on: !A.on }), errOf(r) || JSON.stringify(w));
+    r = await send('systime.setAutoZone', { on: !AZ.on, dryRun: true });
+    w = (res(r) && res(r).writes) || [];
+    const tzStart = regq('HKLM\\SYSTEM\\CurrentControlSet\\Services\\tzautoupdate', 'Start');
+    t.check('setAutoZone plan: the Auto Time Zone Updater start type (manual = on, disabled = off), matching reg.exe now', dry(r) && w.length === 1 && w[0].api === 'ChangeServiceConfig' &&
+      w[0].service === 'tzautoupdate' && (!AZ.on ? /^manual/.test(w[0].startType) : w[0].startType === 'disabled') && (tzStart === 4) === !AZ.on &&
+      JSON.stringify(res(r).elevate.args) === JSON.stringify({ on: !AZ.on }), errOf(r) || JSON.stringify(w) + ' reg ' + tzStart);
+    for (const [args, text] of [[good, '2026-09-28 12:00:00'], [{ year: 2028, month: 2, day: 29, hour: 23, minute: 59, second: 59 }, '2028-02-29 23:59:59'], [{ year: 2000, month: 1, day: 1, hour: 0, minute: 0, second: 0 }, '2000-01-01 00:00:00']]) {
+      r = await send('systime.setClock', Object.assign({ dryRun: true }, args));
+      w = (res(r) && res(r).writes) || [];
+      t.check(`setClock plan ${text}: SetLocalTime to exactly that, elevate args = the six numbers`, dry(r) && w.length === 1 && w[0].api === 'SetLocalTime' && w[0].to === text &&
+        JSON.stringify(res(r).elevate.args) === JSON.stringify(args), errOf(r) || JSON.stringify(res(r)));
+    }
+    for (const bad of [{ year: 2027, month: 2, day: 29, hour: 0, minute: 0, second: 0 }, { year: 2026, month: 13, day: 1, hour: 0, minute: 0, second: 0 }, { year: 2026, month: 1, day: 1, hour: 24, minute: 0, second: 0 }]) {
+      r = await send('systime.setClock', Object.assign({ dryRun: true }, bad));
+      t.check(`setClock refuses ${JSON.stringify(bad).slice(0, 60)} before any prompt`, r.ok === false, errOf(r));
+    }
     r = await send('systime.setClock', Object.assign({}, good, { day: 31, month: 4, dryRun: true }));
     t.check('setClock refuses 31 April before any prompt', r.ok === false && /only 30 days/.test(errOf(r)), errOf(r));
     r = await send('systime.syncNow', { dryRun: true });
@@ -165,6 +198,18 @@ const T = require('./test-lib');
     for (const k of keys) {
       r = await send('sysregion.setFormat', { key: k, value: rg0.formats[k].value, dryRun: true });
       t.check(`setFormat ${k} dryRun: SetLocaleInfoW + the intl broadcast`, dry(r) && res(r).writes[0].api === 'SetLocaleInfoW' && res(r).writes[1].lParam === 'intl', errOf(r));
+    }
+    // Where Windows keeps each format (SetLocaleInfoW writes HKCU\Control Panel\International): the plan's
+    // `before` equals reg.exe's read of that very value,. (Saying the plan in words needs SysTimeRegion.cs; not yet.)
+    const INTL = { shortDate: 'sShortDate', longDate: 'sLongDate', shortTime: 'sShortTime', longTime: 'sTimeFormat', firstDayOfWeek: 'iFirstDayOfWeek', measure: 'iMeasure' };
+    for (const k of keys) {
+      const f = rg0.formats[k];
+      const other = f.options.find((o) => o.value !== f.value) || f.options[0];
+      r = await send('sysregion.setFormat', { key: k, value: other.value, dryRun: true });
+      const p = res(r) || {}, w0 = (p.writes || [])[0] || {};
+      const reg = regq('HKCU\\Control Panel\\International', INTL[k]);
+      t.check(`setFormat ${k} plan: Control Panel\\International\\${INTL[k]} = the choice; before = reg.exe's value there`, dry(r) && w0.registry === 'HKCU\\Control Panel\\International\\' + INTL[k] &&
+        w0.value === other.value && (reg === null || String(w0.before) === String(reg)), errOf(r) || JSON.stringify([w0.registry, w0.before, reg]));
     }
     r = await send('sysregion.setFormat', { key: 'shortDate', value: 'yyyy"; rm', dryRun: true });
     t.check('setFormat refuses a format Windows does not list', r.ok === false && /not one of the choices/.test(errOf(r)), errOf(r));

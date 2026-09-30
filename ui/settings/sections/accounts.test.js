@@ -164,7 +164,7 @@ const SHOTS = [
     check('09: family read-only with the reason', /Family Safety lives in your Microsoft account online/.test(await rowText(p, 'accounts.family') || ''));
   }],
   ['acc-10-failing', PG('info', '&ac=fail'), async (p) => {
-    check('10: the rows say why they could not be read', /Your account could not be read: accounts\.info failed/.test(await rowText(p, 'accounts.info.name') || ''));
+    check('10: the rows say why they could not be read', /Your account could not be read: (Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(await rowText(p, 'accounts.info.name') || ''));
     check('10: nothing threw while drawing', !/could not be drawn/.test(await p.textContent('#page')));
   }],
 ];

@@ -369,7 +369,7 @@ const SHOTS = [
     check('09: recognizer languages listed', /English \(United States\)/.test(await valText(p, 'time.speech.language') || ''));
   }],
   ['time-10-failing', DT + '&tl=fail', async (p) => {
-    check('10: the clock says why it could not be read', /Date and time could not be read: settings\.time\.get failed/.test(await whyText(p, 'time.datetime.now') || ''));
+    check('10: the clock says why it could not be read', /Date and time could not be read: (Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(await whyText(p, 'time.datetime.now') || ''));
     check('10: every switch says why too', /could not be read/.test(await whyText(p, 'time.datetime.autoTime') || '') && /could not be read/.test(await whyText(p, 'time.datetime.zone') || ''));
     check('10: nothing threw while drawing', !/could not be drawn/.test(await p.textContent('#page')));
   }],

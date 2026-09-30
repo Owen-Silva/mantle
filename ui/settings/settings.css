@@ -37,7 +37,7 @@ svg { display: block; }
   position: absolute; top: 0; left: 0; right: 0;
   height: 40px;
   display: flex; align-items: center;
-  padding-left: 16px;
+  padding-left: 4px;
   -webkit-app-region: drag;
 }
 .head-title { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--lg-ink-3); }
@@ -52,6 +52,9 @@ svg { display: block; }
 .winbtn:hover { background: var(--lg-hover); color: var(--lg-ink); }
 .winbtn:active, .winbtn.close:hover { background: var(--lg-press); color: var(--lg-ink); }
 .winbtn:focus-visible { outline-offset: -2px; }
+/* back, at the top left like Windows 11 Settings: a quiet 40x32 key that fades out when there is nowhere to go */
+.backbtn { width: 40px; height: 32px; margin-right: 4px; border-radius: var(--lg-r-ctl); -webkit-app-region: no-drag; }
+.backbtn:disabled { color: var(--lg-ink-3); opacity: .45; background: transparent; }
 .winbtn .g-restore { display: none; }
 body.maxed .winbtn .g-restore { display: block; }
 body.maxed .winbtn .g-max { display: none; }
@@ -198,6 +201,10 @@ button.row:focus-visible { outline-offset: -2px; }
 }
 .why svg { flex: 0 0 12px; margin-top: 2px; }
 .why.info { color: var(--lg-ink-3); }
+/* a card's own note (a reason placed in the card, not on a row): the row's inset and hairline, so it
+   never sits flush against the card edge */
+.card > .why, .card > div:not([class]) > .why { margin: 0; padding: 10px 16px; border-top: 1px solid var(--lg-sunk); }
+.card > .why:first-child, .card > div:not([class]):first-child > .why { border-top: 0; }
 .state { font-size: 12px; color: var(--lg-ink-3); }
 .state.ok { color: var(--lg-ink-2); }
 .state.warn { color: var(--lg-warn); }

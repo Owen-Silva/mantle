@@ -108,7 +108,9 @@
       }
       const S = p.settings || {};
       const hasBat = !!(p.caps && p.caps.battery);
-      saverAt.set(Object.assign(side(S.saverAt && S.saverAt.dc), { info: hasBat ? null : 'This PC has no battery, so energy saver never turns on by itself' }));
+      saverAt.set(side(S.saverAt && S.saverAt.dc));
+      // no battery: the on-battery rows can never apply, so they are not shown (Windows hides them too)
+      saverAt.el.style.display = hasBat ? '' : 'none';
       saverAlways.set({ value: !!(S.saverAt && S.saverAt.ac && S.saverAt.ac.value === 100 && S.saverAt.dc.value === 100), disabled: !(S.saverAt && S.saverAt.ac.writable), reason: S.saverAt && !S.saverAt.ac.writable ? S.saverAt.ac.why : null });
       saverDim.set(side(S.saverBrightness && S.saverBrightness.dc));
       for (const [k] of tGroups) for (const src of ['dc', 'ac']) {
@@ -116,16 +118,21 @@
         const patch = side(s);
         patch.options = timeoutOptions(s ? s.value : null);
         if (S[k] && !S[k].applies) Object.assign(patch, { disabled: true, reason: S[k].why });
-        if (src === 'dc' && !hasBat) Object.assign(patch, { disabled: true, info: 'No battery: only the plugged-in value applies', reason: null });
+        const label = tGroups.find((g) => g[0] === k)[1];
+        patch.label = hasBat ? `${label} (${src === 'dc' ? 'on battery' : 'plugged in'})` : label;
         T[`${k}.${src}`].set(patch);
+        T[`${k}.${src}`].el.style.display = src === 'dc' && !hasBat ? 'none' : '';
       }
       for (const [k] of bRows) for (const src of ['dc', 'ac']) {
         const row = S[k];
         const patch = side(row && row[src]);
         patch.options = (row && row.choices || []).map((c) => ({ value: c.value, label: c.label }));
         if (row && !row.applies) Object.assign(patch, { disabled: true, reason: row.why });
-        if (src === 'dc' && !hasBat) Object.assign(patch, { disabled: true, info: 'No battery: only the plugged-in value applies', reason: null });
+        const label = bRows.find((g) => g[0] === k)[1];
+        patch.label = hasBat ? `${label} (${src === 'dc' ? 'on battery' : 'plugged in'})` : label;
         B[`${k}.${src}`].set(patch);
+        // hidden: the on-battery half without a battery, and a lid or sleep button this PC does not have
+        B[`${k}.${src}`].el.style.display = (src === 'dc' && !hasBat) || (row && row.applies === false && k !== 'powerButton') ? 'none' : '';
       }
       hib.set({ value: !!(p.hibernation && p.hibernation.on), reason: null });
       fast.set({ value: !!(p.fastStartup && p.fastStartup.on), disabled: p.fastStartup && p.fastStartup.available === false, reason: p.fastStartup && p.fastStartup.available === false ? p.fastStartup.why : null });
@@ -321,7 +328,13 @@
   function renderAbout(el, kit) {
     const name = kit.text({ row: 'system.about.name', label: 'Device name', admin: 'rename this PC',
       help: 'Letters, numbers and hyphens, 1 to 15 characters. Takes effect after a restart',
-      onChange: (s) => A(kit, 'system.renamePc', { name: String(s || '').trim() }).then((r) => r && r.ok && !r.dryRun ? { ok: true, value: r.name, note: r.note } : r) });
+      onChange: (s) => {
+        const n = String(s || '').trim(), cur = cur0.name;
+        if (!n) return { ok: false, reason: 'Type a name for this PC' };
+        if (cur && n.toLowerCase() === cur.toLowerCase()) return { ok: true, value: cur };   // nothing to change: no prompt
+        return A(kit, 'system.renamePc', { name: n }).then((r) => r && r.ok && !r.dryRun ? { ok: true, value: r.name, note: r.note } : r);
+      } });
+    const cur0 = { name: null };
     const D = {};
     const dRows = [['processor', 'Processor'], ['ram', 'Installed RAM'], ['storage', 'Storage'], ['model', 'Device'], ['deviceId', 'Device ID'], ['productId', 'Product ID'], ['systemType', 'System type'], ['penTouch', 'Pen and touch']];
     for (const [k, label] of dRows) D[k] = kit.status({ row: `system.about.${k}`, label, value: 'Reading…', tone: 'info' });
@@ -333,6 +346,7 @@
       const a = await R(kit, 'about');
       if (!a || !a.ok) { name.set({ reason: fail('The device', a), disabled: true }); return; }
       const d = a.device, w = a.windows;
+      cur0.name = d.name;
       name.set({ value: d.name });
       const v = { processor: `${d.processor} (${d.cores} logical processors)`, ram: d.ramInstalledBytes ? `${bytes(d.ramInstalledBytes)} (${bytes(d.ramUsableBytes)} usable)` : '—',
         storage: bytes(d.storageBytes), model: [d.manufacturer, d.model].filter(Boolean).join(' ') || '—', deviceId: d.deviceId || '—', productId: d.productId || '—',
@@ -422,6 +436,10 @@
     { value: 'above', label: 'Above the main display' }, { value: 'below', label: 'Below the main display' }];
   const KIND = { mode: 'resolution, refresh rate and orientation', topology: 'display layout', primary: 'main display', arrange: 'display arrangement' };
   const ENDED = { timeout: 'It was not kept in time, so the previous settings are back', asked: 'You chose Revert', exit:'Mantle closed before it was kept, so the previous settings are back' };
+  /* While a change waits, the rows that would start another countdown are locked with this line (the
+     sidecar refuses a 2nd change anyway: SysDisplay.cs Busy()); Windows blocks them with a dialog. */
+  const WAIT = 'Keep or revert the display change above first';
+  const KEPT_HIDE_MS = 6000;   // a change you kept or reverted yourself: the note goes after this
   const hzText = (hz) => `${Math.round(hz * 100) / 100} Hz`;
   const sfx = (i) => (i === 0 ? '' : `.${i + 1}`);
   const hh = (h) => `${String(h).padStart(2, '0')}:00`;
@@ -451,7 +469,7 @@
   }
 
   function renderDisplay(el, kit) {
-    const S = { pending: null, list: [], cards: [], shownLeft: null };
+    const S = { pending: null, list: [], cards: [], shownLeft: null, hideT: null };
     const h = kit.h;
 
     /* -- keep or revert (hidden until a change waits) */
@@ -631,7 +649,7 @@
       if (on && d.refreshHz && C.curHz == null) hzOpts.unshift({ value: d.refreshHz, label: `${hzText(d.refreshHz)} (not in Windows' list)` });
       C.hz.set({ options: hzOpts, value: C.curHz != null ? C.curHz : on ? d.refreshHz : null, disabled: !on || rates.length < 1 || !!noModes,
         reason: off || noModes, info: on && rates.length === 1 ? 'This is the only rate Windows offers at this resolution' : null });
-      C.orient.set({ value: d.orientation || 'landscape', disabled: !on, reason: off });
+      C.orient.set({ value: d.orientation || 'landscape', disabled: !on, reason: off, info: null });
       const sc = d.scale || {};
       const allowed = Array.isArray(sc.allowed) ? sc.allowed : [];
       const scOpts = allowed.map((p) => ({ value: p, label: `${p}%${p === sc.recommended ? ' (Recommended)' : ''}` }));
@@ -645,13 +663,16 @@
         info: d.primary ? (count > 1 ? 'This is your main display: the taskbar and new windows open here' : 'The only display in use is always the main one') : null });
       const showPos = on && !d.primary && main && main.bounds;
       C.pos.el.style.display = showPos ? '' : 'none';
+      if (!showPos) C.pos.set({ disabled: false, info: null });   // a hidden row keeps no lock line from a change that has ended
       if (showPos) {
         const where = relPos(d, main);
         const opts = POS.slice();
         if (where === 'custom') opts.unshift({ value: 'custom', label: `Where it is now (${d.bounds.x}, ${d.bounds.y})` });
-        C.pos.set({ options: opts, value: where, disabled: false, reason: null });
+        C.pos.set({ options: opts, value: where, disabled: false, reason: null, info: null });
       }
+      if (S.pending) lockCard(C);
     }
+    function lockCard(C) { for (const k of ['res', 'hz', 'orient', 'primary', 'pos']) C[k].set({ disabled: true, info: WAIT }); }
 
     function drawMap(list) {
       const act = list.filter((d) => d.active && d.bounds);
@@ -704,6 +725,7 @@
       topo.set({ options: opts, value: t.current, disabled: opts.length < 2 || !t.current,
         reason: t.reason || (opts.length < 2 ? `Read only here: ${single ? 'only one display is connected, so there is no other layout' : 'Windows validated no other layout'}${no.length ? ` (${no.join('; ')})` : ''}` : null),
         info: r.inactiveReason || null });
+      if (S.pending) topo.set({ disabled: true, info: WAIT });
       const cs = r.customScale || {};
       custom.set(cs.on == null && cs.reason ? { value: 'Not read', tone: 'warn', reason: cs.reason }
         : { value: cs.on ? `On: ${cs.percent}%` : 'Off', tone: cs.on ? 'warn' : 'info', reason: null, info: cs.writable === false ? `Read only here: ${cs.why || 'Mantle does not set it'}` : null });
@@ -732,6 +754,8 @@
       keepB.el.style.display = ''; revB.el.style.display = '';
       keepB.set({ disabled: false }); revB.set({ disabled: false });
       cd.set({ label: 'Keep these display settings?', tone: 'warn', reason: null, info: null });
+      clearTimeout(S.hideT);
+      S.cards.forEach(lockCard); topo.set({ disabled: true, info: WAIT });
       tick();
     }
     function tick() {
@@ -751,14 +775,17 @@
       if (what === 'kept') cd.set({ label: 'Display change', value: failed ? 'Not saved' : 'Kept', tone: failed ? 'warn' : 'ok', help: `The new ${kind} stay`, reason: failed ? (ev.reason || 'saving it failed, and no reason came back') : null, info: null });
       else if (what === 'reverted') cd.set({ label: 'Display change', value: failed ? 'Not put back' : 'Put back', tone: failed ? 'warn' : 'info', help: `The previous ${kind}`,
         reason: failed ? (ev.reason || 'putting it back failed, and no reason came back') : null, info: failed ? null : (ENDED[ev && ev.why] || `Put back (${(ev && ev.why) || 'no reason came back'})`) });
-      else cd.set({ label: 'Display change', value: 'No longer waiting', tone: 'info', help: null, reason: null, info: 'Windows reports no change waiting any more: it was kept or put back while this page was not listening. The values below are what Windows has now' });
-      setTimeout(update, 50);
+      else cd.set({ label: 'Display change', value: 'No longer waiting', tone: 'info', help: null, reason: null, info: 'It was kept or put back while this page was not listening. The values below are what Windows has now' });
+      clearTimeout(S.hideT);
+      if (!failed && ev && ev.why === 'asked') S.hideT = setTimeout(() => { if (!S.pending && !kit.disposed) keepWrap.style.display = 'none'; }, KEPT_HIDE_MS);
+      setTimeout(update, 50);   // unlocks the rows with what Windows has now
     }
     function keepOrRevert(keep) {
       const p = S.pending;
       if (!p) return { ok: false, reason: 'No display change is waiting any more' };
       return W(kit, keep ? 'displayKeep' : 'displayRevert', { token: p.token }).then((r) => {
         if (r && r.ok && !r.dryRun && S.pending && S.pending.token === p.token) finish(keep ? 'kept' : 'reverted', { why: 'asked', ok: true, kind: p.kind });
+        else if (r && r.ok === false && /no display change is waiting/.test(r.reason || '') && S.pending && S.pending.token === p.token) finish('ended', { why: 'gone' });
         return r;
       });
     }
@@ -1215,12 +1242,18 @@
       for (const k of S_KINDS) {
         const x = r && r.ok ? (r.kinds || []).find((y) => y.kind === k) : null;
         if (!x) { tick[k].set({ disabled: true, help: null, reason: r && r.ok ? 'Windows did not report this kind' : fail('The temporary files', r) }); continue; }
-        const size = x.measured ? `${bytes(x.bytes)} in ${n0(k === 'downloads' ? x.entries : x.files)} ${k === 'downloads' || k === 'recycleBin' ? 'items' : 'files'}` : 'size not known yet';
-        const there = x.measured && x.allBytes > x.bytes ? ` (${bytes(x.allBytes)} is there; the rest is newer)` : '';
-        tick[k].set({ value: !!S.tick[k], disabled: !x.measured && !x.admin, help: `${x.rule}. ${size}${there}`,
-          reason: !x.measured && !x.admin ? x.reason : null,
-          info: x.yours ? 'Your own files: never ticked for you' : (!x.measured ? x.reason : x.reason || null) });
+        fillKind(x);
       }
+    }
+    /** One cleanup kind's row. */
+    function fillKind(x) {
+      const k = x && x.kind;
+      if (!tick[k]) return;
+      const size = x.measured ? `${bytes(x.bytes)} in ${n0(k === 'downloads' ? x.entries : x.files)} ${k === 'downloads' || k === 'recycleBin' ? 'items' : 'files'}` : 'size not known yet';
+      const there = x.measured && x.allBytes > x.bytes ? ` (${bytes(x.allBytes)} is there; the rest is newer)` : '';
+      tick[k].set({ value: !!S.tick[k], disabled: !x.measured && !x.admin, help: `${x.rule}. ${size}${there}`,
+        reason: !x.measured && !x.admin ? x.reason : null,
+        info: x.yours ? 'Your own files: never ticked for you' : (!x.measured ? x.reason : x.reason || null) });
     }
     function dropPlan(why) {
       if (!S.plan) return;
@@ -1379,11 +1412,11 @@
           { row: 'power.mode', label: 'Power mode', keywords: 'performance efficiency balanced', uri: 'ms-settings:powersleep' },
           { row: 'power.saver', label: 'Energy saver', keywords: 'battery saver', uri: 'ms-settings:batterysaver' },
           { row: 'system.power.saverAt', label: 'Turn energy saver on automatically', keywords: 'battery saver threshold percent' },
-          { row: 'system.power.screenOff.dc', label: 'Turn my screen off after', keywords: 'screen timeout display off monitor' },
-          { row: 'system.power.sleep.dc', label: 'Make my device sleep after', keywords: 'sleep timeout standby' },
-          { row: 'system.power.hibernate.dc', label: 'Make my device hibernate after', keywords: 'hibernate timeout' },
+          { row: 'system.power.screenOff.ac', label: 'Turn my screen off after', keywords: 'screen timeout display off monitor' },
+          { row: 'system.power.sleep.ac', label: 'Make my device sleep after', keywords: 'sleep timeout standby' },
+          { row: 'system.power.hibernate.ac', label: 'Make my device hibernate after', keywords: 'hibernate timeout' },
           { row: 'system.power.lid.dc', label: 'Closing the lid', keywords: 'lid close laptop' },
-          { row: 'system.power.powerButton.dc', label: 'Pressing the power button', keywords: 'power button' },
+          { row: 'system.power.powerButton.ac', label: 'Pressing the power button', keywords: 'power button' },
           { row: 'system.power.hibernation', label: 'Hibernation', keywords: 'hiberfil hibernate' },
           { row: 'system.power.fastStartup', label: 'Fast start-up', keywords: 'fast boot hiberboot' },
           { row: 'power.battery', label: 'Battery', keywords: 'charge percent' },

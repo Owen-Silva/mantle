@@ -81,6 +81,8 @@
     const offs = [];
     let dead = false;
     const msg = (e) => (e && e.message) || String(e || 'no reason came back');
+    // an empty list's line is often a failure's reason: the same plain words as every "why" line
+    const plainOf = (s) => (s && window.SettingsModel && window.SettingsModel.plain ? window.SettingsModel.plain(s) : s);
     const el = (x) => (x && x.el instanceof Node ? x.el : x);
     const kids = (list) => list.map((x) => (Array.isArray(x) ? kids(x) : el(x)));
     const iconOf = (name, size) => (typeof name === 'string' && name.trim().charAt(0) === '<' ? deps.svg(name, size) : icon(name, size));
@@ -298,7 +300,7 @@
             const x = old && old.sig === sig ? old : itemRow(it || {});
             next.set(key, x); els.push(x.el);
           });
-          if (!items.length) els.push(h('div', { class: 'row k-empty' }, h('div', { class: 'row-l' }, h('div', { class: 'row-h' }, L.o.empty || 'Nothing here'))));
+          if (!items.length) els.push(h('div', { class: 'row k-empty' }, h('div', { class: 'row-l' }, h('div', { class: 'row-h' }, plainOf(L.o.empty) || 'Nothing here'))));
           L.rows = next;
           box.replaceChildren(...els);
         };
@@ -309,7 +311,7 @@
       /** Always resolves: the command's own answer, or { ok:false, reason } (never a throw). */
       call(cmd, args) {
         return Promise.resolve().then(() => deps.call(cmd, args)).then(
-          (x) => (x && typeof x === 'object' ? x : { ok: false, reason: cmd + ' answered with nothing' }),
+          (x) => (x && typeof x === 'object' ? x : { ok: false, reason: 'Windows gave no answer. Try again in a moment' }),
           (e) => ({ ok: false, reason: msg(e) }));
       },
       /** mantle.on(event, fn) until dispose. -> off() */

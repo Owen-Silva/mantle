@@ -28,7 +28,7 @@
   const mantle = window.mantle || null;
   const $ = (id) => document.getElementById(id);
   const pageEl = $('page'), navEl = $('nav'), findEl = $('find'), scroller = $('scroller'), bannerEl = $('banner');
-  const NO_BRIDGE = 'this page is not connected to Mantle (window.mantle is missing), so nothing can be read or changed';
+  const NO_BRIDGE = 'Settings is not connected to Mantle, so nothing can be read or changed. Close this window and open Settings again (Win+I)';
 
   /* ---------------------------------------------------------------- the bridge */
   const msg = (e) => (e && e.message) || String(e || 'no reason came back');
@@ -62,6 +62,7 @@
     // module page shown (null = its overview or a one-page section), the view to go back to after a
     // search, the crumb over a built-in drawn as a module's page, the mounted module
     model: M.sectionModel([]), navId: 'home', page: null, baseView: 'home', crumb: null, mod: null, modsReady: false, modelSeq: 0,
+    hist: [], hi: -1, histMove: false,   // back / forward: [{ section, page, scroll }] and where we are in it
   };
 
   /* ---------------------------------------------------------------- data slots */
@@ -167,7 +168,7 @@
     const settle = () => { S.qsBusy[part] = Math.max(0, (S.qsBusy[part] || 0) - 1); if (!S.qsBusy[part]) delete S.qsBusy[part]; };
     return call('qs.set', { part, value }).then((r) => {
       settle();
-      if (!r || typeof r !== 'object') r = { ok: false, reason: 'qs.set answered with nothing' };
+      if (!r || typeof r !== 'object') r = { ok: false, reason: 'Windows gave no answer. Try again in a moment' };
       const qv = slot('qs').v;
       if (r.state && typeof r.state === 'object' && qv) qv[key] = Object.assign({}, r.state);   // the read-back, not the click
       if (r.ok === false) {
@@ -243,6 +244,7 @@
 
   const ACT = {
     nav: (t) => go(t.dataset.section || null, t.dataset.row || null, t.dataset.page || null),
+    back: () => { histGo(-1); },
     remount: () => { unmount(); S.lastView = null; schedule(); },
     win: (t) => openWin(t.dataset.uri || 'ms-settings:', rowOf(t)),
     retry: (t) => { (t.dataset.what || '').split(',').filter(Boolean).forEach(read); },
@@ -539,7 +541,7 @@
   /* main's reasons are sentence fragments ("the sidecar is restarting"); on their own line they read as a sentence */
   const cap = (s) => { const t = String(s == null ? '' : s); return t.charAt(0).toUpperCase() + t.slice(1); };
   function why(text, info) {
-    return h('div', { class: 'why' + (info ? ' info' : '') }, info ? null : icon('warn', 12), h('span', null, cap(text)));
+    return h('div', { class: 'why' + (info ? ' info' : '') }, info ? null : icon('warn', 12), h('span', null, cap(M.plain(text))));
   }
   /* A row: { id, label, help, mono, tile, ctl, why, info, cls, title } */
   function row(o) {
@@ -702,6 +704,7 @@
     // tip: the tile's full words when s is only a count (the Mantle tile: its reasons are the card below)
     function T(key, section, ico, k, v, s, warn, tip) {
       if (s && warn) cant.push(k);
+      if (s && warn) s = M.plain(s);   // a failure's reason in plain words, never "the sidecar is restarting"
       // a number keeps its unit on its line ("3 hr 4 min left" never breaks as "3 / hr")
       if (s && !warn) s = String(s).replace(/(\d) (?=[A-Za-z%])/g, '$1 ');
       tiles.push(keep('tile-' + key, [section, ico, k, v, s || null, !!warn, tip || null], () => h('button', { class: 'tileb', type: 'button', 'data-k': 'tile-' + key, 'data-act': 'nav', 'data-section': section },
@@ -1177,7 +1180,7 @@
 
   V.about = function () {
     const a = slot('about');
-    const out = head('About', sumParts([a.v ? 'Mantle ' + (a.v.version || '') : null, a.v ? (a.v.mode === 'test' ? 'test run' : 'live') : null]));
+    const out = head('About Mantle', sumParts([a.v ? 'Mantle ' + (a.v.version || '') : null, a.v && a.v.mode === 'test' ? 'test copy' : null]));
     const g = gate('about', 'about-all');
     if (g) { out.push(g); return out.concat(moreCard('about')); }
     const v = a.v;
@@ -1187,15 +1190,15 @@
     out.push(groupT('Mantle', 'about-m'));
     out.push(card('about-m',
       row({ id: 'about.version', label: 'Mantle ' + (v.version || '(version unknown)'), tile: tile(icon('mantle'), 'acc'),
-        help: v.commit ? 'Running commit ' + String(v.commit).slice(0, 10) : null, info: v.commit ? null : 'The running commit is unknown: ' + (v.commitReason || 'no reason came back') }),
+        help: v.commit ? 'Build ' + String(v.commit).slice(0, 7) : null, info: v.commit ? null : 'The exact build is unknown: ' + (v.commitReason || 'no reason came back') }),
       row({ id: 'about.uptime', label: 'Running since ' + (since || 'an unknown time'), tile: tile(icon('about')), help: up != null ? 'Up for ' + M.dur(up) : null }),
-      row({ id: 'about.mode', label: v.mode === 'test' ? 'Test run' : 'Live', tile: tile(icon('about')),
-        help: v.mode === 'test' ? 'A test instance: switches here are dry runs and change nothing on this PC' : 'The shell Owen uses every day' })));
+      row({ id: 'about.mode', label: v.mode === 'test' ? 'Test copy' : 'Running as your shell', tile: tile(icon('about')),
+        help: v.mode === 'test' ? 'A test copy of Mantle: switches here show what they would do and change nothing on this PC' : 'Mantle starts when you sign in and replaces the Windows taskbar, Start and Settings' })));
     const gl = S.glass;
     out.push(groupT('Window', 'about-w'));
     out.push(card('about-w', row({ id: 'about.glass', tile: tile(icon('display')),
-      label: !gl ? 'Solid' : gl.ok === true ? 'Glass (acrylic, light)' : gl.ok === false ? 'Solid, not glass' : 'Glass (acrylic): checking with Windows…',
-      help: !gl ? 'This page was opened without glass' : gl.ok === true ? 'Windows reads back the acrylic backdrop and a light frame. The window turns solid while it is in the background: Windows draws acrylic only behind the active window' : null,
+      label: !gl ? 'Solid window' : gl.ok === true ? 'Frosted glass window' : gl.ok === false ? 'Solid window (glass is off)' : 'Frosted glass: checking with Windows…',
+      help: !gl ? 'This window was opened without the frosted glass look' : gl.ok === true ? 'The frosted glass shows while the window is active; Windows draws it solid while it is in the background' : null,
       why: gl && gl.ok === false ? gl.why || 'no reason came back' : null })));
     out.push(groupT('Runtime', 'about.runtime'));
     out.push(card('about-rt', h('div', { class: 'facts', 'data-k': 'rt', style: null },
@@ -1272,8 +1275,41 @@
   /* Anywhere: a built-in section, a module section / page, or a row (whose own place wins). The
      sidebar item is S.navId; S.section is the BUILT-IN whose data and loops apply (null while a
      module draws: its kit runs its own). */
+  /* Back / forward (quality pass 2026-09-29; before it a search hit or a deep link left no way back but
+     the sidebar). Like Windows 11 Settings: the arrow at the top left, Alt+Left / Alt+Right, and the
+     mouse's back/forward buttons. One entry per place (section + page), with its scroll position. */
+  const HIST_MAX = 50;
+  function histHere() { return S.hi >= 0 ? S.hist[S.hi] : null; }
+  function histPush(r) {
+    const cur = histHere();
+    if (cur && cur.section === r.section && cur.page === r.page) return;
+    if (cur) cur.scroll = scroller.scrollTop;
+    S.hist = S.hist.slice(0, S.hi + 1);
+    S.hist.push({ section: r.section, page: r.page, scroll: 0 });
+    if (S.hist.length > HIST_MAX) S.hist.shift();
+    S.hi = S.hist.length - 1;
+  }
+  function histGo(step) {
+    // Back from search results closes the search and returns to the page it was typed over
+    if (step < 0 && S.view === 'search') { findEl.value = ''; onFind(); return true; }
+    const to = S.hi + step;
+    if (to < 0 || to >= S.hist.length) return false;
+    const cur = histHere();
+    if (cur) cur.scroll = scroller.scrollTop;
+    S.hi = to;
+    const e = S.hist[to];
+    S.histMove = true;
+    try { go(e.section, null, e.page); } finally { S.histMove = false; }
+    const y = e.scroll || 0;
+    // a module page draws after its render() resolves: put the scroll back once it has height
+    let tries = 0;
+    const put = () => { if (S.hist[S.hi] !== e) return; scroller.scrollTop = y; if (scroller.scrollTop < y - 2 && ++tries < 20) setTimeout(put, 50); };
+    requestAnimationFrame(put);
+    return true;
+  }
   function go(section, rowId, page) {
     const r = M.resolve(S.model, { section, page, row: rowId });
+    if (!S.histMove) histPush(r);
     const was = S.navId + '/' + S.page + '/' + S.view;
     S.navId = r.section; S.page = r.page; S.flash = null;
     S.crumb = r.page && r.view ? { section: r.section, label: (S.model.mods[r.section] || {}).label || r.section } : null;
@@ -1410,15 +1446,15 @@
     S.model.nav.forEach((s) => {
       if (s.group !== group) { group = s.group; if (group) add(tmp, h('div', { class: 'nav-g', 'data-k': 'g-' + group }, group === 'windows' ? 'Windows' : 'Mantle')); }
       const cur = S.view !== 'search' && S.navId === s.id;
-      const dot = s.down ? h('span', { class: 'ndot', title: 'Down: ' + s.down }) : s.id === 'mantle' && bad ? h('span', { class: 'ndot', title: bad + ' not healthy' }) : null;
-      add(tmp, h('button', { class: 'nav-i', type: 'button', role: 'listitem', 'data-k': s.id, 'data-act': 'nav', 'data-section': s.id, 'aria-current': cur ? 'page' : null, title: s.down ? s.label + ' is down: ' + s.down : null },
+      const dot = s.down ? h('span', { class: 'ndot', title: 'Could not be loaded: ' + M.plain(s.down) }) : s.id === 'mantle' && bad ? h('span', { class: 'ndot', title: bad + ' not healthy' }) : null;
+      add(tmp, h('button', { class: 'nav-i', type: 'button', role: 'listitem', 'data-k': s.id, 'data-act': 'nav', 'data-section': s.id, 'aria-current': cur ? 'page' : null, title: s.down ? s.label + ' could not be loaded: ' + M.plain(s.down) : null },
         iconAny(s.icon || s.id), h('span', null, s.label), dot));
     });
     morph(navEl, tmp);
   }
   function renderBanner() {
     const lines = Object.keys(S.problems).map((k) => S.problems[k]);
-    const kids = lines.map((l, i) => h('div', { 'data-k': 'p' + i }, icon('warn', 14), h('span', null, l)));
+    const kids = lines.map((l, i) => h('div', { 'data-k': 'p' + i }, icon('warn', 14), h('span', null, M.plain(l))));
     if (S.toast) kids.push(h('div', { 'data-k': 'toast', class: S.toast.tone === 'info' ? 'info' : '' }, S.toast.text, ' ', h('button', { class: 'btn quiet', type: 'button', 'data-act': 'dismiss' }, 'Dismiss')));
     const tmp = h('div', { id: 'banner', class: 'banner', role: 'alert' }, kids);
     if (!kids.length) tmp.setAttribute('hidden', '');
@@ -1438,6 +1474,8 @@
       morph(pageEl, tmp);
     }
     document.body.classList.toggle('maxed', S.maxed);
+    const bb = $('backbtn');
+    if (bb) bb.disabled = !(S.hi > 0 || S.view === 'search');
     const ab = slot('about').v;
     $('testchip').hidden = !(S.test || (ab && ab.mode === 'test'));
   }
@@ -1476,12 +1514,17 @@
   });
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); findEl.focus(); findEl.select(); return; }
+    // back / forward: Alt+Left / Alt+Right (as in Windows Settings and every browser), the keyboard's own keys
+    if ((e.altKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowLeft') || e.key === 'BrowserBack') { e.preventDefault(); histGo(-1); return; }
+    if ((e.altKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowRight') || e.key === 'BrowserForward') { e.preventDefault(); histGo(1); return; }
     const a = document.activeElement;
     const typing = a && (a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA');
     if (e.key === 'Escape' && !typing && findEl.value) { e.preventDefault(); findEl.value = ''; onFind(); return; }
     // just typing finds: a printable key with no modifier, outside any field, goes to the search box
     if (!typing && !e.ctrlKey && !e.altKey && !e.metaKey && e.key.length === 1 && e.key !== ' ') findEl.focus();
   });
+  // the mouse's back / forward buttons (buttons 3 and 4)
+  document.addEventListener('mouseup', (e) => { if (e.button === 3 || e.button === 4) { e.preventDefault(); histGo(e.button === 3 ? -1 : 1); } });
   document.addEventListener('visibilitychange', () => { if (document.hidden) sleep(); else wake(); });
   window.addEventListener('focus', () => { if (!document.hidden) { ensure(S.section); modUpdate(); if (S.view === 'search') { read('mantle'); read('catalog'); } } });
   window.addEventListener('pagehide', sleep);
@@ -1512,7 +1555,7 @@
 
   /* ---------------------------------------------------------------- start */
   function boot() {
-    if (!mantle) S.problems.bridge = 'This page is not connected to Mantle: window.mantle is missing, so nothing here can be read or changed.';
+    if (!mantle) S.problems.bridge = cap(NO_BRIDGE) + '.';
     renderNow();
     const first = call('settings.hello').then((r) => {
       if (!r || typeof r !== 'object') r = { ok: false, reason: 'it answered with nothing' };
@@ -1527,7 +1570,7 @@
     // The section modules (SECTIONS.md): listed by main, loaded here, in before the first nav so a
     // deep link into a module lands.
     const mods = call('settings.sections').then((r) => {
-      if (!r || typeof r !== 'object') r = { ok: false, reason: 'settings.sections answered with nothing', sections: [] };
+      if (!r || typeof r !== 'object') r = { ok: false, reason: 'Mantle gave no list of sections', sections: [] };
       if (r.ok === false) S.problems.sections = 'Some Settings sections may be missing: ' + (r.reason || 'no reason came back');
       return SS.load(r.sections, M);
     }, (e) => {

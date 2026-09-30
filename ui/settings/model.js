@@ -655,16 +655,25 @@
    * tail is replaced by what it means for a person. Text with no jargon comes back unchanged.
    */
   var JARGON_RE = /sidecar|"[a-z][a-z0-9-]*\.[A-Za-z][\w.]*"|\b[a-z][a-z0-9-]*\.[A-Za-z]\w* (?:failed|threw)\b|\bdryRun\b|\bE(?:NOENT|ACCES|PERM|PIPE|CONNRESET)\b|\b0x[0-9a-f]{6,8}\b|\bHRESULT\b|\[object Object\]|\bundefined\b|\bnull\b|\bNaN\b|window\.mantle/i;
+  /* case-sensitive on purpose: a Win32 API name that failed ("GetSystemPowerStatus failed"), "Win32 error 5",
+     and main's feature internals (r3 quality pass: these reached Home's tiles as they were) */
+  var API_RE = /\b[A-Z][a-z]+[A-Z]\w* failed\b|\bWin32 error \d+|\bfeature seam\b|\bfeature is not running\b/;
+  function jargon(t) { return JARGON_RE.test(t) || API_RE.test(t); }
   function plain(s) {
     if (s == null) return s;
-    var t = String(s);
-    if (!JARGON_RE.test(t)) return t;
+    // a command name in front of a reason ("settings.mantle: ...", at the start or after a lead-in) says nothing to a person
+    var t = String(s).replace(/(^|: )[a-z][a-z0-9-]{2,}\.[a-z]\w*: /g, '$1');
+    // a technical aside in brackets goes when the words around it stand on their own
+    // (only then: "x.get failed (the sidecar is not running)" keeps its brackets, whose words say what happened)
+    var u = t.replace(/\s*\(([^()]*)\)/g, function (m, inner) { return jargon(inner) ? '' : m; });
+    if (!jargon(u)) return u;
     var parts = t.split(/: /), keep = [];
-    for (var i = 0; i < parts.length && !JARGON_RE.test(parts[i]); i++) keep.push(parts[i]);
+    for (var i = 0; i < parts.length && !jargon(parts[i]); i++) keep.push(parts[i]);
     var rest = parts.slice(keep.length).join(': ');
     keep = keep.filter(function (k) { return !/^\s*refused\s*$/i.test(k); });
     var say;
     if (/passive/i.test(rest)) say = 'this is a test run, so nothing was changed';
+    else if (/feature is not running|failed to start/i.test(rest)) say = 'this part of Mantle did not start. Restart Mantle to try again';
     else if (/did not answer|timed? ?out|within \d/i.test(rest)) say = 'Windows took too long to answer. Try again in a moment';
     else if (/not running|restarting|sidecar down|not finished starting|ready line|never said ready|exited|is not connected|window\.mantle/i.test(rest)) say = 'Mantle\'s connection to Windows is restarting. Try again in a moment';
     else if (/no \S+ command|unknown command|not a command/i.test(rest)) say = 'this needs a newer version of Mantle. Restart Mantle to finish updating it';

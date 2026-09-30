@@ -264,7 +264,7 @@ const SHOTS = [
     check('05: no microphone level arrives in a test run', /Not listening/.test(await rowText(p, 'system.sound.input.level') || ''));
   }],
   ['snd-06-failing', PG + '&snd=fail', async (p) => {
-    check('06: the output says why it could not be read', /The sound devices could not be read: syssound\.devices failed/.test(await rowText(p, 'sound.output') || ''));
+    check('06: the output says why it could not be read', /The sound devices could not be read: (Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(await rowText(p, 'sound.output') || ''));
     check('06: the mixer says why', /The volume mixer could not be read/.test(await p.$eval(sel('sound.mixer') + ' + div', (e) => e.textContent)));
     check('06: nothing threw while drawing', !/could not be drawn/.test(await p.textContent('#page')));
   }],

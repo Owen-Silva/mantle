@@ -129,7 +129,7 @@ const SHOTS = [
   ['dev-failing', '?section=devices&page=mouse&mock=failing', async (p) => {
     await p.waitForTimeout(300);
     const t = await p.textContent('#page');
-    check('a failing backend says why on the page', /sidecar is not running/.test(t));
+    check('a failing backend says why on the page', /(Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(t));
   }],
 ];
 
