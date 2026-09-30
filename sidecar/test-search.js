@@ -1,4 +1,5 @@
-// test-search.js - the `search.files` / `search.status` feature commands (sidecar/SearchIndex.cs)
+// test-search.js - the file search: `search.files` / `search.status` (sidecar/SearchIndex.cs) and
+// `search` (sidecar/Search.cs, which forwards queries to the same engine),
 // against the REAL Windows Search index, read-only.
 //
 //   MANTLE_SIDECAR_EXE=<exe> node sidecar/test-search.js
@@ -111,6 +112,60 @@ const TIER = { prefix: 0, word: 1, contains: 2 };
   ok(burst[burst.length - 1].ok === true, 'the newest query in a burst is answered with rows');
   ok(burst.slice(0, -1).some(b => b.error === 'cancelled'), 'an older query in a burst is cancelled');
 
+  // --- 2026-09-29: ONE engine for both commands (Search.cs forwards `search` to SearchIndex.cs)
+  const legacy = await call('search', { q: 'port', max: 8, ttl: 8000 });
+  const lr = legacy.result || {};
+  ok(legacy.ok === true && 'containsMs' in lr && 'hidden' in lr, '`search` (launcher.files) runs the same three tiers as search.files');
+  const legacyItems = Array.isArray(lr.items) ? lr.items : [];
+  ok(legacyItems.length <= 8 && legacyItems.every(f => f.match in TIER), '`search` keeps its answer shape (max 8, tiers)');
+  const flat = await call('search', { status: true });
+  const fr = flat.result || {};
+  ok(flat.ok === true && 'serviceOk' in fr && typeof fr.served === 'number' && typeof fr.workers === 'number', '`search {status}` stays flat, with the engine counters');
+  // latest wins ACROSS the two commands: they share one slot, so the page's older query is dropped
+  const cross = await Promise.all([call('search', { q: 'la', max: 8, ttl: 8000 }), call('search.files', { q: 'launch', max: 8, ttl: 8000 })]);
+  ok(cross[0].error === 'cancelled' && cross[1].ok === true, 'a newer search.files supersedes an older `search` (one slot)');
+
+  // --- 2026-09-29: what a person types is text, and LIKE's wildcards are literal characters
+  const bad = [
+    [{ q: 42 }, /must be text/, 'a number q'],
+    [{ q: ['a'] }, /must be text/, 'an array q'],
+    [{ q: 'ab\u0000cd' }, /control characters/, 'a NUL in q'],
+    [{ q: 'ab', scope: 'C:\\Users\n\\x' }, /control characters/, 'a newline in scope'],
+    [{ q: 'ab', scope: '\\\\server\\share' }, /absolute folder/, 'a share as scope'],
+    [{ q: 'ab', scope: '1:\\x' }, /absolute folder/, 'a non-letter drive'],
+  ];
+  for (const [args, want, what] of bad) {
+    const r = await call('search.files', args);
+    ok(r.ok === false && want.test(r.error || ''), 'refused: ' + what);
+  }
+  let wildRows = 0, wildOk = 0;
+  for (const q of ['__init__', 'img_', 'test_', 'my_', 'new_', '50%', '[1]', "o'", '"a"', '日本', 'é']) {
+    const r = await call('search.files', { q, max: 12, ttl: 8000 });
+    const res = r.result || {};
+    if (r.ok === true && res.ok === true) wildOk++;
+    const items = Array.isArray(res.items) ? res.items : [];
+    wildRows += items.length;
+    const lower = q.toLowerCase();
+    ok(items.every(f => f.match !== 'prefix' || f.name.toLowerCase().startsWith(lower)), 'special q: prefix rows start with it LITERALLY');
+    ok(items.every(f => f.match !== 'contains' || f.name.toLowerCase().includes(lower)), 'special q: contains rows contain it LITERALLY');
+  }
+  ok(wildOk === 11, 'every special-character query is answered ok (' + wildOk + '/11)');
+  const under = await call('search.files', { q: 'test_', max: 24, ttl: 8000 });
+  const underPrefix = ((under.result || {}).items || []).filter(f => f.match === 'prefix').length;
+  console.log('  special queries: ' + wildRows + ' rows; "test_" prefix rows ' + underPrefix);
+
+  // --- junk never comes back: Office ~$ owner files, desktop.ini, Thumbs.db, hidden/system files
+  let junk = 0, hiddenDropped = 0, junkRows = 0;
+  for (const q of ['~$', 'desktop', 'thumbs', 'doc', 'rep']) {
+    const r = await call('search.files', { q, max: 24, ttl: 8000 });
+    const res = r.result || {};
+    ok(typeof res.hidden === 'number', 'every answer counts the hidden/system rows it dropped');
+    hiddenDropped += res.hidden || 0;
+    for (const f of res.items || []) { junkRows++; if (/^~\$/.test(f.name) || /^(desktop\.ini|thumbs\.db)$/i.test(f.name)) junk++; }
+  }
+  ok(junk === 0, 'no ~$ owner files, desktop.ini or Thumbs.db in ' + junkRows + ' rows (' + junk + ')');
+  console.log('  junk check: ' + junkRows + ' rows, hidden/system dropped ' + hiddenDropped);
+
   // --- ttl already past: skipped, with the word "expired"
   const ex = await call('search.files', { q: 'report', ttl: 0.001 });
   ok(ex.ok === false && /expired/.test(ex.error || '') || ex.ok === true, 'a past-deadline query is skipped as expired (or ran in time)');
@@ -118,6 +173,16 @@ const TIER = { prefix: 0, word: 1, contains: 2 };
   const st2 = await call('search.status', {});
   const stats = (st2.result || {}).stats || {};
   ok(stats.served >= 1 && stats.superseded >= 1, 'counters moved (served ' + stats.served + ', superseded ' + stats.superseded + ')');
+
+  // --- idle cost: 30 s after the last query no worker thread and no connection is left
+  if (process.env.MANTLE_SEARCH_SKIP_IDLE !== '1') {
+    ok(typeof stats.workers === 'number' && typeof stats.openConnections === 'number', 'status reports workers and open connections');
+    await new Promise(r => setTimeout(r, 32000));
+    const st3 = ((await call('search.status', {})).result || {}).stats || {};
+    ok(st3.workers === 0 && st3.openConnections === 0 && st3.running === 0, 'idle: 0 workers, 0 connections after 30 s (workers ' + st3.workers + ', connections ' + st3.openConnections + ')');
+    const again = await call('search.files', { q: 'readme', max: 4, ttl: 8000 });
+    ok(again.ok === true, 'a query after the idle exit starts a fresh worker and answers');
+  }
 
   p.stdin.write(JSON.stringify({ id: 99999, cmd: 'quit' }) + '\n');
   setTimeout(() => {
