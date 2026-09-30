@@ -105,7 +105,7 @@ namespace Mantle {
       lock (_lock) {
         FreeLocked();
         try { Directory.CreateDirectory(dir); }
-        catch (Exception e) { return "shot.grab: the frame folder could not be made (" + e.Message + ")"; }
+        catch (Exception e) { return "shot.grab: the frame folder could not be made (" + Reason(e) + ")"; }
         int stale = DeleteStaleFrames(dir);
 
         int vx = ShotNative.GetSystemMetrics(76), vy = ShotNative.GetSystemMetrics(77);
@@ -190,7 +190,7 @@ namespace Mantle {
             try { bytes = WriteBmp(file, f, l - vx, tp - vy, r - l, b - tp); }
             catch (Exception e2) {
               FreeFrame(f);
-              return "shot.grab: the frame for monitor " + (i + 1) + " could not be written (" + e2.Message + ")";
+              return "shot.grab: the frame for monitor " + (i + 1) + " could not be written (" + Reason(e2) + ")";
             }
             f.Files.Add(file);
           }
@@ -351,7 +351,7 @@ namespace Mantle {
       if (string.IsNullOrEmpty(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
         return "shot.save: name must be a plain file name without a folder";
       if (Program.Passive && CheckTempDir(dir, "x") != null)
-        return FeatureTable.PassiveRefusal + ": would have written a screenshot to " + dir + " (a passive sidecar only writes under %TEMP%)";
+        return FeatureTable.PassiveRefusal + ": would have written a screenshot outside %TEMP% (a passive sidecar only writes under %TEMP%)";
       int id = Json.GetInt(req, "grab", 0);
       int x = Json.GetInt(req, "x", 0), y = Json.GetInt(req, "y", 0);
       int w = Json.GetInt(req, "w", 0), h = Json.GetInt(req, "h", 0);
@@ -398,7 +398,7 @@ namespace Mantle {
 
         sw.Restart();
         try { Directory.CreateDirectory(dir); }
-        catch (Exception e) { return "shot.save: the folder " + dir + " could not be made (" + e.Message + ")"; }
+        catch (Exception e) { return "shot.save: the folder could not be made (" + Reason(e) + ")"; }
         string path = null, used = null;
         for (int n = 1; n <= 999 && path == null; n++) {
           string cand = n == 1 ? name : name + " (" + n + ")";
@@ -413,7 +413,7 @@ namespace Mantle {
             if (!File.Exists(p)) throw;            // not a name clash: a real write failure
           }
         }
-        if (path == null) return "shot.save: 999 files named \"" + name + "\" already exist in " + dir;
+        if (path == null) return "shot.save: 999 screenshots with this name already exist in that folder";
         writeMs = sw.Elapsed.TotalMilliseconds;
 
         result = Json.Obj("ok", true, "path", path, "name", used + ".png", "w", w, "h", h,
@@ -422,7 +422,7 @@ namespace Mantle {
                          "write", Math.Round(writeMs, 2), "total", Math.Round(total.Elapsed.TotalMilliseconds, 2)));
         return null;
       } catch (Exception e) {
-        return "shot.save: the screenshot could not be saved (" + e.GetType().Name + ": " + e.Message + ")";
+        return "shot.save: the screenshot could not be saved (" + Reason(e) + ")";
       } finally {
         if (bmp != null) bmp.Dispose();
       }
@@ -524,7 +524,7 @@ namespace Mantle {
                          "total", Math.Round(total.Elapsed.TotalMilliseconds, 2)));
         return null;
       } catch (Exception e) {
-        return "shot.copy: the screenshot could not be copied (" + e.GetType().Name + ": " + e.Message + ")";
+        return "shot.copy: the screenshot could not be copied (" + Reason(e) + ")";
       } finally {
         if (hMem != IntPtr.Zero) ShotNative.GlobalFree(hMem);
       }
@@ -729,7 +729,7 @@ namespace Mantle {
           why = "the Screenshots known folder is not set up (HRESULT 0x" + hr.ToString("X8") + ")";
         }
       } catch (Exception e) {
-        why = "the Screenshots known folder could not be read (" + e.Message + ")";
+        why = "the Screenshots known folder could not be read (" + Reason(e) + ")";
       }
       string pics = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
       if (string.IsNullOrEmpty(pics)) return "shot.folder: neither the Screenshots folder nor Pictures could be found (" + why + ")";
@@ -776,15 +776,29 @@ namespace Mantle {
     static string CheckTempDir(string dir, string what) {
       if (string.IsNullOrEmpty(dir)) return what + " need a dir (an absolute folder under %TEMP%)";
       try {
-        if (!Path.IsPathRooted(dir)) return what + " need an absolute dir, not \"" + dir + "\"";
+        if (!Path.IsPathRooted(dir)) return what + " need an absolute dir";
         string full = Path.GetFullPath(dir).TrimEnd('\\') + "\\";
         string tmp = Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\') + "\\";
         if (!full.StartsWith(tmp, StringComparison.OrdinalIgnoreCase))
-          return what + " may only go under " + tmp + " (they are pictures of the screen), not " + dir;
+          return what + " may only go under %TEMP% (they are pictures of the screen)";
         return null;
       } catch (Exception e) {
-        return what + ": the dir " + dir + " is not a usable path (" + e.Message + ")";
+        return what + ": the dir is not a usable path (" + Reason(e) + ")";
       }
+    }
+
+    /// An exception's reason for a reply, WITHOUT the path .NET puts in it ("Access to the path
+    /// 'C:\...' is denied."): a reply's words reach mantle.log, and no log line may name a folder or
+    /// a file (lane capture-shot, 2026-09-29: a save into a locked folder logged its full path). The
+    /// type name stays first for the log; the page gets plain words (screenshot.js plainError).
+    static string Reason(Exception e) {
+      string m = (e.Message ?? "").Trim();
+      m = System.Text.RegularExpressions.Regex.Replace(m, "\\s*'[^'\\r\\n]*[\\\\/][^'\\r\\n]*'", "");
+      m = System.Text.RegularExpressions.Regex.Replace(m, "\\s*\"[^\"\\r\\n]*[\\\\/][^\"\\r\\n]*\"", "");
+      m = System.Text.RegularExpressions.Regex.Replace(m, "\\s*[A-Za-z]:\\\\\\S*", "");
+      int nl = m.IndexOfAny(new[] { '\r', '\n' });
+      if (nl > 0) m = m.Substring(0, nl).Trim();
+      return e.GetType().Name + (m.Length > 0 ? ": " + m : "");
     }
 
     static int DeleteStaleFrames(string dir) {

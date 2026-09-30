@@ -216,6 +216,15 @@ async function main() {
     check('a rect entirely off the screen is refused with the reason', outside.ok === false && /outside the capture/.test(outside.error), outside.error);
     const badName = await s.send('shot.save', { grab: r.grab, dir: OUT, name: '..\\escape', x: m0.x, y: m0.y, w: 10, h: 10 });
     check('a name with a folder in it is refused', badName.ok === false && /plain file name/.test(badName.error), badName.error);
+    // PRIVACY (lane capture-shot, 2026-09-29): a failure's words reach mantle.log, so they never name
+    // a folder or a file. A FILE sits where the folder should go, so the folder cannot be made.
+    const blocker = path.join(TMP, 'blocker');
+    fs.writeFileSync(blocker, 'x');
+    const noDir2 = await s.send('shot.save', { grab: r.grab, dir: path.join(blocker, 'My Shots'), name: 'Screenshot 2026-09-29 101500', x: m0.x, y: m0.y, w: 10, h: 10 });
+    const leak = (e) => /[A-Za-z]:\\|mantle-shot-test|blocker|My Shots|Screenshot 2026|os\.homedir/.test(String(e)) || String(e).includes(os.userInfo().username);
+    check('a folder that cannot be made: refused with the reason, and no path in the words', noDir2.ok === false && /could not be made/.test(noDir2.error) && !leak(noDir2.error), noDir2.error && noDir2.error.replace(/[A-Za-z]:\\[^\s"')]*/g, '<path>'));
+    const tempOnly = await s.send('shot.grab', { dir: path.join(os.homedir(), 'mantle-shot-nope-2'), synthetic: true });
+    check('a frame folder outside %TEMP%: refused without naming either folder', tempOnly.ok === false && /may only go under %TEMP%/.test(tempOnly.error) && !leak(tempOnly.error), tempOnly.error && tempOnly.error.replace(/[A-Za-z]:\\[^\s"')]*/g, '<path>'));
     const pics = path.join(os.homedir(), 'Pictures', 'Screenshots');
     const refused = await s.send('shot.save', { grab: r.grab, dir: pics, name: 'mantle-test-must-not-exist', x: m0.x, y: m0.y, w: 10, h: 10 });
     check('PASSIVE: a save outside %TEMP% (the real Pictures folder) is refused', refused.ok === false && /passive/.test(refused.error), refused.error);

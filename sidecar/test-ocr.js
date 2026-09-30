@@ -33,6 +33,9 @@ const WORDS = /train|station|miles|Show your work|prime number/i;   // must neve
     t.check('ocr.status answers', st.ok === true, JSON.stringify(st).slice(0, 300));
     t.check('Windows\' OCR is available in process (via winrt)', r0.available === true && r0.via === 'winrt', JSON.stringify(r0));
     t.check('the engine has a language, and it is one of the installed ones', !!r0.lang && (r0.langs || []).includes(r0.lang), JSON.stringify(r0));
+    // A missing engine is asked again, not remembered for the sidecar's life (a language added in
+    // Windows Settings used to need a Mantle restart): the status says how soon (lane capture-shot).
+    t.check('ocr.status says a missing engine is retried within a minute', r0.retryMs > 0 && r0.retryMs <= 60000, JSON.stringify({ retryMs: r0.retryMs }));
     console.log(`  OCR languages installed: ${(r0.langs || []).join(', ') || 'none'}; engine: ${r0.lang}; max image side ${r0.maxDim} px; engine made in ${r0.engineMs} ms`);
 
     // 2. The round trip: 3 lines of 16 px Segoe UI (screen-sized text) on a big white box.
@@ -80,6 +83,35 @@ const WORDS = /train|station|miles|Show your work|prime number/i;   // must neve
     await s.send('shot.release', {}, 5000);
     const gone = await s.send('shot.ocr', { grab: g.result.grab, x: tx, y: ty, w: 100, h: 40 }, 8000);
     t.check('after shot.release the frame is gone (nothing to read)', !gone.ok && /is gone/.test(gone.error), gone.error);
+
+    // 5b. A HUGE selection (lane capture-shot): an 8K desktop (7680x4320), all of it. 2x would pass the
+    //     engine's 10000 px limit, so the scale must drop (Ocr.cs PickScale) and the text still read.
+    const g8 = await s.send('shot.grab', { dir, synthetic: true, size: { w: 7680, h: 4320 }, text: LINES, textAt: { x: 3000, y: 2000 }, textPx: 24, textPad: 80 }, 30000);
+    if (g8.ok) {
+      const v = g8.result.virt;
+      const huge = await s.send('shot.ocr', { grab: g8.result.grab, x: v.x, y: v.y, w: v.w, h: v.h }, 60000);
+      const hs = huge.ok ? X.shape(huge.result.lines) : { text: '' };
+      const hacc = X.similarity(hs.text.replace(/\r\n/g, '\n'), LINES.join('\n'));
+      const found = LINES.every((l) => hs.text.includes(l.slice(0, 12)));
+      t.check('an 8K whole-desktop selection: read at a smaller scale (under the engine limit), the text found, under 10 s',
+        huge.ok && huge.result.scale <= 1.3 && found && huge.result.ms.ocr < 10000, huge.ok ? `scale ${huge.result.scale}, ${Math.round(huge.result.ms.ocr)} ms, text found ${found}` : huge.error);
+      console.log(`  8K desktop 7680x4320: ${huge.ok ? `${Math.round(huge.result.ms.ocr)} ms ocr at ${huge.result.scale}x, drawn text found: ${found} (${(hacc * 100).toFixed(0)}% of all text incl. the pattern)` : huge.error}`);
+      await s.send('shot.release', {}, 5000);
+    } else t.check('8K synthetic grab', false, g8.error);
+
+    // 5c. Non-English text through the installed engine (en-US here): accented Latin words. Windows
+    //     reads what its language pack covers; this pins that it does not crash and prints how close.
+    const INTL = ['Café crème, déjà vu, naïve façade', 'Größe: 12 Äpfel für Jürgen'];
+    const gi = await s.send('shot.grab', { dir, synthetic: true, text: INTL, textAt: at, textPx: 20, textPad: 60 }, 15000);
+    if (gi.ok) {
+      const bi = gi.result.textBox;
+      const ri = await s.send('shot.ocr', { grab: gi.result.grab, x: bi.x + 30, y: bi.y + 30, w: bi.w - 60, h: bi.h - 60 }, 20000);
+      const si = ri.ok ? X.shape(ri.result.lines) : { text: '', lines: 0 };
+      const acci = X.similarity(si.text.replace(/\r\n/g, '\n'), INTL.join('\n'));
+      t.check('accented (non-English) Latin text: read, 2 lines, at least 80% right with the ' + (r0.lang || '?') + ' engine', ri.ok && si.lines === 2 && acci >= 0.8, ri.ok ? `${si.lines} lines, ${(acci * 100).toFixed(1)}%` : ri.error);
+      console.log(`  accented Latin (${r0.lang}): ${(acci * 100).toFixed(1)}% right`);
+      await s.send('shot.release', {}, 5000);
+    } else t.check('accented synthetic grab', false, gi.error);
 
     // 6. Small text (13 px, what a dense page shows at 100%) and a paragraph gap.
     const Q = ['Which is a prime number?', '', 'A) 21', 'B) 23', 'C) 25'];

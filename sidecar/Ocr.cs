@@ -59,8 +59,11 @@ namespace Mantle {
 #if MANTLE_WINMD
     static OcrEngine _engine;
     static string _engineWhy;     // why there is no engine, once known
+    static int _engineWhyAt;      // Environment.TickCount when it was last tried (Engine: retried after EngineRetryMs)
     static double _engineMs = -1;
 #endif
+    /// A missing engine is asked again after this long (screenshot.js asks ocr.status every 30 s while unavailable).
+    public const int EngineRetryMs = 30000;
 
     /// {} -> {ok, available, lang, langs[], maxDim, via, why?, engineMs}
     /// `available:false` is an answer, not an error: `why` says what is missing, in plain words.
@@ -80,7 +83,8 @@ namespace Mantle {
         if (e != null) { try { lang = e.RecognizerLanguage.LanguageTag; } catch (Exception) { } }
       }
       result = Json.Obj("ok", true, "available", why == null, "lang", lang, "langs", langs,
-        "maxDim", (long)maxDim, "via", "winrt", "why", why, "engineMs", Math.Round(_engineMs, 2));
+        "maxDim", (long)maxDim, "via", "winrt", "why", why, "engineMs", Math.Round(_engineMs, 2),
+        "retryMs", EngineRetryMs);
       return null;
 #else
       result = Json.Obj("ok", true, "available", false, "lang", null, "langs", new List<object>(),
@@ -96,10 +100,15 @@ namespace Mantle {
 
 #if MANTLE_WINMD
     /// The engine for the user's profile languages, made once. Null with `why` when there is none.
+    /// NO ENGINE IS NOT FOREVER (lane capture-shot, 2026-09-29): the reason used to be kept for the
+    /// sidecar's whole life, so a language added in Windows Settings (or one failed first try on a
+    /// busy start-up) left Copy text off until Mantle restarted. It is kept EngineRetryMs, then asked again.
     static OcrEngine Engine(out string why) {
       lock (_lock) {
         why = _engineWhy;
-        if (_engine != null || _engineWhy != null) return _engine;
+        if (_engine != null) return _engine;
+        if (_engineWhy != null && unchecked(Environment.TickCount - _engineWhyAt) < EngineRetryMs) return null;
+        _engineWhy = null;
         var sw = Stopwatch.StartNew();
         try {
           _engine = OcrEngine.TryCreateFromUserProfileLanguages();
@@ -118,6 +127,7 @@ namespace Mantle {
           _engineWhy = "Windows' OCR engine could not be created (" + Why(ex) + ")";
         }
         _engineMs = sw.Elapsed.TotalMilliseconds;
+        _engineWhyAt = Environment.TickCount;
         why = _engineWhy;
         return _engine;
       }
