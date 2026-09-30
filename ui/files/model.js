@@ -554,16 +554,98 @@
     newfile: 'Creating a file', restore: 'Restoring', purge: 'Deleting for good', empty: 'Emptying the Recycle Bin', zip: 'Compressing', unzip: 'Extracting',
   };
   M.opWords = (op) => OP_WORDS[op] || 'Working';
-  /** Every failed item of an opdone, by name, with its reason: never "something failed". */
+  /* ---- errors in plain words (contract 3: the ONE place a reason becomes screen text) -------------- */
+  /* The sidecar says "<words> (0xHHHHHHHH)" (the hex is for the call log) and node can say ENOENT.
+     Nothing on screen may show a code or jargon, and every message says what to do next. Known codes
+     and phrasings map to a written sentence; anything else keeps its words with the codes stripped. */
+  const PLAIN = [
+    [/0x80070005|\bEACCES\b|\bEPERM\b|access (is )?denied|permission denied/i, 'Windows did not allow this. It may need administrator rights, or the item is protected.'],
+    [/0x8007002[01]|\bEBUSY\b|sharing violation|being used by another process|\bin use\b|open in another (app|program)|locked by/i, 'It is open in another app. Close it there, then try again.'],
+    [/0x8007016a|0x8007017c|0x8007018[0-9a-f]|cloud file provider|cloud operation/i, 'This file is online-only and OneDrive is not running, so it cannot be downloaded. Start OneDrive, then try again.'],
+    [/0x80070015|device is not ready|drive is not ready|\bnot ready\b/i, 'The drive is not ready. Insert the disk or reconnect the drive, then try again.'],
+    [/0x80070070|0x80070027|\bENOSPC\b|not enough (disk )?space|disk is full/i, 'There is not enough free space. Free some space, then try again.'],
+    [/0x80070035|0x80070043|0x800704cf|0x80070040|network (path|name) (was )?not found|network location cannot be reached|\bunreachable\b/i, 'The network location cannot be reached. Check the connection, then try again.'],
+    [/0x800700ce|0x8007006f|\bENAMETOOLONG\b|(name|path) (is )?too long/i, 'The name or path is too long for Windows. Use a shorter name, or move it to a shorter folder.'],
+    [/0x80070013|write[- ]protected/i, 'The drive is write-protected. Remove the protection, then try again.'],
+    [/0x800700b7|0x80070050|\bEEXIST\b|already exists/i, 'An item with that name is already there. Pick another name.'],
+    [/0x80070002|0x80070003|\bENOENT\b|cannot find the (file|path)|no such file|not there any more|does not exist|was not found/i, 'It is not there any more: it may have been moved or deleted. Press F5 to refresh.'],
+    [/0x8007007b|0x800700a1|\bEINVAL\b|syntax is incorrect|invalid (file )?name/i, 'Windows does not allow that name. Try a different one.'],
+    [/0x80070091|\bENOTEMPTY\b|directory is not empty/i, 'The folder is not empty, so it was left alone.'],
+    [/0x80070570|corrupt(ed)? and unreadable/i, 'The disk reported damage here. Run a disk check on that drive, then try again.'],
+    [/0x800704c7|operation was cancel+ed|^cancel+ed$/i, 'Cancelled.'],
+    [/no (bridge|answer) (to|from) Mantle|\bsidecar\b|\bIPC\b|timed? ?out waiting/i, 'Mantle did not answer. Try again; if it keeps happening, restart Mantle.'],
+  ];
+  const cap1 = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+  /** Any reason (sidecar, main, node) -> one plain sentence with the next step. Empty -> "no answer". */
+  M.plainReason = function (reason) {
+    const raw = String(reason == null ? '' : reason).trim();
+    if (!raw) return PLAIN[PLAIN.length - 1][1];
+    for (const [re, words] of PLAIN) if (re.test(raw)) return words;
+    let s = raw
+      .replace(/\s*\(?\b0x[0-9a-f]{6,8}\b\)?/gi, '')              // (0x80004005)
+      .replace(/\s*\(?(HRESULT|hr|code|errno)[ :=]*-?\d+\)?/gi, '')
+      .replace(/\bWindows error\b[:\s]*/gi, '')
+      .replace(/\b(E[A-Z]{3,12})\b:?\s*/g, (m, c) => (/^E(NO|ACC|PERM|BUSY|EXIST|INVAL|IO|AGAIN|ISDIR|NOTDIR|MFILE)/.test(c) ? '' : m))
+      .replace(/\b(dry ?run|sidecar|job \w+|undefined|null|NaN|\[object Object\])\b/gi, '')
+      .replace(/\s{2,}/g, ' ').replace(/\s+([.,:;])/g, '$1').trim().replace(/^[:,.;\s]+|[:,;\s]+$/g, '');
+    if (!s) return 'Windows could not finish this and gave no reason. Try again.';
+    s = cap1(s);
+    return /[.!?]$/.test(s) ? s : s + '.';
+  };
+  /** Every failed item of an opdone, by name, with its reason in plain words: never "something failed". */
   M.failLines = function (results) {
     const out = [];
     for (const r of Array.isArray(results) ? results : []) {
       if (!r || r.ok !== false) continue;
       const name = M.baseName(r.src || r.dst || '') || 'an item';
-      const why = r.why || (r.hr ? `Windows error 0x${(r.hr >>> 0).toString(16)}` : 'it failed and Windows gave no reason');
+      const why = r.why ? M.plainReason(r.why) : r.hr ? M.plainReason(`0x${(r.hr >>> 0).toString(16)}`) : 'It failed and Windows gave no reason. Try again.';
       out.push({ name, why });
     }
     return out;
+  };
+  /**
+   * The conflict dialog's answer -> the files.op calls to make. items: the transfer's sources (paths or
+   * {src}); conflicts: [{src}]; choice: { all } | { each: {src: 'replace'|'keepboth'|'skip'} }.
+   * -> [{ conflict, items }] with no empty group: a skipped clash is left out, the items that clash with
+   * nothing ride along with the first group (they are copied whatever the rule), and when every clash
+   * is skipped they go alone under 'skip'.
+   */
+  M.conflictGroups = function (items, conflicts, choice) {
+    const list = Array.isArray(items) ? items : [];
+    if (!choice) return [];
+    const src = (x) => String(typeof x === 'string' ? x : x && x.src).toLowerCase();
+    // "Skip" for all: only what clashes with nothing goes; when that is nothing, there is nothing to do
+    // (so the page can say "every item was skipped" instead of starting an empty copy)
+    if (choice.all === 'skip') {
+      const clash = new Set((conflicts || []).map(src));
+      const rest = list.filter((x) => !clash.has(src(x)));
+      return rest.length ? [{ conflict: 'skip', items: rest }] : [];
+    }
+    if (choice.all) return list.length ? [{ conflict: choice.all, items: list.slice() }] : [];
+    const pick = {};
+    for (const c of conflicts || []) pick[src(c)] = (choice.each || {})[c.src] || 'skip';
+    const by = { keepboth: [], replace: [] };
+    const free = [];
+    for (const x of list) {
+      const k = pick[src(x)];
+      if (k === undefined) free.push(x);
+      else if (by[k]) by[k].push(x);
+    }
+    const out = [];
+    for (const k of ['keepboth', 'replace']) if (by[k].length) out.push({ conflict: k, items: by[k] });
+    if (free.length) { if (out.length) out[0].items = free.concat(out[0].items); else out.push({ conflict: 'skip', items: free }); }
+    return out;
+  };
+  /** Time left in words from what is done so far ('About 2 minutes left'); '' until it can be known. */
+  M.timeLeft = function (done, total, ms) {
+    if (!(total > 0) || !(done > 0) || !(ms > 1500) || done >= total) return '';
+    const left = ((total - done) * ms) / done / 1000;
+    if (left < 5) return 'A few seconds left';
+    if (left < 60) return `About ${Math.max(5, Math.round(left / 5) * 5)} seconds left`;
+    if (left < 3600) { const m = Math.round(left / 60); return `About ${m} minute${m === 1 ? '' : 's'} left`; }
+    const h = Math.floor(left / 3600);
+    const m = Math.round((left - h * 3600) / 60);
+    return `About ${h} hour${h === 1 ? '' : 's'}${m ? ` ${m} minute${m === 1 ? '' : 's'}` : ''} left`;
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = M;

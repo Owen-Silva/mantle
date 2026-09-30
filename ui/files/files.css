@@ -456,3 +456,27 @@ select.fi { padding: 0 4px; }
 .btn:disabled { opacity: .45; cursor: default; }
 .btn.acc:disabled:hover, .btn:disabled:hover { filter: none; background: var(--lg-sunk); }
 .btn.acc:disabled:hover { background: var(--lg-acc); }
+
+/* ---- lane files-ui (2026-09-29): the list's designed states, plain-word toasts, the conflict dialog,
+   progress cards, reduced motion. --lg-* tokens only. ---- */
+.empty { top: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 24px 24px 48px; }
+.empty[hidden] { display: none; }
+.empty .st-g { width: 44px; height: 44px; margin-bottom: 8px; display: grid; place-items: center; border-radius: var(--lg-r-pop); background: var(--lg-sunk); color: var(--lg-ink-3); }
+.empty .st-g svg { width: 22px; height: 22px; }
+.empty .st-t { max-width: min(560px, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; color: var(--lg-ink); }
+.empty .st-s { max-width: min(460px, 100%); line-height: 1.45; color: var(--lg-ink-2); }
+.empty .st-a { display: flex; gap: 8px; margin-top: 12px; pointer-events: auto; }
+.empty.err .st-g { color: var(--lg-warn); background: var(--lg-warn-soft); }
+.empty.wait .st-g svg { animation: st-spin 1.2s linear infinite; }
+@keyframes st-spin { to { transform: rotate(360deg); } }
+.toast .ts { color: var(--lg-ink-2); font-size: 12.5px; line-height: 1.4; word-break: break-word; }
+.dlg.conf .ctitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clist .cnew { margin-left: 8px; color: var(--lg-acc); font-size: 11.5px; font-weight: 600; }
+.fck.call { display: flex; margin-top: 12px; }
+.pcard .pcancel { flex: 0 0 auto; }
+select:focus-visible, .ptile:focus-visible, .crumb:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
+.btn:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

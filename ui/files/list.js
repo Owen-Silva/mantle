@@ -383,8 +383,10 @@
           el.title = name;
         } else {
           this.setImg(el._ic, h.iconOf(it, 16));
-          if (el._kind === 'row') for (const s of el._cs) s.textContent = h.colText(it, s._id);
-          else el.title = name;
+          if (el._kind === 'row') {
+            for (const s of el._cs) s.textContent = h.colText(it, s._id);
+            el._nm.title = name;                         // a long name ellipsizes; the full one shows on hover
+          } else el.title = name;
         }
       }
       const key = MF.keyOf(it);

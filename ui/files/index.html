@@ -22,9 +22,9 @@
     <div class="grow"></div>
     <span class="chip" id="testchip" hidden title="Main runs in --test: writes are refused outside the sandbox and apps never open">test mode</span>
     <div class="wc">
-      <button data-op="min" type="button" aria-label="Minimize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M1 5h8" stroke="currentColor" stroke-width="1.1"/></svg></button>
-      <button data-op="max" type="button" aria-label="Maximize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.1" fill="none"/></svg></button>
-      <button data-op="close" class="x" type="button" aria-label="Close"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.1"/></svg></button>
+      <button data-op="min" type="button" title="Minimize" aria-label="Minimize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M1 5h8" stroke="currentColor" stroke-width="1.1"/></svg></button>
+      <button data-op="max" type="button" title="Maximize" aria-label="Maximize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.1" fill="none"/></svg></button>
+      <button data-op="close" class="x" type="button" title="Close window" aria-label="Close window"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.1"/></svg></button>
     </div>
   </header>
 
@@ -40,7 +40,7 @@
     <div class="search" id="searchbox">
       <span class="sicon" id="sicon"></span>
       <input id="search" type="text" spellcheck="false" autocomplete="off" placeholder="Search" aria-label="Search this folder (Ctrl+F)">
-      <button class="sclear" id="searchclear" type="button" aria-label="Clear the search" hidden></button>
+      <button class="sclear" id="searchclear" type="button" title="Clear the search (Esc)" aria-label="Clear the search" hidden></button>
     </div>
   </div>
 
@@ -71,7 +71,7 @@
     <span id="stload" class="stload" hidden></span>
     <span class="views">
       <button class="ib sm" id="vdetails" type="button" title="Details (Ctrl+Shift+6)" aria-label="Details view"></button>
-      <button class="ib sm" id="vgrid" type="button" title="Large icons (Ctrl+Shift+2)" aria-label="Icons view"></button>
+      <button class="ib sm" id="vgrid" type="button" title="Icons (Ctrl+Shift+3)" aria-label="Icons view"></button>
     </span>
   </footer>
 </div>

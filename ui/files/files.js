@@ -43,6 +43,7 @@
     preview: sv('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.2"/><path d="M9.5 2.5v11"/>'),
     props: sv('<circle cx="8" cy="8" r="6.2"/><path d="M8 7.2v4"/><circle cx="8" cy="4.9" r=".45" fill="currentColor"/>'),
     undo: sv('<path d="M4 6h6a3.5 3.5 0 0 1 0 7H6"/><path d="M6.5 3.5L4 6l2.5 2.5"/>'),
+    redo: sv('<path d="M12 6H6a3.5 3.5 0 0 0 0 7h4"/><path d="M9.5 3.5L12 6l-2.5 2.5"/>'),
     home: sv('<path d="M2.5 7.2L8 2.8l5.5 4.4v6H9.7V9.6H6.3v3.6H2.5z"/>'),
     desktop: sv('<rect x="1.8" y="2.5" width="12.4" height="8.5" rx="1"/><path d="M6 13.5h4M8 11v2.5"/>'),
     downloads: sv('<path d="M8 2v8M4.5 6.8L8 10.3l3.5-3.5M2.5 13.5h11"/>'),
@@ -75,7 +76,7 @@
 
   /* ---- state ---------------------------------------------------------------------------------- */
   const S = {
-    booted: false, home: null, test: false, sandbox: null, names: {}, known: {}, roots: null, pins: [], undoLabel: null,
+    booted: false, home: null, test: false, sandbox: null, names: {}, known: {}, roots: null, pins: [], undoLabel: null, redoLabel: null, redoOk: false,
     options: { showHidden: false, showExtensions: true, defaultView: 'details' },
     tabs: [], active: 0, nextTab: 1, select: null,
     icons: new Map(), iconWant: new Map(), iconTimer: null, iconWhyShown: false,
@@ -94,10 +95,12 @@
     return Promise.resolve().then(() => window.mantle.call(name, a)).then((r) => (r == null ? {} : r), (e) => ({ ok: false, reason: (e && e.message) || String(e) }));
   }
   const toast = MF.toast;
+  /** A reply (or a reason string) in plain words: model.js plainReason is the one place (contract 3). */
+  const plain = (r) => M.plainReason(r && typeof r === 'object' ? r.reason : r);
   const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
   /** The one place replies are judged: a refusal or failure is loud, a test-mode dry run quiet. */
   function report(r, what) {
-    if (!r || r.ok === false) { toast(`${what}: ${(r && r.reason) || 'no answer from Mantle'}`, { kind: 'err' }); return false; }
+    if (!r || r.ok === false) { toast(what, { kind: 'err', sub: plain(r) }); return false; }
     if (r.dryRun) { toast(r.reason || 'test mode: nothing was done', { kind: 'quiet' }); return false; }
     return true;
   }
@@ -136,7 +139,7 @@
       for (let i = 0; i < exts.length; i += 200) {
         api('files.icons', { exts: exts.slice(i, i + 200), px: cls }).then((r) => {
           if (!r || r.ok === false || r.why) {
-            if (!S.iconWhyShown) { S.iconWhyShown = true; toast(`Some icons are missing: ${(r && (r.why || r.reason)) || 'no answer'}`, { kind: 'quiet' }); }
+            if (!S.iconWhyShown) { S.iconWhyShown = true; toast('Some icons are missing', { kind: 'quiet', sub: plain(r && (r.why || r.reason)) }); }
           }
           const got = (r && r.icons) || {};
           let n = 0;
@@ -265,7 +268,7 @@
   function reportTabs() {
     clearTimeout(tabsTimer);
     tabsTimer = setTimeout(() => {
-      api('files.tabs', { tabs: S.tabs.map((t) => ({ tab: t.id, path: t.path })), active: S.active }).then((r) => { if (r && r.ok === false) toast(`Your tabs were not remembered: ${r.reason}`, { kind: 'quiet' }); });
+      api('files.tabs', { tabs: S.tabs.map((t) => ({ tab: t.id, path: t.path })), active: S.active }).then((r) => { if (r && r.ok === false) toast('Your tabs were not remembered', { kind: 'quiet', sub: plain(r) }); });
     }, 300);
   }
   function renderTabs() {
@@ -343,12 +346,13 @@
     const run = { path: p, kind: tab.kind, t0: tab.t0, first: null, all: null, count: 0 };
     tab.run = run;
     if (tab === cur()) { renderTabs(); showTab(); }
+    setTimeout(() => { if (tab.run === run && tab.loading && tab === cur()) renderEmpty(); }, 300);   // the "Reading…" state, never a flash
     reportTabs();
     const r = await api('files.list', { tab: tab.id, path: p });
     if (tab.path !== p || tab.run !== run) return;          // navigated on meanwhile
     if (!r || r.ok === false) {
       tab.loading = false;
-      tab.error = (r && r.reason) || 'no answer from Mantle';
+      tab.error = plain(r);
       if (tab === cur()) showTab();
       return;
     }
@@ -383,7 +387,7 @@
     const h = await api('files.home');
     if (tab.path !== 'mantle:home') return;
     tab.loading = false;
-    if (!h || h.ok === false) { tab.error = `Home could not be read: ${(h && h.reason) || 'no answer'}`; return; }
+    if (!h || h.ok === false) { tab.error = plain(h); return; }
     const items = [];
     for (const pin of h.pins || []) items.push({ n: pin.label || M.baseName(pin.path), d: 1, s: 0, m: 0, c: 0, a: 16, p: pin.path, loc: M.parentOf(pin.path) || '', key: 'pin|' + pin.path.toLowerCase(), _grp: 'Pinned', _grank: 0, pin: true, missing: !!pin.missing });
     for (const rc of h.recent || []) items.push({ n: rc.n || M.baseName(rc.path), d: rc.d ? 1 : 0, s: 0, m: rc.m || 0, c: 0, a: rc.d ? 16 : 32, p: rc.path, loc: M.parentOf(rc.path) || '', key: 'rec|' + rc.path.toLowerCase(), _grp: 'Recent', _grank: 1 });
@@ -445,7 +449,7 @@
       if (ev.done) {
         const rf = tab.refresh;
         tab.refresh = null;
-        if (ev.error) { toast(`${labelOf(tab.path)} could not be refreshed: ${ev.error}`, { kind: 'err' }); return; }
+        if (ev.error) { toast(`${labelOf(tab.path)} could not be refreshed`, { kind: 'err', sub: plain(ev.error) }); return; }
         tab.items = rf.items;
         wantTypes(tab.items);
         arrange(tab);
@@ -462,7 +466,7 @@
     if (ev.done) {
       tab.loading = false;
       tab.job = null;
-      if (ev.error) tab.error = `This folder could not be read: ${ev.error}`;
+      if (ev.error) tab.error = plain(ev.error);
       arrange(tab);
       if (tab.run) { tab.run.count = tab.items.length; tab.run.sidecarMs = ev.ms; afterPaint(() => { if (tab.run && tab.run.all == null) { tab.run.all = performance.now() - tab.run.t0; MF.perf.runs.push(tab.run); } }); }
       if (tab === cur()) showTab();
@@ -522,7 +526,7 @@
     if (tab.kind === 'home') { const sel = [...tab.sel]; await loadHome(tab); if (tab === cur()) { list.selectKeys(sel, false); showTab(); } return; }
     if (tab.kind !== 'folder') {
       const r = await api('files.list', { tab: tab.id, path: tab.path });
-      if (!r || r.ok === false) { toast(`${labelOf(tab.path)} could not be refreshed: ${(r && r.reason) || 'no answer'}`, { kind: 'err' }); return; }
+      if (!r || r.ok === false) { toast(`${labelOf(tab.path)} could not be refreshed`, { kind: 'err', sub: plain(r) }); return; }
       if (tab.kind === 'recycle') { tab.items = (r.recycle || []).map(binItem); tab.binCount = r.count; tab.binBytes = r.bytes; arrange(tab); }
       else { tab.place = { drives: r.drives || [], known: r.known || [], network: r.network || [] }; }
       if (tab === cur()) showTab();
@@ -534,7 +538,7 @@
     tab.refresh = rf;
     const r = await api('files.list', { tab: tab.id, path: tab.path });
     if (tab.refresh !== rf) return;
-    if (!r || r.ok === false) { tab.refresh = null; toast(`${labelOf(tab.path)} could not be refreshed: ${(r && r.reason) || 'no answer'}`, { kind: 'err' }); return; }
+    if (!r || r.ok === false) { tab.refresh = null; toast(`${labelOf(tab.path)} could not be refreshed`, { kind: 'err', sub: plain(r) }); return; }
     rf.job = r.job;
     tab.watchWhy = r.watchWhy || null;
     const evs = S.early.get(r.job);
@@ -568,7 +572,7 @@
     const s = tab.search;
     const r = await api('files.search', { tab: tab.id, path: tab.path, query, contents });
     if (tab.search !== s) { if (r && r.job) api('files.cancel', { job: r.job }); return; }
-    if (!r || r.ok === false) { s.done = true; s.error = (r && r.reason) || 'no answer'; showTab(); return; }
+    if (!r || r.ok === false) { s.done = true; s.error = plain(r); showTab(); return; }
     s.job = r.job;
     const evs = S.early.get(r.job);
     if (evs) { S.early.delete(r.job); for (const ev of evs) onFound(ev); }
@@ -581,7 +585,7 @@
     for (const it of ev.items || []) { it.loc = M.parentOf(it.p) || ''; s.items.push(it); }
     wantTypes(ev.items || []);
     if (ev.done) {
-      Object.assign(s, { done: true, count: ev.count, capped: !!ev.capped, denied: ev.denied || 0, skipped: ev.skipped || 0, ms: ev.ms, error: ev.error || null, job: null });
+      Object.assign(s, { done: true, count: ev.count, capped: !!ev.capped, denied: ev.denied || 0, skipped: ev.skipped || 0, ms: ev.ms, error: ev.error ? plain(ev.error) : null, job: null });
       arrange(tab);
       if (tab === cur()) showTab();
     } else if (s.items.length === (ev.items || []).length) arrange(tab);
@@ -607,7 +611,7 @@
     if (tab.search) return;
     const v = tab.view;
     api('files.setview', { path: tab.path, view: v.view, sort: v.sort, dir: v.dir, group: v.group, cols: v.cols || undefined, size: v.size }).then((r) => {
-      if (r && r.ok === false) toast(`This folder's view was not remembered: ${r.reason}`, { kind: 'quiet' });
+      if (r && r.ok === false) toast("This folder's view was not remembered", { kind: 'quiet', sub: plain(r) });
     });
   }
   function setView(patch) {
@@ -680,10 +684,10 @@
   /** Every started job lands here: progress card, and what to do when it finishes. */
   function track(r, op, info) {
     const words = info.label || M.opWords(op);
-    if (!r || r.ok === false) { toast(`${words} did not start: ${(r && r.reason) || 'no answer from Mantle'}`, { kind: 'err' }); return false; }
+    if (!r || r.ok === false) { toast(`${words} did not start`, { kind: 'err', sub: plain(r) }); return false; }
     if (r.dryRun) { toast(r.reason || 'test mode: nothing was done', { kind: 'quiet' }); return false; }
     if (r.needConflict) { conflictFlow(r, info); return false; }
-    if (!r.job) { toast(cap(r.reason || 'nothing to do'), { kind: 'quiet' }); return false; }
+    if (!r.job) { toast(r.reason ? M.plainReason(r.reason) : 'Nothing to do.', { kind: 'quiet' }); return false; }
     S.ops.set(r.job, Object.assign({ op: r.op || op, label: words, dest: r.dest || null }, info));
     if (!claimOpDone(r.job)) MF.progress.start(r.job, { label: words });
     return true;
@@ -691,13 +695,19 @@
   async function conflictFlow(r, info) {
     const dest = r.dest || info.dest;
     const choice = await MF.dialog.conflict({ conflicts: r.conflicts || [], op: r.op, count: (r.items || []).length, destLabel: labelOf(dest) });
-    if (!choice) { toast('Nothing was copied or moved', { kind: 'quiet' }); return; }
-    const r2 = await api('files.op', { op: r.op, items: r.items, dest, conflict: choice });
-    track(r2, r.op, transferInfo(r.op, (r.items || []).length, dest));
+    const verb = r.op === 'move' ? 'moved' : 'copied';
+    if (!choice) { toast(`Nothing was ${verb}`, { kind: 'quiet' }); return; }
+    const groups = M.conflictGroups(r.items || [], r.conflicts || [], choice);
+    if (!groups.length) { toast(`Nothing was ${verb}: every item was skipped`, { kind: 'quiet' }); return; }
+    for (const g of groups) {
+      const r2 = await api('files.op', { op: r.op, items: g.items, dest, conflict: g.conflict });
+      track(r2, r.op, transferInfo(r.op, g.items.length, dest));
+    }
   }
   function transferInfo(op, n, dest) {
     return {
       label: `${op === 'move' ? 'Moving' : 'Copying'} ${M.plural(n, 'item')} to ${labelOf(dest)}`, dest,
+      undoToast: op === 'move' ? (ev) => `Moved ${M.plural((ev.results || []).filter((x) => x && x.ok !== false && !x.skipped).length || n, 'item')} to ${labelOf(dest)}` : null,
       after: (ev) => {
         const t = cur();
         if (!ev.ok || !t || !M.samePath(t.path, dest)) return;
@@ -747,6 +757,7 @@
     const spec = plan.map((x) => ({ src: pathOf(items[x.index]), name: x.name }));
     startOp({ op: 'rename', items: spec }, {
       label: `Renaming ${M.plural(spec.length, 'item')}`,
+      undoToast: (ev) => `Renamed ${M.plural((ev.results || []).filter((x) => x && x.ok !== false).length || spec.length, 'item')}`,
       after: (ev) => {
         if (cur() !== t) return;
         const keys = (ev.results || []).filter((x) => x && x.ok !== false && x.dst).map((x) => M.baseName(x.dst));
@@ -806,13 +817,25 @@
   async function paste(dest) {
     const d = dest || cur().path;
     const r = await api('files.paste', { dest: d });
-    if (r && r.ok === false) { toast(`Nothing was pasted: ${r.reason}`, { kind: r.reason === 'the clipboard has no files' ? 'quiet' : 'err' }); return; }
+    if (r && r.ok === false) {
+      if (r.reason === 'the clipboard has no files') toast('Nothing to paste: copy or cut some files first', { kind: 'quiet' });
+      else toast('Nothing was pasted', { kind: 'err', sub: plain(r) });
+      return;
+    }
     track(r, r.op || 'copy', transferInfo(r.op || 'copy', (r && r.count) || (r && r.items || []).length || 1, d));
   }
   async function undo() {
     const r = await api('files.undo');
-    if (!r || r.ok === false) { const why = (r && r.reason) || 'no answer'; toast(cap(why), { kind: why === 'nothing to undo' ? 'quiet' : 'err' }); return; }
+    if (!r || r.ok === false) { const why = (r && r.reason) || ''; if (why === 'nothing to undo') toast('Nothing to undo', { kind: 'quiet' }); else toast('Not undone', { kind: 'err', sub: plain(why) }); return; }
     if (r.job) { S.ops.set(r.job, { op: 'undo', label: r.label || 'Undoing' }); if (!claimOpDone(r.job)) MF.progress.start(r.job, { label: r.label || 'Undoing' }); }
+  }
+  /** Redo (contract 1): main's `redo` answers like `undo`. Only offered once main has said it knows
+   *  redo (the files.undo event or boot's undo carries a `redo` field): older mains show no redo UI. */
+  async function redo() {
+    if (!S.redoOk) return;
+    const r = await api('files.redo');
+    if (!r || r.ok === false) { const why = (r && r.reason) || ''; if (/nothing to redo/i.test(why)) toast('Nothing to redo', { kind: 'quiet' }); else toast('Not redone', { kind: 'err', sub: plain(why) }); return; }
+    if (r.job) { S.ops.set(r.job, { op: 'redo', label: r.label || 'Redoing' }); if (!claimOpDone(r.job)) MF.progress.start(r.job, { label: r.label || 'Redoing' }); }
   }
   async function copyPath(paths) {
     const ps = paths || selPaths();
@@ -942,7 +965,7 @@
     if (M.isVirtual(target.path)) { toast(`${labelOf(target.path)} does not take files`, { kind: 'quiet' }); return; }
     const effect = e.ctrlKey ? 'copy' : e.shiftKey ? 'move' : 'auto';
     const r = await api('files.drop', { paths, dest: target.path, effect });
-    if (r && r.ok === false) { toast(`Nothing was dropped: ${r.reason}`, { kind: 'err' }); return; }
+    if (r && r.ok === false) { toast('Nothing was dropped', { kind: 'err', sub: plain(r) }); return; }
     track(r, r.op || 'copy', transferInfo(r.op || (effect === 'move' ? 'move' : 'copy'), (r && r.count) || (r && r.items || paths).length, target.path));
   }
 
@@ -959,6 +982,7 @@
     del: { label: 'Delete', key: 'Delete', icon: I.del, ok: () => (cur().kind === 'recycle' ? selItems().length > 0 : anyReal()), run: recycleSel },
     purge: { label: 'Delete permanently', key: 'Shift+Delete', icon: I.del, ok: () => anyReal(), run: deleteForGood },
     undo: { label: 'Undo', key: 'Ctrl+Z', icon: I.undo, ok: () => !!S.undoLabel, run: undo },
+    redo: { label: 'Redo', key: 'Ctrl+Y', icon: I.redo, ok: () => S.redoOk && !!S.redoLabel, run: redo },
     copypath: { label: 'Copy path', key: 'Ctrl+Shift+C', icon: I.link, ok: () => true, run: () => copyPath() },
     zip: { label: 'Compress to ZIP file', icon: I.zip, ok: () => anyReal(), run: zipSel },
     unzip: { label: 'Extract all', icon: I.zip, ok: () => one() && M.extOf(selItems()[0].n, selItems()[0].d) === '.zip', run: unzipSel },
@@ -1146,7 +1170,7 @@
       more.addEventListener('click', () => {
         const r = more.getBoundingClientRect();
         const items = [];
-        if (t.kind !== 'recycle') items.push(menuCmd('undo', S.undoLabel ? { label: `Undo: ${S.undoLabel}` } : null), { sep: true }, menuCmd('selectall'), menuCmd('invert'), menuCmd('selectnone'), { sep: true }, menuCmd('copypath'), menuCmd('zip'), menuCmd('unzip'), menuCmd('terminal'), { sep: true }, menuCmd('purge', { warn: true }));
+        if (t.kind !== 'recycle') items.push(menuCmd('undo', S.undoLabel ? { label: `Undo: ${S.undoLabel}` } : null), ...redoItem(), { sep: true }, menuCmd('selectall'), menuCmd('invert'), menuCmd('selectnone'), { sep: true }, menuCmd('copypath'), menuCmd('zip'), menuCmd('unzip'), menuCmd('terminal'), { sep: true }, menuCmd('purge', { warn: true }));
         else items.push(menuCmd('selectall'), menuCmd('invert'), menuCmd('selectnone'));
         items.push({ sep: true }, menuCmd('refresh'));
         MF.menu.open(items, r.left, r.bottom + 2);
@@ -1154,7 +1178,10 @@
       bar.appendChild(more);
     }
     bar.appendChild(el('span', 'grow'));
-    if (t.kind !== 'recycle' && t.kind !== 'place') bar.appendChild(cmdBtn('undo', false, (b) => { b.title = S.undoLabel ? `Undo: ${S.undoLabel} (Ctrl+Z)` : 'Nothing to undo'; }));
+    if (t.kind !== 'recycle' && t.kind !== 'place') {
+      bar.appendChild(cmdBtn('undo', false, (b) => { b.title = S.undoLabel ? `Undo: ${S.undoLabel} (Ctrl+Z)` : 'Undo (Ctrl+Z): nothing to undo'; }));
+      if (S.redoOk) bar.appendChild(cmdBtn('redo', false, (b) => { b.title = S.redoLabel ? `Redo: ${S.redoLabel} (Ctrl+Y)` : 'Redo (Ctrl+Y): nothing to redo'; }));
+    }
     bar.appendChild(cmdBtn('preview', true, (b) => b.classList.toggle('on', MF.side.mode === 'preview')));
     bar.appendChild(cmdBtn('props', true, (b) => b.classList.toggle('on', MF.side.mode === 'props')));
     updateCmdbar();
@@ -1166,6 +1193,7 @@
     $('fwd').disabled = !t || !t.fwd.length;
     $('up').disabled = !t || (!t.parent && !t.search && (M.isVirtual(t.path) || !t.path));
   }
+  const redoItem = () => (S.redoOk ? [menuCmd('redo', S.redoLabel ? { label: `Redo: ${S.redoLabel}` } : null)] : []);
   function menuCmd(id, over) {
     const c = CMD[id];
     return Object.assign({ label: c.label, icon: c.icon, key: c.key, disabled: !c.ok(), act: c.run }, over || {});
@@ -1176,7 +1204,7 @@
   function shellVerbs(paths) {
     return async () => {
       const r = await api('files.verbs', { paths });
-      if (!r || r.ok === false) throw new Error((r && r.reason) || 'no answer from Mantle');
+      if (!r || r.ok === false) throw new Error(plain(r));
       const map = (list) => (list || []).filter((v) => !HIDE_VERBS.has(String(v.verb || '').toLowerCase())).map((v) => (v.sub && v.sub.length
         ? { label: v.label, sub: map(v.sub) }
         : { label: v.label, act: () => api('files.verb', { token: r.token, cmd: v.cmd }).then((x) => report(x, `"${v.label}" did not run`)) }));
@@ -1187,7 +1215,7 @@
   function openWith(path) {
     return async () => {
       const r = await api('files.handlers', { path });
-      if (!r || r.ok === false) throw new Error((r && r.reason) || 'no answer from Mantle');
+      if (!r || r.ok === false) throw new Error(plain(r));
       const icon = (s) => (!s ? null : /^(data:|file:)/.test(s) ? s : 'data:image/png;base64,' + s);
       const out = (r.handlers || []).map((h) => ({ label: h.name, img: icon(h.icon), act: () => api('files.openwith', { path, handler: h.handler }).then((x) => report(x, `${h.name} did not open it`)) }));
       if (!out.length) out.push({ note: 'Windows lists no apps for this kind of file' });
@@ -1239,7 +1267,7 @@
     if (t.kind === 'recycle') out.push(menuCmd('empty', { warn: true }), menuCmd('restoreall'), { sep: true }, menuCmd('refresh'));
     else {
       out.push({ label: 'New', icon: I.plus, disabled: !canWriteHere(), sub: [menuCmd('newfolder', { label: 'Folder' }), menuCmd('newfile', { label: 'Text document' })] });
-      out.push(menuCmd('paste'), menuCmd('undo', S.undoLabel ? { label: `Undo: ${S.undoLabel}` } : null), menuCmd('refresh'), { sep: true });
+      out.push(menuCmd('paste'), menuCmd('undo', S.undoLabel ? { label: `Undo: ${S.undoLabel}` } : null), ...redoItem(), menuCmd('refresh'), { sep: true });
       out.push({ label: 'Show hidden items', check: S.options.showHidden, act: () => runCmd('hidden') }, { label: 'Show file name extensions', check: S.options.showExtensions, act: () => runCmd('exts') });
       if (!M.isVirtual(t.path)) {
         const pinned = S.pins.some((p) => M.samePath(p.path, t.path));
@@ -1264,7 +1292,7 @@
 
   /* ---- nav pane --------------------------------------------------------------------------------- */
   function applyRoots(r) {
-    if (!r || r.ok === false) { toast(`Drives and folders could not be listed: ${(r && r.reason) || 'no answer'}`, { kind: 'err' }); if (r && r.pins) S.pins = r.pins; renderNav(); return; }
+    if (!r || r.ok === false) { toast('Drives and folders could not be listed', { kind: 'err', sub: plain(r) }); if (r && r.pins) S.pins = r.pins; renderNav(); return; }
     S.roots = r;
     S.known = {};
     for (const k of r.known || []) S.known[k.key] = k.path;
@@ -1329,7 +1357,7 @@
         b.replaceChild(dv, lab);
         dv.appendChild(lab);
         if (d.ready !== false && d.total > 0) dv.appendChild(freeBar(d));
-        b.title = d.ready === false ? `${label}: ${d.why || 'not ready'}` : `${label}: ${M.fmtSize(d.free)} free of ${M.fmtSize(d.total)}`;
+        b.title = d.ready === false ? `${label}: ${plain(d.why || 'not ready')}` : `${label}: ${M.fmtSize(d.free)} free of ${M.fmtSize(d.total)}`;
         box.appendChild(b);
       }
     }
@@ -1385,7 +1413,7 @@
   function submitAddress() {
     const t = cur();
     const r = M.resolveTyped($('addrinput').value, { cwd: t.path, home: S.home, known: S.known });
-    if (!r.ok) { toast(cap(r.reason), { kind: 'err' }); return; }
+    if (!r.ok) { toast("That address can't be opened", { kind: 'err', sub: `${cap(r.reason)}.` }); return; }
     endAddress();
     list.sc.focus({ preventScroll: true });
     go(t, r.path);
@@ -1428,7 +1456,7 @@
       for (const d of pl.drives || []) {
         const name = S.names[d.path.toLowerCase()] || d.path;
         const bar = d.ready !== false && d.total > 0 ? (() => { const b = el('div', 'pbar'); const i = el('i'); i.style.width = Math.round((1 - d.free / d.total) * 100) + '%'; if (d.free / d.total < 0.1) b.classList.add('low'); b.appendChild(i); return b; })() : null;
-        const sub = d.ready === false ? `Not ready: ${d.why || 'no answer'}` : d.total > 0 ? `${M.fmtSize(d.free)} free of ${M.fmtSize(d.total)}${d.fs ? ' · ' + d.fs : ''}` : d.fs || '';
+        const sub = d.ready === false ? plain(d.why || 'not ready') : d.total > 0 ? `${M.fmtSize(d.free)} free of ${M.fmtSize(d.total)}${d.fs ? ' · ' + d.fs : ''}` : d.fs || '';
         const b = tile(d.path, name, sub, d.type === 'removable' ? I.usb : d.type === 'network' ? I.network : I.drive, bar);
         if (d.ready === false) b.classList.add('off');
         g.appendChild(b);
@@ -1461,11 +1489,11 @@
     let text = null;
     let quiet = false;
     let retry = false;
-    if (t.error) { text = t.error; retry = true; }
+    if (t.error && t.shown.length) { text = t.error; retry = true; }      // with nothing listed, the list's error state says it
     else if (t.search) {
       const s = t.search;
       quiet = true;
-      if (s.error) { text = `The search did not run: ${s.error}`; quiet = false; }
+      if (s.error) { text = `The search did not finish. ${s.error}`; quiet = false; }
       else if (!s.done) text = `Searching "${s.query}" in ${labelOf(t.path)} and its subfolders… ${M.plural(s.items.length, 'result')} so far`;
       else {
         const parts = [`${M.plural(s.items.length, 'result')} for "${s.query}" in ${labelOf(t.path)} and its subfolders`];
@@ -1487,19 +1515,53 @@
       b.appendChild(r);
     }
   }
+  /* The list's designed states: one glyph, one line saying what is going on, one saying what to do,
+     and at most two buttons. Loading shows only after 300 ms (a quick folder never flashes it). */
+  const STATE_ICON = { folder: I.folder, warn: sv('<path d="M8 2.2l6.2 10.9H1.8z"/><path d="M8 6.4v3M8 11.2v.01"/>'), search: I.search, bin: I.bin, home: I.home, filter: I.filter, hidden: I.hidden, wait: I.refresh };
+  function stateOf(t) {
+    if (t.kind === 'place' || t.shown.length) return null;
+    const btn = (label, fn, acc) => ({ label, fn, acc });
+    if (t.error) {
+      const acts = [btn('Try again', () => go(t, t.path, { push: false }), true)];
+      if (t.hist.length) acts.push(btn('Go back', () => back(t)));
+      else if (t.parent) acts.push(btn('Go up', () => up()));
+      return { icon: 'warn', cls: 'err', title: t.kind === 'home' ? 'Home could not be shown' : `${labelOf(t.path) || 'This folder'} could not be opened`, sub: t.error, acts };
+    }
+    if (t.search) {
+      const s = t.search;
+      if (!s.done) return null;
+      const acts = [];
+      if (!s.contents && !/[*?]/.test(s.query)) acts.push(btn('Search file contents too', () => setContents(true), true));
+      acts.push(btn('Clear the search', () => endSearch(t)));
+      return { icon: 'search', title: `No results for "${s.query}"`, sub: `Nothing in ${labelOf(t.path)} or its subfolders has that in its ${s.contents ? 'name or text' : 'name'}.`, acts };
+    }
+    if (t.loading) return performance.now() - t.t0 > 280 ? { icon: 'wait', cls: 'wait', title: `Reading ${labelOf(t.path) || 'this folder'}…`, sub: 'Big or network folders can take a moment.' } : null;
+    if (t.kind === 'recycle') return { icon: 'bin', title: 'The Recycle Bin is empty', sub: 'Deleted files wait here until you empty it.' };
+    if (t.kind === 'home') return { icon: 'home', title: 'Nothing here yet', sub: 'Right-click a folder and choose Pin to Home to keep it here. Files you open show up here too.' };
+    if (t.items.length && M.filterActive(t.filter)) return { icon: 'filter', title: 'Nothing matches the filter', sub: M.filterWords(t.filter), acts: [btn('Clear filters', () => setFilter(null), true)] };
+    if (t.items.length) return { icon: 'hidden', title: 'Only hidden items are here', sub: `${M.plural(t.items.length, 'hidden item')}.`, acts: [btn('Show hidden items', () => setOpt('showHidden', true), true)] };
+    return { icon: 'folder', title: 'This folder is empty', sub: 'Drag files here, paste with Ctrl+V, or make a new folder with Ctrl+Shift+N.' };
+  }
   function renderEmpty() {
     const t = cur();
     const e = $('empty');
-    let text = null;
-    if (t.kind !== 'place' && !t.loading && !t.error && !t.shown.length) {
-      if (t.search) text = t.search.done ? `Nothing named like "${t.search.query}" here or in its subfolders.` : null;
-      else if (t.kind === 'recycle') text = 'The Recycle Bin is empty.';
-      else if (t.kind === 'home') text = 'Pin folders here from their right-click menu. Files you open show up here too.';
-      else if (t.items.length) text = `This folder has only hidden items (${M.fmtCount(t.items.length)}). View > Show hidden items shows them.`;
-      else text = 'This folder is empty.';
+    const st = stateOf(t);
+    const sig = st ? `${st.icon}|${st.title}|${st.sub}|${(st.acts || []).map((a) => a.label).join(',')}` : '';
+    if (e._sig === sig) return;                                  // no rebuild (and no flicker) when nothing changed
+    e._sig = sig;
+    e.textContent = '';
+    e.hidden = !st;
+    e.className = 'empty' + (st && st.cls ? ' ' + st.cls : '');
+    if (!st) return;
+    const g = el('div', 'st-g');
+    g.innerHTML = STATE_ICON[st.icon] || I.folder;
+    e.append(g, el('div', 'st-t', st.title));
+    if (st.sub) e.appendChild(el('div', 'st-s', st.sub));
+    if (st.acts && st.acts.length) {
+      const a = el('div', 'st-a');
+      for (const x of st.acts) { const b = el('button', 'btn' + (x.acc ? ' acc' : ''), x.label); b.type = 'button'; b.addEventListener('click', x.fn); a.appendChild(b); }
+      e.appendChild(a);
     }
-    e.hidden = !text;
-    e.textContent = text || '';
   }
   function renderStatus() {
     const t = cur();
@@ -1600,7 +1662,7 @@
       return selItems();
     },
   });
-  MF.progress.onCancel = (job) => api('files.cancel', { job }).then((r) => { if (r && r.ok === false) toast(`It could not be cancelled: ${r.reason}`, { kind: 'err' }); });
+  MF.progress.onCancel = (job) => api('files.cancel', { job }).then((r) => { if (r && r.ok === false) toast('It could not be cancelled', { kind: 'err', sub: plain(r) }); });
 
   /* ---- keyboard ---------------------------------------------------------------------------------- */
   document.addEventListener('keydown', (e) => {
@@ -1663,6 +1725,7 @@
       if (low === 'c') { stop(); runCmd('copy'); return; }
       if (low === 'x') { stop(); runCmd('cut'); return; }
       if (low === 'v') { stop(); runCmd('paste'); return; }
+      if ((low === 'z' && e.shiftKey) || low === 'y') { stop(); runCmd('redo'); return; }
       if (low === 'z') { stop(); runCmd('undo'); return; }
       if (low === 'n' && e.shiftKey) { stop(); runCmd('newfolder'); return; }
       if (e.shiftKey && /^Digit[2-6]$/.test(e.code)) {
@@ -1726,7 +1789,7 @@
 
   /* ---- events from main ---------------------------------------------------------------------------- */
   function listen() {
-    const on = (ev, fn) => window.mantle.on(ev, (p) => { try { fn(p || {}); } catch (e) { toast(`Mantle Files hit a bug handling ${ev}: ${e.message}`, { kind: 'err' }); } });
+    const on = (ev, fn) => window.mantle.on(ev, (p) => { try { fn(p || {}); } catch (e) { console.error(ev, e); toast('Part of the window did not update', { kind: 'err', sub: 'Press F5 to refresh. If it keeps happening, restart Mantle.' }); } });
     on('files.items', onItems);
     on('files.found', onFound);
     on('files.size', (ev) => MF.side.onSize(ev));
@@ -1748,9 +1811,10 @@
       const fails = M.failLines(results);
       if (ev.aborted) toast(`${info.label}: cancelled${results.length ? ` after ${M.plural(results.filter((x) => x && x.ok !== false).length, 'item')}` : ''}`, { kind: 'quiet' });
       else if (!ev.ok) {
-        const head = fails.length ? `${info.label}: ${M.fmtCount(fails.length)} of ${M.plural(results.length, 'item')} failed` : `${info.label} failed: ${ev.reason || (ev.hr ? `Windows error 0x${(ev.hr >>> 0).toString(16)}` : 'no reason was given')}`;
-        toast(head, { kind: 'err', lines: fails });
-      } else if (ev.wasUndo) toast(`Undone: ${info.label}`, { kind: 'quiet' });
+        const head = fails.length ? `${info.label}: ${M.fmtCount(fails.length)} of ${M.plural(results.length, 'item')} failed` : `${info.label} failed`;
+        toast(head, { kind: 'err', lines: fails, sub: fails.length ? null : plain(ev.reason || (ev.hr ? `0x${(ev.hr >>> 0).toString(16)}` : '')) });
+      } else if (info.op === 'redo' || ev.wasRedo) toast(`Redone: ${info.label}`, { kind: 'quiet' });
+      else if (ev.wasUndo) toast(`Undone: ${info.label}`, { kind: 'quiet' });
       else if (info.undoToast && ev.undoable) toast(info.undoToast(ev), { kind: 'info', action: { label: 'Undo', fn: undo } });
       // search results do not refresh by themselves: drop what moved away, rename what was renamed
       const moved = new Set(results.filter((x) => x && x.ok !== false && x.src && ['recycle', 'delete', 'move'].includes(ev.op)).map((x) => x.src.toLowerCase()));
@@ -1762,7 +1826,7 @@
       for (const t of S.tabs) if (t.path && dirs.includes(t.path.toLowerCase()) && (ev.tab == null || !ev.live || ev.tab === t.id)) relistSoon(t);
       if (dirs.some((d) => M.isRoot(d))) for (const t of S.tabs) if (t.kind === 'place') relistSoon(t);
     });
-    on('files.undo', (ev) => { S.undoLabel = ev.label || null; renderCmdbar(); });
+    on('files.undo', (ev) => { S.undoLabel = ev.label || null; if ('redo' in ev) { S.redoOk = true; S.redoLabel = ev.redo || null; } renderCmdbar(); });
     on('files.opts', (ev) => { if (ev.options) applyOpts(ev.options); });
     on('files.nav', (ev) => { if (!ev.path) return; if (ev.newTab) newTab(ev.path); else go(cur(), ev.path); });
     on('files.pins', (ev) => { S.pins = ev.pins || []; renderNav(); for (const t of S.tabs) if (t.kind === 'home') relistSoon(t); });
@@ -1786,7 +1850,7 @@
     listen();
     const b = await api('files.boot');
     if (!b || b.ok === false) {
-      Object.assign(t, { path: 'mantle:home', kind: 'home', view: defaultView('home'), error: `Mantle Files could not start: ${(b && b.reason) || 'no answer from Mantle'}` });
+      Object.assign(t, { path: 'mantle:home', kind: 'home', view: defaultView('home'), error: plain(b) });
       renderTabs();
       showTab();
       document.documentElement.dataset.ready = '1';
@@ -1798,6 +1862,8 @@
     S.names = Object.assign({}, b.names || {});
     S.pins = b.pins || [];
     S.undoLabel = b.undo ? b.undo.label : null;
+    if ('redo' in b) { S.redoOk = true; S.redoLabel = b.redo ? b.redo.label || null : null; }        // boot's redo: {label}|null
+    else if (b.undo && 'redo' in b.undo) { S.redoOk = true; S.redoLabel = b.undo.redo || null; }
     S.select = b.select || null;
     if (b.options) S.options = Object.assign({}, S.options, b.options);
     $('testchip').hidden = !S.test;

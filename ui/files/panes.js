@@ -93,7 +93,7 @@
           child.fill(list && list.length ? list : [{ note: 'Nothing here' }]);
           child.place();
           if (focus) child.setOn(child.btns.findIndex((x) => !x.it.disabled));
-        }, (err) => { if (menu.stack.includes(child)) { child.fill([{ note: `Could not load: ${err && err.message ? err.message : err}` }]); child.place(); } });
+        }, (err) => { if (menu.stack.includes(child)) { child.fill([{ note: `Could not load. ${M.plainReason(err && err.message ? err.message : err)}` }]); child.place(); } });
       }
       if (focus) { child.box.focus(); child.setOn(child.btns.findIndex((x) => !x.it.disabled)); }
     };
@@ -161,6 +161,7 @@
     if (kind === 'err') t.insertAdjacentHTML('beforeend', WARN(14).replace('<svg ', '<svg class="tg" '));
     const tv = el('div', 'tv');
     tv.appendChild(el('div', 'tt', text));
+    if (opt.sub) tv.appendChild(el('div', 'ts', opt.sub));
     if (opt.lines && opt.lines.length) {
       const ul = el('ul', 'tl');
       for (const ln of opt.lines.slice(0, 50)) {
@@ -183,6 +184,7 @@
     const x = el('button', 'tx');
     x.type = 'button';
     x.setAttribute('aria-label', 'Dismiss');
+    x.title = 'Dismiss';
     x.innerHTML = X_SVG;
     x.addEventListener('click', close);
     t.appendChild(x);
@@ -205,7 +207,7 @@
   const prog = { jobs: new Map(), onCancel: null };
   MF.progress = prog;
   prog.start = function (job, info) {
-    const j = { job, info, card: null, last: null, timer: setTimeout(() => prog.show(job), 400) };
+    const j = { job, info, card: null, last: null, t0: performance.now(), timer: setTimeout(() => prog.show(job), 400) };
     prog.jobs.set(job, j);
   };
   prog.show = function (job) {
@@ -214,12 +216,10 @@
     const c = el('div', 'pcard');
     const ph = el('div', 'ph');
     j.pt = el('div', 'pt', j.info.label);
-    const x = el('button', 'tx ib sm');
+    const x = el('button', 'btn sm pcancel', 'Cancel');
     x.type = 'button';
-    x.title = 'Cancel';
-    x.setAttribute('aria-label', 'Cancel');
-    x.innerHTML = X_SVG;
-    x.addEventListener('click', () => { x.disabled = true; j.pt.textContent = 'Cancelling…'; if (prog.onCancel) prog.onCancel(job); });
+    x.title = 'Stop it; what is already done stays done (Ctrl+Z puts it back)';
+    x.addEventListener('click', () => { x.disabled = true; x.textContent = 'Cancelling…'; if (prog.onCancel) prog.onCancel(job); });
     ph.append(j.pt, x);
     j.pi = el('div', 'pi', '');
     const pb = el('div', 'pb');
@@ -242,7 +242,8 @@
     const parts = [];
     if (ev.itemsTotal > 0) parts.push(`${M.fmtCount(Math.min(ev.items || 0, ev.itemsTotal))} of ${M.plural(ev.itemsTotal, 'item')}`);
     if (ev.total > 0) parts.push(`${M.fmtSize(ev.done || 0)} of ${M.fmtSize(ev.total)}`);
-    parts.push(`${Math.round(frac * 100)}%`);
+    const left = ev.total > 0 ? M.timeLeft(ev.done || 0, ev.total, performance.now() - j.t0) : M.timeLeft(ev.items || 0, ev.itemsTotal, performance.now() - j.t0);
+    parts.push(left || `${Math.round(frac * 100)}%`);
     j.pn.textContent = parts.join(' · ');
   };
   prog.end = function (job) {
@@ -326,36 +327,59 @@
       { label: o.cancel || 'Cancel', value: false, focus: !!o.danger },
     ]).then((v) => v === true);
   };
-  /** Mantle's conflict dialog: what is there, what is coming, and four ways out. */
-  dialog.conflict = function (o) {
+  /** Mantle's conflict dialog: ONE clash at a time (what is coming, what is there now, which is newer),
+   *  three ways out (Replace / Keep both / Skip) and "Do this for all N" to answer the rest at once.
+   *  -> null (Cancel / Esc) | { all: choice } | { each: { <src>: choice } }. Keep both has the focus:
+   *  Enter never overwrites anything. */
+  dialog.conflict = async function (o) {
     const list = o.conflicts || [];
     const n = list.length;
-    return dialog.show((d) => {
-      d.appendChild(el('h2', null, n === 1 ? 'An item with this name is already there' : `${M.plural(n, 'item')} with these names are already there`));
-      d.appendChild(el('p', null, `${o.op === 'move' ? 'Moving' : 'Copying'} ${M.plural(o.count || n, 'item')} to ${o.destLabel || 'this folder'}.`));
-      const ul = el('ul', 'clist');
-      for (const c of list.slice(0, 6)) {
+    const each = {};
+    for (let i = 0; i < n; i++) {
+      const c = list[i];
+      const left = n - i;
+      let all = false;
+      const v = await dialog.show((d) => {
+        d.classList.add('conf');
+        const name = M.baseName(c.dst || c.src);
+        d.appendChild(el('h2', 'ctitle', `"${name}" is already in ${o.destLabel || 'this folder'}`));
+        d.lastChild.title = name;
+        d.appendChild(el('p', null, n === 1 ? `${o.op === 'move' ? 'Moving' : 'Copying'} ${M.plural(o.count || 1, 'item')}. Replace it, keep both, or skip this one?`
+          : `${M.plural(n, 'item')} have the same name as one already there. This is ${i + 1} of ${n}.`));
+        const ul = el('ul', 'clist');
         const li = el('li');
-        li.appendChild(el('div', 'cn', M.baseName(c.dst || c.src)));
-        const row = (label, dir, s, m) => {
+        const newer = (c.m || 0) > (c.dstM || 0) ? 'coming' : (c.dstM || 0) > (c.m || 0) ? 'there' : null;
+        const row = (label, dir, s, m, isNewer) => {
           const r = el('div', 'cd');
           r.appendChild(el('b', null, label + ' '));
-          r.appendChild(document.createTextNode(dir ? `folder · ${M.fmtDate(m)}` : `${M.fmtSize(s || 0)} · ${M.fmtDate(m)}`));
+          r.appendChild(document.createTextNode(dir ? `Folder · ${M.fmtDate(m)}` : `${M.fmtSize(s || 0)} · ${M.fmtDate(m)}`));
+          if (isNewer) r.appendChild(el('span', 'cnew', 'newer'));
           return r;
         };
-        li.appendChild(row('Coming:', c.d, c.s, c.m));
-        li.appendChild(row('There now:', c.dstD, c.dstS, c.dstM));
+        li.appendChild(row('Coming:', c.d, c.s, c.m, newer === 'coming'));
+        li.appendChild(row('There now:', c.dstD, c.dstS, c.dstM, newer === 'there'));
         ul.appendChild(li);
-      }
-      d.appendChild(ul);
-      if (n > 6) d.appendChild(el('div', 'cmore', `and ${n - 6} more`));
-    }, [
-      { label: 'Let Windows ask', value: 'ask', title: "Windows' own dialog, one item at a time" },
-      { label: 'Skip', value: 'skip', title: 'Leave the ones already there alone' },
-      { label: 'Keep both', value: 'keepboth', title: 'Add " (2)" to the new ones' },
-      { label: 'Replace', value: 'replace', kind: 'danger', title: 'Overwrite the ones already there' },
-      { label: 'Cancel', value: null, focus: true },
-    ]);
+        d.appendChild(ul);
+        if (left > 1) {
+          const w = el('label', 'fck call');
+          const cb = el('input');
+          cb.type = 'checkbox';
+          cb.addEventListener('change', () => { all = cb.checked; });
+          w.append(cb, el('span', null, i === 0 ? (n === 2 ? 'Do this for both' : `Do this for all ${n}`) : `Do this for the last ${left}`));
+          d.appendChild(w);
+        }
+      }, [
+        { label: 'Replace', value: 'replace', kind: 'danger', title: 'Overwrite the one already there' },
+        { label: 'Skip', value: 'skip', title: 'Leave the one already there alone; do not copy this one' },
+        { label: 'Keep both', value: 'keepboth', kind: 'acc', focus: true, title: 'The new one gets " (2)" added to its name' },
+        { label: 'Cancel', value: null, title: 'Stop: nothing is copied or moved (Esc)' },
+      ]);
+      if (!v) return null;
+      if (n === 1 || (all && i === 0)) return { all: v };
+      if (all) { for (let k = i; k < n; k++) each[list[k].src] = v; break; }
+      each[c.src] = v;
+    }
+    return { each };
   };
 
   /**
@@ -454,6 +478,7 @@
     const x = el('button', 'ib sm');
     x.type = 'button';
     x.setAttribute('aria-label', 'Close the pane');
+    x.title = 'Close the pane';
     x.innerHTML = X_SVG;
     x.addEventListener('click', side.close);
     head.appendChild(x);
@@ -487,7 +512,7 @@
     h.api('files.preview', { path: p }).then((r) => {
       if (token !== side.token) return;          // the selection moved on: a late answer is dropped
       wait.remove();
-      if (!r || r.ok === false) { side.none(body, it, r && r.reason ? r.reason : 'no answer from Mantle'); return; }
+      if (!r || r.ok === false) { side.none(body, it, M.plainReason(r && r.reason)); return; }
       if (r.kind === 'image') { const im = el('img', 'pvimg'); im.alt = ''; im.src = r.url; im.addEventListener('error', () => { im.remove(); side.none(body, it, 'the image could not be decoded'); }); body.appendChild(im); }
       else if (r.kind === 'video' || r.kind === 'audio') {
         const m = el(r.kind, 'pvmedia');
@@ -505,8 +530,8 @@
       } else if (r.kind === 'text') {
         body.appendChild(el('pre', 'pvtext', r.text || ''));
         if (r.truncated) body.appendChild(el('div', 'pvnote', `Showing the first ${M.fmtSize((r.text || '').length)}; the file is ${M.fmtSize(r.size || 0)}.`));
-      } else side.none(body, it, r.why || 'no preview for this kind of file');
-    }, (e) => { if (token === side.token) { wait.remove(); side.none(body, it, e.message); } });
+      } else side.none(body, it, r.why ? M.plainReason(r.why) : 'No preview for this kind of file.');
+    }, (e) => { if (token === side.token) { wait.remove(); side.none(body, it, M.plainReason(e && e.message)); } });
   };
   side.none = function (body, it, why) {
     const n = el('div', 'pvnone');
@@ -558,7 +583,7 @@
     if (drive) {                               // a drive root: what the drive says, never a count of the whole disk
       const ok = drive.ready !== false && drive.total > 0;
       side.dl(body, [['Path', drive.path], ['File system', drive.fs], ['Used', ok ? `${M.fmtSize(drive.total - drive.free)} (${M.fmtBytes(drive.total - drive.free)})` : null],
-        ['Free', ok ? `${M.fmtSize(drive.free)} (${M.fmtBytes(drive.free)})` : null], ['Capacity', ok ? M.fmtSize(drive.total) : null], ['Problem', drive.ready === false ? drive.why || 'not ready' : null]]);
+        ['Free', ok ? `${M.fmtSize(drive.free)} (${M.fmtBytes(drive.free)})` : null], ['Capacity', ok ? M.fmtSize(drive.total) : null], ['Problem', drive.ready === false ? M.plainReason(drive.why || 'not ready') : null]]);
       return;
     }
     const wait = el('div', 'pvnote', 'Reading…');
@@ -566,7 +591,7 @@
     h.api('files.stat', { path: p }).then((r) => {
       if (token !== side.token) return;
       wait.remove();
-      if (!r || r.ok === false || r.exists === false) { side.dl(body, [['Location', M.parentOf(p)], ['Problem', r && r.reason ? r.reason : 'it is not there any more']]); return; }
+      if (!r || r.ok === false || r.exists === false) { side.dl(body, [['Location', M.parentOf(p)], ['Problem', M.plainReason(r && r.reason ? r.reason : 'not there any more')]]); return; }
       const attrs = ATTRS.filter(([bit]) => (r.a & bit) !== 0).map(([, n]) => n).join(', ');
       const rows = [
         ['Type', r.type || h.typeOf(it)],
@@ -583,11 +608,11 @@
       const containsDd = dds.Contains;
       h.api('files.size', { w: h.w, path: p }).then((s) => {
         if (token !== side.token) { if (s && s.job) h.api('files.cancel', { job: s.job }); return; }
-        if (!s || s.ok === false || !s.job) { sizeDd.textContent = `not counted: ${s && s.reason ? s.reason : 'no answer'}`; containsDd.textContent = '—'; return; }
+        if (!s || s.ok === false || !s.job) { sizeDd.textContent = `Not counted. ${M.plainReason(s && s.reason)}`; containsDd.textContent = '—'; return; }
         side.sizeJob = s.job;
         side.sizeOut = { job: s.job, sizeDd, containsDd, token };
       });
-    }, (e) => { if (token === side.token) { wait.remove(); side.dl(body, [['Problem', e.message]]); } });
+    }, (e) => { if (token === side.token) { wait.remove(); side.dl(body, [['Problem', M.plainReason(e && e.message)]]); } });
   };
   /** Properties > Checksum: pick the algorithm, press Compute (a big file takes a moment; nothing is
    *  read until asked). The answer can be copied like any text in the pane. */
@@ -612,11 +637,11 @@
       h.api('files.hash', { w: h.w, path: p, algo }).then((r) => {
         if (token !== side.token) return;
         go.disabled = false;
-        if (!r || r.ok === false) { if (r && r.cancelled) return; out.className = 'hash-out bad'; out.textContent = `Not computed: ${(r && r.reason) || 'no answer'}`; return; }
+        if (!r || r.ok === false) { if (r && r.cancelled) return; out.className = 'hash-out bad'; out.textContent = `Not computed. ${M.plainReason(r && r.reason)}`; return; }
         out.className = 'hash-out';
         out.textContent = r.hex;
         out.title = `${pick.options[pick.selectedIndex].text} of ${M.fmtBytes(r.bytes || 0)} in ${r.ms} ms`;
-      }, (e) => { if (token === side.token) { go.disabled = false; out.className = 'hash-out bad'; out.textContent = `Not computed: ${e.message}`; } });
+      }, (e) => { if (token === side.token) { go.disabled = false; out.className = 'hash-out bad'; out.textContent = `Not computed. ${M.plainReason(e && e.message)}`; } });
     });
   };
   /** 'files.size' events (every ~250 ms while a folder is counted). */
@@ -627,7 +652,7 @@
     o.sizeDd.textContent = `${M.fmtSize(ev.bytes || 0)} (${M.fmtBytes(ev.bytes || 0)})${word}`;
     let c = `${M.plural(ev.files || 0, 'file')}, ${M.plural(ev.dirs || 0, 'folder')}`;
     if (ev.denied) c += ` · ${M.plural(ev.denied, 'folder')} could not be read`;
-    if (ev.error) c += ` · stopped: ${ev.error}`;
+    if (ev.error) c += ` · stopped. ${M.plainReason(ev.error)}`;
     o.containsDd.textContent = c;
     if (ev.done) { side.sizeJob = null; side.sizeOut = null; }
   };

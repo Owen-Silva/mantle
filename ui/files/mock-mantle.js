@@ -111,7 +111,7 @@
     { key: '$RP7Q8R9.mp4', n: 'Screen recording.mp4', orig: HOME + '\\Videos', del: NOW - 60 * DAY, s: 312 * MB, d: 0 },
   ];
   const views = new Map();
-  const options = { showHidden: false, showExtensions: true, defaultView: 'details', startIn: 'last', replaceExplorer: false, searchContents: false, compact: false, checkboxes: false };
+  const options = { showHidden: false, showExtensions: true, defaultView: 'details', startIn: 'last', searchContents: false, compact: false, checkboxes: false };
   let clip = { paths: [], cut: false };
   const undo = [];
 

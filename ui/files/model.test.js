@@ -163,7 +163,7 @@ eq('typeahead wraps', M.findTypeAhead(shown, 'a', 1), 0);
 eq('typeahead miss', M.findTypeAhead(shown, 'zz', 0), -1);
 eq('summarize', M.summarize([it('a', { s: 10 }), it('b', { d: 1 }), it('c', { s: 5 })]), { count: 3, files: 2, dirs: 1, bytes: 15 });
 eq('fail lines', M.failLines([{ src: 'C:\\a\\x.txt', ok: false, why: 'in use' }, { src: 'C:\\a\\y', ok: true }, { src: 'C:\\a\\z', ok: false, hr: -2147024891 }]),
-  [{ name: 'x.txt', why: 'in use' }, { name: 'z', why: 'Windows error 0x80070005' }]);
+  [{ name: 'x.txt', why: 'It is open in another app. Close it there, then try again.' }, { name: 'z', why: 'Windows did not allow this. It may need administrator rights, or the item is protected.' }]);
 eq('thumb key', M.thumbKey('C:\\A.png', 5, 6, 96), 'c:\\a.png|5|6|96');
 
 /* speed: 10,000 names sort in well under a frame budget per key (numbers go to shoot.js too) */
@@ -229,6 +229,42 @@ eq('sort by status', names(M.sortItems([it('a', { a: 0x400000 }), it('b', { a: 0
   const swap = M.renamePlan([it('a.txt'), it('b.txt')], { mode: 'replace', find: 'a', replace: 'b' }, ['a.txt', 'b.txt']);
   eq('replace: onto another selected item\'s current name is refused (no order games)', swap.rows[0].why, 'another selected item has this name now');
   eq('replace: a bad regex says why', /not valid/.test(M.renamePlan(sel, { mode: 'replace', find: '(', regex: true }, taken).why), true);
+}
+
+/* errors in plain words (contract 3): no code, no jargon, each says what to do next (lane files-ui) */
+{
+  const P = M.plainReason;
+  const noCode = (s) => !/0x[0-9a-f]{4,}|\bE[A-Z]{3,}\b|Windows error|sidecar|dry ?run|undefined|null\b|NaN/i.test(s);
+  eq('plain: access denied from the sidecar', P('Access is denied. (0x80070005)'), 'Windows did not allow this. It may need administrator rights, or the item is protected.');
+  eq('plain: in use', /open in another app. Close it there/.test(P('The process cannot access the file because it is being used by another process. (0x80070020)')), true);
+  eq('plain: missing (node code)', /not there any more.*F5/.test(P("ENOENT: no such file or directory, open 'x'")), true);
+  eq('plain: drive not ready', /drive is not ready.*try again/.test(P('The device is not ready. (0x80070015)')), true);
+  eq('plain: offline OneDrive file', /OneDrive is not running.*Start OneDrive/.test(P('The cloud file provider is not running. (0x8007016A)')), true);
+  eq('plain: disk full', /not enough free space/.test(P('There is not enough space on the disk. (0x80070070)')), true);
+  eq('plain: network', /network location cannot be reached/.test(P('The network path was not found. (0x80070035)')), true);
+  eq('plain: no answer', /Mantle did not answer/.test(P('')), true);
+  eq('plain: sidecar jargon never shows', /Mantle did not answer/.test(P('the sidecar is not running')), true);
+  eq('plain: unknown words keep their words, lose the code', P('The media is sealed by policy X (0x80071234)'), 'The media is sealed by policy X.');
+  eq('plain: a bare unknown code says something useful', noCode(P('(0x80004005)')) && P('(0x80004005)').length > 20, true);
+  eq('plain: already plain stays', P('they are already in this folder'), 'They are already in this folder.');
+  const all = ['Access is denied. (0x80070005)', 'x (0x80070002)', 'EBUSY: resource busy', 'Windows error 0x80070570', 'hr -2147024864', 'job fo12 failed (0x80004005)', 'dry run: nothing'];
+  eq('plain: none of them shows a code or jargon', all.map(P).filter((s) => !noCode(s)), []);
+  eq('fail lines map through the plain words', M.failLines([{ src: 'C:\\a\\x.txt', ok: false, hr: -2147024864 }])[0].why, 'It is open in another app. Close it there, then try again.');
+  eq('time left: unknown at first', M.timeLeft(10, 100, 500), '');
+  eq('time left: minutes', M.timeLeft(25, 100, 60000), 'About 3 minutes left');
+  eq('time left: seconds', M.timeLeft(50, 100, 20000), 'About 20 seconds left');
+  eq('time left: done', M.timeLeft(100, 100, 60000), '');
+  const its = ['C:\\a\\1.txt', 'C:\\a\\2.txt', 'C:\\a\\3.txt', 'C:\\a\\4.txt'];
+  const cf = [{ src: its[0] }, { src: its[1] }, { src: its[2] }];
+  eq('conflict groups: one answer for all', M.conflictGroups(its, cf, { all: 'replace' }), [{ conflict: 'replace', items: its }]);
+  eq('conflict groups: one each, the free item rides with the first group', M.conflictGroups(its, cf, { each: { [its[0]]: 'replace', [its[1]]: 'skip', [its[2]]: 'keepboth' } }),
+    [{ conflict: 'keepboth', items: [its[3], its[2]] }, { conflict: 'replace', items: [its[0]] }]);
+  eq('conflict groups: every clash skipped, the free one still goes (safely)', M.conflictGroups(its, cf, { each: { [its[0]]: 'skip', [its[1]]: 'skip', [its[2]]: 'skip' } }),
+    [{ conflict: 'skip', items: [its[3]] }]);
+  eq('conflict groups: all skipped and nothing free = nothing to do', M.conflictGroups(its.slice(0, 1), cf.slice(0, 1), { each: { [its[0]]: 'skip' } }), []);
+  eq('conflict groups: cancelled', M.conflictGroups(its, cf, null), []);
+  eq('conflict groups: "skip" for all, nothing free = nothing to do', M.conflictGroups(its.slice(0, 3), cf, { all: 'skip' }), []);
+  eq('conflict groups: "skip" for all, only the free one goes', M.conflictGroups(its, cf, { all: 'skip' }), [{ conflict: 'skip', items: [its[3]] }]);
 }
 
 console.log(`FILES MODEL TEST: ${pass} passed, ${fail} failed`);
