@@ -34,6 +34,9 @@ function regGuids(name) {
   } catch (_) { return null; }
 }
 
+// What must never reach the screen: error codes, Windows API names, developer words.
+const JARGON = /0x[0-9a-f]{4,}|QueryService|FindDesktop|SetForegroundWindow|IVirtual|HKCU|registry|explorer|sidecar|hwnd|\bCOM\b|\bnull\b|undefined/i;
+
 function build() {
   try {
     const out = execFileSync('reg', ['query', 'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion', '/v', 'CurrentBuild'], { encoding: 'utf8' });
@@ -96,9 +99,10 @@ function build() {
       t.check('...and writes are available', desks.canWrite === true, desks.writeReason);
     } else {
       t.check('off the pinned build: registry fallback, writes off WITH a reason',
-        desks.source !== 'com' && desks.canWrite === false && /build/.test(String(desks.writeReason)), desks.writeReason);
+        desks.source !== 'com' && desks.canWrite === false && /version of Windows/.test(String(desks.writeReason)), desks.writeReason);
     }
     const ids = (desks.list || []).map((d) => d.id);
+    t.check('every desktop reason on screen is plain words', [desks.reason, desks.writeReason, desks.windowsReason].every((x) => x == null || !JARGON.test(x)), [desks.reason, desks.writeReason].join(' | '));
     if (regIds) t.check('desktop ids match the registry, in order', ids.join(',') === regIds.join(','), `${ids.length} vs ${regIds.length}`);
     if (regCur) t.check('current desktop matches the registry', desks.current === regCur);
     t.check('every desktop has a name ("Desktop N" when unnamed)', (desks.list || []).every((d) => typeof d.name === 'string' && d.name.length > 0));
@@ -157,6 +161,8 @@ function build() {
     t.check('move with no window: plain words', !gone.ok && /closed/.test(gone.error), gone.error);
     const badName = await s.send('desktops.rename', { desktop: cur, name: 'x'.repeat(101), dry: true }, 4000);
     t.check('a 101-character name is refused', !badName.ok && /100 characters/.test(badName.error), badName.error);
+    const ctl = await s.send('desktops.rename', { desktop: cur, name: '  Work\r\n\tstuff ', dry: true }, 4000);
+    t.check('a pasted newline or tab never reaches a desktop name (dry rename cleans it)', ctl.ok && ctl.result.name === 'Workstuff', JSON.stringify(ctl.result));
 
     // ---- nothing changed ------------------------------------------------------------------------
     const after = await s.send('desktops.list', {}, 4000);
@@ -167,6 +173,34 @@ function build() {
     t.check('no exception', false, err.stack);
   } finally {
     await s.stop();
+  }
+
+  // ---- when Windows' desktop controls are missing or changed (the test seam, passive only) ------------
+  // MANTLE_TEST_VD makes a passive sidecar pretend: another Windows build, or no desktop objects at all.
+  // Every path must answer in plain words (no codes, no method names) and never crash or go silent.
+  for (const mode of ['build:27000', 'nocom']) {
+    process.env.MANTLE_TEST_VD = mode;
+    let p = null;
+    try {
+      p = await T.startPassive();
+      const lr = await p.send('taskview.list', {}, 4000);
+      const d = (lr.result && lr.result.desktops) || {};
+      t.check(`${mode}: the window list still answers`, lr.ok && Array.isArray(lr.result.list), lr.error);
+      t.check(`${mode}: desktops are listed read-only from Windows' saved copy`, d.ok === true && d.source === 'registry' && d.canWrite === false && (d.list || []).length >= 1, JSON.stringify(d).slice(0, 200));
+      t.check(`${mode}: the reason is plain words`, typeof d.writeReason === 'string' && d.writeReason.length > 10 && !JARGON.test(d.writeReason), d.writeReason);
+      if (mode === 'nocom') t.check('nocom: the window counts warn in plain words', typeof d.windowsReason === 'string' && !JARGON.test(d.windowsReason), d.windowsReason);
+      for (const [cmd, args] of [['desktops.switch', { desktop: d.current }], ['desktops.create', {}], ['desktops.rename', { desktop: d.current, name: 'x' }], ['desktops.remove', { desktop: d.current }]]) {
+        const w = await p.send(cmd, Object.assign({ dry: true }, args), 4000);
+        t.check(`${mode}: dry ${cmd} refused with plain words`, w.ok === false && /can only be viewed here/.test(w.error) && !JARGON.test(w.error), w.error);
+      }
+      const pong = await p.send('ping', {}, 4000);
+      t.check(`${mode}: the sidecar is still healthy after every refusal`, pong.ok === true);
+    } catch (err) {
+      t.check(`${mode}: no exception`, false, err.stack);
+    } finally {
+      delete process.env.MANTLE_TEST_VD;
+      if (p) await p.stop();
+    }
   }
   for (const n of notes) console.log('  note: ' + n);
   process.exit(t.summary());

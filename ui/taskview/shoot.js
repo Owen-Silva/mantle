@@ -44,7 +44,7 @@ const SHOTS = [
 
 function gamesRunning() {
   const out = execFileSync('powershell', ['-NoProfile', '-Command',
-    '@(Get-Process javaw,Minecraft*,RobloxPlayerBeta,*Riot*,VALORANT* -ErrorAction SilentlyContinue).Count'],
+    '@(Get-Process VALORANT*,javaw,Minecraft*,RobloxPlayerBeta -ErrorAction SilentlyContinue).Count'],
   { encoding: 'utf8' }).trim();
   return out === '0' ? 0 : (Number(out) || 1);
 }

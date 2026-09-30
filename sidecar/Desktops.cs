@@ -155,6 +155,25 @@ namespace Mantle {
 
     public static string IdText(Guid g) { return g.ToString("D").ToUpperInvariant(); }
 
+    // WORDS (quality pass, 2026-09-29): every reason below reaches the screen, so it is plain words
+    // for someone who is not a developer; the technical detail (HRESULTs, method names) goes to the
+    // log only, through Why(). Codes are fine in a log line; window titles never are.
+    public static string Why(string plain, string detail) {
+      if (detail != null) Program.EmitLog("warn", "desktops: " + plain + " [" + detail + "]");
+      return plain;
+    }
+    static string Hr(Exception ex) { return ex.GetType().Name + " 0x" + Marshal.GetHRForException(ex).ToString("X8"); }
+
+    // A TEST SEAM, passive sidecars only (a live one ignores it): MANTLE_TEST_VD=build:<n> pretends
+    // to be another Windows build, MANTLE_TEST_VD=nocom pretends explorer offers no desktop objects
+    // at all. It proves the read-only and unavailable paths say why, on this machine.
+    static string _test;
+    static string Test() {
+      if (_test == null) _test = Program.Passive ? (Environment.GetEnvironmentVariable("MANTLE_TEST_VD") ?? "") : "";
+      return _test;
+    }
+    public const string NoCom = "Windows didn't give Mantle its desktop controls";
+
     static bool Dead(Exception ex) {
       int hr = Marshal.GetHRForException(ex);
       // RPC_E_DISCONNECTED, RPC_S_SERVER_UNAVAILABLE, RPC_S_CALL_FAILED: explorer restarted under us.
@@ -170,11 +189,12 @@ namespace Mantle {
     /// The documented manager, or null with DocReason set.
     public static VdNative.IVirtualDesktopManager Doc() {
       if (_doc != null || _docReason != null) return _doc;
+      const string plain = "Windows didn't say which desktop each window is on, so the window counts may be off";
+      if (Test() == "nocom") { _docReason = Why(plain, "test seam: nocom"); return null; }
       try {
         _doc = (VdNative.IVirtualDesktopManager)Activator.CreateInstance(Type.GetTypeFromCLSID(VdNative.CLSID_VirtualDesktopManager));
       } catch (Exception ex) {
-        _docReason = "Windows' virtual desktop manager could not be created (" + ex.GetType().Name + " 0x" +
-                     Marshal.GetHRForException(ex).ToString("X8") + "), so Mantle cannot tell which desktop a window is on";
+        _docReason = Why(plain, "IVirtualDesktopManager: " + Hr(ex));
       }
       return _doc;
     }
@@ -183,11 +203,17 @@ namespace Mantle {
     /// The internal manager when the build, the IID and the self-check all agree; else null with MgrReason.
     public static VdNative.IVirtualDesktopManagerInternal Mgr() {
       if (_mgr != null || _mgrReason != null) return _mgr;
-      if (_faulted) { _mgrReason = "a call into Windows' internal desktop interface faulted earlier, so Mantle stopped using it until it restarts"; return null; }
-      if (Build < 0) Build = ReadBuild();
+      if (_faulted) { _mgrReason = "Windows' desktop controls failed earlier, so Mantle stopped using them until Mantle restarts"; return null; }
+      if (Build < 0) {
+        Build = ReadBuild();
+        int fake;
+        if (Test().StartsWith("build:", StringComparison.Ordinal) && int.TryParse(Test().Substring(6), NumberStyles.Integer, CultureInfo.InvariantCulture, out fake)) Build = fake;
+      }
+      if (Test() == "nocom") { _mgrReason = Why(NoCom, "test seam: nocom"); return null; }
       if (Build != PinnedBuild) {
-        _mgrReason = "this is Windows build 10.0." + Build + ", and Mantle only has the desktop-switching layout for build 10.0." +
-                     PinnedBuild + " (it changes between builds, and guessing could run the wrong command)";
+        // The internal interface changes its layout between builds; guessing could run the wrong command.
+        _mgrReason = Why("Mantle can't change desktops on this version of Windows yet",
+                         "build 10.0." + Build + ", layout known for 10.0." + PinnedBuild);
         return null;
       }
       try {
@@ -197,8 +223,7 @@ namespace Mantle {
         object o;
         try { o = sp.QueryService(ref svc, ref iid); }
         catch (Exception ex) {
-          _mgrReason = "explorer does not offer the desktop interface Mantle knows for build " + PinnedBuild + " (QueryService 0x" +
-                       Marshal.GetHRForException(ex).ToString("X8") + "): Windows has changed it, so Mantle will not guess";
+          _mgrReason = Why(NoCom, "QueryService(IVirtualDesktopManagerInternal) for build " + PinnedBuild + ": " + Hr(ex));
           return null;
         }
         var mgr = (VdNative.IVirtualDesktopManagerInternal)o;
@@ -207,11 +232,10 @@ namespace Mantle {
         try { views = (VdNative.IApplicationViewCollection)sp.QueryService(ref ciid, ref ciid); }
         catch (Exception) { views = null; }   // only moving windows needs it; said in MoveWindow
         string bad = SelfCheck(mgr);
-        if (bad != null) { _mgrReason = bad; return null; }
+        if (bad != null) { _mgrReason = Why("Windows' desktop controls didn't pass Mantle's safety check", bad); return null; }
         _mgr = mgr; _views = views;
       } catch (Exception ex) {
-        _mgrReason = "explorer's desktop interface could not be reached (" + ex.GetType().Name + " 0x" +
-                     Marshal.GetHRForException(ex).ToString("X8") + ")";
+        _mgrReason = Why("Windows' desktop controls didn't answer", "ImmersiveShell: " + Hr(ex));
       }
       return _mgr;
     }
@@ -265,9 +289,10 @@ namespace Mantle {
       var r = new RegDesktops();
       try {
         using (RegistryKey k = Registry.CurrentUser.OpenSubKey(RegRoot)) {
-          if (k == null) { r.Reason = "the registry has no virtual desktop list (HKCU\\" + RegRoot + ")"; return r; }
+          // (the self-check reads this every Mgr(); these reasons are logged only when they reach the screen)
+          if (k == null) { r.Reason = "Windows' saved list of desktops is missing"; return r; }
           r.Ids = Guids(k.GetValue("VirtualDesktopIDs") as byte[]);
-          if (r.Ids == null) r.Reason = "the registry's VirtualDesktopIDs value is missing or malformed";
+          if (r.Ids == null) r.Reason = "Windows' saved list of desktops couldn't be read";
           List<Guid> cur = Guids(k.GetValue("CurrentVirtualDesktop") as byte[]);
           if (cur == null) {
             // Some builds keep the current desktop per logon session instead.
@@ -288,7 +313,7 @@ namespace Mantle {
         }
       } catch (Exception ex) {
         r.Ids = null;
-        r.Reason = "the registry's virtual desktop list could not be read (" + ex.GetType().Name + ")";
+        r.Reason = "Windows' saved list of desktops couldn't be read (" + ex.GetType().Name + ")";
       }
       return r;
     }
@@ -304,8 +329,8 @@ namespace Mantle {
     public static string Run(Job job, int ms) {
       lock (_gate) {
         if (_busySince != 0) {
-          return "explorer has not answered Mantle's previous desktop call for " + Lanes.MsSince(_busySince) +
-                 " ms, so this one was not sent (Windows' desktop service looks stuck)";
+          return Why("Windows is still busy with the last desktop request; try again in a moment",
+                     "previous COM call in flight for " + Lanes.MsSince(_busySince) + " ms");
         }
         _busySince = Stopwatch.GetTimestamp();
       }
@@ -318,7 +343,7 @@ namespace Mantle {
           try { done.Set(); } catch (ObjectDisposedException) { }
         }
       });
-      if (!done.WaitOne(ms)) return "explorer did not answer a desktop call within " + ms + " ms";
+      if (!done.WaitOne(ms)) return Why("Windows took too long to answer; try again in a moment", "no answer within " + ms + " ms");
       done.Close();
       return answer;
     }
@@ -330,15 +355,15 @@ namespace Mantle {
       try { return job(); }
       catch (AccessViolationException) {
         Faulted("AccessViolation inside a desktop call");
-        return "a call into Windows' internal desktop interface faulted; Mantle stopped using it until it restarts";
+        return "Windows' desktop controls failed, so Mantle stopped using them until Mantle restarts";
       } catch (COMException ex) {
-        if (Dead(ex)) { Drop("explorer went away: 0x" + ex.ErrorCode.ToString("X8")); return "explorer restarted during the call; try again"; }
-        return "Windows refused the desktop call (0x" + ex.ErrorCode.ToString("X8") + ")";
+        if (Dead(ex)) { Drop("explorer went away: 0x" + ex.ErrorCode.ToString("X8")); return "Windows' desktop service restarted in the middle of that; try again"; }
+        return Why("Windows refused that desktop change", "COMException 0x" + ex.ErrorCode.ToString("X8"));
       } catch (InvalidCastException ex) {
         Drop("cast: " + ex.Message);
-        return "explorer's desktop objects changed shape under Mantle (" + ex.Message + ")";
+        return "Windows' desktop controls changed while Mantle was using them; try again";
       } catch (Exception ex) {
-        return "the desktop call threw " + ex.GetType().Name + ": " + ex.Message;
+        return Why("That desktop request failed unexpectedly; try again", ex.GetType().Name);
       }
     }
   }
@@ -391,7 +416,7 @@ namespace Mantle {
       string why = VdCom.MgrReason;
       VdCom.RegDesktops reg = VdCom.ReadRegistry();
       if (reg.Ids == null) {
-        return Json.Obj("ok", false, "source", "none", "reason", why + "; " + reg.Reason, "canWrite", false,
+        return Json.Obj("ok", false, "source", "none", "reason", VdCom.Why(why, reg.Reason), "canWrite", false,
                         "writeReason", why, "current", null, "list", list, "build", VdCom.Build);
       }
       for (int i = 0; i < reg.Ids.Count; i++) {
@@ -399,7 +424,8 @@ namespace Mantle {
         bool named = reg.Names.TryGetValue(reg.Ids[i], out name);
         list.Add(Json.Obj("id", VdCom.IdText(reg.Ids[i]), "index", i, "named", named, "name", named ? name : "Desktop " + (i + 1)));
       }
-      return Json.Obj("ok", true, "source", "registry", "reason", "read from the registry because " + why, "canWrite", false,
+      // source says where the list came from (Windows' saved copy); reason is the on-screen words
+      return Json.Obj("ok", true, "source", "registry", "reason", why, "canWrite", false,
                       "writeReason", why, "current", reg.Current == Guid.Empty ? null : VdCom.IdText(reg.Current), "list", list,
                       "build", VdCom.Build);
     }
@@ -512,7 +538,7 @@ namespace Mantle {
       string inner = null;
       string err = VdCom.Run(delegate {
         VdNative.IVirtualDesktopManagerInternal mgr = VdCom.Mgr();
-        if (mgr == null) { inner = "desktop changes are off: " + VdCom.MgrReason; return null; }
+        if (mgr == null) { inner = "desktops can only be viewed here: " + VdCom.MgrReason; return null; }
         inner = body(mgr);
         return null;
       }, ms);
@@ -589,10 +615,18 @@ namespace Mantle {
       return null;
     }
 
+    /// A desktop name as typed: control characters (a pasted newline or tab) dropped, trimmed.
+    static string Clean(string s) {
+      if (s == null) return "";
+      var b = new System.Text.StringBuilder(s.Length);
+      foreach (char c in s) if (!char.IsControl(c)) b.Append(c);
+      return b.ToString().Trim();
+    }
+
     static string Rename(Dictionary<string, object> req, ref object result) {
       Guid id;
       if (!ParseId(req, out id)) return "desktops.rename needs the desktop's id (desktop)";
-      string name = (Json.GetString(req, "name") ?? "").Trim();
+      string name = Clean(Json.GetString(req, "name"));
       if (name.Length > 100) return "a desktop name can be at most 100 characters";
       string gate = WriteGate(req, "renamed desktop " + VdCom.IdText(id));
       if (gate != null) return gate;
@@ -624,12 +658,13 @@ namespace Mantle {
         VdNative.IVirtualDesktop target = Find(mgr, id);
         if (target == null) return "that desktop no longer exists";
         VdNative.IApplicationViewCollection views = VdCom.Views;
-        if (views == null) return "explorer does not offer its window-view list, so Mantle cannot move windows between desktops";
+        const string cannot = "Windows doesn't let Mantle move this window to another desktop";
+        if (views == null) return VdCom.Why(cannot, "no IApplicationViewCollection");
         VdNative.IApplicationView view;
         int hr = views.GetViewForHwnd(hwnd, out view);
         if (hr != 0 || view == null)
-          return "Windows does not manage that window as an app view (0x" + hr.ToString("X8") + "), so it cannot be moved to another desktop";
-        if (!mgr.CanViewMoveDesktops(view)) return "Windows does not allow that window to move to another desktop";
+          return VdCom.Why(cannot, "GetViewForHwnd 0x" + hr.ToString("X8"));
+        if (!mgr.CanViewMoveDesktops(view)) return VdCom.Why(cannot, "CanViewMoveDesktops false");
         bool already = target.IsViewVisible(view);
         if (!dry && !already) mgr.MoveViewToDesktop(view, target);
         res = Json.Obj("ok", true, "dry", dry, "would", dry ? "move" : null, "already", already, "to", VdCom.IdText(id));
@@ -673,8 +708,8 @@ namespace Mantle {
         result = Json.Obj("ok", true, "how", "ladder");
         return null;
       }
-      return "Windows kept another window in front (SetForegroundWindow was refused, then the focus ladder: " + ferr + ")" +
-             (hung ? "; Windows also reports that window as not responding" : "");
+      return VdCom.Why("Windows kept another window in front" + (hung ? ", and this window is not responding" : ""),
+                      "SetForegroundWindow refused, then the focus ladder: " + ferr);
     }
 
     static IntPtr RootOf(IntPtr hwnd) {
