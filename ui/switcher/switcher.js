@@ -163,8 +163,9 @@
     ttl.className = 'ttl';
     ttl.textContent = it.title || 'Untitled window';
     cap.appendChild(ttl);
-    if (it.hung) cap.appendChild(chip('not responding', true));
-    else if (it.minimized) cap.appendChild(chip('minimized', false));
+    // sentence case, like every other label in Mantle
+    if (it.hung) cap.appendChild(chip('Not responding', true));
+    else if (it.minimized) cap.appendChild(chip('Minimized', false));
     el.appendChild(pv);
     el.appendChild(cap);
     return { el: el, pv: pv, why: why, ico: ico, cap: cap };

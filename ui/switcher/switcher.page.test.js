@@ -87,6 +87,9 @@ async function session(p, list, opts) {
   const o = opts || {};
   const lay = Lay.layout(list.length, o.workW || 1920, o.workH || 1040);
   await p.setViewportSize({ width: Math.max(1, Math.round(lay.w)), height: Math.max(1, Math.round(lay.h)) });
+  // main sizes the window BEFORE it sends the session; let that resize land first, or the page's
+  // resize report races the session's own and the test counts two
+  await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await clearCalls(p);
   await p.evaluate((a) => window.__emit('switcher.session', a), { seq: o.seq || 1, sel: o.sel === undefined ? (list.length > 1 ? 1 : 0) : o.sel, current: 0, backwards: false, tracking: o.tracking !== false, list, lay });
   await p.waitForTimeout(120);
