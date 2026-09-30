@@ -35,6 +35,8 @@ function regGuids(name) {
 }
 
 // What must never reach the screen: error codes, Windows API names, developer words.
+// The builds sidecar/Desktops.cs KnownBuilds opens (each measured read-only on this machine).
+const KNOWN_BUILDS = [26200, 26300];
 const JARGON = /0x[0-9a-f]{4,}|QueryService|FindDesktop|SetForegroundWindow|IVirtual|HKCU|registry|explorer|sidecar|hwnd|\bCOM\b|\bnull\b|undefined/i;
 
 function build() {
@@ -94,11 +96,11 @@ function build() {
     const regCur = (regGuids('CurrentVirtualDesktop') || [])[0] || null;
     notes.push(`build ${b}; registry: ${regIds ? regIds.length : 'unreadable'} desktop(s); sidecar source ${desks.source}, canWrite ${desks.canWrite}`);
     t.check('desktops.ok', desks.ok === true, desks.reason);
-    if (b === 26200) {
-      t.check('on the pinned build the internal interface passed its self-check (source com)', desks.source === 'com', desks.reason);
+    if (KNOWN_BUILDS.includes(b)) {
+      t.check('on a measured build (' + KNOWN_BUILDS.join('/') + ') the internal interface passed its self-check (source com)', desks.source === 'com', desks.reason);
       t.check('...and writes are available', desks.canWrite === true, desks.writeReason);
     } else {
-      t.check('off the pinned build: registry fallback, writes off WITH a reason',
+      t.check('off the measured builds: registry fallback, writes off WITH a reason',
         desks.source !== 'com' && desks.canWrite === false && /version of Windows/.test(String(desks.writeReason)), desks.writeReason);
     }
     const ids = (desks.list || []).map((d) => d.id);
@@ -178,7 +180,9 @@ function build() {
   // ---- when Windows' desktop controls are missing or changed (the test seam, passive only) ------------
   // MANTLE_TEST_VD makes a passive sidecar pretend: another Windows build, or no desktop objects at all.
   // Every path must answer in plain words (no codes, no method names) and never crash or go silent.
-  for (const mode of ['build:27000', 'nocom']) {
+  // build:26100 (24H2) matters: explorer there serves the same IID, but this machine never measured
+  // it, so it must stay read-only (the gate is the build list, not the IID).
+  for (const mode of ['build:27000', 'build:26100', 'nocom']) {
     process.env.MANTLE_TEST_VD = mode;
     let p = null;
     try {
@@ -202,6 +206,29 @@ function build() {
       if (p) await p.stop();
     }
   }
+
+  // Each measured build opens the controls (26200 kept exactly as before; 26300 added 2026-09-30).
+  // Only meaningful on a machine running one of them, where explorer's objects pass the self-check.
+  if (KNOWN_BUILDS.includes(build())) {
+    for (const nb of KNOWN_BUILDS) {
+      const mode = 'build:' + nb;
+      process.env.MANTLE_TEST_VD = mode;
+      let p = null;
+      try {
+        p = await T.startPassive();
+        const dl = await p.send('desktops.list', {}, 4000);
+        const d = dl.result || {};
+        t.check(`${mode}: a measured build uses Windows' desktop controls (writes available)`, dl.ok && d.source === 'com' && d.canWrite === true && d.build === nb, JSON.stringify(d).slice(0, 200));
+        const cr = await p.send('desktops.create', { dry: true }, 4000);
+        t.check(`${mode}: dry create answers the plan`, cr.ok && cr.result.would === 'create', JSON.stringify(cr).slice(0, 200));
+      } catch (err) {
+        t.check(`${mode}: no exception`, false, err.stack);
+      } finally {
+        delete process.env.MANTLE_TEST_VD;
+        if (p) await p.stop();
+      }
+    }
+  } else notes.push('not on a measured build: the measured-build seam checks were skipped');
   for (const n of notes) console.log('  note: ' + n);
   process.exit(t.summary());
 })();

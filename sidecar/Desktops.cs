@@ -16,7 +16,7 @@
 //     rename, move another app's window. Microsoft changes its IID and its method order between
 //     Windows builds, and calling a method at the wrong vtable slot does not fail politely: it runs
 //     whatever method is there. So it is used ONLY when all three hold, else refused with the reason:
-//       1. the build is 10.0.26200 (the layout below was measured on it);
+//       1. the build is one the layout below was measured on (10.0.26200 or 10.0.26300, KnownBuilds);
 //       2. explorer answers QueryService for THIS IID (a different IID = a different layout);
 //       3. the read-only self-check agrees with the registry (count, current desktop) and
 //          FindDesktop (slot 12) finds the current desktop again, which proves slots 1-12 line up.
@@ -36,6 +36,23 @@
 //     RemoveDesktop, SetDesktopName. Their slots sit between/after verified ones in the same layout.
 //   * Cost: cold (first call, STA) ~20 ms; warm on an MTA thread 0.04-1 ms per call. 6 windows'
 //     GetWindowDesktopId: 1 ms warm. Hence: the objects live in the MTA and are warmed at startup.
+//
+// RE-MEASURED 2026-09-30 ON BUILD 26300.9550 (26H2, installed by Windows Update 2026-09-29 23:40;
+// scratchpad lanes/r3/win26300/vdprobe, read-only, 13/13):
+//   * 26H2 is an enablement package: the SAME binaries, a new build number. The update wrote no
+//     program file in System32 (4 perf-counter data files only); UBR is still 9550; twinui.pcshell.dll
+//     (10.0.26100.9278, the interface's code), ActXPrxy.dll (10.0.26100.9549, its proxy) and
+//     explorer.exe (10.0.26100.8117) all still carry their 2026-09-22 dates, i.e. the very files the
+//     26200 layout was measured on. HKCR\Interface still sends 53F5CA0B/3F07F4BE to ActXPrxy.dll.
+//   * QueryService answers exactly as on 26200: 53F5CA0B OK, 4970BA3D OK, A3175F2D E_NOINTERFACE.
+//   * Read slots, each checked against the registry: GetCount, GetCurrentDesktop + GetId,
+//     GetDesktops (ids in order), GetName (= the saved name), GetWallpaperPath (= the saved
+//     wallpaper), GetAdjacentDesktop both ways (0x80028CA1 with one desktop), FindDesktop (finds each
+//     desktop; an unknown id fails), CanViewMoveDesktops, IsViewVisible (agrees with the documented
+//     GetWindowDesktopId), ViewCollection.GetViewForHwnd.
+//   * The write slots were NOT called (never are from a test); they are the same compiled vtable as
+//     on 26200 because the binary is the same file. Switch / new / rename / remove / move are proven
+//     by dry runs here and are LIVE-ONLY checks for a person.
 //
 // THREADING: the handlers are on the ui lane (the message loop, an STA). A cross-process COM call
 // from an STA pumps messages while it waits, which could re-enter the ui lane mid-request, and a hung
@@ -85,7 +102,8 @@ namespace Mantle {
     [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIInspectable), Guid("372E1D3B-38D3-42E4-A15B-8AB2B178F513")]
     internal interface IApplicationView { }
 
-    // Build 26200. IsRemote (slot 5 in the published 24H2 layout) is deliberately absent: see the header.
+    // Builds 26200 and 26300 (same binary). IsRemote (slot 5 in the published 24H2 layout) is
+    // deliberately absent: see the header.
     [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("3F07F4BE-B107-441A-AF0F-39D82529072C")]
     internal interface IVirtualDesktop {
       bool IsViewVisible(IApplicationView view);
@@ -94,7 +112,7 @@ namespace Mantle {
       [return: MarshalAs(UnmanagedType.HString)] string GetWallpaperPath();
     }
 
-    // Build 26200. Every slot up to SetDesktopName is declared, in order, because the position IS the
+    // Builds 26200 and 26300. Every slot up to SetDesktopName is declared, in order, because the position IS the
     // method; the ones after it are never called and so not declared.
     [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("53F5CA0B-158F-4124-900C-057158060B27")]
     internal interface IVirtualDesktopManagerInternal {
@@ -132,7 +150,15 @@ namespace Mantle {
 
   /// The COM objects and the reasons they are (not) usable. Touched ONLY from MTA threads (VdCom.Run).
   static class VdCom {
-    public const int PinnedBuild = 26200;
+    // The builds whose layout was measured on this machine (see the header). Any other build stays
+    // read-only until someone measures it: add it here only with the same read-only proof.
+    static readonly int[] KnownBuilds = { 26200, 26300 };
+    public static bool KnownBuild(int b) { return Array.IndexOf(KnownBuilds, b) >= 0; }
+    static string KnownText() {
+      var parts = new string[KnownBuilds.Length];
+      for (int i = 0; i < KnownBuilds.Length; i++) parts[i] = "10.0." + KnownBuilds[i].ToString(CultureInfo.InvariantCulture);
+      return string.Join(", ", parts);
+    }
     const string RegRoot = @"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops";
 
     static VdNative.IVirtualDesktopManager _doc;
@@ -210,10 +236,10 @@ namespace Mantle {
         if (Test().StartsWith("build:", StringComparison.Ordinal) && int.TryParse(Test().Substring(6), NumberStyles.Integer, CultureInfo.InvariantCulture, out fake)) Build = fake;
       }
       if (Test() == "nocom") { _mgrReason = Why(NoCom, "test seam: nocom"); return null; }
-      if (Build != PinnedBuild) {
+      if (!KnownBuild(Build)) {
         // The internal interface changes its layout between builds; guessing could run the wrong command.
         _mgrReason = Why("Mantle can't change desktops on this version of Windows yet",
-                         "build 10.0." + Build + ", layout known for 10.0." + PinnedBuild);
+                         "build 10.0." + Build + ", layout known for " + KnownText());
         return null;
       }
       try {
@@ -223,7 +249,7 @@ namespace Mantle {
         object o;
         try { o = sp.QueryService(ref svc, ref iid); }
         catch (Exception ex) {
-          _mgrReason = Why(NoCom, "QueryService(IVirtualDesktopManagerInternal) for build " + PinnedBuild + ": " + Hr(ex));
+          _mgrReason = Why(NoCom, "QueryService(IVirtualDesktopManagerInternal) for build " + Build + ": " + Hr(ex));
           return null;
         }
         var mgr = (VdNative.IVirtualDesktopManagerInternal)o;
