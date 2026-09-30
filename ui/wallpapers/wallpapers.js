@@ -18,9 +18,15 @@
  *
  * Every failure is a sentence on screen: a card's own state line, the notice under the header for
  * adds and imports, and the Playback section for the pause rules.
+ *
+ * KEYBOARD (2026-09-29, lane launch-desk): the grid is one tab stop; arrows / Home / End move
+ * between cards, Enter puts the card on the desktop, Delete removes it (with Undo in the notice),
+ * Esc dismisses the notice, then closes the window. Remove has Undo instead of "are you sure".
  */
 (function () {
   const $ = (id) => document.getElementById(id);
+  // Reasons arrive as clauses ("its file … is missing"); standing alone on a card they start a sentence.
+  const cap = (s) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : '');
   const M = window.mantle;
 
   const els = {
@@ -37,7 +43,7 @@
 
   let L = null;               // the last listing
   let focusId = null;         // the card whose details are on the right
-  let confirmId = null;       // the card whose Remove is asking "are you sure"
+  let undoTimer = 0;         // hides the Undo notice when the undo window closes
   let propsFor = null;        // the id the property editor was built for
   const cards = new Map();    // id -> card element
 
@@ -52,12 +58,14 @@
 
   // ---- the notice under the header -------------------------------------
   function notice(html, bad) {
+    clearTimeout(undoTimer);
     els.noticeText.replaceChildren();
     for (const n of html) els.noticeText.appendChild(n);
     els.notice.classList.toggle('bad', !!bad);
     els.notice.hidden = false;
   }
-  $('notice-x').addEventListener('click', () => { els.notice.hidden = true; });
+  function hideNotice() { clearTimeout(undoTimer); els.notice.hidden = true; }
+  $('notice-x').addEventListener('click', hideNotice);
 
   function sayError(what, err) {
     notice([h('b', null, what + ': '), document.createTextNode(err && err.message ? err.message : String(err))], true);
@@ -65,15 +73,15 @@
 
   // ---- state line for one item -----------------------------------------
   function stateOf(it) {
-    if (!it.health.ok) return { bad: true, text: it.health.reason };
+    if (!it.health.ok) return { bad: true, text: cap(it.health.reason) };
     const rt = it.runtime;
     if (rt && rt.state === 'error') return { bad: true, text: 'Did not play: ' + rt.reason };
     if (it.needsThumb) return { bad: false, text: 'Making a thumbnail…' };
     if (it.selected) {
       const pb = L.playback;
-      if (pb && pb.paused) return { bad: false, text: 'On the desktop, paused' };
-      if (rt && (rt.state === 'playing' || rt.state === 'ready')) return { bad: false, text: 'On the desktop, playing' };
-      return { bad: false, text: 'On the desktop, loading' };
+      if (pb && pb.paused) return { bad: false, text: 'On your desktop, paused' };
+      if (rt && (rt.state === 'playing' || rt.state === 'ready')) return { bad: false, text: 'On your desktop, playing' };
+      return { bad: false, text: 'On your desktop, loading' };
     }
     return { bad: false, text: it.origin };
   }
@@ -84,19 +92,19 @@
     if (!c) {
       c = h('button', 'card');
       c.type = 'button';
-      c.setAttribute('role', 'listitem');
+      c.setAttribute('role', 'option');
       c.dataset.id = it.id;
       c.addEventListener('click', () => focus(it.id));
       c.addEventListener('dblclick', () => setWallpaper(it.id));
-      c.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); setWallpaper(c.dataset.id); }
-        if (e.key === 'Delete') { e.preventDefault(); focus(c.dataset.id); askRemove(c.dataset.id); }
-      });
       cards.set(it.id, c);
     }
     const st = stateOf(it);
     c.className = 'card' + (it.id === focusId ? ' is-focus' : '') + (it.selected ? ' is-selected' : '') + (st.bad ? ' is-bad' : '');
-    c.title = it.title;
+    c.tabIndex = it.id === (focusId || (L.items[0] && L.items[0].id)) ? 0 : -1;
+    c.setAttribute('aria-selected', it.id === focusId ? 'true' : 'false');
+    c.setAttribute('aria-label', it.title + (it.selected ? ', on your desktop' : ''));
+    // The full name on hover (long ones are cut with an ellipsis), and how to use the card.
+    c.title = it.title + (it.selected ? '\nOn your desktop' : (it.health.ok ? '\nDouble-click or press Enter to set as wallpaper' : ''));
     const thumb = h('div', 'thumb');
     if (it.thumbUrl) {
       const img = h('img');
@@ -107,7 +115,13 @@
     } else {
       thumb.appendChild(h('div', 'no-thumb', it.type === 'video' ? (it.needsThumb ? 'Making a thumbnail…' : 'No thumbnail') : 'No thumbnail picture'));
     }
-    if (it.selected) thumb.appendChild(h('span', 'on-desk', 'On desktop'));
+    if (it.selected) {
+      // The one accent mark in the grid: a tick on what is on the desktop now.
+      const tick = h('span', 'tick');
+      tick.setAttribute('aria-hidden', 'true');
+      tick.innerHTML = '<svg viewBox="0 0 12 12"><path d="M2.6 6.3l2.2 2.2 4.6-4.9"/></svg>';
+      thumb.appendChild(tick);
+    }
     const title = h('div', 'card-title', it.title);
     const meta = h('div', 'card-meta');
     meta.appendChild(h('span', 'chip', it.typeLabel));
@@ -131,12 +145,37 @@
     // Re-append only when the order changed, so keyboard focus survives a push.
     const now = Array.from(els.grid.children);
     if (now.length !== order.length || now.some((c, i) => c !== order[i])) els.grid.replaceChildren.apply(els.grid, order);
+    els.grid.classList.remove('is-loading');
     els.empty.hidden = L.items.length > 0;
     if (!L.items.length) {
-      els.empty.textContent = L.importing
-        ? 'Copying your Lively library in…'
-        : 'Nothing here yet. Add a video, GIF or picture with Add files, or drop it on this window. A folder or .zip holding an HTML wallpaper works too.';
+      const kids = [];
+      if (L.importing) {
+        kids.push(h('b', null, 'Copying your Lively wallpapers…'), h('span', null, L.importing.done + ' of ' + L.importing.total + ' so far. They appear here as they arrive.'));
+      } else {
+        kids.push(h('b', null, 'No wallpapers yet'), h('span', null, 'Add a video, GIF or picture, or drop files on this window.'));
+        const b = h('button', 'btn primary', 'Add wallpapers…');
+        b.type = 'button';
+        b.addEventListener('click', () => add({ pick: 'files' }));
+        kids.push(b);
+      }
+      els.empty.replaceChildren.apply(els.empty, kids);
     }
+  }
+
+  // Before the first listing: grey placeholder cards, so nothing jumps when the library arrives.
+  function renderLoading() {
+    const kids = [];
+    for (let i = 0; i < 6; i++) { const c = h('div', 'card skel'); c.appendChild(h('div', 'thumb')); c.appendChild(h('div', 'skel-line')); kids.push(c); }
+    els.grid.classList.add('is-loading');
+    els.grid.replaceChildren.apply(els.grid, kids);
+  }
+
+  function renderLoadFailed(msg) {
+    els.grid.classList.remove('is-loading');
+    els.grid.replaceChildren();
+    els.empty.hidden = false;
+    els.empty.replaceChildren(h('b', null, 'The library could not be read'), h('span', null, msg + '. Close this window and open it again; if that does not help, restart Mantle.'));
+    els.headSub.textContent = '';
   }
 
   // ---- the details ---------------------------------------------------------
@@ -167,7 +206,7 @@
     if (it.desc) kids.push(h('p', 'd-note', it.desc));
     const st = stateOf(it);
     kids.push(h('p', 'd-state' + (st.bad ? ' bad' : ''), st.text));
-    if (it.runtime && it.runtime.state === 'ready' && it.runtime.reason) kids.push(h('p', 'd-state bad', it.runtime.reason));
+    if (it.runtime && it.runtime.state === 'ready' && it.runtime.reason) kids.push(h('p', 'd-state bad', cap(it.runtime.reason)));
     if (it.sysinfo) kids.push(h('p', 'd-note', 'Its GPU and network charts read 0: Mantle feeds it CPU and memory only (the same numbers as the System pane).'));
     if (it.runtime && it.runtime.notes && it.runtime.notes.length) {
       kids.push(h('p', 'd-note', 'The wallpaper\'s own page reported:'));
@@ -176,29 +215,28 @@
       kids.push(ul);
     }
     const acts = h('div', 'd-actions');
-    const setBtn = h('button', 'btn primary', it.selected ? 'On the desktop' : 'Set as wallpaper');
+    const setBtn = h('button', 'btn primary', it.selected ? 'On your desktop' : 'Set as wallpaper');
+    setBtn.id = 'd-set';
+    setBtn.title = it.selected ? '' : 'Enter';
     setBtn.disabled = it.selected || !it.health.ok;
     setBtn.addEventListener('click', () => setWallpaper(it.id));
-    const rmBtn = h('button', 'btn warn', 'Remove…');
-    rmBtn.addEventListener('click', () => askRemove(it.id));
     acts.appendChild(setBtn);
+    if (it.selected) {
+      // The wallpaper's own Pause: held until pressed again, even across restarts.
+      const paused = !!L.userPaused;
+      const pz = h('button', 'btn', paused ? 'Play' : 'Pause');
+      pz.id = 'd-pause';
+      pz.setAttribute('aria-pressed', paused ? 'true' : 'false');
+      pz.title = paused ? 'Play the wallpaper again' : 'Stop the wallpaper moving until you press Play';
+      pz.addEventListener('click', () => setPaused(!paused, pz));
+      acts.appendChild(pz);
+    }
+    const rmBtn = h('button', 'btn quiet', 'Remove');
+    rmBtn.id = 'd-remove';
+    rmBtn.title = 'Delete (you can undo it)';
+    rmBtn.addEventListener('click', () => doRemove(it.id));
     acts.appendChild(rmBtn);
     kids.push(acts);
-    if (confirmId === it.id) {
-      const conf = h('div', 'confirm');
-      conf.appendChild(h('div', null, it.origin === 'Imported from Lively'
-        ? 'Remove "' + it.title + '" from Mantle? This deletes Mantle\'s copy. Lively\'s own files are not touched, and "Restore removed ones" brings it back while Lively is installed.'
-        : 'Remove "' + it.title + '" from Mantle? This deletes Mantle\'s copy. The original' + (it.originPath ? ' at ' + it.originPath : '') + ' is not touched.'));
-      const a2 = h('div', 'd-actions');
-      const yes = h('button', 'btn warn', 'Remove');
-      yes.addEventListener('click', () => doRemove(it.id));
-      const no = h('button', 'btn', 'Keep it');
-      no.addEventListener('click', () => { confirmId = null; renderDetail(); });
-      a2.appendChild(yes);
-      a2.appendChild(no);
-      conf.appendChild(a2);
-      kids.push(conf);
-    }
     head.replaceChildren.apply(head, kids);
     if (propsFor !== it.id) buildProps(it, props);
   }
@@ -400,7 +438,7 @@
     const sel = L.items.find((i) => i.selected);
     const bits = [n + ' in your library'];
     if (L.importing) bits.push('copying from Lively ' + L.importing.done + '/' + L.importing.total);
-    if (sel) bits.push((L.playback && L.playback.paused ? 'paused: ' : 'on the desktop: ') + sel.title);
+    if (sel) bits.push((L.playback && L.playback.paused ? 'paused: ' : 'on your desktop: ') + sel.title);
     if (L.test) bits.push('test mode');
     els.headSub.textContent = bits.join(' · ');
     if (L.loadError) notice([h('b', null, 'The library file was damaged: '), document.createTextNode(L.loadError)], true);
@@ -421,29 +459,86 @@
     queueThumbs();
   }
 
-  function focus(id) {
+  function focus(id, moveKeyboard) {
     focusId = id;
-    if (confirmId !== id) confirmId = null;
-    for (const [cid, c] of cards) c.classList.toggle('is-focus', cid === id);
+    for (const [cid, c] of cards) {
+      c.classList.toggle('is-focus', cid === id);
+      c.setAttribute('aria-selected', cid === id ? 'true' : 'false');
+      c.tabIndex = cid === id ? 0 : -1;
+    }
+    const c = cards.get(id);
+    if (c && moveKeyboard) { c.focus(); c.scrollIntoView({ block: 'nearest' }); }
     renderDetail();
   }
+
+  // ---- the keyboard ---------------------------------------------------------------------------
+  // Arrows move by card (Up/Down by a row, however many columns the window is wide), Home/End to
+  // the ends, Enter sets, Delete removes. One tab stop for the whole grid.
+  function columns() {
+    const list = Array.from(els.grid.children);
+    if (list.length < 2) return 1;
+    const top = list[0].offsetTop;
+    const n = list.findIndex((c) => c.offsetTop !== top);
+    return n < 0 ? list.length : n;
+  }
+  els.grid.addEventListener('keydown', (e) => {
+    if (!L || !L.items.length || !e.target.classList || !e.target.classList.contains('card')) return;
+    const ids = Array.from(els.grid.children).map((c) => c.dataset.id);
+    const at = Math.max(0, ids.indexOf(e.target.dataset.id));
+    const cols = columns();
+    const to = { ArrowRight: at + 1, ArrowLeft: at - 1, ArrowDown: at + cols, ArrowUp: at - cols, Home: 0, End: ids.length - 1 }[e.key];
+    if (to !== undefined) {
+      e.preventDefault();
+      focus(ids[Math.min(ids.length - 1, Math.max(0, to))], true);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      setWallpaper(e.target.dataset.id);
+    } else if (e.key === 'Delete') {
+      e.preventDefault();
+      doRemove(e.target.dataset.id);
+    }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    if (document.activeElement && /^(SELECT|INPUT)$/.test(document.activeElement.tagName) && document.activeElement.type !== 'range' && document.activeElement.type !== 'checkbox') return;
+    e.preventDefault();
+    if (!els.notice.hidden) { hideNotice(); return; }
+    M.call('wallpaper.window', { action: 'close' }).catch(() => window.close());
+  });
 
   // ---- actions ------------------------------------------------------------------
   async function setWallpaper(id) {
     const it = byId(id);
     if (!it || it.selected) return;
+    // Enter or a double-click on a broken card: say why here (its Set button is off for the same reason).
+    if (!it.health.ok) { notice([h('b', null, 'Can\'t use "' + it.title + '": '), document.createTextNode(it.health.reason || 'its file is missing')], true); return; }
     try { await M.call('wallpaper.set', { id }); } catch (err) { sayError('Could not set "' + (it ? it.title : id) + '"', err); }
   }
 
-  function askRemove(id) { confirmId = id; renderDetail(); }
+  async function setPaused(on, btn) {
+    if (btn) btn.disabled = true;   // feedback now; the listing push redraws it
+    try { await M.call('wallpaper.setPaused', { paused: on }); } catch (err) { sayError(on ? 'Could not pause it' : 'Could not play it', err); if (btn) btn.disabled = false; }
+  }
 
+  // Remove at once, with Undo in the notice while the removed folder is kept (lib/wallpaper.js).
   async function doRemove(id) {
     const it = byId(id);
-    confirmId = null;
-    try {
-      await M.call('wallpaper.remove', { id });
-      notice([h('b', null, 'Removed '), document.createTextNode('"' + (it ? it.title : id) + '" from Mantle\'s library.')], false);
-    } catch (err) { sayError('Could not remove "' + (it ? it.title : id) + '"', err); }
+    if (!it) return;
+    const ids = L.items.map((x) => x.id);
+    const next = ids[ids.indexOf(id) + 1] || ids[ids.indexOf(id) - 1] || null;
+    let r;
+    try { r = await M.call('wallpaper.remove', { id }); } catch (err) { sayError('Could not remove "' + it.title + '"', err); return; }
+    if (next && byId(next)) focus(next, els.grid.contains(document.activeElement));
+    const undo = h('button', 'link', 'Undo');
+    undo.id = 'undo';
+    undo.addEventListener('click', async () => {
+      undo.disabled = true;
+      try { await M.call('wallpaper.undoRemove', { id }); hideNotice(); focus(id, true); } catch (err) { sayError('Could not undo', err); }
+    });
+    notice([h('span', null, 'Removed "' + it.title + '". '), undo], false);
+    const ms = (r && r.undoMs) || 20000;
+    undoTimer = setTimeout(() => { if (els.notice.contains(undo)) els.notice.hidden = true; }, ms);
   }
 
   function showAddResults(r) {
@@ -468,6 +563,7 @@
   }
 
   $('add-files').addEventListener('click', () => add({ pick: 'files' }));
+  $('add-folder').title = 'A folder holding an HTML wallpaper (a Lively web wallpaper, or any index.html)';
   $('add-folder').addEventListener('click', () => add({ pick: 'folder' }));
   $('win-close').addEventListener('click', () => M.call('wallpaper.window', { action: 'close' }).catch(() => window.close()));
   $('win-min').addEventListener('click', () => M.call('wallpaper.window', { action: 'minimize' }).catch(() => {}));
@@ -555,6 +651,7 @@
   }
 
   // ---- go -------------------------------------------------------------------------
+  renderLoading();
   if (typeof M.on === 'function') M.on('wallpaper.library', render);
-  else M.call('wallpaper.list').then(render).catch((err) => { els.headSub.textContent = 'The library could not be read: ' + err.message; });
+  else M.call('wallpaper.list').then(render).catch((err) => renderLoadFailed(err && err.message ? err.message : String(err)));
 })();

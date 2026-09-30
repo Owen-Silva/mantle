@@ -470,6 +470,8 @@
   let wall = null;          // {id, url, type, item, el, ready, drawn, timer}
   let wallLast = null;      // the last 'wallpaper' payload, to remount after an unload
   let wallPause = { paused: false, unload: false };
+  let wallRetry = { id: null, at: 0 };   // the last time a video was mounted again after a decoder loss
+  const WALL_RETRY_GAP_MS = 60000;
 
   function wallStatus(id, st, reason) {
     window.mantle.call('wallpaper.status', { id, state: st, reason: reason || '' }).catch((err) => {
@@ -494,7 +496,9 @@
     if (!wall) return;
     const id = wall.id;
     clearTimeout(wall.timer);
-    console.warn('[desktop] wallpaper', id, 'failed:', reason);
+    // The reason goes on the card and the strip; the console (which main copies to its log) gets the
+    // id only, because a media error can quote the file's path.
+    console.warn('[desktop] wallpaper', id, 'failed');
     // Take it off the screen: the panes go back to the still picture of
     // whatever Windows is showing, rather than frosting a black rectangle.
     clearWall();
@@ -515,10 +519,10 @@
     const what = {
       1: 'loading was aborted',
       2: 'the file could not be read from disk',
-      3: 'the video is damaged, or it uses a codec Chromium cannot decode',
-      4: 'Chromium cannot play this file: its format or codec is not supported, or the file is missing',
-    }[code] || 'the video element reported an error without a code';
-    return what + (e && e.message ? ' (' + e.message + ')' : '');
+      3: 'the video is damaged, or it is in a format Mantle cannot play',
+      4: 'Mantle cannot play this file: its format is not supported, or the file is missing',
+    }[code] || 'the video stopped with an error that gave no reason';
+    return what;
   }
 
   function playVideo() {
@@ -529,7 +533,7 @@
       pr.catch((err) => {
         // AbortError is a pause() or a new src landing mid-start: not a failure.
         if (err && err.name === 'AbortError') return;
-        failWall('Chromium would not start it: ' + (err && err.message ? err.message : String(err)));
+        failWall('it would not start playing (' + (err && err.name ? err.name : 'no reason given') + ')');
       });
     }
   }
@@ -568,7 +572,23 @@
       clearTimeout(wall.timer);
       wallStatus(wall.id, 'playing');
     });
-    v.addEventListener('error', () => { if (wall && wall.el === v) failWall(mediaError(v)); });
+    v.addEventListener('error', () => {
+      if (!wall || wall.el !== v) return;
+      // A video that HAD been playing and then errors is almost always the graphics side restarting
+      // (after sleep, a driver update, a display change), not a bad file: mount it again, once.
+      // Once per minute per wallpaper: a second loss soon after the retry is a real fault and is
+      // reported; one hours later (the next sleep) gets its own retry.
+      const now = Date.now();
+      if (wall.drawn && !(wallRetry.id === wall.id && now - wallRetry.at < WALL_RETRY_GAP_MS)) {
+        const again = wall.item;
+        wallRetry = { id: again.id, at: now };
+        console.warn('[desktop] wallpaper', wall.id, 'stopped after playing; mounting it again once');
+        clearWall();
+        setTimeout(() => { if (!wall && wallLast && wallLast.item && wallLast.item.id === again.id) setWallpaper(Object.assign({}, wallLast, wallPause)); }, 1500);
+        return;
+      }
+      failWall(mediaError(v));
+    });
     wall.el = v;
     wallEl.replaceChildren(v);
     applyLook(it);
@@ -592,7 +612,7 @@
       wallStatus(wall.id, 'playing');
     });
     img.addEventListener('error', () => {
-      if (wall && wall.el === img) failWall('the picture could not be loaded: the file is missing or is not a picture Chromium can read');
+      if (wall && wall.el === img) failWall('the picture could not be loaded: the file is missing or is not a picture Mantle can show');
     });
     wall.el = img;
     wallEl.replaceChildren(img);

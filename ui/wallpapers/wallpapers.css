@@ -139,10 +139,20 @@ button, select, input { font: inherit; color: inherit; }
 }
 .btn:hover { background: var(--lg-hover); }
 .btn:active { background: var(--lg-press); }
-.btn:disabled { color: var(--lg-ink-3); background: transparent; }
+.btn:disabled, .btn.primary:disabled { color: var(--lg-ink-3); background: var(--lg-sunk); border-color: transparent; }
 .btn.primary { background: var(--lg-acc); border-color: var(--lg-acc); color: var(--lg-acc-on); }
 .btn.primary:hover, .btn.primary:active { background: var(--lg-acc); }
 .btn.warn { color: var(--lg-warn); }
+.btn.quiet { border-color: transparent; background: transparent; color: var(--lg-ink-2); margin-left: auto; }
+.btn.quiet:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.btn.quiet:active { background: var(--lg-press); }
+.btn:disabled { cursor: default; }
+/* a text action inside a sentence (the notice's Undo): accent words, no box */
+.link { border: 0; background: none; padding: 0 2px; border-radius: 4px; color: var(--lg-acc); font-weight: 600; }
+.link:hover { text-decoration: underline; }
+.link:active { opacity: .7; }
+.link:disabled { color: var(--lg-ink-3); text-decoration: none; }
+.link:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
 .btn:focus-visible, .win-btn:focus-visible, .card:focus-visible, .sect summary:focus-visible {
   outline: 2px solid var(--lg-acc);
   outline-offset: 1px;
@@ -212,7 +222,12 @@ button, select, input { font: inherit; color: inherit; }
 .grid::-webkit-scrollbar-thumb:hover, .side::-webkit-scrollbar-thumb:hover { background: var(--lg-press); }
 .grid::-webkit-scrollbar-track, .side::-webkit-scrollbar-track { background: transparent; }
 
-.empty { margin: 0; padding: 24px; line-height: 1.6; color: var(--lg-ink-2); }
+/* empty / loading-failed: one quiet block in the middle of the grid, a verb button where one helps */
+.grid:empty { display: none; }
+.empty { flex: 1; justify-content: center; margin: 0; padding: 48px 24px 96px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; line-height: 1.5; color: var(--lg-ink-2); }
+.empty b { color: var(--lg-ink); font-size: 14px; font-weight: 600; }
+.empty .btn { margin-top: 8px; }
+.empty[hidden] { display: none; }
 
 /* ---- a card --------------------------------------------------------------- */
 
@@ -222,10 +237,17 @@ button, select, input { font: inherit; color: inherit; }
   gap: 7px;
   padding: 7px 7px 9px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 8px;
   background: transparent;
   text-align: left;
+  transition: background var(--lg-dur) var(--lg-ease);
 }
+.card:active { background: var(--lg-press); }
+/* before the first listing: grey stand-ins the size of real cards, so nothing jumps */
+.card.skel { pointer-events: none; }
+.card.skel .thumb { border-color: transparent; }
+.skel-line { height: 10px; width: 60%; margin: 4px 2px; border-radius: 4px; background: var(--lg-sunk); }
+@media (prefers-reduced-motion: reduce) { .card { transition: none; } }
 /* hover a whisper, the card the side pane shows a quiet grey wash: never a bordered block */
 .card:hover { background: var(--lg-sunk); }
 .card.is-focus { background: var(--lg-hover); }
@@ -252,20 +274,21 @@ button, select, input { font: inherit; color: inherit; }
 }
 .card.is-bad .thumb img { opacity: .45; }
 
-/* the one accent mark in the grid: what is on the desktop right now */
-.on-desk {
+.card.is-selected .thumb { border-color: var(--lg-acc); }
+/* the tick: what is on the desktop now (the brief: grey wash for focus, accent tick for the choice) */
+.tick {
   position: absolute;
-  left: 6px;
+  right: 6px;
   top: 6px;
-  padding: 2px 7px;
-  border-radius: 999px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
   background: var(--lg-acc);
   color: var(--lg-acc-on);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: .02em;
 }
-.card.is-selected .thumb { border-color: var(--lg-acc); }
+.tick svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 .card-title {
   font-size: 12.5px;
@@ -349,15 +372,6 @@ button, select, input { font: inherit; color: inherit; }
 .d-notes { margin: 6px 0 0; padding-left: 16px; font-size: 11.5px; line-height: 1.5; color: var(--lg-ink-2); }
 
 .d-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
-.confirm {
-  margin: 8px 0 0;
-  padding: 10px 12px;
-  border: 1px solid var(--lg-edge-out);
-  border-radius: var(--lg-r);
-  background: var(--lg-fill-strong);
-  line-height: 1.5;
-}
-.confirm .d-actions { margin-bottom: 0; }
 
 /* ---- properties ----------------------------------------------------------- */
 
@@ -481,4 +495,6 @@ button, select, input { font: inherit; color: inherit; }
 @media (max-width: 880px) {
   .body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
   .pane + .pane { border-left: 0; border-top: 1px solid var(--lg-edge-out); }
+  /* stacked: the grid already shows the picture, so the details lead with the name and "Set as wallpaper" */
+  .big { display: none; }
 }

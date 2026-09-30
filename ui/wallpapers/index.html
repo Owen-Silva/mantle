@@ -30,7 +30,7 @@
       <span class="head-sub" id="head-sub">Loading the library&hellip;</span>
     </div>
     <div class="head-actions">
-      <button class="btn" id="add-files" title="Videos (mp4, webm), GIFs, pictures, or a .zip of an HTML wallpaper">Add files&hellip;</button>
+      <button class="btn" id="add-files" title="Videos (mp4, webm), GIFs, pictures, or a .zip of an HTML wallpaper. You can also drop files on this window.">Add wallpapers&hellip;</button>
       <button class="btn" id="add-folder" title="A folder holding an HTML wallpaper (a Lively web wallpaper, or any index.html)">Add folder&hellip;</button>
       <span class="head-gap"></span>
       <button class="win-btn" id="win-min" aria-label="Minimise" title="Minimise">
@@ -52,17 +52,17 @@
 
   <main class="body">
     <section class="pane grid-pane" aria-label="Library">
-      <div class="grid" id="grid" role="list"></div>
-      <p class="empty" id="empty" hidden></p>
+      <div class="grid" id="grid" role="listbox" aria-label="Your wallpapers"></div>
+      <div class="empty" id="empty" hidden></div>
     </section>
 
     <aside class="pane side" id="side" aria-label="Details">
       <div class="detail" id="detail"></div>
 
-      <details class="sect" id="playback-sect" open>
-        <summary>Playback</summary>
+      <details class="sect" id="playback-sect">
+        <summary>When it pauses</summary>
         <p class="play-line" id="play-line"></p>
-        <p class="sect-note">Carried over from Lively. Mantle applies each rule itself; where it cannot, the line says so.</p>
+        <p class="sect-note">Carried over from Lively. Where Mantle cannot apply a rule, the line says so.</p>
         <dl class="rules" id="rules"></dl>
       </details>
 
