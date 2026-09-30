@@ -63,17 +63,18 @@
   background: var(--lg-acc);
 }
 
-.dl-icon { flex: 0 0 28px; width: 28px; height: 28px; object-fit: contain; }
-.dl-tile {
+/* The type's glyph (ui/bar/downloads.js GLYPH: one family, 16 grid, 1.25 stroke) on a quiet tile. */
+.dl-icon {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
   display: inline-grid;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 7px;
   background: var(--lg-tile);
   color: var(--lg-ink-2);
-  font-size: 8.5px;
-  font-weight: 700;
-  letter-spacing: .02em;
 }
+.dl-icon svg { display: block; }
 .dl-text { flex: 1 1 auto; min-width: 0; }
 .dl-name { color: var(--lg-ink); font-size: 12.5px; font-weight: 500; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dl-meta { color: var(--lg-ink-3); font-size: 11px; line-height: 1.3; margin-top: 1px; font-variant-numeric: tabular-nums; }
@@ -95,17 +96,24 @@
   transition: background-color 120ms steps(2), color 120ms steps(2);
 }
 .dl-row:hover .dl-reveal, .dl-row:focus-within .dl-reveal { opacity: 1; }
-.dl-reveal:hover { background: var(--lg-press); color: var(--lg-ink); }
+.dl-reveal:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.dl-reveal:active { background: var(--lg-press); }
 .dl-reveal:focus-visible { opacity: 1; outline: 1px solid var(--lg-acc); outline-offset: -1px; }
+/* A touch screen has no hover: the button is always there. */
+@media (hover: none) { .dl-reveal { opacity: 1; } }
 
 .dl-empty { padding: 18px 8px 16px; text-align: center; }
 .dl-empty .big { font-size: 13.5px; }
 .dl-bad .big { color: var(--lg-warn); }
 .dl-path { margin-top: 6px; color: var(--lg-ink-3); font-size: 11px; overflow-wrap: anywhere; user-select: text; }
+.dl-next { margin-top: 8px; color: var(--lg-ink-3); font-size: 11px; line-height: 1.4; }
+@media (prefers-reduced-motion: reduce) { .dl-row, .dl-reveal { transition: none; } }
 
 .pop.dl .note { margin: 6px 6px 0; }
 .pop.dl .note[hidden], .dl-detail[hidden] { display: none; }
 .dl-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; margin: 6px 2px 0; padding-top: 6px; border-top: 1px solid var(--lg-edge-out); }
 .dl-detail { flex: 1 0 100%; min-width: 0; padding: 0 4px; color: var(--lg-ink-3); font-size: 11px; line-height: 1.35; }
 .dl-folder { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
-.dl-folder:disabled { color: var(--lg-ink-3); background: transparent; }
+.dl-folder:active:not(:disabled) { background: var(--lg-press); }
+/* Off (no folder to open): visibly off, its tooltip says why (the same quiet look as the calendar's). */
+.dl-folder:disabled, .dl-folder:disabled:hover { color: var(--lg-ink-3); background: transparent; opacity: .6; }

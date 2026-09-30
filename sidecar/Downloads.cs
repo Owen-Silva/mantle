@@ -23,7 +23,8 @@
 // place, lib/features/_downloads-list.js.
 //
 // PRIVACY: file names are Owen's. Nothing here logs a name or a path, and no reason carries one (an
-// IOException's message usually repeats the path, so only its HRESULT is quoted).
+// IOException's message usually repeats the path). A reason is SHOWN, so it is plain words; the
+// exception type / HRESULT goes in `code`, which main writes to its log only.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -57,11 +58,11 @@ namespace Mantle {
       if (max > 500) max = 500;
 
       if (string.IsNullOrEmpty(folder)) {
-        string why;
-        folder = KnownDownloads(out why);
+        string why, code;
+        folder = KnownDownloads(out why, out code);
         via = "known folder";
         if (folder == null) {
-          result = Json.Obj("ok", false, "state", "unresolved", "via", via, "reason", why);
+          result = Json.Obj("ok", false, "state", "unresolved", "via", via, "code", code, "reason", why);
           return null;
         }
       }
@@ -90,12 +91,15 @@ namespace Mantle {
           all.Add(e);
         }
       } catch (UnauthorizedAccessException) {
-        result = Json.Obj("ok", false, "state", "unreadable", "folder", folder, "via", via,
-          "reason", "Windows refused to list the Downloads folder (access denied)");
+        result = Json.Obj("ok", false, "state", "unreadable", "folder", folder, "via", via, "code", "EACCES",
+          "reason", "Windows did not let Mantle list the Downloads folder (access denied)");
         return null;
       } catch (Exception ex) {
+        // The reason is shown on screen, so it is plain words; the type and HRESULT go in `code`,
+        // which main writes to the log only.
         result = Json.Obj("ok", false, "state", "unreadable", "folder", folder, "via", via,
-          "reason", "the Downloads folder could not be listed (" + ex.GetType().Name + ", HRESULT 0x" + ex.HResult.ToString("X8") + ")");
+          "code", ex.GetType().Name + " 0x" + ex.HResult.ToString("X8"),
+          "reason", "the Downloads folder could not be listed: Windows reported a disk or network error");
         return null;
       }
 
@@ -126,22 +130,24 @@ namespace Mantle {
       return true;
     }
 
-    /// FOLDERID_Downloads, or null with the reason. Never throws.
-    static string KnownDownloads(out string why) {
-      why = null;
+    /// FOLDERID_Downloads, or null with the reason (plain words, for the screen) and a code (the log's). Never throws.
+    static string KnownDownloads(out string why, out string code) {
+      why = null; code = null;
       IntPtr p = IntPtr.Zero;
       try {
         Guid g = new Guid("374DE290-123F-4565-9164-39C4925E467B");   // FOLDERID_Downloads
         int hr = DlNative.SHGetKnownFolderPath(ref g, DlNative.KF_FLAG_DONT_VERIFY, IntPtr.Zero, out p);
         if (hr != 0 || p == IntPtr.Zero) {
-          why = "Windows has no Downloads known folder for this account (HRESULT 0x" + hr.ToString("X8") + ")";
+          why = "Windows did not say where the Downloads folder is for this account";
+          code = "SHGetKnownFolderPath 0x" + hr.ToString("X8");
           return null;
         }
         string s = Marshal.PtrToStringUni(p);
-        if (string.IsNullOrEmpty(s)) { why = "Windows answered an empty path for the Downloads known folder"; return null; }
+        if (string.IsNullOrEmpty(s)) { why = "Windows did not say where the Downloads folder is for this account"; code = "empty path"; return null; }
         return s;
       } catch (Exception e) {
-        why = "the Downloads known folder could not be read (" + e.GetType().Name + ")";
+        why = "Windows did not say where the Downloads folder is for this account";
+        code = e.GetType().Name;
         return null;
       } finally {
         if (p != IntPtr.Zero) Marshal.FreeCoTaskMem(p);

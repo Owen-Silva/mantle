@@ -69,6 +69,50 @@ const H = 3600000;
     const miss = await s.send('downloads.list', { folder: path.join(TMP, 'gone-away') }, 6000);
     t.check('a missing folder is ok:false, state missing, a reason without the path', miss.ok && miss.result.ok === false && miss.result.state === 'missing' && !String(miss.result.reason).includes('gone-away'), JSON.stringify(miss.result && { state: miss.result.state, reason: miss.result.reason }));
 
+    /* quality pass (lane topbar-dl, 2026-09-29): what the panel SHOWS is plain words; codes go to `code` */
+    const asFile = await s.send('downloads.list', { folder: path.join(TMP, 'worksheet.pdf') }, 6000);
+    t.check('a FILE where the folder should be is state missing, not a crash', asFile.ok && asFile.result.ok === false && asFile.result.state === 'missing', JSON.stringify(asFile.result && { state: asFile.result.state }));
+    const DENY = fs.mkdtempSync(path.join(os.tmpdir(), 'mantle-dl-deny-'));
+    fs.writeFileSync(path.join(DENY, 'x.txt'), 'x');
+    try {
+      execFileSync('icacls', [DENY, '/deny', process.env.USERNAME + ':(RD)'], { windowsHide: true, stdio: 'ignore' });
+      const dn = await s.send('downloads.list', { folder: DENY }, 6000);
+      const dv = dn.ok ? dn.result : { ok: false, reason: dn.error };
+      t.check('a folder Windows will not list is state unreadable, in plain words, the code apart',
+        dv.ok === false && dv.state === 'unreadable' && /access denied/.test(dv.reason) && !L.JARGON.test(dv.reason) && typeof dv.code === 'string' && dv.code.length > 0,
+        JSON.stringify({ state: dv.state, reason: dv.reason, code: dv.code }));
+    } finally {
+      try { execFileSync('icacls', [DENY, '/remove:d', process.env.USERNAME], { windowsHide: true, stdio: 'ignore' }); } catch (_) { /* best effort */ }
+      try { fs.rmSync(DENY, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+    }
+    for (const r of [miss.result, asFile.result]) t.check('a shown reason carries no jargon: "' + (r && r.state) + '"', r && !L.JARGON.test(String(r.reason)), r && r.reason);
+
+    /* unicode names cross the wire exactly (emoji = a surrogate PAIR, CJK, accents, RTL) */
+    const UNI = fs.mkdtempSync(path.join(os.tmpdir(), 'mantle-dl-uni-'));
+    const uniNames = ['résumé finál.pdf', '数学の宿題.docx', 'party 🎉 photos.zip', 'שלום.txt'];
+    try {
+      for (const n of uniNames) fs.writeFileSync(path.join(UNI, n), 'u');
+      const un = await s.send('downloads.list', { folder: UNI, max: 60 }, 6000);
+      const got = un.ok && un.result.ok ? un.result.items.map((i) => i.name).sort() : [];
+      t.check('unicode names (accents, CJK, an emoji pair, RTL) come back exactly', JSON.stringify(got) === JSON.stringify(uniNames.slice().sort()) && un.result.unspellable === 0, JSON.stringify({ n: got.length, same: JSON.stringify(got) === JSON.stringify(uniNames.slice().sort()) }));
+    } finally { try { fs.rmSync(UNI, { recursive: true, force: true }); } catch (_) { /* best effort */ } }
+
+    /* a huge folder: 20,000 entries, only the newest 60 sent, and still quick */
+    const HUGE = fs.mkdtempSync(path.join(os.tmpdir(), 'mantle-dl-huge-'));
+    try {
+      for (let i = 0; i < 20000; i++) fs.writeFileSync(path.join(HUGE, 'file-' + i + '.bin'), '');
+      const newest = path.join(HUGE, 'the-newest.pdf');
+      fs.writeFileSync(newest, 'n');
+      const fut = new Date(Date.now() + H); fs.utimesSync(newest, fut, fut);
+      await s.send('downloads.list', { folder: HUGE, max: 60 }, 15000);   // warm the directory cache
+      const h0 = Date.now();
+      const hg = await s.send('downloads.list', { folder: HUGE, max: 60 }, 15000);
+      const hms = Date.now() - h0;
+      t.check('a 20,001-entry folder: 60 sent, total counted, the newest first, under 1 s', hg.ok && hg.result.ok && hg.result.items.length === 60 && hg.result.total === 20001 && hg.result.items[0].name === 'the-newest.pdf' && hms < 1000,
+        JSON.stringify({ ms: hms, n: hg.result && hg.result.items && hg.result.items.length, total: hg.result && hg.result.total }));
+      console.log(`  (a 20,001-entry folder: ${hms} ms)`);
+    } finally { try { fs.rmSync(HUGE, { recursive: true, force: true }); } catch (_) { /* best effort */ } }
+
     /* The known folder: max 0, so no name of Owen's is sent. Compared with the registry's value. */
     const k = await s.send('downloads.list', { max: 0 }, 6000);
     const kv = k.ok ? k.result : { ok: false, reason: k.error };
