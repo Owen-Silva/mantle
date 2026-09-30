@@ -161,7 +161,8 @@ function shape(r) {
     }
     t.check('some app resolves a "new window" route', launches > 0, `${launches}`);
     const sc = await s.send('jumplist.shortcut', { exe: process.env.USERPROFILE + '\\browser\\node_modules\\electron\\dist\\electron.exe' }, 8000);
-    console.log(`  shortcut for the browser exe: ${sc.ok ? (sc.result.appid + ' -> ' + (sc.result.shortcut ? path.basename(sc.result.shortcut) : 'none')) : sc.error}`);
+    // privacy: whether a shortcut was found, never its file name (a shortcut is named by Owen)
+    console.log(`  shortcut for the browser exe: ${sc.ok ? (sc.result.shortcut ? 'found (.lnk)' : 'none') : 'error'}`);
     const real = await s.send('jumplist.open', { app: 'MSEdge', item: 'app' }, 8000);
     t.check('a REAL "new window" is refused by the passive sidecar', real.ok === false && real.error.indexOf(T.PASSIVE_REFUSAL) === 0, real.error);
 

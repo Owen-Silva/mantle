@@ -789,7 +789,11 @@ namespace Mantle {
       try {
         IStream ds;
         int hr = stg.OpenStream("DestList", IntPtr.Zero, 0x10, 0, out ds);
-        if (hr != 0 || ds == null) throw new InvalidDataException("it has no DestList (0x" + hr.ToString("x8") + ")");
+        // STG_E_FILENOTFOUND: Windows writes the file before the app's first recent item (or after
+        // "clear"), with no DestList yet. That is an EMPTY list, not a broken one (quality pass,
+        // 2026-09-29: an Electron app's file on Owen's machine read as an error with a hex code).
+        if (hr == unchecked((int)0x80030002)) { info = "empty (no DestList yet)"; return items; }
+        if (hr != 0 || ds == null) throw new InvalidDataException("its recent-items file is damaged (no list inside it)");
         byte[] d;
         try { d = ReadAll(ds); } finally { Marshal.ReleaseComObject(ds); }
         if (d.Length < 32) throw new InvalidDataException("its DestList is " + d.Length + " bytes");
