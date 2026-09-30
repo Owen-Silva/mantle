@@ -9,6 +9,13 @@
 // "observe" mode, which keeps counts and format names only. Nothing Owen copied can reach this
 // output: the only strings printed are this file's own fixtures.
 //
+// THE COPY PATH ITSELF (privacy flags, kinds, sizes, dedupe) is proved with clip.capture: a
+// passive-only command that runs the SAME Capture a real copy takes, over this file's own fixture
+// formats instead of the clipboard. So "a password manager's copy is never kept" is tested for
+// each of the four flags without Owen's clipboard being opened, read or written.
+//
+// Temp files (the pins stores) go under MANTLE_CLIP_TEST_DIR when it is set, else %TEMP%.
+//
 // Prints exactly one summary line and exits non-zero if anything failed.
 'use strict';
 
@@ -68,14 +75,17 @@ const R = (m) => (m && m.result) || {};
 
 async function main() {
   if (!fs.existsSync(EXE)) { console.log('clipboard sidecar: 0 passed, 1 failed (no exe at ' + EXE + ')'); process.exit(1); }
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mantle-clip-test-'));
+  const base = process.env.MANTLE_CLIP_TEST_DIR || os.tmpdir();
+  fs.mkdirSync(base, { recursive: true });
+  const tmp = fs.mkdtempSync(path.join(base, 'mantle-clip-test-'));
   const pins = path.join(tmp, 'pins.dat');
   const s = start(['--passive', '--parent-pid=' + process.pid]);
   try {
     const ping = await s.send('ping');
     const cmds = (((ping.result || {}).features) || {}).commands || [];
     for (const c of ['clip.start', 'clip.stop', 'clip.status', 'clip.list', 'clip.arm', 'clip.pin',
-                     'clip.delete', 'clip.clear', 'clip.seed', 'clip.paste']) {
+                     'clip.delete', 'clip.clear', 'clip.restore', 'clip.forget', 'clip.seed', 'clip.capture',
+                     'clip.limits', 'clip.paste']) {
       check('ping lists ' + c, cmds.includes(c), JSON.stringify(cmds));
     }
     const probs = (((ping.result || {}).features) || {}).problems || [];
@@ -221,10 +231,225 @@ async function main() {
     check('harness', false, e.message);
   } finally {
     await s.quit();
-    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) { }
   }
+  try { await copyPath(tmp); } catch (e) { check('copy-path harness', false, e.message); }
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) { }
   console.log('clipboard sidecar: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
+}
+
+// ---- the copy path (clip.capture), undo, plain paste and the pins file's recovery ------------
+const T = (text) => ({ name: 'CF_UNICODETEXT', text });
+const IMG = (name, w, h, color, extra) => ({ name, image: Object.assign({ w, h, color }, extra || {}) });
+const FLAG = {
+  exclude: { name: 'ExcludeClipboardContentFromMonitorProcessing' },
+  viewer: { name: 'Clipboard Viewer Ignore' },
+  include: (v) => ({ name: 'CanIncludeInClipboardHistory', dword: v }),
+  upload: (v) => ({ name: 'CanUploadToCloudClipboard', dword: v }),
+};
+
+async function copyPath(tmp) {
+  const pins = path.join(tmp, 'pins-copy.dat');
+  const s = start(['--passive', '--parent-pid=' + process.pid]);
+  const cap = async (formats, extra) => R(await s.send('clip.capture', Object.assign({ formats }, extra || {})));
+  const items = async () => R(await s.send('clip.list')).items || [];
+  try {
+    await s.send('clip.start', { listen: false, pinsFile: pins });
+
+    // ---- 1. THE PRIVACY RULE: a flagged copy never enters the history, whatever it holds
+    const MARK = 'secret-fixture-4c1e';
+    const privateCases = [
+      ['ExcludeClipboardContentFromMonitorProcessing present', [T(MARK), FLAG.exclude], 'exclude'],
+      ['Clipboard Viewer Ignore present', [T(MARK), FLAG.viewer], 'viewerIgnore'],
+      ['CanIncludeInClipboardHistory = 0', [T(MARK), FLAG.include(0)], 'canInclude'],
+      ['CanUploadToCloudClipboard = 0 (no CanInclude)', [T(MARK), FLAG.upload(0)], 'canUpload'],
+      ['CanUploadToCloudClipboard = 0 even with CanInclude = 1', [T(MARK), FLAG.include(1), FLAG.upload(0)], 'canUpload'],
+      ['CanInclude present but unreadable: fails closed', [T(MARK), { name: 'CanIncludeInClipboardHistory', nodata: true }], 'canInclude'],
+      ['CanInclude shorter than a DWORD: fails closed', [T(MARK), { name: 'CanIncludeInClipboardHistory', b64: Buffer.from([1, 0]).toString('base64') }], 'canInclude'],
+      ['CanUpload present but unreadable: fails closed', [T(MARK), { name: 'CanUploadToCloudClipboard', nodata: true }], 'canUpload'],
+      ['a flagged PICTURE', [IMG('PNG', 40, 30, '#223344'), FLAG.exclude], 'exclude'],
+      ['flagged FILES', [{ name: 'CF_HDROP', files: ['C:\\fixture\\secret.txt'] }, FLAG.include(0)], 'canInclude'],
+    ];
+    let before = R(await s.send('clip.status'));
+    for (const [name, formats, rule] of privateCases) {
+      const r = await cap(formats);
+      check('private: ' + name + ' -> not kept (' + rule + ')', r.outcome === 'skipped:private:' + rule && r.count === before.count, r.outcome + ' count ' + r.count);
+    }
+    // in the passive test mode that only counts copies, too
+    const ob = await cap([T(MARK), FLAG.exclude], { observe: true });
+    check('private in observe mode: skipped, not even counted as observed', ob.outcome === 'skipped:private:exclude', ob.outcome);
+    let st = R(await s.send('clip.status'));
+    check('private skips counted', (st.stats.skipped.private || 0) === privateCases.length + 1, JSON.stringify(st.stats.skipped));
+    check('a private skip records no format names', st.stats.recent[0].reason === 'private' && !st.stats.recent[0].formats, JSON.stringify(st.stats.recent[0]));
+    check('no private text anywhere in the list', !JSON.stringify(R(await s.send('clip.list'))).includes(MARK));
+    // controls: the flags saying YES keep the copy
+    let r = await cap([T('kept-with-include-1'), FLAG.include(1)]);
+    check('CanInclude = 1 alone: kept', r.outcome === 'added', r.outcome);
+    r = await cap([T('kept-with-both-1'), FLAG.include(1), FLAG.upload(1)]);
+    check('CanInclude = 1 and CanUpload = 1: kept', r.outcome === 'added', r.outcome);
+
+    // ---- 2. every kind is recorded
+    await s.send('clip.seed', { reset: true, items: [] }).catch(() => {});
+    await s.send('clip.clear'); await s.send('clip.forget');
+    r = await cap([T('plain words')]);
+    let l = await items();
+    check('text: recorded, not rich', r.outcome === 'added' && l[0].kind === 'text' && l[0].text === 'plain words' && l[0].rich === false, r.outcome);
+    r = await cap([T('formatted words'), { name: 'HTML Format', html: '<b>formatted</b> words' }, { name: 'Rich Text Format', rtf: '{\\rtf1 formatted words}' }]);
+    l = await items();
+    check('rich text: recorded as rich', r.outcome === 'added' && l[0].rich === true, r.outcome);
+    let d = R(await s.send('clip.paste', { item: l[0].id, hwnd: '0', dryRun: true }));
+    let names = (d.formats || []).map((f) => f.name);
+    check('rich text: a paste sets text + HTML + RTF, round trip', d.roundTrip === true && ['CF_UNICODETEXT', 'HTML Format', 'Rich Text Format'].every((n) => names.includes(n)), names.join());
+    // (the new feature) plain text: the same item pasted as bare words
+    d = R(await s.send('clip.paste', { item: l[0].id, hwnd: '0', dryRun: true, plain: true }));
+    check('plain paste of rich text: only CF_UNICODETEXT, round trip', d.plain === true && d.roundTrip === true && (d.formats || []).map((f) => f.name).join() === 'CF_UNICODETEXT', JSON.stringify(d.formats));
+    r = await cap([IMG('PNG', 90, 60, '#2A9D8F')]);
+    l = await items();
+    check('PNG picture: recorded with size + thumbnail', r.outcome === 'added' && l[0].kind === 'image' && l[0].w === 90 && l[0].h === 60 && /^data:image\/jpeg/.test(l[0].thumb || ''), r.outcome);
+    d = R(await s.send('clip.paste', { item: l[0].id, hwnd: '0', dryRun: true, plain: true }));
+    check('plain paste of a picture: pastes the picture (PNG + CF_DIB)', d.plain === false && d.roundTrip === true && (d.formats || []).map((f) => f.name).join() === 'PNG,CF_DIB', JSON.stringify(d.formats));
+    r = await cap([IMG('CF_DIBV5', 33, 21, '#AA3355')]);
+    l = await items();
+    check('CF_DIBV5 picture: recorded', r.outcome === 'added' && l[0].kind === 'image' && l[0].w === 33 && l[0].h === 21, r.outcome);
+    r = await cap([IMG('CF_DIB', 17, 45, '#335577')]);
+    l = await items();
+    check('CF_DIB picture: recorded', r.outcome === 'added' && l[0].kind === 'image' && l[0].w === 17 && l[0].h === 45, r.outcome);
+    d = R(await s.send('clip.paste', { item: l[0].id, hwnd: '0', dryRun: true }));
+    check('CF_DIB picture: pastes back pixel-exact', d.roundTrip === true, d.roundTripError);
+    r = await cap([{ name: 'CF_HDROP', files: ['C:\\fixture\\a.txt', 'C:\\fixture\\folder'] }]);
+    l = await items();
+    check('files: recorded with names', r.outcome === 'added' && l[0].kind === 'files' && l[0].fileCount === 2 && l[0].files[0].name === 'a.txt', r.outcome);
+    d = R(await s.send('clip.paste', { item: l[0].id, hwnd: '0', dryRun: true, plain: true }));
+    check('plain paste of files: the paths as text', d.plain === true && d.roundTrip === true && (d.formats || []).map((f) => f.name).join() === 'CF_UNICODETEXT', JSON.stringify(d.formats));
+    r = await cap([IMG('PNG', 50, 40, '#101010'), { name: 'CF_HDROP', files: ['C:\\fixture\\shot.png'] }]);
+    l = await items();
+    check('picture + its file (screenshot tool): one picture item carrying the file', r.outcome === 'added' && l[0].kind === 'image' && l[0].fileCount === 1, r.outcome);
+    r = await cap([T('   \r\n  ')]);
+    check('only whitespace: skipped as empty', r.outcome === 'skipped:empty', r.outcome);
+    r = await cap([{ name: 'Some App Private Format' }]);
+    check('a format Mantle cannot keep: skipped as unsupported', r.outcome === 'skipped:unsupported', r.outcome);
+    r = await cap([T('held')], { busy: true });
+    check('clipboard held by another app: skipped as busy', r.outcome === 'skipped:busy', r.outcome);
+    r = await cap([T('observed only')], { observe: true });
+    const cnt = (await items()).length;
+    check('observe mode: counted, not kept', r.outcome === 'observed' && !(await items()).some((i) => i.text === 'observed only'), r.outcome + ' ' + cnt);
+
+    // ---- 3. dedupe: the same copy again is ONE item, on top, with the newest formats
+    const n0 = (await items()).length;
+    const id0 = (await items()).find((i) => i.text === 'plain words').id;
+    r = await cap([T('plain words')]);
+    l = await items();
+    check('same text again: moved to the top, not doubled', r.outcome === 'moved' && l.length === n0 && l[0].id === id0, r.outcome + ' ' + l.length);
+    r = await cap([T('plain words'), { name: 'HTML Format', html: '<i>plain words</i>' }]);
+    l = await items();
+    check('same words from a web page (text + HTML): still one item, now rich', r.outcome === 'moved' && l.length === n0 && l[0].id === id0 && l[0].rich === true, r.outcome + ' rich ' + l[0].rich);
+    r = await cap([IMG('PNG', 90, 60, '#2A9D8F')]);
+    l = await items();
+    check('same picture again: moved, not doubled', r.outcome === 'moved' && l.length === n0 && l[0].kind === 'image' && l[0].w === 90, r.outcome);
+    r = await cap([IMG('PNG', 90, 60, '#2A9D8F'), { name: 'CF_HDROP', files: ['C:\\fixture\\saved.png'] }]);
+    l = await items();
+    check('same picture plus its saved file: the item gains the file', r.outcome === 'moved' && l.length === n0 && l[0].fileCount === 1, r.outcome);
+    r = await cap([{ name: 'CF_HDROP', files: ['C:\\FIXTURE\\A.TXT', 'C:\\fixture\\folder'] }]);
+    l = await items();
+    check('same files again (any letter case): moved', r.outcome === 'moved' && l.length === n0 && l[0].kind === 'files', r.outcome);
+
+    // ---- 4. sizes and caps
+    r = await cap([{ name: 'CF_UNICODETEXT', text: 'abcd', repeat: 530000 }]);   // 2.12M chars = 4.24 MB > 4 MB
+    st = R(await s.send('clip.status'));
+    check('huge text (> 4 MB): skipped as too large, with the reason', r.outcome === 'skipped:tooLarge' && st.stats.recent[0].reason === 'tooLarge', r.outcome);
+    r = await cap([{ name: 'CF_UNICODETEXT', text: 'abcd', repeat: 500000 }]);   // 4.0 MB: under the cap
+    check('large text under 4 MB: kept', r.outcome === 'added', r.outcome);
+    const lim = R(await s.send('clip.limits', { maxImageSourceBytes: 4000 }));
+    check('limits take (test only)', lim.maxImageSourceBytes === 4000, JSON.stringify(lim));
+    r = await cap([IMG('PNG', 80, 80, '#000000', { noise: true })]);
+    check('huge picture (source over the limit): skipped as too large', r.outcome === 'skipped:tooLarge', r.outcome);
+    await s.send('clip.limits', { maxItemBytes: 3000 });
+    r = await cap([IMG('CF_DIB', 80, 80, '#000000', { noise: true, seed: 3 })]);
+    check('picture whose PNG passes 2x the item limit: skipped as too large', r.outcome === 'skipped:tooLarge', r.outcome);
+    await s.send('clip.limits', {});
+    await s.send('clip.clear'); await s.send('clip.forget');
+    await s.send('clip.limits', { maxItems: 5 });
+    for (let i = 0; i < 8; i++) await cap([T('cap item ' + i)]);
+    l = await items();
+    check('item cap: only the newest 5 unpinned kept', l.filter((i) => !i.pinned).length === 5 && l[0].text === 'cap item 7' && !l.some((i) => i.text === 'cap item 2'), l.map((i) => i.text).join('|'));
+    await s.send('clip.limits', {});
+    await s.send('clip.clear'); await s.send('clip.forget');
+    await s.send('clip.limits', { memoryBudget: 1000 });
+    for (let i = 0; i < 5; i++) await cap([T(String(i).repeat(200))]);   // 400 bytes each
+    l = (await items()).filter((i) => !i.pinned);
+    check('memory budget: the oldest go once 1000 bytes would be passed', l.length === 2 && l[0].text[0] === '4' && l[1].text[0] === '3', l.map((i) => i.text[0]).join());
+    await s.send('clip.limits', {});
+
+    // ---- 5. undo: Delete and Clear all come back exactly
+    await s.send('clip.clear'); await s.send('clip.forget');
+    for (const t of ['u-old', 'u-mid', 'u-new']) await cap([T(t)]);
+    l = await items();
+    const order = l.map((i) => i.id).join();
+    const mid = l.find((i) => i.text === 'u-mid');
+    let del = R(await s.send('clip.delete', { item: mid.id, undo: true }));
+    check('delete: one gone, one to undo', del.undo === 1 && !(await items()).some((i) => i.id === mid.id), JSON.stringify({ u: del.undo }));
+    let res = await s.send('clip.restore');
+    check('undo delete: back in the same place', res.ok && R(res).restored === 1 && (await items()).map((i) => i.id).join() === order, res.error || (await items()).map((i) => i.id).join());
+    res = await s.send('clip.restore');
+    check('undo twice: says there is nothing to undo', res.ok === false && /nothing to undo/.test(res.error), res.error);
+    await s.send('clip.pin', { item: mid.id, pinned: true });
+    const cl = R(await s.send('clip.clear', { undo: true }));
+    check('clear all: pinned kept, the rest undoable', cl.removed === 2 && cl.count === 1 && cl.undo === 2, JSON.stringify({ r: cl.removed, c: cl.count, u: cl.undo }));
+    res = await s.send('clip.restore');
+    check('undo clear all: every item back in order', res.ok && R(res).restored === 2 && (await items()).map((i) => i.id).join() === order, (await items()).map((i) => i.id).join());
+    await s.send('clip.delete', { item: mid.id, undo: true });   // a PINNED item deleted...
+    const s2 = start(['--passive', '--parent-pid=' + process.pid]);
+    try {
+      await s2.send('clip.start', { listen: false, pinsFile: pins });
+      check('deleting a pinned item removes it from the pins file', R(await s2.send('clip.list')).pinned === 0);
+    } finally { await s2.quit(); }
+    res = await s.send('clip.restore');                                 // ...and undone
+    const s3 = start(['--passive', '--parent-pid=' + process.pid]);
+    try {
+      await s3.send('clip.start', { listen: false, pinsFile: pins });
+      const l3 = R(await s3.send('clip.list'));
+      check('undoing it saves the pin again', res.ok && l3.pinned === 1 && l3.items[0].text === 'u-mid', res.error || l3.pinned);
+    } finally { await s3.quit(); }
+    await s.send('clip.delete', { item: (await items()).find((i) => i.text === 'u-new').id, undo: true });
+    await cap([T('u-new')]);                                             // copied again meanwhile
+    res = await s.send('clip.restore');
+    check('undo does not double an item copied again meanwhile', res.ok && R(res).restored === 0 && (await items()).filter((i) => i.text === 'u-new').length === 1, res.error || R(res).restored);
+    await s.send('clip.delete', { item: (await items())[0].id, undo: true });
+    const fg = R(await s.send('clip.forget'));
+    res = await s.send('clip.restore');
+    check('forget (the panel closed): nothing left to undo', fg.forgot === 1 && res.ok === false, JSON.stringify(fg));
+
+    const plainDel = R(await s.send('clip.delete', { item: (await items()).find((i) => !i.pinned).id }));
+    check('a delete without undo keeps nothing in memory', plainDel.undo === 0, plainDel.undo);
+
+    // ---- 6. the pins file: a save that died half-way, and a file that cannot be opened
+    fs.renameSync(pins, pins + '.tmp');                                  // as if the rename never happened
+    const s4 = start(['--passive', '--parent-pid=' + process.pid]);
+    try {
+      await s4.send('clip.start', { listen: false, pinsFile: pins });
+      const l4 = R(await s4.send('clip.list'));
+      check('a pins save cut off before its rename is recovered', l4.pinned === 1 && fs.existsSync(pins), l4.pinned);
+    } finally { await s4.quit(); }
+    const junk = Buffer.from('not a DPAPI blob at all, a damaged file');
+    fs.writeFileSync(pins, junk);
+    const s5 = start(['--passive', '--parent-pid=' + process.pid]);
+    try {
+      const st5 = R(await s5.send('clip.start', { listen: false, pinsFile: pins }));
+      check('an unreadable pins file: said in plain words', /could not be opened/.test(st5.pinsError || '') && !/Exception|error \d/.test(st5.pinsError), st5.pinsError);
+      await s5.send('clip.seed', { items: [{ kind: 'text', text: 'new pin' }] });
+      const it5 = R(await s5.send('clip.list')).items[0];
+      await s5.send('clip.pin', { item: it5.id, pinned: true });
+      check('pinning after that sets the damaged file aside, never overwrites it',
+        fs.existsSync(pins + '.unreadable') && fs.readFileSync(pins + '.unreadable').equals(junk), fs.existsSync(pins + '.unreadable'));
+      check('...and the new pins file is good', R(await s5.send('clip.status')).pinsError === null);
+    } finally { await s5.quit(); }
+
+    // ---- 7. test-only commands say what they are in any sidecar; nothing leaks in events
+    const evs = s.events.filter((e) => e.ev === 'clip');
+    check('no clip event carries content', evs.length > 0 && evs.every((e) => e.text === undefined && e.items === undefined && !JSON.stringify(e).includes(MARK)), evs.length);
+  } finally {
+    await s.quit();
+  }
 }
 
 main();

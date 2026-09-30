@@ -18,19 +18,24 @@
 // PRIVACY, which is the design and not an afterthought:
 //   - Content lives in MEMORY ONLY. Nothing Owen copied is written to disk, a log or an event;
 //     every event and log line carries counts, format names, sizes and timings.
-//   - A copy a password manager has flagged never enters the history at all. Checked BEFORE the
-//     clipboard is even opened where possible (Microsoft's documented "Cloud Clipboard and
-//     Clipboard History Formats"):
+//   - A copy a password manager has flagged never enters the history at all (Microsoft's
+//     documented "Cloud Clipboard and Clipboard History Formats"; PrivacyVerdict is the rule):
 //       ExcludeClipboardContentFromMonitorProcessing  present = skip, content never read
 //       Clipboard Viewer Ignore                       present = skip (KeePass and older tools)
-//       CanIncludeInClipboardHistory                  DWORD 0 = skip (its value decides when present)
-//       CanUploadToCloudClipboard                     DWORD 0 = skip when CanInclude... is absent:
-//                                                     an app that bothered to say "not to the
-//                                                     cloud" and nothing else is treated as secret
+//       CanIncludeInClipboardHistory                  DWORD 0 = skip
+//       CanUploadToCloudClipboard                     DWORD 0 = skip, EVEN when CanInclude... says
+//                                                     yes: an app that bothered to say "this must
+//                                                     not leave the machine" is treated as secret
+//     The first two are checked before the clipboard is opened (the content is never touched),
+//     then ALL FOUR again inside the open, so a copy that changed in between cannot slip past.
+//     A flag that is present but unreadable or shorter than a DWORD FAILS CLOSED (= skip).
 //   - PINS are the only thing that persists: DPAPI (CurrentUser) encrypted, capped at 25 items
-//     and 4 MB each, in the file the caller names.
-//   - A PASSIVE (test) sidecar never stores anything it did not seed itself: its listener, if
-//     asked for, only counts copies and their formats.
+//     and 4 MB each, in the file the caller names. Undo (clip.restore) holds a deleted item in
+//     MEMORY only, and only until the panel closes (clip.forget) or a minute passes.
+//   - A PASSIVE (test) sidecar never stores anything it did not seed or simulate itself: its
+//     listener, if asked for, only counts copies and their formats. clip.capture runs the SAME
+//     decision path as a real copy over a test's own fixture formats, so every rule here is
+//     proved without reading or writing Owen's clipboard.
 //
 // THREADING: the listener window, the reads and the writes all live on ONE dedicated STA thread
 // with its own message loop - NOT the ui lane. GetClipboardData on a delay-rendered format sends
@@ -59,15 +64,21 @@ namespace Mantle {
     // 25 items and 4 MB an item are Windows' own clipboard-history limits, so Mantle's history
     // holds what Windows' would. The memory budget is what stops 25 4K screenshots from making
     // the sidecar a 800 MB process: images are kept as PNG, and the oldest unpinned items go.
-    const int MaxItems = 25;
+    // Fields, not consts, only so a PASSIVE sidecar's clip.limits can shrink them: a test proves
+    // "too large" and "too many" with kilobyte fixtures instead of 100 MB ones.
+    const int DefMaxItems = 25;
+    const long DefMaxItemBytes = 4L * 1024 * 1024;
+    const long DefMaxImageSourceBytes = 96L * 1024 * 1024;   // a raw 8K DIB is ~130 MB: not held
+    const long DefMemoryBudget = 64L * 1024 * 1024;
+    static int MaxItems = DefMaxItems;
+    static long MaxItemBytes = DefMaxItemBytes;
+    static long MaxImageSourceBytes = DefMaxImageSourceBytes;
+    static long MemoryBudget = DefMemoryBudget;
     const int MaxPins = 25;
-    const long MaxItemBytes = 4L * 1024 * 1024;
-    const long MaxImageSourceBytes = 96L * 1024 * 1024;   // a raw 8K DIB is ~130 MB: not held
-    const long MemoryBudget = 64L * 1024 * 1024;
     const int TextForPage = 2000;                        // enough to filter on and to preview
     const int MaxFilesForPage = 20;
     const int DebounceMs = 80;
-    const int SupersedeMs = 3000;                        // a write of the same picture this soon is the same copy
+    const int UndoMs = 60000;                            // a deleted item is kept (in memory) this long at most
 
     // ------------------------------------------------------------------ state
     sealed class Item {
@@ -82,8 +93,7 @@ namespace Mantle {
       public int W, H;
       public string Thumb;          // data URL for the panel
       public string[] Files;        // CF_HDROP paths
-      public string Hash;
-      public string ImageHash;      // the picture's source bytes alone: a later write of the same picture extends it
+      public string ImageHash;      // the picture's source bytes: the same picture copied again is the same item
       public long Bytes;
     }
 
@@ -95,6 +105,10 @@ namespace Mantle {
     static string _mode = "off";            // off | history | observe
     static string _error;                   // the listener's standing problem, in words
     static string _pinsError;               // the pins file's, in words
+    static bool _pinsUnreadable;            // the file on disk could not be opened: set aside before a save, never overwritten
+    // Undo: what the last Delete / Clear all took out, with where each item was. Memory only.
+    static readonly List<KeyValuePair<int, Item>> _trash = new List<KeyValuePair<int, Item>>();
+    static long _trashAt;
     static readonly Dictionary<string, int> _skipped = new Dictionary<string, int>(StringComparer.Ordinal);
     static int _captured, _observed, _ownWrites;
     static readonly List<object> _recent = new List<object>();   // last few captures: formats and sizes ONLY
@@ -108,7 +122,11 @@ namespace Mantle {
       t.Add("clip.pin", Lanes.Ui, Pin);
       t.Add("clip.delete", Lanes.Ui, Delete);
       t.Add("clip.clear", Lanes.Ui, Clear);
+      t.Add("clip.restore", Lanes.Ui, Restore);
+      t.Add("clip.forget", Lanes.Ui, Forget);
       t.Add("clip.seed", Lanes.Ui, Seed);
+      t.Add("clip.capture", Lanes.Ui, CaptureSim);
+      t.Add("clip.limits", Lanes.Ui, Limits);
       // Not the ui lane: a paste waits (up to ~1 s) for the clipboard, the focus change and the
       // keys to be released, and the ui lane runs the keyboard hook that must never wait.
       t.Add("clip.paste", Lanes.Qs, Paste);
@@ -144,6 +162,7 @@ namespace Mantle {
       lock (_gate) {
         // Memory-only means GONE when the feature is switched off: keep the pins, drop the rest.
         _items.RemoveAll(delegate (Item i) { return !i.Pinned; });
+        _trash.Clear();
         _mode = "off";
         _error = null;
         _rev++;
@@ -223,7 +242,12 @@ namespace Mantle {
       lock (_gate) {
         Item it = FindLocked(id);
         if (it == null) return "that item is no longer in the clipboard history";
+        int at = _items.IndexOf(it);
         _items.Remove(it);
+        _trash.Clear();
+        // kept for undo ONLY when the caller offers undo (and forgets it when the panel closes)
+        if (Json.GetBool(req, "undo", false)) _trash.Add(new KeyValuePair<int, Item>(at, it));
+        _trashAt = NowMs();
         _rev++;
         if (it.Pinned) SavePinsLocked();
       }
@@ -231,10 +255,15 @@ namespace Mantle {
       return null;
     }
 
-    /// Clear all, like Windows' "Clear all": pinned items stay.
+    /// Clear all, like Windows' "Clear all": pinned items stay. Undoable, like Delete.
     static string Clear(Dictionary<string, object> req, ref object result) {
       int removed;
       lock (_gate) {
+        _trash.Clear();
+        bool undo = Json.GetBool(req, "undo", false);
+        for (int k = 0; undo && k < _items.Count; k++)
+          if (!_items[k].Pinned) _trash.Add(new KeyValuePair<int, Item>(k, _items[k]));
+        _trashAt = NowMs();
         removed = _items.RemoveAll(delegate (Item i) { return !i.Pinned; });
         _rev++;
       }
@@ -242,6 +271,151 @@ namespace Mantle {
       s["removed"] = removed;
       result = s;
       return null;
+    }
+
+    /// Undo the last Delete or Clear all: every item goes back where it was, pinned ones pinned
+    /// (and saved again). An item copied again meanwhile is not doubled.
+    static string Restore(Dictionary<string, object> req, ref object result) {
+      int restored = 0;
+      lock (_gate) {
+        if (_trash.Count == 0 || NowMs() - _trashAt > UndoMs) { _trash.Clear(); return "there is nothing to undo"; }
+        bool pins = false;
+        foreach (KeyValuePair<int, Item> kv in _trash) {   // ascending positions: each lands where it was
+          Item t = kv.Value;
+          bool dup = false;
+          foreach (Item x in _items) if (x == t || SameContent(x, t, t.ImageHash)) { dup = true; break; }
+          if (dup) continue;
+          _items.Insert(Math.Min(kv.Key, _items.Count), t);
+          if (t.Pinned) pins = true;
+          restored++;
+        }
+        _trash.Clear();
+        _rev++;
+        if (pins) SavePinsLocked();
+      }
+      IDictionary s = StatusObj(false);
+      s["restored"] = restored;
+      result = s;
+      return null;
+    }
+
+    /// The panel closed: nothing can be undone any more, so the deleted items leave memory now.
+    static string Forget(Dictionary<string, object> req, ref object result) {
+      int n;
+      lock (_gate) { n = _trash.Count; _trash.Clear(); }
+      result = Json.Obj("ok", true, "forgot", n);
+      return null;
+    }
+
+    /// TEST ONLY (passive): smaller limits, so a test proves "too large", "too many" and the
+    /// memory budget with kilobyte fixtures. {} puts the real limits back.
+    static string Limits(Dictionary<string, object> req, ref object result) {
+      if (!Program.Passive) return "clip.limits is a test-only command; a live sidecar keeps its limits";
+      lock (_gate) {
+        MaxItems = Math.Max(1, Math.Min(DefMaxItems, Json.GetInt(req, "maxItems", DefMaxItems)));
+        MaxItemBytes = Math.Max(16, Math.Min(DefMaxItemBytes, (long)Json.GetInt(req, "maxItemBytes", (int)DefMaxItemBytes)));
+        MaxImageSourceBytes = Math.Max(16, Math.Min(DefMaxImageSourceBytes, (long)Json.GetInt(req, "maxImageSourceBytes", (int)DefMaxImageSourceBytes)));
+        MemoryBudget = Math.Max(16, Math.Min(DefMemoryBudget, (long)Json.GetInt(req, "memoryBudget", (int)DefMemoryBudget)));
+      }
+      result = Json.Obj("ok", true, "maxItems", MaxItems, "maxItemBytes", MaxItemBytes,
+                        "maxImageSourceBytes", MaxImageSourceBytes, "memoryBudget", MemoryBudget);
+      return null;
+    }
+
+    /// TEST ONLY (passive): one copy, from a fixture instead of the clipboard, through the SAME
+    /// Capture a real copy takes (privacy flags, kinds, sizes, dedupe, trim). Nothing of Owen's
+    /// clipboard is opened, read or written.
+    ///   {formats:[{name, text?, repeat?, html?, rtf?, image?:{w,h,color,noise?}, as?:'png'|'dib',
+    ///              files?:[...], dword?, b64?, size?, nodata?}], busy?, observe?}
+    static string CaptureSim(Dictionary<string, object> req, ref object result) {
+      if (!Program.Passive) return "clip.capture is a test-only command; a live sidecar only records real copies";
+      object v;
+      var list = Json.TryGet(req, "formats", out v) ? v as List<object> : null;
+      if (list == null) return "clip.capture needs formats:[...]";
+      var src = new SimSource();
+      src.Busy = Json.GetBool(req, "busy", false);
+      foreach (object o in list) {
+        var d = o as Dictionary<string, object>;
+        string name = d != null ? Json.GetString(d, "name") : null;
+        if (string.IsNullOrEmpty(name)) return "clip.capture: every format needs a name";
+        byte[] data;
+        string err = SimBytes(name, d, out data);
+        if (err != null) return "clip.capture: " + err;
+        src.Put(Fmt.ByName(name), data);
+      }
+      string outcome = Capture(Json.GetBool(req, "observe", false), src, false);
+      IDictionary s = StatusObj(false);
+      s["outcome"] = outcome;
+      result = s;
+      return null;
+    }
+
+    static string SimBytes(string name, Dictionary<string, object> d, out byte[] data) {
+      data = null;
+      if (Json.GetBool(d, "nodata", false)) return null;   // present, but GetClipboardData gives nothing
+      string b64 = Json.GetString(d, "b64");
+      if (b64 != null) { data = B64(b64) ?? new byte[0]; return null; }
+      object dv;
+      if (Json.TryGet(d, "dword", out dv)) { data = BitConverter.GetBytes(Json.GetInt(d, "dword", 0)); return null; }
+      int size = Json.GetInt(d, "size", 0);
+      if (size > 0) { data = new byte[Math.Min(size, 200 * 1024 * 1024)]; return null; }
+      if (name == "CF_UNICODETEXT") {
+        string t = Json.GetString(d, "text") ?? "";
+        int rep = Math.Max(1, Json.GetInt(d, "repeat", 1));
+        var sb = new StringBuilder(t.Length * rep);
+        for (int i = 0; i < rep; i++) sb.Append(t);
+        data = Codec.Utf16zBytes(sb.ToString());
+        return null;
+      }
+      if (name == "HTML Format") { data = Codec.HtmlClipboardBytes(Json.GetString(d, "html") ?? ""); return null; }
+      if (name == "Rich Text Format") { data = Encoding.ASCII.GetBytes((Json.GetString(d, "rtf") ?? "{\\rtf1 }") + "\0"); return null; }
+      if (name == "CF_HDROP") {
+        object fv;
+        var fl = Json.TryGet(d, "files", out fv) ? fv as List<object> : null;
+        if (fl == null || fl.Count == 0) return "CF_HDROP needs files:[...]";
+        var arr = new string[fl.Count];
+        for (int i = 0; i < arr.Length; i++) arr[i] = Convert.ToString(fl[i], CultureInfo.InvariantCulture);
+        data = Codec.EncodeDropFiles(arr);
+        return null;
+      }
+      if (name == "PNG" || name == "CF_DIB" || name == "CF_DIBV5") {
+        object iv;
+        var img = Json.TryGet(d, "image", out iv) ? iv as Dictionary<string, object> : null;
+        if (img == null) return name + " needs image:{w,h,color}";
+        using (Bitmap bmp = FixtureBitmap(img)) data = name == "PNG" ? Codec.ToPng(bmp) : Codec.ToDib(bmp);
+        return null;
+      }
+      data = new byte[4];   // any other format: present, with a few bytes
+      return null;
+    }
+
+    /// A fixture picture: one colour, a white diagonal (so a flip cannot pass unnoticed) and, with
+    /// noise:true, random pixels, which is what makes a PNG large.
+    static Bitmap FixtureBitmap(Dictionary<string, object> d) {
+      int w = Math.Max(1, Math.Min(4000, Json.GetInt(d, "w", 64)));
+      int h = Math.Max(1, Math.Min(4000, Json.GetInt(d, "h", 48)));
+      Color c;
+      try { c = ColorTranslator.FromHtml(Json.GetString(d, "color") ?? "#4436E8"); }
+      catch (Exception) { c = Color.FromArgb(0x44, 0x36, 0xE8); }
+      var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+      using (Graphics g = Graphics.FromImage(bmp)) {
+        g.Clear(c);
+        using (var pen = new Pen(Color.White, Math.Max(1, Math.Min(w, h) / 8)))
+          g.DrawLine(pen, 0, 0, w / 2, h / 2);
+      }
+      if (Json.GetBool(d, "noise", false)) {
+        var rnd = new Random(Json.GetInt(d, "seed", 7));
+        BitmapData bd = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        try {
+          var row = new byte[w * 4];
+          for (int y = 0; y < h; y++) {
+            rnd.NextBytes(row);
+            for (int x = 3; x < row.Length; x += 4) row[x] = 255;
+            Marshal.Copy(row, 0, new IntPtr(bd.Scan0.ToInt64() + (long)y * bd.Stride), row.Length);
+          }
+        } finally { bmp.UnlockBits(bd); }
+      }
+      return bmp;
     }
 
     /// TEST ONLY: fake items, so the panel, the codecs and paste's dry run can be proved without
@@ -267,22 +441,15 @@ namespace Mantle {
           string html = Json.GetString(d, "html");
           if (html != null) it.Html = Codec.HtmlClipboardBytes(html);
         } else if (kind == "image") {
-          int w = Math.Max(1, Math.Min(4000, Json.GetInt(d, "w", 64)));
-          int h = Math.Max(1, Math.Min(4000, Json.GetInt(d, "h", 48)));
-          Color c;
-          try { c = ColorTranslator.FromHtml(Json.GetString(d, "color") ?? "#4436E8"); }
-          catch (Exception) { return "clip.seed: color must be #RRGGBB"; }
-          using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
-            using (Graphics g = Graphics.FromImage(bmp)) {
-              g.Clear(c);
-              // a white diagonal, so a flipped or mirrored round trip cannot pass unnoticed
-              using (var pen = new Pen(Color.White, Math.Max(1, Math.Min(w, h) / 8)))
-                g.DrawLine(pen, 0, 0, w / 2, h / 2);
-            }
+          string col = Json.GetString(d, "color");
+          if (col != null && !System.Text.RegularExpressions.Regex.IsMatch(col, "^#[0-9A-Fa-f]{6}$"))
+            return "clip.seed: color must be #RRGGBB";
+          using (Bitmap bmp = FixtureBitmap(d)) {
             it.Png = Codec.ToPng(bmp);
-            it.W = w; it.H = h;
+            it.W = bmp.Width; it.H = bmp.Height;
             it.Thumb = Codec.Thumb(bmp);
           }
+          it.ImageHash = ImgHash(it.Png);
         } else if (kind == "files") {
           object pv;
           var paths = Json.TryGet(d, "paths", out pv) ? pv as List<object> : null;
@@ -293,11 +460,11 @@ namespace Mantle {
         } else {
           return "clip.seed: kind must be text, image or files";
         }
-        Finish(it, Hash(it.Text, it.Html, it.Rtf, it.Png, it.Files));
+        Finish(it);
         made.Add(it);
       }
       lock (_gate) {
-        if (Json.GetBool(req, "reset", false)) _items.Clear();
+        if (Json.GetBool(req, "reset", false)) { _items.Clear(); _trash.Clear(); }
         // items[0] ends up on top: a test reads the panel in the order it wrote the fixture.
         for (int i = made.Count - 1; i >= 0; i--) {
           made[i].Id = "c" + (_nextId++).ToString(CultureInfo.InvariantCulture);
@@ -316,17 +483,30 @@ namespace Mantle {
     /// dryRun does NONE of that: it builds every clipboard format exactly as a real paste would,
     /// decodes them back with the same readers the listener uses, and says what it would have
     /// done. Tests only ever use this path; a passive sidecar refuses the real one.
+    ///
+    /// plain:true pastes the words only: a formatted text item as bare text (no HTML, no RTF), a
+    /// files item as its paths, one per line. A picture has no plain form and pastes as itself.
     static string Paste(Dictionary<string, object> req, ref object result) {
       var sw = Stopwatch.StartNew();
       string id = Json.GetString(req, "item");
       bool dry = Json.GetBool(req, "dryRun", false);
+      bool plain = Json.GetBool(req, "plain", false);
       IntPtr target = Json.GetHwnd(req, "hwnd");
       Item it;
       lock (_gate) it = FindLocked(id);
       if (it == null) return "that item is no longer in the clipboard history";
 
+      string text = it.Text;
+      byte[] html = it.Html, rtf = it.Rtf, png = it.Png;
+      string[] files = it.Files;
+      bool plainApplied = false;
+      if (plain && it.Kind == "text") { html = null; rtf = null; plainApplied = true; }
+      else if (plain && it.Kind == "files" && files != null) {
+        text = string.Join("\r\n", files); files = null; html = null; rtf = null; plainApplied = true;
+      }
+
       List<Codec.Format> formats;
-      string encErr = Codec.Encode(it.Text, it.Html, it.Rtf, it.Png, it.Files, out formats);
+      string encErr = Codec.Encode(text, html, rtf, png, files, out formats);
       if (encErr != null) return "could not prepare the item for the clipboard: " + encErr;
 
       bool targetOk = target != IntPtr.Zero && Win32.IsWindow(target);
@@ -339,8 +519,8 @@ namespace Mantle {
       foreach (Codec.Format f in formats) fl.Add(Json.Obj("name", f.Name, "bytes", f.Data.Length));
 
       if (dry) {
-        string rt = Codec.RoundTrip(it.Text, it.Html, it.Rtf, it.Png, it.Files, formats);
-        result = Json.Obj("ok", true, "dryRun", true, "id", id, "kind", it.Kind,
+        string rt = Codec.RoundTrip(text, html, rtf, png, files, formats);
+        result = Json.Obj("ok", true, "dryRun", true, "id", id, "kind", it.Kind, "plain", plainApplied,
                           "formats", fl, "roundTrip", rt == null, "roundTripError", rt,
                           "target", Json.Obj("hwnd", target.ToInt64().ToString(CultureInfo.InvariantCulture),
                                              "exists", targetOk, "elevated", targetElevated),
@@ -356,10 +536,12 @@ namespace Mantle {
       string werr = Listener.Write(formats);
       if (werr != null) return "could not put the item on the clipboard: " + werr;
       lock (_gate) {
-        _items.Remove(it);
-        it.Ts = NowMs();
-        _items.Insert(0, it);
-        _rev++;
+        if (_items.Remove(it)) {   // deleted meanwhile (another click): it stays deleted
+          it.Ts = NowMs();
+          _items.Insert(0, it);
+          _rev++;
+          if (it.Pinned) SavePinsLocked();   // the pins file keeps the order across a restart
+        }
       }
       Features.Event("clip", Json.Obj("what", "changed", "rev", Rev(), "count", Count(), "why", "paste"));
 
@@ -379,7 +561,7 @@ namespace Mantle {
         }
       }
       if (!pasted) Program.EmitLog("warn", "clipboard: pasted:false (" + why + ")");
-      result = Json.Obj("ok", true, "copied", true, "pasted", pasted, "reason", why,
+      result = Json.Obj("ok", true, "copied", true, "pasted", pasted, "reason", why, "plain", plainApplied,
                         "formats", fl, "ms", sw.ElapsedMilliseconds);
       return null;
     }
@@ -405,6 +587,7 @@ namespace Mantle {
                                  "count", _items.Count,
                                  "pinned", pinned,
                                  "bytes", bytes,
+                                 "undo", _trash.Count,
                                  "windowsHistory", WindowsHistorySwitch(),
                                  "stats", Json.Obj("captured", _captured, "observed", _observed,
                                                    "ownWrites", _ownWrites, "skipped", skipped,
@@ -495,8 +678,7 @@ namespace Mantle {
       }
     }
 
-    static void Finish(Item it, string hash) {
-      it.Hash = hash;
+    static void Finish(Item it) {
       long b = 0;
       if (it.Text != null) b += it.Text.Length * 2L;
       if (it.Html != null) b += it.Html.Length;
@@ -506,17 +688,25 @@ namespace Mantle {
       it.Bytes = b;
     }
 
-    static string Hash(string text, byte[] html, byte[] rtf, byte[] image, string[] files) {
-      using (SHA1 sha = SHA1.Create()) {
-        var ms = new MemoryStream();
-        var w = new BinaryWriter(ms, Encoding.UTF8);
-        w.Write(text ?? "\u0001"); w.Write(html != null ? html.Length : -1); if (html != null) w.Write(html);
-        w.Write(rtf != null ? rtf.Length : -1); if (rtf != null) w.Write(rtf);
-        w.Write(image != null ? image.Length : -1); if (image != null) w.Write(image);
-        w.Write(files != null ? string.Join("\n", files) : "\u0001");
-        w.Flush();
-        return Convert.ToBase64String(sha.ComputeHash(ms.ToArray()));
+    static string ImgHash(byte[] image) {
+      if (image == null) return null;
+      using (SHA1 sha = SHA1.Create()) return Convert.ToBase64String(sha.ComputeHash(image));
+    }
+
+    /// "The same copy" is what the person SEES, not which formats the app added: the same words
+    /// copied from a web page (text + HTML) and from Notepad (text only) are ONE item, as are the
+    /// same files and the same picture. The newer copy's formats win (see Capture).
+    static bool SameContent(Item x, Item it, string imgHash) {
+      if (x.Kind != it.Kind) return false;
+      if (x.Kind == "text") return x.Text != null && x.Text == it.Text;
+      if (x.Kind == "image") return x.ImageHash != null && x.ImageHash == imgHash;
+      if (x.Kind == "files") {
+        if (x.Files == null || it.Files == null || x.Files.Length != it.Files.Length) return false;
+        for (int k = 0; k < x.Files.Length; k++)
+          if (!string.Equals(x.Files[k], it.Files[k], StringComparison.OrdinalIgnoreCase)) return false;
+        return true;
       }
+      return false;
     }
 
     /// Drop the oldest UNPINNED items past the count or the memory budget. Pins never count.
@@ -570,7 +760,11 @@ namespace Mantle {
         inputs[i].u.ki.dwFlags = i >= 2 ? Win32.KEYEVENTF_KEYUP : 0;
       }
       uint sent = Win32.SendInput(4, inputs, Marshal.SizeOf(typeof(Win32.INPUT)));
-      if (sent != 4) return "Windows refused the Ctrl+V keystroke (sent " + sent + " of 4, error " + Marshal.GetLastWin32Error() + "). It is on the clipboard: press Ctrl+V";
+      if (sent != 4) {
+        // the numbers go to the log; the panel gets the sentence
+        Program.EmitLog("warn", "clipboard: SendInput sent " + sent + " of 4 (error " + Marshal.GetLastWin32Error() + ")");
+        return "Windows blocked the Ctrl+V keystroke. It is on the clipboard: press Ctrl+V";
+      }
       return null;
     }
 
@@ -599,129 +793,168 @@ namespace Mantle {
 
     // ================================================================ capture
 
-    /// Runs on the listener thread after a clipboard change settles.
-    static void Capture(bool observe, IntPtr hwnd) {
+    /// Where Capture reads a copy from: the real clipboard (LiveSource, on the listener thread)
+    /// or a test's fixture (SimSource, clip.capture in a passive sidecar). ONE decision path for
+    /// both, so the privacy rule, the kinds, the sizes and the dedupe are all proved by tests that
+    /// never open Owen's clipboard.
+    interface IClipSource {
+      bool Has(uint fmt);
+      byte[] Read(uint fmt, long cap, ref bool tooLarge);
+      bool Open();
+      void Close();
+      List<object> Names();
+    }
+
+    sealed class LiveSource : IClipSource {
+      readonly IntPtr _hwnd;
+      public LiveSource(IntPtr hwnd) { _hwnd = hwnd; }
+      public bool Has(uint fmt) { return Native.IsClipboardFormatAvailable(fmt); }
+      public byte[] Read(uint fmt, long cap, ref bool tooLarge) { return ReadClipboard(fmt, cap, ref tooLarge); }
+      public bool Open() { return Listener.Open(_hwnd); }
+      public void Close() { Native.CloseClipboard(); }
+      public List<object> Names() {
+        var names = new List<object>();
+        uint f = 0;
+        int guard = 0;
+        while ((f = Native.EnumClipboardFormats(f)) != 0 && guard++ < 64) names.Add(Fmt.Name(f));
+        return names;
+      }
+    }
+
+    sealed class SimSource : IClipSource {
+      readonly List<uint> _order = new List<uint>();
+      readonly Dictionary<uint, byte[]> _data = new Dictionary<uint, byte[]>();
+      public bool Busy;
+      public void Put(uint fmt, byte[] data) { if (!_data.ContainsKey(fmt)) _order.Add(fmt); _data[fmt] = data; }
+      public bool Has(uint fmt) { return _data.ContainsKey(fmt); }
+      public byte[] Read(uint fmt, long cap, ref bool tooLarge) {
+        byte[] d;
+        if (!_data.TryGetValue(fmt, out d) || d == null || d.Length == 0) return null;
+        if (d.Length > cap) { tooLarge = true; return null; }
+        return d;
+      }
+      public bool Open() { return !Busy; }
+      public void Close() { }
+      public List<object> Names() {
+        var l = new List<object>();
+        foreach (uint f in _order) l.Add(Fmt.Name(f));
+        return l;
+      }
+    }
+
+    /// THE PRIVACY RULE, in one place. null = the copy may be kept; else the flag that said no.
+    /// FAILS CLOSED: a CanInclude / CanUpload flag that is present but unreadable, or shorter
+    /// than a DWORD, counts as "no". The flag's DATA is read (never the copy's) - that needs the
+    /// clipboard open, which is why Capture asks again inside the open.
+    static string PrivacyVerdict(IClipSource s) {
+      if (s.Has(Fmt.Exclude)) return "exclude";
+      if (s.Has(Fmt.ViewerIgnore)) return "viewerIgnore";
+      bool big = false;
+      if (s.Has(Fmt.CanInclude) && !DwordYes(s.Read(Fmt.CanInclude, 16, ref big))) return "canInclude";
+      if (s.Has(Fmt.CanUpload) && !DwordYes(s.Read(Fmt.CanUpload, 16, ref big))) return "canUpload";
+      return null;
+    }
+
+    static bool DwordYes(byte[] d) { return d != null && d.Length >= 4 && BitConverter.ToInt32(d, 0) != 0; }
+
+    /// One skipped copy: counted, in the recent list and an event - reason and timing only.
+    static string Skip(string reason, Stopwatch sw, List<object> names) {
+      Bump(reason);
+      Recent(Json.Obj("result", "skipped", "reason", reason, "formats", names, "ms", sw.ElapsedMilliseconds));
+      Features.Event("clip", Json.Obj("what", "skipped", "reason", reason));
+      return "skipped:" + reason;
+    }
+
+    /// Runs on the listener thread after a clipboard change settles (live), or for clip.capture
+    /// (a test's fixture). Returns the outcome in a word: added | moved | observed | own |
+    /// skipped:<reason> (private ones as skipped:private:<which flag>).
+    static string Capture(bool observe, IClipSource src, bool live) {
       var sw = Stopwatch.StartNew();
-      uint seq = Native.GetClipboardSequenceNumber();
-      if (seq == Listener.OwnSeq) { lock (_gate) _ownWrites++; return; }
+      if (live) {
+        uint seq = Native.GetClipboardSequenceNumber();
+        if (seq != 0 && seq == Listener.OwnSeq) { lock (_gate) _ownWrites++; return "own"; }
+      }
 
       // Flags readable WITHOUT opening the clipboard: the content is never touched.
-      if (Native.IsClipboardFormatAvailable(Fmt.Exclude) || Native.IsClipboardFormatAvailable(Fmt.ViewerIgnore)) {
-        Bump("private");
-        Recent(Json.Obj("result", "skipped", "reason", "private", "ms", sw.ElapsedMilliseconds));
-        Features.Event("clip", Json.Obj("what", "skipped", "reason", "private"));
-        return;
-      }
-      if (!Listener.Open(hwnd)) {
-        Bump("busy");
-        Recent(Json.Obj("result", "skipped", "reason", "busy", "ms", sw.ElapsedMilliseconds));
-        Features.Event("clip", Json.Obj("what", "skipped", "reason", "busy"));
-        return;
-      }
-      string text = null;
+      if (src.Has(Fmt.Exclude) || src.Has(Fmt.ViewerIgnore))
+        return Skip("private", sw, null) + (src.Has(Fmt.Exclude) ? ":exclude" : ":viewerIgnore");
+      if (!src.Open()) return Skip("busy", sw, null);
+      string text = null, priv = null;
       byte[] html = null, rtf = null, png = null, dib = null, drop = null;
-      bool tooLarge = false, isPrivate = false;
-      var names = new List<object>();
+      bool tooLarge = false;
+      List<object> names = null;
       try {
-        if (Native.IsClipboardFormatAvailable(Fmt.CanInclude)) {
-          byte[] d = Read(Fmt.CanInclude, 16, ref tooLarge);
-          isPrivate = d != null && d.Length >= 4 && BitConverter.ToInt32(d, 0) == 0;
-        } else if (Native.IsClipboardFormatAvailable(Fmt.CanUpload)) {
-          byte[] d = Read(Fmt.CanUpload, 16, ref tooLarge);
-          isPrivate = d != null && d.Length >= 4 && BitConverter.ToInt32(d, 0) == 0;
-        }
-        if (!isPrivate) {
-          uint f = 0;
-          int guard = 0;
-          while ((f = Native.EnumClipboardFormats(f)) != 0 && guard++ < 64) names.Add(Fmt.Name(f));
+        // ALL FOUR flags again, inside the open: the copy may have changed since the check above.
+        priv = PrivacyVerdict(src);
+        if (priv == null) {
+          names = src.Names();
           if (!observe) {
-            if (Native.IsClipboardFormatAvailable(Fmt.CF_HDROP)) drop = Read(Fmt.CF_HDROP, MaxItemBytes, ref tooLarge);
-            if (Native.IsClipboardFormatAvailable(Fmt.CF_UNICODETEXT)) {
-              byte[] t = Read(Fmt.CF_UNICODETEXT, MaxItemBytes, ref tooLarge);
+            if (src.Has(Fmt.CF_HDROP)) drop = src.Read(Fmt.CF_HDROP, MaxItemBytes, ref tooLarge);
+            if (src.Has(Fmt.CF_UNICODETEXT)) {
+              byte[] t = src.Read(Fmt.CF_UNICODETEXT, MaxItemBytes, ref tooLarge);
               if (t != null) text = Codec.Utf16z(t);
             }
-            if (Native.IsClipboardFormatAvailable(Fmt.Html)) html = Read(Fmt.Html, MaxItemBytes, ref tooLarge);
-            if (Native.IsClipboardFormatAvailable(Fmt.Rtf)) rtf = Read(Fmt.Rtf, MaxItemBytes, ref tooLarge);
+            if (src.Has(Fmt.Html)) html = src.Read(Fmt.Html, MaxItemBytes, ref tooLarge);
+            if (src.Has(Fmt.Rtf)) rtf = src.Read(Fmt.Rtf, MaxItemBytes, ref tooLarge);
             bool hasText = text != null && text.Trim().Length > 0;
             if (!hasText) {
-              if (Native.IsClipboardFormatAvailable(Fmt.Png)) png = Read(Fmt.Png, MaxImageSourceBytes, ref tooLarge);
-              if (png == null && Native.IsClipboardFormatAvailable(Fmt.CF_DIBV5)) dib = Read(Fmt.CF_DIBV5, MaxImageSourceBytes, ref tooLarge);
-              if (png == null && dib == null && Native.IsClipboardFormatAvailable(Fmt.CF_DIB)) dib = Read(Fmt.CF_DIB, MaxImageSourceBytes, ref tooLarge);
+              if (src.Has(Fmt.Png)) png = src.Read(Fmt.Png, MaxImageSourceBytes, ref tooLarge);
+              if (png == null && src.Has(Fmt.CF_DIBV5)) dib = src.Read(Fmt.CF_DIBV5, MaxImageSourceBytes, ref tooLarge);
+              if (png == null && dib == null && src.Has(Fmt.CF_DIB)) dib = src.Read(Fmt.CF_DIB, MaxImageSourceBytes, ref tooLarge);
             }
           }
         }
       } finally {
-        Native.CloseClipboard();
+        src.Close();
       }
       long openMs = sw.ElapsedMilliseconds;
 
-      if (isPrivate) {
-        Bump("private");
-        Recent(Json.Obj("result", "skipped", "reason", "private", "ms", openMs));
-        Features.Event("clip", Json.Obj("what", "skipped", "reason", "private"));
-        return;
-      }
+      if (priv != null) return Skip("private", sw, null) + ":" + priv;
       if (observe) {
         lock (_gate) _observed++;
         Recent(Json.Obj("result", "observed", "formats", names, "ms", openMs));
         Features.Event("clip", Json.Obj("what", "observed", "formats", names.Count));
-        return;
+        return "observed";
       }
 
       var it = new Item();
       string[] files = drop != null ? Codec.DecodeDropFiles(drop) : null;
       bool hasT = text != null && text.Trim().Length > 0;
       bool hasFiles = files != null && files.Length > 0;
-      string reason = null;
       // A picture WITH a file is a screenshot tool offering both (measured 2026-09-24, observe
       // mode: PNG + CF_DIB + CF_HDROP + FileContents in one copy). It is a picture in the panel,
       // and a paste sets both, so Explorer still gets the file and an editor the pixels.
       if ((png != null || dib != null) && !hasT) { it.Kind = "image"; it.Html = html; if (hasFiles) it.Files = files; }
       else if (hasFiles) { it.Kind = "files"; it.Files = files; }
       else if (hasT) { it.Kind = "text"; it.Text = text; it.Html = html; it.Rtf = rtf; }
-      else reason = tooLarge ? "tooLarge" : (names.Count == 0 || text != null ? "empty" : "unsupported");
-      if (reason != null) {
-        Bump(reason);
-        Recent(Json.Obj("result", "skipped", "reason", reason, "formats", names, "ms", openMs));
-        Features.Event("clip", Json.Obj("what", "skipped", "reason", reason));
-        return;
-      }
+      else return Skip(tooLarge ? "tooLarge" : (names.Count == 0 || text != null ? "empty" : "unsupported"), sw, names);
 
-      string hash = Hash(it.Text, it.Html, it.Rtf, png ?? dib, it.Files);
+      string imgHash = it.Kind == "image" ? ImgHash(png ?? dib) : null;
       lock (_gate) {
         foreach (Item x in _items) {
-          if (x.Hash != hash) continue;
-          // The same thing copied again: it moves to the top, as in Windows' history.
+          if (!SameContent(x, it, imgHash)) continue;
+          // The same thing copied again (from anywhere, with whatever extra formats): ONE item,
+          // moved to the top, holding the NEWEST copy's formats - what a paste now should give.
+          // This is also the screenshot tool's second write (the picture, then the picture plus
+          // its saved file ~250 ms later): one copy, and the item gains the file.
           _items.Remove(x);
+          x.Html = it.Html;
+          x.Rtf = it.Rtf;
+          if (x.Kind == "image") x.Files = it.Files;
+          Finish(x);
           x.Ts = NowMs();
           _items.Insert(0, x);
+          if (x.Pinned) SavePinsLocked();
           _rev++;
           _captured++;
           Recent(Json.Obj("result", "moved", "kind", x.Kind, "formats", names, "bytes", x.Bytes, "ms", sw.ElapsedMilliseconds));
           Features.Event("clip", Json.Obj("what", "changed", "rev", _rev, "count", _items.Count, "why", "again"));
-          return;
-        }
-        // THE SAME PICTURE, EXTENDED: the measured screenshot tool writes the picture (7 formats),
-        // then ~200-300 ms later the picture plus its saved file (11 formats). That is one copy,
-        // so the newer write replaces the item it extends instead of adding a second one.
-        if (it.Kind == "image" && _items.Count > 0) {
-          Item top = _items[0];
-          string img = Hash(null, null, null, png ?? dib, null);
-          if (top.Kind == "image" && top.ImageHash == img && NowMs() - top.Ts < SupersedeMs) {
-            top.Files = it.Files;
-            top.Html = it.Html;
-            Finish(top, hash);
-            top.Ts = NowMs();
-            _rev++;
-            Recent(Json.Obj("result", "extended", "kind", top.Kind, "formats", names, "bytes", top.Bytes, "ms", sw.ElapsedMilliseconds));
-            Features.Event("clip", Json.Obj("what", "changed", "rev", _rev, "count", _items.Count, "why", "extended"));
-            return;
-          }
+          return "moved";
         }
       }
-      if (it.Kind == "image") it.ImageHash = Hash(null, null, null, png ?? dib, null);
 
       if (it.Kind == "image") {
+        it.ImageHash = imgHash;
         string ierr = null;
         try {
           Bitmap bmp = png != null ? Codec.FromPng(png) : Codec.FromDib(dib);
@@ -735,15 +968,15 @@ namespace Mantle {
           Bump("unreadableImage");
           Recent(Json.Obj("result", "skipped", "reason", "unreadableImage", "why", ierr, "formats", names, "ms", sw.ElapsedMilliseconds));
           Features.Event("clip", Json.Obj("what", "skipped", "reason", "unreadableImage"));
-          return;
+          return "skipped:unreadableImage";
         }
       }
-      Finish(it, hash);
+      Finish(it);
       if (it.Bytes > MaxItemBytes * 2) {   // a PNG may be larger than its DIB was; 8 MB is the ceiling
         Bump("tooLarge");
         Recent(Json.Obj("result", "skipped", "reason", "tooLarge", "bytes", it.Bytes, "ms", sw.ElapsedMilliseconds));
         Features.Event("clip", Json.Obj("what", "skipped", "reason", "tooLarge"));
-        return;
+        return "skipped:tooLarge";
       }
       lock (_gate) {
         it.Id = "c" + (_nextId++).ToString(CultureInfo.InvariantCulture);
@@ -756,10 +989,11 @@ namespace Mantle {
       Recent(Json.Obj("result", "added", "kind", it.Kind, "formats", names, "bytes", it.Bytes,
                       "openMs", openMs, "ms", sw.ElapsedMilliseconds));
       Features.Event("clip", Json.Obj("what", "changed", "rev", Rev(), "count", Count(), "why", "copy"));
+      return "added";
     }
 
     /// One format's bytes, or null. Larger than `cap` = null and tooLarge set (never half an item).
-    static byte[] Read(uint fmt, long cap, ref bool tooLarge) {
+    static byte[] ReadClipboard(uint fmt, long cap, ref bool tooLarge) {
       IntPtr h = Native.GetClipboardData(fmt);
       if (h == IntPtr.Zero) return null;
       long size = (long)Native.GlobalSize(h).ToUInt64();
@@ -780,15 +1014,25 @@ namespace Mantle {
 
     static void LoadPinsLocked() {
       _pinsError = null;
+      _pinsUnreadable = false;
       _items.RemoveAll(delegate (Item i) { return i.Pinned; });
-      if (string.IsNullOrEmpty(_pinsFile) || !File.Exists(_pinsFile)) return;
+      if (string.IsNullOrEmpty(_pinsFile)) return;
+      // A save that died between writing the new file and putting it in place leaves only the
+      // .tmp (the old save order deleted first): that file IS the pins.
+      string tmp = _pinsFile + ".tmp";
+      try { if (!File.Exists(_pinsFile) && File.Exists(tmp)) File.Move(tmp, _pinsFile); } catch (Exception) { }
+      if (!File.Exists(_pinsFile)) return;
       try {
         byte[] plain = Dpapi(File.ReadAllBytes(_pinsFile), false);
-        if (plain == null) { _pinsError = "the pinned items could not be decrypted (a different Windows user, or a damaged file)"; return; }
+        if (plain == null) {
+          _pinsUnreadable = true;
+          _pinsError = "the saved pins could not be opened (they belong to another Windows user, or the file is damaged)";
+          return;
+        }
         var root = Json.Parse(Encoding.UTF8.GetString(plain)) as Dictionary<string, object>;
         object v;
         var list = root != null && Json.TryGet(root, "items", out v) ? v as List<object> : null;
-        if (list == null) { _pinsError = "the pinned-items file is not in a shape Mantle knows"; return; }
+        if (list == null) { _pinsUnreadable = true; _pinsError = "the saved pins are in a form this Mantle does not know"; return; }
         var loaded = new List<Item>();
         foreach (object o in list) {
           var d = o as Dictionary<string, object>;
@@ -813,7 +1057,8 @@ namespace Mantle {
               using (Bitmap bmp = Codec.FromPng(it.Png)) { it.W = bmp.Width; it.H = bmp.Height; it.Thumb = Codec.Thumb(bmp); }
             } catch (Exception) { continue; }
           }
-          Finish(it, Hash(it.Text, it.Html, it.Rtf, it.Png, it.Files));
+          if (it.Png != null) it.ImageHash = ImgHash(it.Png);
+          Finish(it);
           it.Id = "c" + (_nextId++).ToString(CultureInfo.InvariantCulture);
           loaded.Add(it);
           if (loaded.Count >= MaxPins) break;
@@ -822,12 +1067,14 @@ namespace Mantle {
         _items.Sort(delegate (Item a, Item b) { return b.Ts.CompareTo(a.Ts); });
         _rev++;
       } catch (Exception ex) {
-        _pinsError = "the pinned items could not be read (" + ex.GetType().Name + ")";
+        _pinsUnreadable = true;
+        Program.EmitLog("warn", "clipboard: pins file unreadable (" + ex.GetType().Name + ")");
+        _pinsError = "the saved pins could not be read";
       }
     }
 
     static void SavePinsLocked() {
-      if (string.IsNullOrEmpty(_pinsFile)) { _pinsError = "pins are kept for this session only: Mantle was not given a file to save them in"; return; }
+      if (string.IsNullOrEmpty(_pinsFile)) { _pinsError = "pins are kept only until Mantle restarts: there is no file to save them in"; return; }
       try {
         var list = new List<object>();
         foreach (Item i in _items) {
@@ -842,13 +1089,23 @@ namespace Mantle {
         if (sealedBytes == null) { _pinsError = "Windows would not encrypt the pinned items, so they were not saved"; return; }
         string dir = Path.GetDirectoryName(_pinsFile);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        // A file that could not be opened is set aside, never overwritten: it may be another
+        // Windows user's pins, or recoverable.
+        if (_pinsUnreadable && File.Exists(_pinsFile)) {
+          string aside = _pinsFile + ".unreadable";
+          if (File.Exists(aside)) File.Delete(aside);
+          File.Move(_pinsFile, aside);
+          _pinsUnreadable = false;
+        }
         string tmp = _pinsFile + ".tmp";
         File.WriteAllBytes(tmp, sealedBytes);
-        if (File.Exists(_pinsFile)) File.Delete(_pinsFile);
-        File.Move(tmp, _pinsFile);
+        // Replace swaps the files in one step; there is never a moment with no pins file at all.
+        if (File.Exists(_pinsFile)) File.Replace(tmp, _pinsFile, null);
+        else File.Move(tmp, _pinsFile);
         _pinsError = null;
       } catch (Exception ex) {
-        _pinsError = "the pinned items could not be saved (" + ex.GetType().Name + ")";
+        Program.EmitLog("warn", "clipboard: pins not saved (" + ex.GetType().Name + ")");
+        _pinsError = "the pinned items could not be saved to disk";
       }
     }
 
@@ -899,6 +1156,7 @@ namespace Mantle {
           case "CF_UNICODETEXT": return CF_UNICODETEXT;
           case "CF_DIB": return CF_DIB;
           case "CF_HDROP": return CF_HDROP;
+          case "CF_DIBV5": return CF_DIBV5;
           default: return Native.RegisterClipboardFormatW(name);
         }
       }
@@ -1127,7 +1385,7 @@ namespace Mantle {
               list.Add(new Format("PNG", png));
               list.Add(new Format("CF_DIB", ToDib(bmp)));
             }
-          } catch (Exception ex) { return "the picture could not be decoded (" + ex.GetType().Name + ")"; }
+          } catch (Exception) { return "its picture could not be read"; }
         }
         if (list.Count == 0) return "the item has nothing to paste";
         return null;
@@ -1195,7 +1453,7 @@ namespace Mantle {
           Debounce.Interval = DebounceMs;
           Debounce.Tick += delegate (object s, EventArgs e) {
             Debounce.Stop();
-            try { Capture(_observe, Handle); }
+            try { Capture(_observe, new LiveSource(Handle), true); }
             catch (Exception ex) {
               try { Native.CloseClipboard(); } catch (Exception) { }
               Bump("error");
@@ -1235,7 +1493,8 @@ namespace Mantle {
           try {
             var w = new Win();
             if (!Native.AddClipboardFormatListener(w.Handle)) {
-              err = "Windows refused the clipboard listener (error " + Marshal.GetLastWin32Error() + ")";
+              Program.EmitLog("warn", "clipboard: AddClipboardFormatListener failed (error " + Marshal.GetLastWin32Error() + ")");
+              err = "Windows did not let Mantle watch the clipboard";
               w.DestroyHandle();
               ready.Set();
               return;
@@ -1247,7 +1506,8 @@ namespace Mantle {
             w.Debounce.Dispose();
             w.DestroyHandle();
           } catch (Exception ex) {
-            err = "the clipboard listener thread failed (" + ex.GetType().Name + ": " + ex.Message + ")";
+            Program.EmitLog("warn", "clipboard: listener thread failed (" + ex.GetType().Name + ")");
+            err = "Mantle's clipboard watcher stopped unexpectedly";
             ready.Set();
           }
         });
@@ -1255,7 +1515,7 @@ namespace Mantle {
         t.IsBackground = true;
         t.SetApartmentState(ApartmentState.STA);
         t.Start();
-        if (!ready.WaitOne(3000)) return "the clipboard listener did not start within 3 s";
+        if (!ready.WaitOne(3000)) return "Mantle could not start watching the clipboard in time";
         if (err != null) return err;
         lock (_lk) _thread = t;
         return null;
@@ -1281,11 +1541,11 @@ namespace Mantle {
       static string Invoke(Func<string> fn, int timeoutMs) {
         bool running;
         lock (_lk) running = _win != null;
-        if (!running) return "the clipboard listener is not running";
+        if (!running) return "clipboard history is not running";
         string r = null;
         var done = new ManualResetEvent(false);
         Post(delegate () { try { r = fn(); } finally { done.Set(); } });
-        if (!done.WaitOne(timeoutMs)) return "the clipboard did not answer within " + timeoutMs + " ms";
+        if (!done.WaitOne(timeoutMs)) return "the clipboard did not answer in time; try again";
         return r;
       }
 
@@ -1301,19 +1561,20 @@ namespace Mantle {
       public static string Write(List<Codec.Format> formats) {
         return Invoke(delegate () {
           IntPtr hwnd = _win.Handle;
-          if (!Open(hwnd)) return "another app is holding the clipboard";
+          if (!Open(hwnd)) return "another app is holding the clipboard; try again";
           try {
-            if (!Native.EmptyClipboard()) return "Windows would not empty the clipboard (error " + Marshal.GetLastWin32Error() + ")";
+            if (!Native.EmptyClipboard()) { Program.EmitLog("warn", "clipboard: EmptyClipboard failed (error " + Marshal.GetLastWin32Error() + ")"); return "Windows did not let Mantle change the clipboard"; }
             foreach (Codec.Format f in formats) {
               uint id = Fmt.ByName(f.Name);
               IntPtr h = Native.GlobalAlloc(0x0002 /* GMEM_MOVEABLE */, new UIntPtr((ulong)f.Data.Length));
-              if (h == IntPtr.Zero) return "out of memory for " + f.Name;
+              if (h == IntPtr.Zero) return "there was not enough memory to put it on the clipboard";
               IntPtr p = Native.GlobalLock(h);
               Marshal.Copy(f.Data, 0, p, f.Data.Length);
               Native.GlobalUnlock(h);
               if (Native.SetClipboardData(id, h) == IntPtr.Zero) {
                 Native.GlobalFree(h);
-                return "Windows refused the " + f.Name + " format (error " + Marshal.GetLastWin32Error() + ")";
+                Program.EmitLog("warn", "clipboard: SetClipboardData " + f.Name + " failed (error " + Marshal.GetLastWin32Error() + ")");
+                return "Windows did not accept the item on the clipboard";
               }
             }
           } finally {
