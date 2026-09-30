@@ -36,6 +36,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -109,7 +110,12 @@ namespace Mantle {
       }
       string mode = Equals(caps["aoac"], true) ? "Modern Standby (S0 low power idle)" : "S3 standby";
 
-      if (passive && !dry) {
+      // simulate (passive only): the whole real path - the once-only guard, the delay, the
+      // thread - with a 200 ms wait standing in for SetSuspendState. It is how the test proves
+      // the guard without ever suspending anything.
+      bool simulate = Json.GetBool(req, "simulate", false);
+      if (simulate && !passive) return "session: simulate is a test argument and only runs in --passive";
+      if (passive && !dry && !simulate) {
         result = Json.Obj("ok", false, "action", action,
                           "reason", "refused: sidecar is passive (test mode), and a test sidecar never suspends the machine it runs on");
         return null;
@@ -132,22 +138,55 @@ namespace Mantle {
         return null;
       }
 
+      // ONE SLEEP AT A TIME. A double-click on Sleep (or a retry after a slow reply) sent two
+      // requests, and each started its own thread: two SetSuspendState calls, the second of
+      // which can land as the machine wakes and put it straight back to sleep. Now a request
+      // that arrives while one is on its way - or within RepeatGuardMs of the call - is
+      // answered ok with already:true and never reaches Windows (core-sc, 2026-09-29).
+      if (!ClaimSleep()) {
+        result = Json.Obj("ok", true, "action", action, "already", true, "simulated", simulate,
+                          "reason", "a sleep is already on its way, so this request was not sent to Windows a second time");
+        return null;
+      }
       var t = new Thread(delegate () {
-        Thread.Sleep(delay);
-        bool ok = SetSuspendState(false, false, false);
-        if (!ok) {
-          int e = Marshal.GetLastWin32Error();
-          string why = "sleep failed: " + SleepCall + " returned FALSE (Win32 error " + e + ": " + new Win32Exception(e).Message + ")";
-          Program.EmitLog("error", why);
-          Program.Emit(Json.Obj("ev", "session", "action", "sleep", "ok", false, "reason", why));
+        try {
+          Thread.Sleep(delay);
+          Interlocked.Exchange(ref _callTs, Stopwatch.GetTimestamp());
+          if (simulate) { Thread.Sleep(200); return; }
+          bool ok = SetSuspendState(false, false, false);
+          if (!ok) {
+            int e = Marshal.GetLastWin32Error();
+            string why = "sleep failed: " + SleepCall + " returned FALSE (Win32 error " + e + ": " + new Win32Exception(e).Message + ")";
+            Program.EmitLog("error", why);
+            Program.Emit(Json.Obj("ev", "session", "action", "sleep", "ok", false, "reason", why));
+          }
+        } finally {
+          Interlocked.Exchange(ref _pending, 0);
         }
       });
       t.IsBackground = true;
       t.Name = "mantle-session-sleep";
       t.Start();
-      result = Json.Obj("ok", true, "action", action, "dryRun", false, "call", SleepCall,
+      result = Json.Obj("ok", true, "action", action, "dryRun", false, "simulated", simulate, "call", SleepCall,
                         "afterMs", delay, "mode", mode, "reason", null);
       return null;
+    }
+
+    static int _pending;       // 1 from an accepted sleep until its call has returned (after the wake)
+    static long _callTs;       // Stopwatch timestamp of the last call to SetSuspendState, 0 = never
+    const int RepeatGuardMs = 1000;
+
+    /// True when this request may sleep the machine: none is on its way, and the last call
+    /// started more than RepeatGuardMs ago (SetSuspendState may return early on some
+    /// machines, so "pending" alone would not cover a double-click).
+    static bool ClaimSleep() {
+      if (Interlocked.CompareExchange(ref _pending, 1, 0) != 0) return false;
+      long last = Interlocked.Read(ref _callTs);
+      if (last != 0 && (Stopwatch.GetTimestamp() - last) * 1000 / Stopwatch.Frequency < RepeatGuardMs) {
+        Interlocked.Exchange(ref _pending, 0);
+        return false;
+      }
+      return true;
     }
 
     /// Read-only. What the power manager says this machine can do.

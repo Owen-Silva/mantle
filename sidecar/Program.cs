@@ -59,6 +59,7 @@ namespace Mantle {
     /// class and common controls reuse it, while WM_APP is reserved for the
     /// application. Posted by the keyboard hook, handled below.
     public const int WM_HOTKEY_TAP = 0x8000 + 11;
+    const int WM_ENDSESSION = 0x0016;
 
     protected override CreateParams CreateParams {
       get {
@@ -75,6 +76,17 @@ namespace Mantle {
       if (Program.ParkWanted) Program.ParkLoopIfAsked();   // exiting: see Program.ParkLoopForExit
       if (m.Msg == WM_HOTKEY_TAP) {
         Program.Emit(Json.Obj("ev", "hotkey", "name", "win"));
+        return;
+      }
+      // SIGN-OUT, RESTART, SHUT DOWN. This is a winexe, so it has no console and the
+      // console handler never hears CTRL_LOGOFF/CTRL_SHUTDOWN: WM_ENDSESSION to a top-level
+      // window is the only word it gets, and Windows ends the process soon after this
+      // returns. Until 2026-09-29 nothing handled it, so the one exit path that happens
+      // every day skipped the restore and left restored:false in the note (core-sc,
+      // test-protocol.js). wParam FALSE means the sign-out was cancelled: nothing to do.
+      if (m.Msg == WM_ENDSESSION) {
+        if (m.WParam != IntPtr.Zero) Program.RequestShutdown(0, "Windows is ending the session (sign-out, restart or shut down)");
+        m.Result = IntPtr.Zero;
         return;
       }
       base.WndProc(ref m);
@@ -165,6 +177,13 @@ namespace Mantle {
         var ex = e.ExceptionObject as Exception;
         // Same path as every other exit: restore first, speak afterwards.
         RequestShutdown(1, "unhandled error: " + (ex == null ? "unknown" : ex.Message));
+        // Only reached when ANOTHER thread already owns the shutdown (the owner never
+        // returns: it ends in Environment.Exit). Returning from this handler lets the
+        // runtime tear the process down on the spot - in the middle of that thread's
+        // restore. Measured 2026-09-29 (core-sc): two threads throwing together exited
+        // 0xE0434352 with no restore and restored:false. So wait here; the hard exit
+        // armed by the owner bounds the wait.
+        Thread.Sleep(HardExitMs + 1000);
       };
       // A throw on the UI thread is survivable: report it, keep serving.
       Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
@@ -340,8 +359,13 @@ namespace Mantle {
       string line;
       try {
         line = Json.Write(payload);
-      } catch (Exception) {
-        return;   // never let serialising an event kill a command
+      } catch (Exception ex) {
+        // Never let serialising kill a command - but a REPLY that cannot be written
+        // still owes its caller an answer. Until 2026-09-29 it was dropped without a
+        // word and the caller waited out its whole timeout (core-sc, test-protocol.js).
+        // An event that cannot be written is still dropped: nobody is waiting on it.
+        line = FallbackReply(payload, ex);
+        if (line == null) return;
       }
       bool taken = false;
       try {
@@ -358,6 +382,21 @@ namespace Mantle {
       } catch (Exception) {
       } finally {
         if (taken) Monitor.Exit(_writeLock);
+      }
+    }
+
+    /// The error line for a reply whose result could not be serialised, or null when the
+    /// payload is not a reply (an event) or even this cannot be written.
+    static string FallbackReply(object payload, Exception ex) {
+      try {
+        var d = payload as IDictionary;
+        if (d == null || !d.Contains("id") || d.Contains("ev")) return null;
+        object id = d["id"];
+        if (id != null && !(id is string) && !(id is long) && !(id is int) && !(id is double)) id = null;
+        return Json.Write(Json.Obj("id", id, "ok", false,
+          "error", "the answer could not be written (" + ex.GetType().Name + ": " + ex.Message + ")"));
+      } catch (Exception) {
+        return null;
       }
     }
 
@@ -413,8 +452,15 @@ namespace Mantle {
       var t = new Thread(delegate () {
         try {
           var sin = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false));
+          var sb = new StringBuilder(4096);
           string line;
-          while ((line = sin.ReadLine()) != null) {
+          bool over;
+          while ((line = ReadLineCapped(sin, ref sb, out over)) != null) {
+            if (over) {
+              Reply(null, false, null, "bad request: the line is over the " + (MaxLineChars / (1024 * 1024)) +
+                                       " MB line cap, so it was dropped unread (send one small JSON object per line)");
+              continue;
+            }
             string trimmed = line.Trim();
             if (trimmed.Length == 0) continue;
             // Stamped HERE, the moment the line arrives: a request's deadline
@@ -433,6 +479,36 @@ namespace Mantle {
       t.IsBackground = true;
       t.Name = "mantle-stdin";
       t.Start();
+    }
+
+    /// The longest request line read, in chars. Mantle's biggest request is a few KB; the
+    /// cap exists because ReadLine buffers a line of ANY length, and a runaway writer
+    /// (gigabytes with no newline) ran the sidecar out of memory - an OutOfMemoryException on
+    /// the stdin thread, and so a shutdown. 16 MB is 4x the reader's own cap the other way
+    /// (lib/sidecar.js MAX_LINE_CHARS), so no real request comes near it.
+    const int MaxLineChars = 16 * 1024 * 1024;
+
+    /// ReadLine with a ceiling: a line over MaxLineChars is read to its newline and thrown
+    /// away without ever being held whole (`over` = true, the line returned is ""). null at
+    /// EOF. A trailing \r is dropped, as ReadLine does.
+    static string ReadLineCapped(StreamReader r, ref StringBuilder sb, out bool over) {
+      over = false;
+      sb.Length = 0;
+      bool any = false;
+      int c;
+      while ((c = r.Read()) >= 0) {
+        any = true;
+        if (c == '\n') break;
+        if (over) continue;
+        if (sb.Length >= MaxLineChars) { over = true; sb.Length = 0; continue; }
+        sb.Append((char)c);
+      }
+      if (!any) return null;
+      if (sb.Length > 0 && sb[sb.Length - 1] == '\r') sb.Length--;
+      string line = over ? "" : sb.ToString();
+      // Do not keep a 32 MB buffer alive for the rest of the run because one line was big.
+      if (sb.Capacity > 1024 * 1024) sb = new StringBuilder(4096);
+      return line;
     }
 
     /// If the UI process dies, the sidecar must not outlive it holding a hidden
@@ -514,8 +590,16 @@ namespace Mantle {
       }
       r.Lane = lane;
       Lane worker = Lanes.Worker(lane);
-      if (worker != null) { worker.Post(r); return true; }
+      if (worker != null) {
+        if (!worker.Post(r)) ReplyBusy(r, lane, worker.Queued);
+        return true;
+      }
 
+      // The ui lane's ceiling. UiQueued is posted-but-not-started, the same count ping shows.
+      if (!r.Exempt && Thread.VolatileRead(ref Lanes.UiQueued) >= Lanes.MaxQueued) {
+        ReplyBusy(r, lane, Thread.VolatileRead(ref Lanes.UiQueued));
+        return true;
+      }
       Interlocked.Increment(ref Lanes.UiQueued);
       try {
         _loop.BeginInvoke(new Action<Request>(Execute), r);
@@ -583,6 +667,17 @@ namespace Mantle {
       }
     }
 
+    /// A full lane (Lanes.MaxQueued): answered now rather than queued without limit. `reason`
+    /// "busy" like "expired", so a caller can tell it from a real failure and try again.
+    static void ReplyBusy(Request r, string lane, int queued) {
+      Interlocked.Increment(ref Lanes.Refused);
+      foreach (Waiter w in r.Waiters)
+        Emit(Json.Obj("id", NormalizeId(w.Id), "ok", false,
+                      "error", "busy: \"" + r.Cmd + "\" was not queued because the " + lane + " lane already has " +
+                               queued + " requests waiting; try again in a moment",
+                      "reason", "busy"));
+    }
+
     /// `error` AND `reason` both carry the word, like ReplyCancelled, so a
     /// caller reading either can tell a skipped request from a failed one.
     static void ReplyExpired(string cmd, Waiter w, long nowTs) {
@@ -639,6 +734,13 @@ namespace Mantle {
                             "thread", Thread.CurrentThread.Name ?? "ui");
           return null;
         }
+
+        case "selftest":
+          // TEST ONLY, like `sleep`: the probes test-protocol.js needs to prove the
+          // protocol's own edges (the writer, the arg helpers, the crash path, the
+          // state note under contention, handle counts). Refused outside --passive.
+          if (!Passive) return "selftest is a test command and only runs in --passive";
+          return SelfTest.Run(req, ref result);
 
         case "windows":
           result = WindowList.Build();
@@ -698,6 +800,7 @@ namespace Mantle {
           IntPtr rHwnd = Json.GetHwnd(req, "hwnd");
           if (rHwnd == IntPtr.Zero) return "raise: no hwnd given";
           if (!Win32.IsWindow(rHwnd)) return "raise: window " + rHwnd.ToInt64() + " no longer exists";
+          { string own = Foreground.NotMantleWindow(rHwnd, "raise"); if (own != null) return own; }
           // It changes a live z-order, so passive refuses it - even though the
           // window is the caller's own.
           if (Passive) return PassiveRefusal + ": raise would change a live window's z-order";
@@ -714,6 +817,7 @@ namespace Mantle {
           // hwnd. It never touches the taskbar's z-order, visibility or state -
           // it only watches it. Subscribe refuses the taskbar itself outright.
           IntPtr barHwnd = Json.GetHwnd(req, "hwnd");
+          { string own = Foreground.NotMantleWindow(barHwnd, "traywatch"); if (own != null) return own; }
           bool watching;
           string twerr = TrayWatch.Subscribe(barHwnd, out watching);
           if (twerr != null) return twerr;
@@ -768,6 +872,7 @@ namespace Mantle {
         case "appbar": {
           if (Passive) return PassiveRefusal;
           IntPtr abHwnd = Json.GetHwnd(req, "hwnd");
+          { string own = Foreground.NotMantleWindow(abHwnd, "appbar"); if (own != null) return own; }
           if (Json.GetBool(req, "remove", false)) {
             bool removed;
             string xerr = AppBars.Remove(abHwnd, out removed);
@@ -792,6 +897,7 @@ namespace Mantle {
           // and dies with the window, so there is nothing for passive mode to
           // protect the machine from.
           IntPtr gHwnd = Json.GetHwnd(req, "hwnd");
+          { string own = Foreground.NotMantleWindow(gHwnd, "glass"); if (own != null) return own; }
           bool applied;
           string usedMode;
           string gerr = Glass.Apply(gHwnd, Json.GetString(req, "mode"),
@@ -806,6 +912,7 @@ namespace Mantle {
           // attribute dies with it. Refused only for a hwnd that is not a
           // window, an unknown mode, or the taskbar.
           IntPtr cHwnd = Json.GetHwnd(req, "hwnd");
+          { string own = Foreground.NotMantleWindow(cHwnd, "corners"); if (own != null) return own; }
           string usedCorner, usedBorder, borderWhy;
           // `border` absent means "leave the window border alone", which is not
           // the same as "default" - so the key's presence is what decides.
@@ -949,6 +1056,7 @@ namespace Mantle {
             result = Json.Obj("ok", true, "cancelled", Morph.Cancel(mHwnd));
             return null;
           }
+          { string own = Foreground.NotMantleWindow(mHwnd, "morph"); if (own != null) return own; }
           Morph.Box mFrom, mTo;
           string berr = GetBox(req, "from", out mFrom);
           if (berr != null) return berr;
@@ -966,6 +1074,7 @@ namespace Mantle {
 
         case "region": {
           IntPtr rgHwnd = Json.GetHwnd(req, "hwnd");
+          { string own = Foreground.NotMantleWindow(rgHwnd, "region"); if (own != null) return own; }
           int usedR;
           string gerr2 = Morph.SetRegion(rgHwnd, Json.GetInt(req, "r", 0), out usedR);
           if (gerr2 != null) return gerr2;
@@ -985,6 +1094,7 @@ namespace Mantle {
           // z-order change.
           IntPtr pHwnd = Json.GetHwnd(req, "hwnd");
           if (pHwnd == IntPtr.Zero || !Win32.IsWindow(pHwnd)) return "place: hwnd is not a window";
+          { string own = Foreground.NotMantleWindow(pHwnd, "place"); if (own != null) return own; }
           int px = Json.GetInt(req, "x", 0), py = Json.GetInt(req, "y", 0);
           int pw = Json.GetInt(req, "w", 0), ph = Json.GetInt(req, "h", 0);
           if (pw <= 0 || ph <= 0) return "place: w and h must be positive physical pixels";
@@ -1012,6 +1122,7 @@ namespace Mantle {
         case "desktop": {
           if (Passive) return PassiveRefusal;
           IntPtr hwnd = Json.GetHwnd(req, "hwnd");
+          { string own = Foreground.NotMantleWindow(hwnd, "desktop"); if (own != null) return own; }
           if (Json.GetBool(req, "detach", false)) {
             string derr = Desktop.Detach(hwnd);
             if (derr != null) return derr;
@@ -1665,6 +1776,97 @@ namespace Mantle {
       } catch (Exception ex) { detail.Add("state file: could not be updated (" + ex.Message + ")"); }
 
       return string.Join("; ", detail.ToArray());
+    }
+  }
+
+  /// `selftest {op}` - passive-only probes for sidecar/test-protocol.js (Program.Run refuses
+  /// it outside --passive). Each op answers one question the wire alone cannot ask:
+  ///   echo        {value, num}  the writer: value goes back as given; num is a string parsed
+  ///                             to a double ("NaN", "Infinity" included) and written out
+  ///   unwritable                a result the writer cannot serialise: the caller must still
+  ///                             get an answer
+  ///   getint      {v}           Json.GetInt on whatever v is (-1 when it cannot)
+  ///   throw       {count}       `count` background threads throw at once, after the reply:
+  ///                             the crash path must still restore and write the state note
+  ///   stateRace   {threads, writes}  the state note written from many threads at once
+  ///   resources                 this process's GDI objects, USER objects and kernel handles
+  static class SelfTest {
+    [DllImport("user32.dll")] static extern uint GetGuiResources(IntPtr process, uint flags);
+
+    sealed class Unwritable : IEnumerable {
+      public IEnumerator GetEnumerator() { throw new InvalidOperationException("this value cannot be written"); }
+    }
+
+    public static string Run(Dictionary<string, object> req, ref object result) {
+      string op = Json.GetString(req, "op");
+      switch (op) {
+        case "echo": {
+          object v;
+          req.TryGetValue("value", out v);
+          string ns = Json.GetString(req, "num");
+          object num = null;
+          if (ns != null) {
+            if (ns == "NaN") num = double.NaN;
+            else if (ns == "Infinity") num = double.PositiveInfinity;
+            else if (ns == "-Infinity") num = double.NegativeInfinity;
+            else num = double.Parse(ns, CultureInfo.InvariantCulture);
+          }
+          result = Json.Obj("value", v, "num", num);
+          return null;
+        }
+        case "unwritable":
+          result = Json.Obj("bad", new Unwritable());
+          return null;
+        case "getint":
+          result = Json.Obj("v", Json.GetInt(req, "v", -1));
+          return null;
+        case "throw": {
+          int n = Math.Max(1, Math.Min(8, Json.GetInt(req, "count", 1)));
+          var go = new ManualResetEvent(false);
+          for (int i = 0; i < n; i++) {
+            var t = new Thread(delegate () {
+              go.WaitOne();
+              throw new InvalidOperationException("selftest: a background thread threw on purpose");
+            });
+            t.IsBackground = true;
+            t.Name = "mantle-selftest-throw";
+            t.Start();
+          }
+          // After the reply is out: the ui lane replies once Run returns.
+          var starter = new Thread(delegate () { Thread.Sleep(150); go.Set(); });
+          starter.IsBackground = true;
+          starter.Start();
+          result = Json.Obj("threads", n);
+          return null;
+        }
+        case "stateRace": {
+          int threads = Math.Max(1, Math.Min(16, Json.GetInt(req, "threads", 8)));
+          int writes = Math.Max(1, Math.Min(200, Json.GetInt(req, "writes", 40)));
+          int errors = 0;
+          var ts = new List<Thread>();
+          for (int i = 0; i < threads; i++) {
+            var t = new Thread(delegate () {
+              for (int k = 0; k < writes; k++) if (ShellState.Write() != null) Interlocked.Increment(ref errors);
+            });
+            t.IsBackground = true;
+            ts.Add(t);
+          }
+          foreach (Thread t in ts) t.Start();
+          foreach (Thread t in ts) t.Join(20000);
+          result = Json.Obj("threads", threads, "writes", threads * writes, "errors", errors);
+          return null;
+        }
+        case "resources": {
+          IntPtr me = Win32.GetCurrentProcess();   // the pseudo-handle: opens nothing
+          int handles, threads;
+          using (Process p = Process.GetCurrentProcess()) { handles = p.HandleCount; threads = p.Threads.Count; }
+          result = Json.Obj("gdi", (long)GetGuiResources(me, 0), "user", (long)GetGuiResources(me, 1),
+                            "handles", handles, "threads", threads);
+          return null;
+        }
+        default:
+          return "selftest: op must be echo, unwritable, getint, throw, stateRace or resources";
+      }
     }
   }
 }

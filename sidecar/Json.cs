@@ -35,21 +35,32 @@ namespace Mantle {
 
     public static string Write(object v) {
       var sb = new StringBuilder(256);
-      WriteValue(sb, v);
+      WriteValue(sb, v, 0);
       return sb.ToString();
     }
 
-    static void WriteValue(StringBuilder sb, object v) {
+    /// How deep a value may nest, in and out. The protocol is flat-ish (a handful of levels);
+    /// the limit exists because recursion past ~10,000 levels is a StackOverflowException, which
+    /// .NET cannot catch: the sidecar died on the spot with no restore (core-sc, measured
+    /// 2026-09-29 with a 200,000-deep request).
+    public const int MaxDepth = 128;
+
+    static void WriteValue(StringBuilder sb, object v, int depth) {
+      if (depth > MaxDepth) throw new InvalidOperationException("the value nests more than " + MaxDepth + " levels deep");
       if (v == null) { sb.Append("null"); return; }
       if (v is string) { WriteString(sb, (string)v); return; }
       if (v is bool) { sb.Append(((bool)v) ? "true" : "false"); return; }
-      if (v is int || v is long || v is short || v is byte || v is uint || v is ulong) {
+      if (v is int || v is long || v is short || v is byte || v is uint || v is ulong || v is sbyte || v is ushort) {
         sb.Append(Convert.ToString(v, CultureInfo.InvariantCulture)); return;
       }
       if (v is double || v is float || v is decimal) {
         // "R" round-trips and renders 1.0 as "1", which is what a JS caller wants.
-        sb.Append(Convert.ToDouble(v, CultureInfo.InvariantCulture)
-                         .ToString("R", CultureInfo.InvariantCulture));
+        // NaN and the infinities have NO JSON spelling: written as text they made the
+        // whole line unreadable, so the caller's reply was lost with it. null is what
+        // JSON.stringify writes for them too (core-sc, 2026-09-29).
+        double dv = Convert.ToDouble(v, CultureInfo.InvariantCulture);
+        if (double.IsNaN(dv) || double.IsInfinity(dv)) { sb.Append("null"); return; }
+        sb.Append(dv.ToString("R", CultureInfo.InvariantCulture));
         return;
       }
       if (v is IDictionary) {
@@ -61,7 +72,7 @@ namespace Mantle {
           first = false;
           WriteString(sb, Convert.ToString(e.Key));
           sb.Append(':');
-          WriteValue(sb, e.Value);
+          WriteValue(sb, e.Value, depth + 1);
         }
         sb.Append('}');
         return;
@@ -72,7 +83,7 @@ namespace Mantle {
         foreach (var item in (IEnumerable)v) {
           if (!first) sb.Append(',');
           first = false;
-          WriteValue(sb, item);
+          WriteValue(sb, item, depth + 1);
         }
         sb.Append(']');
         return;
@@ -95,7 +106,12 @@ namespace Mantle {
           default:
             // Anything below 0x20 must be escaped; everything else (including
             // emoji in window titles) goes out as UTF-8 bytes on the stream.
+            // A LONE surrogate has no UTF-8 form: the encoder turned it into
+            // U+FFFD, so a window title or path holding one came back changed
+            // and could never be matched again. Escaped, it round-trips exactly.
             if (c < ' ') sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+            else if (char.IsHighSurrogate(c) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1])) { sb.Append(c).Append(s[i + 1]); i++; }
+            else if (char.IsSurrogate(c)) sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
             else sb.Append(c);
             break;
         }
@@ -107,7 +123,7 @@ namespace Mantle {
 
     public static object Parse(string s) {
       int i = 0;
-      object v = ParseValue(s, ref i);
+      object v = ParseValue(s, ref i, 0);
       SkipWs(s, ref i);
       // Trailing content is NOT ignored. '{"id":1,...}{"id":2,...}' on one line
       // used to parse the first object and drop the second without a word - a
@@ -122,12 +138,14 @@ namespace Mantle {
       while (i < s.Length && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n')) i++;
     }
 
-    static object ParseValue(string s, ref int i) {
+    static object ParseValue(string s, ref int i, int depth) {
       SkipWs(s, ref i);
       if (i >= s.Length) throw new FormatException("unexpected end of JSON");
       char c = s[i];
-      if (c == '{') return ParseObject(s, ref i);
-      if (c == '[') return ParseArray(s, ref i);
+      if ((c == '{' || c == '[') && depth >= MaxDepth)
+        throw new FormatException("the request is too deeply nested (more than " + MaxDepth + " levels)");
+      if (c == '{') return ParseObject(s, ref i, depth + 1);
+      if (c == '[') return ParseArray(s, ref i, depth + 1);
       if (c == '"') return ParseString(s, ref i);
       if (c == 't') { Expect(s, ref i, "true"); return true; }
       if (c == 'f') { Expect(s, ref i, "false"); return false; }
@@ -141,7 +159,7 @@ namespace Mantle {
       i += lit.Length;
     }
 
-    static Dictionary<string, object> ParseObject(string s, ref int i) {
+    static Dictionary<string, object> ParseObject(string s, ref int i, int depth) {
       var d = new Dictionary<string, object>(StringComparer.Ordinal);
       i++; // '{'
       SkipWs(s, ref i);
@@ -152,7 +170,7 @@ namespace Mantle {
         SkipWs(s, ref i);
         if (i >= s.Length || s[i] != ':') throw new FormatException("expected ':' at offset " + i);
         i++;
-        d[key] = ParseValue(s, ref i);
+        d[key] = ParseValue(s, ref i, depth);
         SkipWs(s, ref i);
         if (i >= s.Length) throw new FormatException("unterminated object");
         if (s[i] == ',') { i++; continue; }
@@ -161,13 +179,13 @@ namespace Mantle {
       }
     }
 
-    static List<object> ParseArray(string s, ref int i) {
+    static List<object> ParseArray(string s, ref int i, int depth) {
       var list = new List<object>();
       i++; // '['
       SkipWs(s, ref i);
       if (i < s.Length && s[i] == ']') { i++; return list; }
       while (true) {
-        list.Add(ParseValue(s, ref i));
+        list.Add(ParseValue(s, ref i, depth));
         SkipWs(s, ref i);
         if (i >= s.Length) throw new FormatException("unterminated array");
         if (s[i] == ',') { i++; continue; }
@@ -198,7 +216,15 @@ namespace Mantle {
           case 't': sb.Append('\t'); break;
           case 'u':
             if (i + 4 > s.Length) throw new FormatException("truncated \\u escape");
-            sb.Append((char)int.Parse(s.Substring(i, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture));
+            // Exactly four hex digits: NumberStyles.HexNumber also allows spaces,
+            // so a "u 12a" escape used to be read as U+012A.
+            int code = 0;
+            for (int k = 0; k < 4; k++) {
+              int h = HexVal(s[i + k]);
+              if (h < 0) throw new FormatException("bad \\u escape at offset " + (i - 2) + ": it needs exactly four hex digits");
+              code = code * 16 + h;
+            }
+            sb.Append((char)code);
             i += 4;
             break;
           default: throw new FormatException("bad escape \\" + e);
@@ -212,7 +238,45 @@ namespace Mantle {
       if (i == start)
         throw new FormatException("not valid JSON: expected a value at offset " + i +
                                   " but found '" + (i < s.Length ? s[i].ToString() : "end of line") + "'");
-      return double.Parse(s.Substring(start, i - start), CultureInfo.InvariantCulture);
+      string num = s.Substring(start, i - start);
+      // JSON's own grammar, not double.Parse's looser one: "+1", ".5", "01" and
+      // "1." all parsed before. -?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?
+      if (!IsJsonNumber(num))
+        throw new FormatException("not a valid JSON number at offset " + start + ": '" +
+                                  (num.Length > 40 ? num.Substring(0, 40) + "..." : num) + "'");
+      double d;
+      if (!double.TryParse(num, NumberStyles.Float, CultureInfo.InvariantCulture, out d) || double.IsInfinity(d))
+        throw new FormatException("number out of range at offset " + start);
+      return d;
+    }
+
+    static int HexVal(char c) {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+      return -1;
+    }
+
+    static bool IsDigit(string n, int i) { return i < n.Length && n[i] >= '0' && n[i] <= '9'; }
+
+    static bool IsJsonNumber(string n) {
+      int i = 0;
+      if (i < n.Length && n[i] == '-') i++;
+      if (!IsDigit(n, i)) return false;
+      if (n[i] == '0') i++;
+      else while (IsDigit(n, i)) i++;
+      if (i < n.Length && n[i] == '.') {
+        i++;
+        if (!IsDigit(n, i)) return false;
+        while (IsDigit(n, i)) i++;
+      }
+      if (i < n.Length && (n[i] == 'e' || n[i] == 'E')) {
+        i++;
+        if (i < n.Length && (n[i] == '+' || n[i] == '-')) i++;
+        if (!IsDigit(n, i)) return false;
+        while (IsDigit(n, i)) i++;
+      }
+      return i == n.Length;
     }
 
     // ------------------------------------------------------------- arg helpers
@@ -241,7 +305,15 @@ namespace Mantle {
     public static int GetInt(Dictionary<string, object> req, string key, int dflt) {
       object v;
       if (!TryGet(req, key, out v)) return dflt;
-      if (v is double) return (int)Math.Round((double)v);
+      // Clamped, not cast: (int) of a double outside the int range is undefined in
+      // C# and came out as int.MinValue, so w:1e12 read as a huge NEGATIVE width.
+      if (v is double) {
+        double d = Math.Round((double)v);
+        if (double.IsNaN(d)) return dflt;
+        if (d >= int.MaxValue) return int.MaxValue;
+        if (d <= int.MinValue) return int.MinValue;
+        return (int)d;
+      }
       if (v is string) {
         int n;
         if (int.TryParse((string)v, NumberStyles.Integer, CultureInfo.InvariantCulture, out n)) return n;

@@ -104,6 +104,17 @@ namespace Mantle {
     /// or null when the file is on disk - or when there is no file to write.
     public static string Write() {
       if (!_enabled) return null;
+      // ONE WRITER AT A TIME, from building the text to the file landing. Until 2026-09-29
+      // only the build was locked: two threads then shared "<path>.tmp" (246 of 320 writes
+      // failed with a sharing violation under 8 threads, core-sc test-protocol.js), and an
+      // OLDER snapshot could land after a newer one - e.g. an app-bar change on the ui lane
+      // overwriting the shutdown's restored:true. A write is ~1 ms, so the wait is nothing.
+      lock (_fileLock) return WriteLocked();
+    }
+
+    static readonly object _fileLock = new object();
+
+    static string WriteLocked() {
       string json;
       string target = _path;
       lock (_lock) {
@@ -135,8 +146,17 @@ namespace Mantle {
         // UTF-8 with no BOM: the same convention as the wire protocol, so a
         // reader that handles our stdout handles this file too.
         File.WriteAllText(tmp, json + "\n", new UTF8Encoding(false));
-        File.Copy(tmp, target, true);
-        try { File.Delete(tmp); } catch (Exception) { }
+        // File.Replace is ReplaceFile: the target is swapped whole, so a reader (the
+        // recovery script) never sees a half-copied file. It needs the target to exist,
+        // and some file systems refuse it; the copy is the old way, kept as the fallback.
+        bool replaced = false;
+        if (File.Exists(target)) {
+          try { File.Replace(tmp, target, null, true); replaced = true; } catch (Exception) { }
+        }
+        if (!replaced) {
+          File.Copy(tmp, target, true);
+          try { File.Delete(tmp); } catch (Exception) { }
+        }
         _lastWriteError = null;
         return null;
       } catch (Exception ex) {

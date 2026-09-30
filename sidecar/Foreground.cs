@@ -85,7 +85,7 @@ namespace Mantle {
       // Never Mantle's own windows: the parent Electron process owns the bar,
       // the launcher and the monitor-sized desktop layer, and this process owns
       // one hidden window.
-      if (pid != 0 && (pid == Program.OwnPid || (Program.ParentPid > 0 && pid == Program.ParentPid))) return false;
+      if (IsMantlePid(pid)) return false;
 
       IntPtr mon = Win32.MonitorFromWindow(hwnd, Win32.MONITOR_DEFAULTTONEAREST);
       if (mon == IntPtr.Zero) return false;
@@ -99,6 +99,32 @@ namespace Mantle {
       // may legitimately extend a pixel past the edge.
       return r.left <= mi.rcMonitor.left && r.top <= mi.rcMonitor.top &&
              r.right >= mi.rcMonitor.right && r.bottom >= mi.rcMonitor.bottom;
+    }
+
+    /// Mantle's own processes: this sidecar, and the Electron main process that started it
+    /// (--parent-pid), which creates every Mantle window - the bar, the launcher, the panels,
+    /// the desktop layer.
+    public static bool IsMantlePid(int pid) {
+      return pid != 0 && (pid == Program.OwnPid || (Program.ParentPid > 0 && pid == Program.ParentPid));
+    }
+
+    /// THE OWNERSHIP GATE for every command that restyles or moves a window it is handed
+    /// (glass, corners, region, morph, place, raise, traywatch, appbar, desktop). Their
+    /// comments always said "a window Mantle owns", but nothing checked it: until 2026-09-29
+    /// any hwnd went through, so one bad argument could blur, round, clip or move another
+    /// app's window - and SetWindowPos on a window whose thread is not pumping blocked the ui
+    /// lane for good (core-sc, measured: `place` on a stalled test window never answered).
+    /// Returns null when the command may go on: a Mantle window, OR a handle that is 0, dead
+    /// or the taskbar, which each command refuses itself with its own long-standing words.
+    public static string NotMantleWindow(IntPtr hwnd, string what) {
+      if (hwnd == IntPtr.Zero || !Win32.IsWindow(hwnd)) return null;
+      string cls = Win32.GetClassName(hwnd);
+      if (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd") return null;
+      int pid;
+      Win32.GetWindowThreadProcessId(hwnd, out pid);
+      if (IsMantlePid(pid)) return null;
+      return what + ": window " + hwnd.ToInt64().ToString(CultureInfo.InvariantCulture) +
+             " is not one of Mantle's own windows, so it was left alone";
     }
   }
 }

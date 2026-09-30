@@ -106,6 +106,35 @@ HWNDs travel as **decimal strings** (`"131862"`), the same convention as
 `~/browser/embed.js`, because a 64-bit handle does not survive a round trip
 through a JavaScript number.
 
+The edges of the pipe (hardened 2026-09-29, proven by `test-protocol.js`):
+
+- **Strict JSON in.** Numbers follow JSON's grammar (`+1`, `01`, `.5` and `1.`
+  are errors), a `\u` escape is exactly four hex digits, and nesting stops at
+  128 levels. A 200,000-deep request used to overflow the stack, which .NET
+  cannot catch, and killed the sidecar with no restore.
+- **A 16 MB line cap.** A longer line is read to its newline and dropped unread,
+  answered `bad request: the line is over the 16 MB line cap…`; the next line is
+  served as usual.
+- **Exact JSON out.** NaN and the infinities are written as `null` (they have no
+  JSON spelling and used to make the whole line unreadable); a lone surrogate in
+  a title or path is written as a `\u` escape and round-trips exactly instead of
+  becoming U+FFFD. A reply whose result cannot be serialised still answers its
+  caller: `ok:false`, `the answer could not be written (…)`.
+- **Integer arguments clamp** to the int range (`w:1e12` is `2147483647`, not a
+  huge negative number).
+- **Bounded lanes.** Each lane (ui included) holds at most 1024 waiting requests.
+  Past that, a request is answered at once with `ok:false`, `reason:"busy"`,
+  `busy: "<cmd>" was not queued because the <lane> lane already has N requests
+  waiting; try again in a moment`. Undos are never refused. `ping.lanes.refused`
+  counts them.
+- **Mantle's windows only.** `glass`, `corners`, `region`, `morph`, `place`,
+  `raise`, `traywatch`, `appbar` and `desktop` act only on a window owned by
+  this sidecar or by its `--parent-pid` (Electron's main process, which creates
+  every Mantle window). Anything else is refused: `<cmd>: window N is not one of
+  Mantle's own windows, so it was left alone`. Before this, any hwnd went
+  through, and `place` on a window whose thread was not pumping blocked the ui
+  lane for good.
+
 ### Commands
 
 | cmd | args | result |
@@ -214,6 +243,29 @@ the state file is written **554 ms before** the process exits, and the exit
 still happens 579 ms after EOF.
 
 An error inside a command never kills the process; it answers `ok:false`.
+
+**Sign-out, restart and shut down** (added 2026-09-29). The sidecar is a
+winexe, so it has no console and never hears `CTRL_LOGOFF`/`CTRL_SHUTDOWN`;
+Windows tells it with `WM_ENDSESSION` to its hidden window and ends it soon
+after. That message now runs the same restore as every other exit (a cancelled
+sign-out, `wParam` FALSE, changes nothing). Before, the one exit that happens
+every day skipped the restore and left `restored:false` in the state file.
+
+**Two crashes at once** (fixed 2026-09-29). When a second background thread
+throws while the first is already restoring, its handler now waits for that
+restore instead of returning; returning let the runtime kill the process in
+the middle of it (measured: exit `0xE0434352`, no `restore` event,
+`restored:false`).
+
+**The state file has one writer at a time** (fixed 2026-09-29). Two threads
+used to share `<path>.tmp` (246 of 320 writes failed under 8 threads) and an
+older snapshot could land after a newer one. Writes are serialised end to end,
+and the file is swapped whole with `File.Replace` (copy as the fallback).
+
+**One Sleep at a time** (`session {action:"sleep"}`, fixed 2026-09-29). A
+second request while one is on its way, or within 1 s of the call, answers
+`{ok:true, already:true}` and never reaches Windows, so a double-click cannot
+put a machine that is just waking straight back to sleep.
 
 ### DPI — and the app bar that landed 200 px too high
 
@@ -371,3 +423,19 @@ And it reproduces the crash-test bug directly: one instance is flooded with
 then sent EOF. It must still write `restored:true` and still exit. State files
 go to the OS temp directory and are deleted afterwards: a test run leaves
 nothing behind.
+
+```
+node sidecar/test-protocol.js --exe=<your build>
+PROTOCOL TEST: 24 passed, 0 failed
+```
+
+The pipe's own edges: hostile input (deep nesting, bad escapes and numbers, a
+17 MB line), exact output (lone surrogates, NaN, an unwritable result), clamped
+integers, flooded lanes, the state file under 8 writers, the ownership gate
+(against a hidden window it creates in a throwaway PowerShell process, never
+anyone's real window), GDI/USER/handle counts over 150 rounds of the window
+commands, two threads crashing at once, `WM_ENDSESSION` (posted from another
+process, as Windows would) and the Sleep guard. It uses `selftest {op}`, a
+passive-only probe command like `sleep`, and `session {simulate:true}`, which
+runs the real Sleep path with a 200 ms wait standing in for the suspend; both
+are refused outside `--passive`.

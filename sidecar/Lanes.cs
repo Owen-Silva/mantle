@@ -123,7 +123,9 @@ namespace Mantle {
       t.Start();
     }
 
-    public void Post(Request r) {
+    /// False (and nothing queued) when the lane already holds Lanes.MaxQueued requests; the
+    /// caller answers "busy". An undo (Request.Exempt) is always queued.
+    public bool Post(Request r) {
       lock (_lock) {
         if (r.CoalesceKey != null) {
           // Newest first. Without MergeAnywhere only the tail may absorb, so
@@ -132,15 +134,19 @@ namespace Mantle {
             if (n.Value.CoalesceKey == r.CoalesceKey) {
               n.Value.Absorb(r);
               Interlocked.Increment(ref Lanes.Merged);
-              return;
+              return true;
             }
             if (!r.MergeAnywhere) break;
           }
         }
+        if (!r.Exempt && _queue.Count >= Lanes.MaxQueued) return false;
         _queue.AddLast(r);
         Monitor.Pulse(_lock);
+        return true;
       }
     }
+
+    public int Queued { get { lock (_lock) return _queue.Count; } }
 
     void Loop() {
       for (;;) {
@@ -238,6 +244,15 @@ namespace Mantle {
     static readonly Dictionary<string, Lane> _workers = new Dictionary<string, Lane>(StringComparer.Ordinal);
 
     public static int Expired, Merged;         // Interlocked counters, reported by ping
+    public static int Refused;                 // Interlocked: requests answered "busy" (a full lane)
+
+    /// THE QUEUE CEILING, per lane (ui included). Until 2026-09-29 every queue was unbounded:
+    /// a caller stuck in a loop - or one lane stalled behind a hung call while requests kept
+    /// arriving - grew it without limit, and every entry was an answer owed later instead of
+    /// now. Past this depth a request is answered "busy" at once (core-sc, test-protocol.js).
+    /// Mantle's real peak is a few dozen (icons for every window at start); 1024 is far above
+    /// it. Undos (Request.Exempt) are never refused.
+    public const int MaxQueued = 1024;
 
     // The ui lane's own bookkeeping. It is the message loop, so it has no
     // queue object of ours - just a count of posted-but-not-started requests.
@@ -370,6 +385,8 @@ namespace Mantle {
       return Json.Obj("lanes", lanes,
                       "expired", Thread.VolatileRead(ref Expired),
                       "merged", Thread.VolatileRead(ref Merged),
+                      "refused", Thread.VolatileRead(ref Refused),
+                      "maxQueued", MaxQueued,
                       // Focus attach helpers the focus lane stopped waiting for and that are still
                       // stuck on another app's thread (WindowList.AttachAndRaise). Non-zero for long
                       // = some app is not answering; each one detaches the moment it returns.

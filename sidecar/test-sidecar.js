@@ -1797,7 +1797,7 @@ async function main() {
       (d.reason === null || typeof d.reason === 'string'),
       JSON.stringify(r).slice(0, 220));
     if (d) quickNotes.push('wifi: present=' + d.present + ' on=' + d.on + ' connected=' + d.connected +
-      ' ssid=' + JSON.stringify(d.ssid) + ' signal=' + d.signal + ' band=' + JSON.stringify(d.band) +
+      ' ssid=' + (d.ssid ? '<' + String(d.ssid).length + ' chars>' : JSON.stringify(d.ssid)) + ' signal=' + d.signal + ' band=' + JSON.stringify(d.band) +
       (d.reason ? ' reason=' + JSON.stringify(d.reason) : ''));
   } catch (e) { check('wifi reads with the full shape', false, e.message); }
 
@@ -2250,7 +2250,7 @@ async function main() {
         typeof d.pid === 'number' && typeof d.exe === 'string',
         JSON.stringify(r).slice(0, 220));
       hitNote = 'hittest at the sidecar window centre: cls=' + (d && d.cls) +
-        ' title=' + JSON.stringify(d && d.title) + ' pid=' + (d && d.pid);
+        ' title=' + (d && d.title ? '<' + String(d.title).length + ' chars>' : '""') + ' pid=' + (d && d.pid);
     } catch (e) { check('hittest answers with the full shape at a known point', false, e.message); }
   }
 
