@@ -12,13 +12,29 @@
  *      different times -- but it is never a surprise either.
  *
  * Exit code is 1 only if something that EXISTS does not parse.
+ *
+ * SPEED (core-lib, 2026-09-29): it used to start one `node --check` per file, and with ~310 files
+ * that took 133 s on Owen's machine, not "a second". Now each file is parsed IN this process the
+ * way Node's CommonJS loader wraps it (Module.wrap + vm.Script, compiled but never run), and only a
+ * file that fails that is handed to `node --check` for the verdict and the words, so the answer is
+ * still node's own.
  */
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const vm = require('vm');
+const Module = require('module');
 
 const ROOT = path.resolve(__dirname, '..');
-const SKIP = new Set(['node_modules', '.git', 'obj', 'bin', 'shots']);
+const SKIP = new Set(['node_modules', '.git', 'obj', 'bin', 'bin-int', 'bin-next', 'out', 'shots']);
+
+/** Does this file parse as Node would load it? Compiled only, never run. */
+function parsesInProcess(file) {
+  let src = fs.readFileSync(file, 'utf8');
+  if (src.charCodeAt(0) === 0xfeff) src = src.slice(1);
+  if (src.startsWith('#!')) src = '//' + src.slice(2);   // a hashbang is legal only at the very start
+  try { new vm.Script(Module.wrap(src), { filename: file }); return true; } catch (_) { return false; }
+}
 
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -45,10 +61,11 @@ const CONTRACT = [
 let bad = 0;
 
 console.log('syntax');
-for (const file of walk(ROOT)) {
+const files = walk(ROOT);
+for (const file of files) {
   const rel = path.relative(ROOT, file).split(path.sep).join('/');
   try {
-    execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });
+    if (!parsesInProcess(file)) execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });
     console.log(`  ok      ${rel}`);
   } catch (err) {
     bad++;
@@ -63,5 +80,5 @@ for (const [rel, who] of CONTRACT) {
   console.log(`  ${there ? 'present' : 'MISSING'}  ${rel}  (${who})`);
 }
 
-console.log(bad ? `\n${bad} file(s) do not parse` : '\nevery .js parses');
+console.log(bad ? `\n${bad} of ${files.length} file(s) do not parse` : `\nevery .js parses (${files.length} files)`);
 process.exit(bad ? 1 : 0);

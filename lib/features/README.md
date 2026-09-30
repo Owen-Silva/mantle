@@ -9,7 +9,20 @@ Implemented by `lib/features.js`; proved by `node lib/features.test.js [--electr
 Loaded: every `*.js` directly in this folder except `*.test.js` and files starting with `_`
 (put helpers in `_<name>-util.js` or a subfolder). Sorted by file name. A module that does not
 load, breaks the contract, or throws in `install()` is that feature DOWN with its reason on the
-desktop strip, in the tray and in mantle.log. Mantle and the other features carry on.
+desktop strip, in the tray and in mantle.log. Mantle and the other features carry on. An
+`install()` that throws (or rejects) half way has everything it hooked up through ctx let go at
+once: its `sidecar.on` / `host.onMedia` / `host.features.onChange` subscriptions, its commands,
+its replays and its chord/key handlers (core-lib, 2026-09-29; they used to stay alive and run).
+Windows you created before the throw are YOURS to close: catch, close, rethrow.
+
+A feature that is down comes back without restarting Mantle through `restart(name)`
+(`ctx.host.features.restart`, for Mantle Settings / the strip): it runs your stop() if you were
+running (`how.restart === true`), lets go of everything as above, and calls the same
+`install()` with a FRESH ctx. The old ctx refuses `command()` and `sidecar.on()` from then on.
+Refused in words (never installed) for a file that did not load, a chord or name clash, a quit
+or a game rest. An async install that misses its 10 s deadline is marked down, and marked
+healthy again if it finishes after all; a handle that arrives after the feature was stopped
+(quit, game rest) has its stop() run at once.
 
 ## The module
 
@@ -78,7 +91,7 @@ notifs qs wallpaper shell tray media battery volume net apps mantle test.
 | `ctx.host.rest(on, why)` | ADDED (memfix). Game mode's watch only: `rest(true, 'VALORANT runs')` makes Mantle rest, `rest(false, why)` brings it back. `Promise<{ ok, text, closed, before, after }>` |
 | `ctx.settings.get(key, dflt)` / `.set(key, value)` | JSON in `<userData>/features/<name>.json` (live `%APPDATA%\mantle`, test `%TEMP%\mantle-test-<profile>`). Values are copied (JSON round trip). `set` throws in plain words if it cannot write. `.file` = the path |
 | `ctx.onOption(key, fn)` | ADDED (lane settings). `fn(value, key)` when Mantle Settings changes one of the module's `options` (below); `key` `'*'` = any. Only declared keys (else throws). Not needed if you read the setting each time you act |
-| `ctx.host.features` | ADDED (lane settings), for Mantle Settings: `list()` (features.list plus each one's `options` with current values, `keys`, `keysReason`), `setEnabled(name, on)` (the tray's switch, `{ok, reason, feature}`), `setOption(name, key, value)` (`value` null = default; `{ok, reason, option}`), `onChange(fn)`. Writes are logged "by <your label>" |
+| `ctx.host.features` | ADDED (lane settings), for Mantle Settings: `list()` (features.list plus each one's `options` with current values, `keys`, `keysReason`), `setEnabled(name, on)` (the tray's switch, `{ok, reason, feature}`), `setOption(name, key, value)` (`value` null = default; `{ok, reason, option}`), `onChange(fn)`, `restart(name)` (ADDED core-lib: a feature that is down, back without restarting Mantle; `Promise<{ok, reason, feature}>`, see the top). Writes are logged "by <your label>" |
 | `ctx.host.switcher` | ADDED (lane settings). `{ get(), set(patch) }` for main's Alt+Tab and Win+N / Win+A switches, or null |
 | `ctx.test.fireChord(chord)` / `.fireKey(key)` | TEST ONLY. `ctx.test` is `null` in a live run. Routes exactly like the hook would (so a chord for a feature that is off/unhealthy is NOT delivered). Returns `{ delivered, feature }` / `{ delivered, handlers }` or `{ delivered:false, reason }` |
 

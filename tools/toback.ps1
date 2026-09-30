@@ -43,12 +43,19 @@ public class WB {
 '@
 try { Add-Type -TypeDefinition $sig -ErrorAction Stop } catch { }
 
+# The WHOLE flag, ended by a space, a quote or the end (core-lib, 2026-09-29): a plain Contains
+# let '-Match core' take '--profile-name=core-lib' too, another lane's instance.
+function Test-FlagMatch([string]$cmdLine, [string]$needle) {
+  if (-not $cmdLine) { return $false }
+  return [regex]::IsMatch($cmdLine, '(^|[\s"])' + [regex]::Escape($needle) + '($|[\s"])')
+}
+
 function Get-TreePids([string]$m) {
   $all = Get-CimInstance Win32_Process -Filter "Name='electron.exe'"
   # Match the --profile-name flag itself, never a bare substring: '-Match ws'
   # matched 'browser' in the live browser's path and sent IT to the back once.
   $needle = if ($m.Contains('=')) { $m } else { '--profile-name=' + $m }
-  $mine = @($all | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($needle) })
+  $mine = @($all | Where-Object { Test-FlagMatch $_.CommandLine $needle })
   $ids = New-Object 'System.Collections.Generic.HashSet[int]'
   foreach ($p in $mine) { [void]$ids.Add([int]$p.ProcessId) }
   # The comma keeps the HashSet whole: a bare return unrolls it into an object[]
