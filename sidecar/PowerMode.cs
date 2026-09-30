@@ -43,6 +43,8 @@
 //     (381b4222-f694-41f0-9685-ff5bb260df2e) and Settings hides the dropdown on any other plan, so
 //     on this machine today the control is shown muted with that reason, and a set is refused
 //     with it rather than written to a registry value Windows would ignore.
+//   - (2026-09-30, 26H2 26300.9550) the same rule reads right: the plan is Balanced now and the AC
+//     overlay is Best performance (ded574b5-...), DC none; sidecar/test-power.js passes.
 //
 // LIVE UPDATES. Listeners only, no polling: PowerRegisterForEffectivePowerModeNotifications (the
 // mode in force changed), PowerSettingRegisterNotification for GUID_ACTIVE_POWERSCHEME (a plan

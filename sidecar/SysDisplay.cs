@@ -70,6 +70,7 @@
 // MEASURED ON OWEN'S MACHINE (2026-09-28, Windows 11 26200): one internal panel, landscape; the
 // night light settings blob is 43 bytes (schedule fields: hours 21:00 -> 07:00, no strength field,
 // empty sunset/sunrise); the state blob 41 bytes (off). See the night light section for the bytes.
+// Re-read on 26H2 (26300, 2026-09-30): the same 43- and 41-byte blobs; test-sysdisplay.js passes.
 using System;
 using System.Collections;
 using System.Collections.Generic;

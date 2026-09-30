@@ -20,7 +20,7 @@
 // printers.addTcp {address, name, driver}. Their validators check every value against what the spooler
 // lists right now (a known list, not "not empty"), in the sidecar and again in the elevated copy.
 //
-// VERIFIED 2026-09-28 by READS only (Windows 11 build 26200):
+// VERIFIED 2026-09-28 by READS only (Windows 11 build 26200; re-read on 26300, 2026-09-30):
 //   - "Let Windows manage my default printer" = HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows,
 //     DWORD LegacyDefaultPrinterMode: present here as 0 (Windows manages), so 1 = Windows does NOT manage.
 //     winspool.drv holds that value name, the key text, "DefaultPrinterModeChanged" and imports

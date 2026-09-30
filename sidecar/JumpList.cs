@@ -4,7 +4,8 @@
 // regular windows shows". This file reads what Windows' own jump list shows for one app; the
 // menu is ui/bar/jumplist.js, the main-process side lib/features/jumplist.js.
 //
-// ROUTE, all of it MEASURED on Owen's machine on 2026-09-24 (build 26200):
+// ROUTE, all of it MEASURED on Owen's machine on 2026-09-24 (build 26200; sidecar/test-jumplist.js
+// passes again on 26H2, build 26300, 2026-09-30):
 //   1. WHICH APP. The taskbar's own resolver, IApplicationResolver (CLSID 660b90c8, the Windows 8+
 //      vtable, IID DE25675A): GetAppIDForWindow for a running app, GetAppIDForShortcut for a pinned
 //      .lnk, GetBestShortcutAndAppIDForAppPath for a bare exe. Not a home-made guess, because the

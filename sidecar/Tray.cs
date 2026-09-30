@@ -71,7 +71,7 @@ namespace Mantle {
     public static List<object> List() {
       string why;
       var toolbars = Toolbars(out why);
-      // No legacy toolbar (Windows 11 26200, measured): answer from the XAML
+      // No legacy toolbar (Windows 11 26200 and 26300, measured): answer from the XAML
       // tray instead - see TrayUia.cs. If that fails too, name both failures.
       if (toolbars.Count == 0) return FromXaml(why);
 

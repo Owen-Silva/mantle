@@ -10,7 +10,7 @@
 //   sysnotify.focus {on, minutes?, dryRun?}            start (1..240 min) or end a focus session
 //   sysnotify.app {app, key:'enabled'|'banner'|'center'|'priority', value, dryRun?}   one app's switch
 //
-// WHERE WINDOWS KEEPS EACH ONE (measured on this PC, 25H2 build 26200, 2026-09-28):
+// WHERE WINDOWS KEEPS EACH ONE (measured on this PC, 25H2 build 26200, 2026-09-28; reads pass on 26300):
 //   - the notification platform's database (wpndatabase.db, HandlerSettings: s:toast, s:banner,
 //     s:audio, s:lock:toast per app) is the platform's own record, written only by its service;
 //   - the REGISTRY mirrors the switches the shell reads: HKCU ...\PushNotifications ToastEnabled

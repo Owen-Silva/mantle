@@ -32,7 +32,8 @@
 // NO SILENT FAILURES: every missing battery, every device without a connect route, every failed
 // read says why, in words, in the reply.
 //
-// MEASURED on Owen's machine, 2026-09-23 (Windows 11 build 26200), all of it read-only:
+// MEASURED on Owen's machine, 2026-09-23 (Windows 11 build 26200), all of it read-only (the reads
+// re-checked on 26H2, build 26300, 2026-09-30: same program files, sidecar/test-devices.js passes):
 //   - 4 paired devices, all classic: two WH-CH520 (class of device 4/1, a headset; Windows' category
 //     "Communication.Headset.Bluetooth"), an Xbox Wireless Controller (5/2, "Input.Gaming") and an
 //     Android TV (4/15, a video display: "Display"). A list is 71-100 ms cold and 26 ms warm.

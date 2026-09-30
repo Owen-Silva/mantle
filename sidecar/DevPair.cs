@@ -20,7 +20,7 @@
 // The paired list, connect / disconnect and battery live in BtDevices.cs, the radio in Bluetooth.cs.
 // Nothing here repeats them.
 //
-// WHERE THE TOGGLES LIVE (verified 2026-09-28 by READS only, Windows 11 build 26200):
+// WHERE THE TOGGLES LIVE (verified 2026-09-28 by READS only, Windows 11 build 26200; re-read on 26300):
 //   - "Show notifications to connect using Swift Pair" = HKCU\Software\Microsoft\Windows\CurrentVersion
 //     \Bluetooth, DWORD QuickPair. SettingsHandlers_Devices.dll holds the class BluetoothQuickPairToggle,
 //     the value name "QuickPair" and the key text "software\microsoft\windows\CurrentVersion\Bluetooth";

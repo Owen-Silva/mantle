@@ -1,7 +1,7 @@
 // TrayUia.cs - the Windows 11 notification area, read WITHOUT the legacy toolbar.
 //
 // WHY THIS FILE EXISTS. Tray.cs reads the classic ToolbarWindow32 inside
-// TrayNotifyWnd. On Windows 11 25H2 (build 26200, this machine) that toolbar is
+// TrayNotifyWnd. On Windows 11 25H2 and 26H2 (builds 26200/26300, this machine) that toolbar is
 // gone: TrayNotifyWnd is an empty HWND and the icons are XAML buttons inside
 // the taskbar's DesktopWindowContentBridge. Tray.cs falls back to this file when
 // it finds no legacy toolbar, and the Electron side gets the same {id, tooltip,

@@ -16,7 +16,7 @@
 //                    the open panel already shows the level (QuickSettings.PanelOpen).
 //
 // WHY MANTLE STEPS THE VOLUME ITSELF (2026-09-24): Windows' own volume/brightness flyout host could
-// not be found on Windows 11 25H2 (26200.9550: no NativeHWNDHost + DirectUIHWND in explorer, nothing
+// not be found on Windows 11 25H2 or 26H2 (26200/26300.9550: no NativeHWNDHost + DirectUIHWND in explorer, nothing
 // flyout-like among explorer.exe / ShellHost.exe windows at rest), so it cannot be hidden. Instead the
 // keyboard hook TAKES VolumeUp / VolumeDown / VolumeMute (KeyMachine chords in AltTab.cs, only while
 // lib/features/osd.js is on and healthy): a key Windows never sees shows no Windows flyout, and this

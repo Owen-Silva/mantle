@@ -79,7 +79,7 @@ namespace Mantle {
     // The first chord with Ctrl in its set (ChordCtrl), added the way Alt was: only this chord
     // names Ctrl, so every other chord still refuses a held Ctrl, and Win+Ctrl+Shift+T /
     // Win+Ctrl+Alt+T stay Windows'. Not a Windows shortcut: RegisterHotKey(MOD_WIN|MOD_CONTROL, 'T')
-    // succeeded on 25H2 (26200) while Win+T, Win+Alt+T and Win+Ctrl+D were refused as taken
+    // succeeded on 25H2 (26200) and 26H2 (26300) while Win+T, Win+Alt+T and Win+Ctrl+D were refused as taken
     // (error 1409), the control that the probe sees explorer's keys. Taken, Win gets its partner key
     // before its keyup (Start stays shut) and so does CTRL (_swallowedInCtrl): with the T eaten, a
     // Ctrl down/up with nothing between is a "lone Ctrl tap" to whatever watches for one (Windows'
@@ -87,7 +87,7 @@ namespace Mantle {
     //
     // WIN+ALT+N (lane tbtools, 2026-09-27): the top bar's quick notes pad. A second Alt chord, taken
     // exactly like Win+Alt+T (ChordAlt: Win and Alt both get the partner key before their keyup).
-    // Not a Windows shortcut: RegisterHotKey(MOD_WIN|MOD_ALT, 'N') succeeded on 25H2 (26200) while
+    // Not a Windows shortcut: RegisterHotKey(MOD_WIN|MOD_ALT, 'N') succeeded on 25H2 (26200) and 26H2 (26300) while
     // the controls Win+Alt+T, Win+Alt+R, Win+Alt+G and Win+Alt+K (Game Bar's) were refused as taken
     // (error 1409). Win+N (notifications), Win+Ctrl+Alt+N and Win+Alt+Shift+N stay Windows'.
     //
