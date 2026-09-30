@@ -16,7 +16,9 @@
 //     rename, move another app's window. Microsoft changes its IID and its method order between
 //     Windows builds, and calling a method at the wrong vtable slot does not fail politely: it runs
 //     whatever method is there. So it is used ONLY when all three hold, else refused with the reason:
-//       1. the build is one the layout below was measured on (10.0.26200 or 10.0.26300, KnownBuilds);
+//       1. the build is one the layout below was measured on (10.0.26200 or 10.0.26300, KnownBuilds),
+//          OR the two files the layout lives in (twinui.pcshell.dll, ActXPrxy.dll) are exactly the
+//          versions it was measured against (KnownFiles; see "THE GATE" in VdCom);
 //       2. explorer answers QueryService for THIS IID (a different IID = a different layout);
 //       3. the read-only self-check agrees with the registry (count, current desktop) and
 //          FindDesktop (slot 12) finds the current desktop again, which proves slots 1-12 line up.
@@ -53,6 +55,15 @@
 //   * The write slots were NOT called (never are from a test); they are the same compiled vtable as
 //     on 26200 because the binary is the same file. Switch / new / rename / remove / move are proven
 //     by dry runs here and are LIVE-ONLY checks for a person.
+//
+// THE GATE KEYS ON THE FILES TOO (round 4, 2026-09-30): the 26H2 enablement update above bumped the
+// build number without changing one program file, and the build-only gate closed Task View's desktop
+// switching until a lane re-measured. The layout is compiled into twinui.pcshell.dll and marshalled by
+// ActXPrxy.dll, so the gate now opens when the build is measured OR both files are the measured
+// versions. A real twinui/proxy change on an unmeasured build still closes it, with the reason; a file
+// that cannot be read counts as changed (fail closed). MEASURED 2026-09-30 (System32, read-only):
+// twinui.pcshell.dll has fixed version 10.0.26100.9549 but version text 10.0.26100.9278 (servicing
+// restamps one and not the other, so both are compared); ActXPrxy.dll is 10.0.26100.9549 in both.
 //
 // THREADING: the handlers are on the ui lane (the message loop, an STA). A cross-process COM call
 // from an STA pumps messages while it waits, which could re-enter the ui lane mid-request, and a hung
@@ -159,6 +170,54 @@ namespace Mantle {
       for (int i = 0; i < KnownBuilds.Length; i++) parts[i] = "10.0." + KnownBuilds[i].ToString(CultureInfo.InvariantCulture);
       return string.Join(", ", parts);
     }
+    // THE GATE, second key: the files the layout lives in, at the versions it was measured against
+    // (name, fixed version, version text; see the header). Both versions of both files must match.
+    // The fixed version is compared as build.revision only: Windows' version lie reports a system
+    // DLL's fixed major.minor as 6.2 to an exe with no Windows 10 manifest (this one; MEASURED:
+    // "6.2.26100.9549" here vs "10.0.26100.9549" in PowerShell). The text is not shimmed.
+    static readonly string[][] KnownFiles = {
+      new[] { "twinui.pcshell.dll", "26100.9549", "10.0.26100.9278" },
+      new[] { "ActXPrxy.dll",       "26100.9549", "10.0.26100.9549" },
+    };
+    public static string GateBy;     // "build" | "files" once the gate opened; null while closed
+
+    /// "<fixed build.revision>|<text>" for a System32 file, or null when it can't be read (missing, no version info).
+    /// Read-only: FileVersionInfo only reads the version resource. A 32-bit process would be sent to
+    /// SysWOW64, so it reads through Sysnative instead (this sidecar builds AnyCPU and runs 64-bit).
+    static string ReadFileVersion(string name) {
+      string seam = Seam(name.Substring(0, name.IndexOf('.')).ToLowerInvariant());
+      if (seam != null) return seam == "unreadable" ? null : seam.IndexOf('|') >= 0 ? seam : seam + "|" + seam;
+      try {
+        string dir = Environment.SystemDirectory;
+        if (Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess)
+          dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Sysnative");
+        string path = System.IO.Path.Combine(dir, name);
+        if (!System.IO.File.Exists(path)) return null;
+        FileVersionInfo v = FileVersionInfo.GetVersionInfo(path);
+        if (v.FileMajorPart == 0 && v.FileMinorPart == 0 && v.FileBuildPart == 0 && v.FilePrivatePart == 0) return null;
+        string fixedV = v.FileBuildPart + "." + v.FilePrivatePart;   // build.revision (see KnownFiles)
+        string text = (v.FileVersion ?? "").Trim();
+        int sp = text.IndexOf(' ');
+        if (sp > 0) text = text.Substring(0, sp);        // "10.0.26100.9278 (WinBuild.160101.0800)"
+        if (text.Length == 0) return null;
+        return fixedV + "|" + text;
+      } catch (Exception) { return null; }
+    }
+
+    /// Null when both files are the measured versions; else the reason, for the log (never the screen).
+    /// Anything unreadable is a mismatch: the gate fails closed.
+    static string FilesDiffer(out bool unreadable) {
+      unreadable = false;
+      var diffs = new List<string>();
+      foreach (string[] f in KnownFiles) {
+        string have = ReadFileVersion(f[0]);
+        if (have == null) { unreadable = true; diffs.Add(f[0] + " unreadable"); continue; }
+        string want = f[1] + "|" + f[2];
+        if (have != want) diffs.Add(f[0] + " " + have + " (measured " + want + ")");
+      }
+      return diffs.Count == 0 ? null : string.Join("; ", diffs.ToArray());
+    }
+
     const string RegRoot = @"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops";
 
     static VdNative.IVirtualDesktopManager _doc;
@@ -192,11 +251,23 @@ namespace Mantle {
 
     // A TEST SEAM, passive sidecars only (a live one ignores it): MANTLE_TEST_VD=build:<n> pretends
     // to be another Windows build, MANTLE_TEST_VD=nocom pretends explorer offers no desktop objects
-    // at all. It proves the read-only and unavailable paths say why, on this machine.
+    // at all. It proves the read-only and unavailable paths say why, on this machine. Parts join with
+    // ';': twinui:<version> / actxprxy:<version> pretend that file has that version (both its fixed
+    // version and its text; <fixed>|<text> sets them apart), twinui:unreadable / actxprxy:unreadable
+    // that it can't be read.
     static string _test;
     static string Test() {
       if (_test == null) _test = Program.Passive ? (Environment.GetEnvironmentVariable("MANTLE_TEST_VD") ?? "") : "";
       return _test;
+    }
+    /// The seam's value for "<key>:<value>", or "" for a bare "<key>", or null when it isn't set.
+    static string Seam(string key) {
+      foreach (string part in Test().Split(';')) {
+        string p = part.Trim();
+        if (p == key) return "";
+        if (p.StartsWith(key + ":", StringComparison.Ordinal)) return p.Substring(key.Length + 1);
+      }
+      return null;
     }
     public const string NoCom = "Windows didn't give Mantle its desktop controls";
 
@@ -216,7 +287,7 @@ namespace Mantle {
     public static VdNative.IVirtualDesktopManager Doc() {
       if (_doc != null || _docReason != null) return _doc;
       const string plain = "Windows didn't say which desktop each window is on, so the window counts may be off";
-      if (Test() == "nocom") { _docReason = Why(plain, "test seam: nocom"); return null; }
+      if (Seam("nocom") != null) { _docReason = Why(plain, "test seam: nocom"); return null; }
       try {
         _doc = (VdNative.IVirtualDesktopManager)Activator.CreateInstance(Type.GetTypeFromCLSID(VdNative.CLSID_VirtualDesktopManager));
       } catch (Exception ex) {
@@ -233,14 +304,31 @@ namespace Mantle {
       if (Build < 0) {
         Build = ReadBuild();
         int fake;
-        if (Test().StartsWith("build:", StringComparison.Ordinal) && int.TryParse(Test().Substring(6), NumberStyles.Integer, CultureInfo.InvariantCulture, out fake)) Build = fake;
+        string sb = Seam("build");
+        if (sb != null && int.TryParse(sb, NumberStyles.Integer, CultureInfo.InvariantCulture, out fake)) Build = fake;
       }
-      if (Test() == "nocom") { _mgrReason = Why(NoCom, "test seam: nocom"); return null; }
-      if (!KnownBuild(Build)) {
-        // The internal interface changes its layout between builds; guessing could run the wrong command.
-        _mgrReason = Why("Mantle can't change desktops on this version of Windows yet",
-                         "build 10.0." + Build + ", layout known for " + KnownText());
+      if (Seam("nocom") != null) { _mgrReason = Why(NoCom, "test seam: nocom"); return null; }
+      GateBy = null;
+      if (KnownBuild(Build)) GateBy = "build";
+      else if (Build <= 0) {
+        // Fail closed: an unreadable build number is not evidence of anything, even with known files.
+        _mgrReason = Why("Mantle can't change desktops on this version of Windows yet: it couldn't check which version of Windows is installed",
+                         "CurrentBuild unreadable");
         return null;
+      } else {
+        // The internal interface changes its layout when its code changes; guessing could run the
+        // wrong command. An unmeasured build number alone is not a change (26H2 was the same files).
+        bool unreadable;
+        string differ = FilesDiffer(out unreadable);
+        if (differ != null) {
+          _mgrReason = Why(unreadable
+              ? "Mantle can't change desktops on this version of Windows yet: it couldn't check which version of Windows' desktop code is installed"
+              : "Mantle can't change desktops on this version of Windows yet: Windows' desktop code has changed since Mantle was checked against it",
+            "build 10.0." + Build + " not in " + KnownText() + "; " + differ);
+          return null;
+        }
+        GateBy = "files";
+        Program.EmitLog("info", "desktops: build 10.0." + Build + " is not in " + KnownText() + ", but twinui.pcshell.dll and ActXPrxy.dll are the measured versions; the self-check decides");
       }
       try {
         var sp = (VdNative.IServiceProvider10)Activator.CreateInstance(Type.GetTypeFromCLSID(VdNative.CLSID_ImmersiveShell));
@@ -437,7 +525,8 @@ namespace Mantle {
                             "name", string.IsNullOrEmpty(name) ? "Desktop " + (i + 1) : name));
         }
         return Json.Obj("ok", true, "source", "com", "reason", null, "canWrite", true, "writeReason", null,
-                        "current", VdCom.IdText(mgr.GetCurrentDesktop().GetId()), "list", list, "build", VdCom.Build);
+                        "current", VdCom.IdText(mgr.GetCurrentDesktop().GetId()), "list", list, "build", VdCom.Build,
+                        "gate", VdCom.GateBy);
       }
       string why = VdCom.MgrReason;
       VdCom.RegDesktops reg = VdCom.ReadRegistry();

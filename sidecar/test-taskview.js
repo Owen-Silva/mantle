@@ -37,6 +37,21 @@ function regGuids(name) {
 // What must never reach the screen: error codes, Windows API names, developer words.
 // The builds sidecar/Desktops.cs KnownBuilds opens (each measured read-only on this machine).
 const KNOWN_BUILDS = [26200, 26300];
+// ...and the file versions its KnownFiles opens on any build ("<fixed build.revision>|<text>",
+// measured 2026-09-30; the fixed major.minor is left out because Windows shims it to 6.2 for the sidecar).
+const KNOWN_FILES = ['26100.9549|10.0.26100.9278', '26100.9549|10.0.26100.9549'];
+
+// This machine's twinui.pcshell.dll and ActXPrxy.dll versions, read the way the sidecar reads them
+// (read-only). True when both are the measured ones, i.e. an unmeasured build number should open.
+function filesMatch() {
+  try {
+    const ps = "foreach($f in 'twinui.pcshell.dll','ActXPrxy.dll'){" +
+      '$v=[Diagnostics.FileVersionInfo]::GetVersionInfo([IO.Path]::Combine([Environment]::SystemDirectory,$f));' +
+      "'{0}.{1}|{2}' -f $v.FileBuildPart,$v.FilePrivatePart,(($v.FileVersion -split ' ')[0])}";
+    const out = execFileSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8' }).trim().split(/\r?\n/);
+    return out.length === 2 && out.every((line, i) => line.trim() === KNOWN_FILES[i]);
+  } catch (_) { return false; }
+}
 const JARGON = /0x[0-9a-f]{4,}|QueryService|FindDesktop|SetForegroundWindow|IVirtual|HKCU|registry|explorer|sidecar|hwnd|\bCOM\b|\bnull\b|undefined/i;
 
 function build() {
@@ -99,8 +114,12 @@ function build() {
     if (KNOWN_BUILDS.includes(b)) {
       t.check('on a measured build (' + KNOWN_BUILDS.join('/') + ') the internal interface passed its self-check (source com)', desks.source === 'com', desks.reason);
       t.check('...and writes are available', desks.canWrite === true, desks.writeReason);
+      t.check('...opened by the build list', desks.gate === 'build', String(desks.gate));
+    } else if (filesMatch()) {
+      t.check('an unmeasured build with the measured twinui/proxy files: opened by the files (source com)',
+        desks.source === 'com' && desks.canWrite === true && desks.gate === 'files', desks.writeReason);
     } else {
-      t.check('off the measured builds: registry fallback, writes off WITH a reason',
+      t.check('off the measured builds and files: registry fallback, writes off WITH a reason',
         desks.source !== 'com' && desks.canWrite === false && /version of Windows/.test(String(desks.writeReason)), desks.writeReason);
     }
     const ids = (desks.list || []).map((d) => d.id);
@@ -180,9 +199,18 @@ function build() {
   // ---- when Windows' desktop controls are missing or changed (the test seam, passive only) ------------
   // MANTLE_TEST_VD makes a passive sidecar pretend: another Windows build, or no desktop objects at all.
   // Every path must answer in plain words (no codes, no method names) and never crash or go silent.
-  // build:26100 (24H2) matters: explorer there serves the same IID, but this machine never measured
-  // it, so it must stay read-only (the gate is the build list, not the IID).
-  for (const mode of ['build:27000', 'build:26100', 'nocom']) {
+  // build:26100 (24H2) matters: explorer there serves the same IID, but its twinui is older code this
+  // machine never measured, so it must stay read-only (the gate is the build list or the files, never
+  // the IID). An unreadable version closes the gate too (fail closed), and the reason says which.
+  const CHANGED = /desktop code has changed/;
+  const UNREAD = /couldn't check which version/;
+  for (const [mode, why] of [['build:27000;twinui:10.0.26300.1000', CHANGED],
+                             ['build:26100;twinui:10.0.26100.1742;actxprxy:10.0.26100.1742', CHANGED],
+                             ['build:27000;actxprxy:10.0.26300.1000', CHANGED],
+                             ['build:27000;twinui:unreadable', UNREAD],
+                             ['build:27000;actxprxy:unreadable', UNREAD],
+                             ['build:0', UNREAD],   // the build number itself unreadable (ReadBuild's 0)
+                             ['nocom', null]]) {
     process.env.MANTLE_TEST_VD = mode;
     let p = null;
     try {
@@ -192,6 +220,7 @@ function build() {
       t.check(`${mode}: the window list still answers`, lr.ok && Array.isArray(lr.result.list), lr.error);
       t.check(`${mode}: desktops are listed read-only from Windows' saved copy`, d.ok === true && d.source === 'registry' && d.canWrite === false && (d.list || []).length >= 1, JSON.stringify(d).slice(0, 200));
       t.check(`${mode}: the reason is plain words`, typeof d.writeReason === 'string' && d.writeReason.length > 10 && !JARGON.test(d.writeReason), d.writeReason);
+      if (why) t.check(`${mode}: the reason says why (${why.source})`, why.test(String(d.writeReason)) && /version of Windows/.test(String(d.writeReason)), d.writeReason);
       if (mode === 'nocom') t.check('nocom: the window counts warn in plain words', typeof d.windowsReason === 'string' && !JARGON.test(d.windowsReason), d.windowsReason);
       for (const [cmd, args] of [['desktops.switch', { desktop: d.current }], ['desktops.create', {}], ['desktops.rename', { desktop: d.current, name: 'x' }], ['desktops.remove', { desktop: d.current }]]) {
         const w = await p.send(cmd, Object.assign({ dry: true }, args), 4000);
@@ -218,7 +247,33 @@ function build() {
         p = await T.startPassive();
         const dl = await p.send('desktops.list', {}, 4000);
         const d = dl.result || {};
-        t.check(`${mode}: a measured build uses Windows' desktop controls (writes available)`, dl.ok && d.source === 'com' && d.canWrite === true && d.build === nb, JSON.stringify(d).slice(0, 200));
+        t.check(`${mode}: a measured build uses Windows' desktop controls (writes available)`, dl.ok && d.source === 'com' && d.canWrite === true && d.build === nb && d.gate === 'build', JSON.stringify(d).slice(0, 200));
+        const cr = await p.send('desktops.create', { dry: true }, 4000);
+        t.check(`${mode}: dry create answers the plan`, cr.ok && cr.result.would === 'create', JSON.stringify(cr).slice(0, 200));
+      } catch (err) {
+        t.check(`${mode}: no exception`, false, err.stack);
+      } finally {
+        delete process.env.MANTLE_TEST_VD;
+        if (p) await p.stop();
+      }
+    }
+    // The gate keys on the files as well as the build (round 4): a build-number-only bump (26H2 was
+    // one) keeps working; a known build stays open whatever its files say (the build list is the
+    // other key; the IID check and the self-check still stand behind both).
+    const opens = [['build:27000;twinui:' + KNOWN_FILES[0] + ';actxprxy:' + KNOWN_FILES[1], 'files',
+                    'an unmeasured build with the measured files opens (by the files)']];
+    if (filesMatch()) opens.push(['build:27000', 'files', 'an unmeasured build on THIS machine\'s real files opens (by the files)']);
+    else notes.push('this machine\'s twinui/proxy files are not the measured versions: the real-files open check was skipped');
+    opens.push(['build:' + KNOWN_BUILDS[KNOWN_BUILDS.length - 1] + ';twinui:10.0.26100.9999', 'build',
+                'a measured build with a changed twinui still opens (by the build list)']);
+    for (const [mode, by, what] of opens) {
+      process.env.MANTLE_TEST_VD = mode;
+      let p = null;
+      try {
+        p = await T.startPassive();
+        const dl = await p.send('desktops.list', {}, 4000);
+        const d = dl.result || {};
+        t.check(`${mode}: ${what}`, dl.ok && d.source === 'com' && d.canWrite === true && d.gate === by, JSON.stringify(d).slice(0, 200));
         const cr = await p.send('desktops.create', { dry: true }, 4000);
         t.check(`${mode}: dry create answers the plan`, cr.ok && cr.result.would === 'create', JSON.stringify(cr).slice(0, 200));
       } catch (err) {
