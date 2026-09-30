@@ -121,19 +121,24 @@ page -> main: elevate(sidecar, action, args)
            1. whitelist + validator                      -> refused early, no prompt
            2. %LOCALAPPDATA%\Mantle\elevate\<nonce>.req.json
               (folder and file ACL'd to this user only, CreateNew)
-           3. ShellExecuteEx verb "runas": Mantle.Sidecar.exe --elevated "<that path>"
-              -> the UAC prompt
+           3. ShellExecuteEx verb "runas":
+              Mantle.Sidecar.exe --elevated "<that path>" --sha256 <digest of its bytes>
+              -> the UAC prompt (refused for 3 s after a "No": see Security rules)
            4. answers AT ONCE {ticket}; a thread waits for the step to exit
   elevated copy (Program.Main -> Elevate.RunElevated)
            5. refuses a path outside the folder or not named <32 hex>.req.json (exit 2)
-           6. refuses a folder or request that is a link, owned by or writable by anyone but
-              you / SYSTEM / Administrators, missing, older than 60 s, dated in the future,
-              over 64 KB, or whose nonce was already spent
-           7. opens it share-READ + delete-on-close: nobody can swap it mid-check, and it is
-              used up whatever the verdict
-           8. whitelist + validator AGAIN, then ONE [Elevated] method
-           9. <nonce>.res.json (atomic rename), exit
-  sidecar  10. reads the answer (nonce must match), deletes it, pushes
+           6. PINS the folder: opens it without following a link, without share-delete (it cannot
+              be renamed or swapped for a junction until the step ends), and checks Windows'
+              final path for it is where it should be; else exit 2 and NO answer is written
+           7. opens the request by handle, never through a link at its name, share-READ, and marks
+              it used up whatever the verdict (only its name in the folder goes)
+           8. refuses a request that is a link or has a second name (hard link), owned by or
+              writable by anyone but you / SYSTEM / Administrators, missing, whose bytes do not
+              match the --sha256 digest (or that has none), older than 60 s, dated in the future,
+              over 64 KB, or whose nonce was already spent (the ledger is opened link-safe too)
+           9. whitelist + validator AGAIN, then ONE [Elevated] method
+          10. <nonce>.res.json: written to a FRESH temp file, renamed over the answer's name, exit
+  sidecar  11. reads the answer (nonce must match), deletes it, pushes
                {"ev":"elevate", ticket, action, ok, kind, result | reason}
                (elevate.status {ticket} answers for a caller that missed the event)
 ```
@@ -173,6 +178,32 @@ and `lib/elevate.js` waits for the event.
   - The nonce comes from a CSPRNG and must match the file name.
   - A spent nonce is kept in `used-nonces.txt` for 10 minutes, which is longer than any
     request stays fresh.
+- **The request is BOUND to its prompt.** The step's command line carries the SHA-256 of the
+  exact bytes the broker wrote (`--sha256`). Windows fixes that line when it shows the prompt, so
+  a request rewritten while the prompt is up (anything running as Owen can write the folder) is
+  refused: "the request changed after Windows asked about it". A step started without a
+  digest is refused too. Before 2026-09-29 a same-user program could swap the DNS servers Owen
+  was approving for its own during the prompt.
+- **The administrator step never writes through a link.** The folder is writable by everything
+  running as Owen, and the step is an administrator: a hard link, symlink or junction planted in
+  that folder would otherwise make it overwrite, truncate or delete a file anywhere (a classic
+  way to turn "runs as Owen" into "runs as an administrator"). So it pins the folder open
+  (no share-delete, checked final path), opens every file by handle with
+  `FILE_FLAG_OPEN_REPARSE_POINT`, refuses a link or a second name (`NumberOfLinks != 1`) or a
+  file whose final path is not in the folder, writes its answer only to a file it just created
+  (`CREATE_NEW`) and renames that over the answer's name. Before 2026-09-29 a hard link planted as
+  `used-nonces.txt` or `<nonce>.res.json.tmp` was written through (test-elevate.js "links:").
+- **No prompt loops.** After a "No", `elevate.run` refuses for 3 s ("you said no a moment ago,
+  so Mantle waits 3 s before asking again", kind `busy` in lib/elevate.js). A UAC prompt takes
+  the whole screen; a page stuck in a loop, or a compromised one, could otherwise put it back
+  the instant it was answered, and Owen could never reach Mantle to stop it. One prompt at a
+  time was already the rule.
+- **Who can ask.** There is no pipe or socket: the only way in is `elevate.run` on the sidecar's
+  stdin, which only Mantle's main process holds. Pages never name an action directly: a
+  Settings section's main-side module does (`env.elevate`), from its own table (System's
+  `ADMIN`, the devices/internet bridges), and the sidecar's validator checks every arg. So a
+  compromised page can at most ask for a whitelisted action with args that pass its validator,
+  one prompt at a time, never again for 3 s after a No, and nothing runs unless Owen says yes.
 - **Logs carry action names, kinds and tickets. Never args or reasons**, since a reason can
   quote an arg (a PC name, a DNS server).
 - **The test seam can never raise UAC.** `MANTLE_ELEVATE_TEST=1` is honoured only in a process
@@ -188,10 +219,12 @@ and `lib/elevate.js` waits for the event.
 
 **What this does NOT protect against, said plainly:**
 
-- **Malware running as Owen, not elevated.** It can already raise any UAC prompt it likes. It
-  could also rewrite a request between the prompt and the read, or replace
+- **Malware running as Owen, not elevated.** It can already raise any UAC prompt it likes,
+  including one for `Mantle.Sidecar.exe --elevated` with a request of its own, or replace
   `Mantle.Sidecar.exe` itself. The exe lives in a user-writable folder, and the prompt shows it
-  as an unsigned "Mantle.Sidecar.exe".
+  as an unsigned "Mantle.Sidecar.exe". (It can no longer rewrite Mantle's OWN request during
+  Mantle's prompt, or use the step to write files through links: see the rules above.) It can
+  also read a request and forge an answer, which only lies to Mantle's own page.
   - The broker caps the damage from a forged request: it is only ever a whitelisted action with
     args its validator accepts.
   - The exe is only as trustworthy as its folder. Installing a copy under Program Files would
@@ -205,6 +238,26 @@ and `lib/elevate.js` waits for the event.
 |---|---|---|
 | `system.renamePc` `{name}` | rename this PC. Windows' rules: letters, numbers and hyphens, 1 to 15 characters, not only numbers, no hyphen first or last. `SetComputerNameEx(ComputerNamePhysicalDnsHostname)`. Result `{name, before, restartNeeded: true, note}`. | Elevate.cs (`ElevatePcName`), the worked example. The system lane calls it; it does not re-implement it. |
 | `test.echo` `{text, sleepMs?}` | returns its args. Test mode only. | Elevate.cs |
+
+Every other action, by the file that owns it (its `does` words and validator live there;
+`elevate.list` answers the live list, and test-elevate.js fails if this table misses one):
+
+| name | file |
+|---|---|
+| `camera.setEnabled`, `usb.setBatterySaver` | DevMisc.cs |
+| `devpair.meteredDownload` | DevPair.cs |
+| `network.setAdapterEnabled`, `network.setDns` | NetAdapters.cs |
+| `printers.addTcp`, `printers.removeLocal` | DevPrinters.cs |
+| `privacy.developerMode` | SysPrivacyGeneral.cs |
+| `privacy.deviceAccess` | SysPrivacy.cs |
+| `sysdisplay.gpuScheduling` | SysDisplay.cs |
+| `syssound.deviceProp` | SysSound.cs |
+| `sysstorage.cleanSystem` | SysStorage.cs |
+| `system.fastStartup`, `system.hibernate` | SysPower.cs |
+| `system.networkReset`, `system.productKey` | SysAbout.cs |
+| `system.remoteDesktop` | SysMulti.cs |
+| `time.setAutoSync`, `time.setAutoZone`, `time.setClock`, `time.syncNow` | SysTime.cs |
+| `update.activeHours`, `update.pause` | SysUpdate.cs |
 
 ## Tests
 

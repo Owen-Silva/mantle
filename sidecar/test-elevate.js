@@ -48,10 +48,19 @@ function craft(nonce, body, name) {
   return file;
 }
 
-/** Run `exe --elevated <file>` directly, not elevated. -> { code, answer | null, stderr } */
-function step(exe, file, env) {
+/** SHA-256 (hex) of a file as it is now, the way the broker binds a request to its prompt. */
+function sha(file) {
+  try { return require('crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex'); } catch (_) { return '0'.repeat(64); }
+}
+
+/** Run `exe --elevated <file> --sha256 <digest>` directly, not elevated. -> { code, answer | null, stderr }
+ *  opts.sha: the digest to pass (default: the file's own, as the broker would); null = pass none. */
+function step(exe, file, env, opts) {
+  const o = opts || {};
+  const digest = o.sha === undefined ? sha(file) : o.sha;
+  const argv = ['--elevated', file].concat(digest === null ? [] : ['--sha256', digest]);
   return new Promise((resolve) => {
-    const p = spawn(exe, ['--elevated', file], { env: env || process.env, stdio: ['ignore', 'ignore', 'pipe'] });
+    const p = spawn(exe, argv, { env: env || process.env, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     p.stderr.on('data', (c) => { stderr += c.toString('utf8'); });
     const timer = setTimeout(() => { try { p.kill(); } catch (_) { /* gone */ } }, 15000);
@@ -102,13 +111,24 @@ function adapter(s) {
   t.check('source: exactly one ShellExecuteEx call (plus its declaration)', decls === 1 && uses - decls === 1, `${uses - decls} calls, ${decls} declarations`);
   t.check('source: it launches THIS exe, nothing named in a request', /sei\.lpFile\s*=\s*ExePath\(\)\s*;/.test(code) &&
     /static string ExePath\(\)\s*\{\s*return Assembly\.GetExecutingAssembly\(\)\.Location;\s*\}/.test(code));
-  t.check('source: its parameters are --elevated and the request path it wrote',
-    /sei\.lpParameters\s*=\s*"--elevated \\""\s*\+\s*f\.ReqPath\s*\+\s*"\\""\s*;/.test(code));
+  t.check('source: its parameters are --elevated, the request path it wrote and that request\'s digest',
+    /sei\.lpParameters\s*=\s*"--elevated \\""\s*\+\s*f\.ReqPath\s*\+\s*"\\" --sha256 "\s*\+\s*f\.Digest\s*;/.test(code));
   t.check('source: runas only outside the seam', /sei\.lpVerb\s*=\s*seam\s*\?\s*"open"\s*:\s*"runas"\s*;/.test(code) &&
     (code.match(/"runas"/g) || []).length === 1);
   t.check('source: the passive refusal comes before any launch',
     code.indexOf('if (Program.Passive && !seam) return FeatureTable.PassiveRefusal;') > 0 &&
     code.indexOf('if (Program.Passive && !seam) return FeatureTable.PassiveRefusal;') < code.indexOf('new Thread(delegate () { Launch('));
+  // ELEVATE.md says the truth: every [Elevated] action in the sidecar is named in it.
+  const md = fs.readFileSync(path.join(__dirname, 'ELEVATE.md'), 'utf8');
+  const declared = new Set();
+  for (const f of fs.readdirSync(__dirname).filter((x) => /\.cs$/.test(x))) {
+    for (const line of fs.readFileSync(path.join(__dirname, f), 'utf8').split(/\r?\n/)) {
+      const m = /^\s*\[Elevated\("([^"]+)"/.exec(line);
+      if (m) declared.add(m[1]);
+    }
+  }
+  const undocumented = [...declared].filter((a) => !md.includes('`' + a + '`'));
+  t.check('ELEVATE.md names every [Elevated] action', declared.size > 1 && undocumented.length === 0, `missing: ${undocumented.join(', ')}`);
   const prog = fs.readFileSync(path.join(__dirname, 'Program.cs'), 'utf8');
   t.check('source: Program.Main dispatches --elevated before the pipe exists',
     prog.indexOf('return Elevate.RunElevated(args)') > 0 && prog.indexOf('return Elevate.RunElevated(args)') < prog.indexOf('_out = new StreamWriter('));
@@ -192,6 +212,11 @@ function adapter(s) {
     t.check('cancel: ERROR_CANCELLED maps to its words', cev.ok === false && cev.kind === 'cancelled' &&
       cev.reason === "you said no to the administrator prompt, so Mantle did not run Mantle's test action", JSON.stringify(cev));
     t.check('cancel: the request file was removed', leftovers().length === 0, leftovers().join(','));
+    // A "No" is not asked again at once: a page stuck in a loop cannot hold the screen with prompts.
+    const again = await s.send('elevate.run', { action: 'test.echo', args: { text: 'x' } }, 8000);
+    t.check('after a No: the next ask right away is refused, in plain words', !again.ok && /you said no a moment ago/.test(again.error || ''), JSON.stringify(again));
+    t.check('after a No: the refusal wrote no request', leftovers().length === 0, leftovers().join(','));
+    await sleep(3200);
 
     // ---- 7. timeouts: never started, and started ----
     const hang = await s.send('elevate.run', { action: 'test.echo', args: { text: 'x' }, testSimulate: 'hang', testTimeoutMs: 1200 }, 8000);
@@ -262,6 +287,87 @@ function adapter(s) {
     const odd = await step(exe, oddName);
     t.check('step: a request with a made-up name is refused (exit 2)', odd.code === 2 && odd.answer === null, JSON.stringify(odd));
     try { fs.unlinkSync(oddName); } catch (_) { /* fine */ }
+
+    // ---- 8b. the request is BOUND to its prompt, and the step never writes through a link ----
+    const n12 = hex32();
+    const f12 = craft(n12, { args: { text: 'what Owen was asked' } });
+    const d12 = sha(f12);
+    craft(n12, { args: { text: 'swapped in during the prompt' } });
+    const swapped = await step(exe, f12, undefined, { sha: d12 });
+    t.check('bound: a request changed after Windows was asked is refused', swapped.code === 1 && /changed after Windows asked/.test((swapped.answer || {}).reason || ''), JSON.stringify(swapped.answer));
+    const n13 = hex32();
+    const unbound = await step(exe, craft(n13), undefined, { sha: null });
+    t.check('bound: a step started without the digest is refused', unbound.code === 1 && /not bound/.test((unbound.answer || {}).reason || ''), JSON.stringify(unbound.answer));
+    const n13b = hex32();
+    const badSha = await step(exe, craft(n13b), undefined, { sha: 'zz' });
+    t.check('bound: a malformed digest is refused', badSha.code === 1 && /not bound/.test((badSha.answer || {}).reason || ''), JSON.stringify(badSha.answer));
+
+    // Links: the elevated step must never write, truncate or delete a file OUTSIDE its folder through
+    // a link planted in it (a same-user attacker's classic lever on an administrator process).
+    const CAN = path.join(os.tmpdir(), `mantle-elevate-canary-${process.pid}-${Date.now()}`);
+    fs.mkdirSync(CAN, { recursive: true });
+    const ledger = path.join(DIR, 'used-nonces.txt');
+    const canary = path.join(CAN, 'ledger-canary.txt');
+    fs.writeFileSync(canary, 'CANARY-LEDGER');
+    try { fs.unlinkSync(ledger); } catch (_) { /* none yet */ }
+    fs.linkSync(canary, ledger);
+    const n14 = hex32();
+    const viaLedger = await step(exe, craft(n14));
+    t.check('links: a hard-linked nonce ledger is refused', viaLedger.code === 1 && /link/.test((viaLedger.answer || {}).reason || ''), JSON.stringify(viaLedger.answer));
+    t.check('links: the file behind the ledger link is untouched', fs.readFileSync(canary, 'utf8') === 'CANARY-LEDGER', fs.readFileSync(canary, 'utf8').slice(0, 80));
+    try { fs.unlinkSync(ledger); } catch (_) { /* fine */ }
+
+    const n15 = hex32();
+    const reqCanary = path.join(CAN, 'request-canary.json');
+    fs.writeFileSync(reqCanary, JSON.stringify({ v: 1, action: 'test.echo', args: { text: 'linked' }, nonce: n15, createdAt: Date.now(), by: process.pid }));
+    const reqLink = path.join(DIR, `${n15}.req.json`);
+    fs.linkSync(reqCanary, reqLink);
+    const viaReq = await step(exe, reqLink);
+    t.check('links: a hard-linked request is refused and not run', viaReq.code === 1 && /link/.test((viaReq.answer || {}).reason || ''), JSON.stringify(viaReq.answer));
+    t.check('links: the file behind the request link still exists', fs.existsSync(reqCanary));
+    try { fs.unlinkSync(reqLink); } catch (_) { /* used up */ }
+
+    const n16 = hex32();
+    const tmpCanary = path.join(CAN, 'answer-tmp-canary.txt');
+    const resCanary = path.join(CAN, 'answer-canary.txt');
+    fs.writeFileSync(tmpCanary, 'CANARY-TMP');
+    fs.writeFileSync(resCanary, 'CANARY-RES');
+    fs.linkSync(tmpCanary, path.join(DIR, `${n16}.res.json.tmp`));
+    fs.linkSync(resCanary, path.join(DIR, `${n16}.res.json`));
+    const viaAns = await step(exe, craft(n16, { args: { text: 'answer links' } }));
+    t.check('links: planted answer links do not stop a good request', viaAns.code === 0 && viaAns.answer && viaAns.answer.ok === true, JSON.stringify(viaAns.answer));
+    t.check('links: the files behind the answer links are untouched', fs.readFileSync(tmpCanary, 'utf8') === 'CANARY-TMP' && fs.readFileSync(resCanary, 'utf8') === 'CANARY-RES',
+      fs.readFileSync(tmpCanary, 'utf8').slice(0, 40) + ' / ' + fs.readFileSync(resCanary, 'utf8').slice(0, 40));
+    try { fs.unlinkSync(path.join(DIR, `${n16}.res.json.tmp`)); } catch (_) { /* replaced */ }
+
+    // A symbolic link needs Developer Mode or an administrator; skipped (and said so) when Windows refuses one.
+    const symCanary = path.join(CAN, 'symlink-canary.txt');
+    fs.writeFileSync(symCanary, 'CANARY-SYM');
+    let symOk = false;
+    try { fs.unlinkSync(ledger); } catch (_) { /* none */ }
+    try { fs.symlinkSync(symCanary, ledger, 'file'); symOk = true; } catch (e) { console.log(`(skipped the symlink check: Windows refused to make one here, ${e.code})`); }
+    if (symOk) {
+      const n17 = hex32();
+      const viaSym = await step(exe, craft(n17));
+      t.check('links: a symlinked nonce ledger is refused', viaSym.code === 1 && /link/.test((viaSym.answer || {}).reason || ''), JSON.stringify(viaSym.answer));
+      t.check('links: the file behind the symlink is untouched', fs.readFileSync(symCanary, 'utf8') === 'CANARY-SYM');
+      try { fs.unlinkSync(ledger); } catch (_) { /* fine */ }
+    }
+    // The folder as a junction (no privilege needed to make one): the step refuses with exit 2 and
+    // writes NOTHING through it (before: it wrote its answer into the junction's target).
+    const JT = path.join(CAN, 'junction-target');
+    fs.mkdirSync(JT);
+    const JL = path.join(CAN, 'junction');
+    fs.symlinkSync(JT, JL, 'junction');
+    const n18 = hex32();
+    const viaJunction = path.join(JL, `${n18}.req.json`);
+    fs.writeFileSync(viaJunction, JSON.stringify({ v: 1, action: 'test.echo', args: { text: 'junction' }, nonce: n18, createdAt: Date.now(), by: process.pid }));
+    const jr = await step(exe, viaJunction, Object.assign({}, process.env, { MANTLE_ELEVATE_DIR: JL }));
+    const jfiles = fs.readdirSync(JT);
+    t.check('links: a request folder that is a junction is refused (exit 2)', jr.code === 2, JSON.stringify({ code: jr.code, answer: jr.answer }));
+    t.check('links: nothing was written or used up behind the junction', jfiles.length === 1 && jfiles[0] === `${n18}.req.json`, jfiles.join(','));
+    try { fs.unlinkSync(JL); } catch (_) { try { fs.rmdirSync(JL); } catch (__) { /* scratch */ } }
+    try { fs.rmSync(CAN, { recursive: true, force: true }); } catch (_) { /* scratch */ }
 
     // The folder itself: open it to other users, the step refuses; the broker's next ask makes it private again.
     execFileSync(path.join(SYS32, 'icacls.exe'), [DIR, '/grant', '*S-1-5-32-545:(W)'], { stdio: 'ignore' });

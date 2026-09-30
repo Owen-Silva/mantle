@@ -40,6 +40,7 @@ using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using Microsoft.Win32.SafeHandles;
 
 namespace Mantle {
   /// Marks a static method as an administrator action. `name` is "area.action" (the page asks for
@@ -83,12 +84,19 @@ namespace Mantle {
     const int MaxRequestBytes = 65536;
     const int ErrorCancelled = 1223;       // ERROR_CANCELLED: "No" on the UAC prompt
     const int AfterTimeoutMs = 120000;     // how long the waiter stays for a late answer, to log it
+    /// After a "No" on the prompt, elevate.run refuses for this long. A UAC prompt takes the whole
+    /// screen (the secure desktop): a page stuck in a loop - or a compromised one - could otherwise
+    /// put it back the instant it is answered, and Owen could never reach Mantle to stop it.
+    public const int NoCooldownMs = 3000;
 
     /// Exit codes of the --elevated step. BadPath writes no answer (there is nowhere trusted to).
     public const int ExitRan = 0, ExitRefused = 1, ExitBadPath = 2, ExitCrashed = 3;
 
     static readonly Regex NameRx = new Regex(@"^[a-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$", RegexOptions.CultureInvariant);
     static readonly Regex RequestRx = new Regex(@"^[0-9a-f]{32}\.req\.json$", RegexOptions.CultureInvariant);
+    static readonly Regex ShaRx = new Regex(@"^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
+    const string LedgerName = "used-nonces.txt";
+    static long _noUntilMs;                // NoCooldownMs after the last "No" (under _gate)
 
     sealed class Entry {
       public string Name, Does, Owner;
@@ -100,6 +108,7 @@ namespace Mantle {
     sealed class Flight {
       public int Ticket;
       public string Action, Does, Nonce, ReqPath, ResPath;
+      public string Digest;        // SHA-256 of the request's bytes, on the step's command line
       public int TimeoutMs;
       public long DeadlineMs;
       public int Done;             // 0 until Finish wins (Interlocked)
@@ -287,6 +296,9 @@ namespace Mantle {
       lock (_gate) {
         if (_inflight != null)
           return "another administrator prompt is already open (to " + _inflight.Does + "); answer that one first";
+        long wait = _noUntilMs - NowMs();
+        if (wait > 0)
+          return "you said no a moment ago, so Mantle waits " + ((wait + 999) / 1000) + " s before asking again";
         f.Ticket = ++_nextTicket;
         _inflight = f;
       }
@@ -296,7 +308,7 @@ namespace Mantle {
         f.Nonce = NewNonce();
         f.ReqPath = Path.Combine(dir, f.Nonce + ".req.json");
         f.ResPath = Path.Combine(dir, f.Nonce + ".res.json");
-        WriteRequest(f.ReqPath, entry.Name, args, f.Nonce);
+        f.Digest = Sha256Hex(WriteRequest(f.ReqPath, entry.Name, args, f.Nonce));
       } catch (Exception ex) {
         lock (_gate) { if (_inflight == f) _inflight = null; }
         TryDelete(f.ReqPath);
@@ -352,7 +364,10 @@ namespace Mantle {
           // elevation and a test can never put a UAC prompt on Owen's screen.
           sei.lpVerb = seam ? "open" : "runas";
           sei.lpFile = ExePath();
-          sei.lpParameters = "--elevated \"" + f.ReqPath + "\"";
+          // The digest BINDS the step to these exact bytes: whatever rewrites the request while the
+          // prompt is up (anything running as this user can) makes the step refuse. Windows shows
+          // this line under "Show more details", and nothing can change it once the prompt is up.
+          sei.lpParameters = "--elevated \"" + f.ReqPath + "\" --sha256 " + f.Digest;
           sei.lpDirectory = Environment.SystemDirectory;   // no DLLs from wherever Mantle was started
           sei.nShow = 0;
           if (!ShellExecuteExW(ref sei)) err = Marshal.GetLastWin32Error();
@@ -411,6 +426,7 @@ namespace Mantle {
       TryDelete(f.ReqPath);
       lock (_gate) {
         if (_inflight == f) _inflight = null;
+        if ("cancelled".Equals(outcome["kind"])) _noUntilMs = NowMs() + NoCooldownMs;
         _outcomes[f.Ticket] = outcome;
         _outcomeOrder.Enqueue(f.Ticket);
         while (_outcomeOrder.Count > 16) _outcomes.Remove(_outcomeOrder.Dequeue());
@@ -432,7 +448,7 @@ namespace Mantle {
     static IDictionary ReadAnswer(Flight f, int exitCode) {
       if (!File.Exists(f.ResPath)) {
         if (exitCode == ExitBadPath)
-          return Outcome(f, false, "failed", "the administrator step refused where its request was (exit code 2, a Mantle bug), so Mantle did not " + f.Does, null);
+          return Outcome(f, false, "failed", "the administrator step could not safely reach Mantle's request folder (if Windows asked for another account's password, that account cannot use this one's folder), so Mantle did not " + f.Does, null);
         return Outcome(f, false, "failed", "the administrator step ended without an answer (exit code " + exitCode + "), so it is unknown whether Mantle could " + f.Does, null);
       }
       Dictionary<string, object> a;
@@ -477,7 +493,8 @@ namespace Mantle {
       return sec;
     }
 
-    static void WriteRequest(string path, string action, Dictionary<string, object> args, string nonce) {
+    /// Writes the request and returns its exact bytes (their digest goes on the step's command line).
+    static byte[] WriteRequest(string path, string action, Dictionary<string, object> args, string nonce) {
       var sec = new FileSecurity();
       sec.SetAccessRuleProtection(true, false);
       sec.AddAccessRule(new FileSystemAccessRule(Me(), FileSystemRights.FullControl, AccessControlType.Allow));
@@ -486,6 +503,15 @@ namespace Mantle {
       // CreateNew: a file already there (a guessed name) is an error, never overwritten.
       using (var fs = new FileStream(path, FileMode.CreateNew, FileSystemRights.Write, FileShare.None, 4096, FileOptions.WriteThrough, sec))
         fs.Write(bytes, 0, bytes.Length);
+      return bytes;
+    }
+
+    static string Sha256Hex(byte[] bytes) {
+      byte[] h;
+      using (var sha = SHA256.Create()) h = sha.ComputeHash(bytes);
+      var sb = new StringBuilder(64);
+      foreach (byte x in h) sb.Append(x.ToString("x2", CultureInfo.InvariantCulture));
+      return sb.ToString();
     }
 
     const int WriteMask = 0x2 | 0x4 | 0x10 | 0x100 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000;
@@ -535,27 +561,43 @@ namespace Mantle {
 
     // ------------------------------------------------------------------ the elevated step
 
-    /// Program.Main's `--elevated <request path>`. Runs at most ONE whitelisted action, writes
-    /// <nonce>.res.json next to the request, and returns the exit code. Reads nothing but that
-    /// file; never starts anything.
+    /// Program.Main's `--elevated <request path> --sha256 <digest>`. Runs at most ONE whitelisted
+    /// action, writes <nonce>.res.json next to the request, and returns the exit code. Reads nothing
+    /// but that file; never starts anything.
+    ///
+    /// LINK-SAFE (lane core-hk, 2026-09-29): the request folder is writable by everything running as
+    /// Owen, and this process is an administrator. So every file it touches there is opened by
+    /// HANDLE, never through a link: the folder is pinned open (it cannot be renamed or swapped for
+    /// a junction while the step runs) and must really be where it should be; each file is opened
+    /// without following a link at its name, and refused if it is one, if it has a second name
+    /// elsewhere (a hard link), or if it is not really in the folder. Before this, a hard link
+    /// planted as used-nonces.txt or <nonce>.res.json.tmp made the step overwrite the file behind it,
+    /// wherever that was (test-elevate.js "links:").
     public static int RunElevated(string[] argv) {
-      string path = null;
-      for (int i = 0; i + 1 < argv.Length; i++) if (argv[i] == "--elevated") { path = argv[i + 1]; break; }
+      string path = null, digest = null;
+      for (int i = 0; i + 1 < argv.Length; i++) {
+        if (argv[i] == "--elevated" && path == null) path = argv[i + 1];
+        else if (argv[i] == "--sha256" && digest == null) digest = argv[i + 1];
+      }
       string dir, nonce;
       try {
         dir = ElevateDir();
         string why = RequestPathProblem(path, dir, out nonce);
         if (why != null) { Complain(why); return ExitBadPath; }
       } catch (Exception ex) { Complain("the request path could not be checked: " + ex.Message); return ExitBadPath; }
-      string resPath = Path.Combine(dir, nonce + ".res.json");
-      try {
-        IDictionary answer = RunRequest(Path.GetFullPath(path), dir, nonce);
-        WriteAnswer(resPath, answer);
-        return true.Equals(answer["ok"]) ? ExitRan : ExitRefused;
-      } catch (Exception ex) {
-        try { WriteAnswer(resPath, Answer(nonce, false, "failed", "the administrator step failed (" + ex.GetType().Name + ": " + ex.Message + ")", null)); }
-        catch (Exception) { }
-        return ExitCrashed;
+      Pinned pin;
+      string pinWhy = PinDir(dir, out pin);
+      if (pinWhy != null) { Complain(pinWhy); return ExitBadPath; }
+      using (pin) {
+        try {
+          IDictionary answer = RunRequest(pin, nonce, digest);
+          WriteAnswer(pin, nonce, answer);
+          return true.Equals(answer["ok"]) ? ExitRan : ExitRefused;
+        } catch (Exception ex) {
+          try { WriteAnswer(pin, nonce, Answer(nonce, false, "failed", "the administrator step failed (" + ex.GetType().Name + ": " + ex.Message + ")", null)); }
+          catch (Exception) { }
+          return ExitCrashed;
+        }
       }
     }
 
@@ -565,35 +607,49 @@ namespace Mantle {
       string full = Path.GetFullPath(path);
       string parent = (Path.GetDirectoryName(full) ?? "").TrimEnd('\\', '/');
       if (!string.Equals(parent, dir.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
-        return "the request file is not in Mantle's request folder (" + dir + "), so it was not read";
+        return "the request file is not in Mantle's request folder, so it was not read";
       string name = Path.GetFileName(full);
       if (!RequestRx.IsMatch(name)) return "\"" + name + "\" is not a request file name, so it was not read";
       nonce = name.Substring(0, 32);
       return null;
     }
 
-    static IDictionary RunRequest(string path, string dir, string nonce) {
-      if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0)
-        return Answer(nonce, false, "refused", "the request folder is a link to somewhere else, so nothing was run", null);
-      string why = FolderProblem(dir);
+    static IDictionary RunRequest(Pinned pin, string nonce, string digest) {
+      string why = FolderProblem(pin.Plain);
       if (why != null) return Answer(nonce, false, "refused", why + ", so nothing was run", null);
-      if (!File.Exists(path))
-        return Answer(nonce, false, "refused", "the request is gone (already used, or Mantle stopped waiting), so nothing was run", null);
-      if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-        return Answer(nonce, false, "refused", "the request file is a link to somewhere else, so nothing was run", null);
 
       Dictionary<string, object> req;
-      try {
-        // Share READ only: nobody can write, rename or delete it while it is checked and read, and
-        // DeleteOnClose uses it up whatever the verdict.
-        using (var fs = new FileStream(path, FileMode.Open, FileSystemRights.Read | FileSystemRights.Delete,
-                                       FileShare.Read, 4096, FileOptions.DeleteOnClose)) {
+      SafeFileHandle h;
+      int err;
+      // Share READ only: nobody can write, rename or delete it while it is checked and read.
+      why = OpenInDir(pin, nonce + ".req.json", GENERIC_READ | DELETE | READ_CONTROL, FILE_SHARE_READ, OPEN_EXISTING, "the request file", out h, out err);
+      if (h == null) {
+        if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)
+          return Answer(nonce, false, "refused", "the request is gone (already used, or Mantle stopped waiting), so nothing was run", null);
+        if (err == ERROR_ACCESS_DENIED)
+          return Answer(nonce, false, "refused", "the administrator step could not open the request (the administrator account is not the one that asked?), so nothing was run", null);
+        if (err == ERROR_SHARING_VIOLATION)
+          return Answer(nonce, false, "refused", "the request file is in use by another program, so nothing was run", null);
+        return Answer(nonce, false, "refused", why + ", so nothing was run", null);
+      }
+      using (h) {
+        // Used up whatever the verdict. Safe even for a link: the handle is the NAME in this folder
+        // (opened without following it), so only that name goes, never what it pointed at.
+        byte gone = 1;
+        SetFileInformationByHandle(h, FileDispositionInfo, ref gone, 1);
+        if (why != null) return Answer(nonce, false, "refused", why + ", so nothing was run", null);
+        using (var fs = new FileStream(h, FileAccess.Read)) {
           why = ForeignWriter(fs.GetAccessControl().GetSecurityDescriptorBinaryForm(), false, "the request file");
           if (why != null) return Answer(nonce, false, "refused", why + ", so nothing was run", null);
           if (fs.Length > MaxRequestBytes) return Answer(nonce, false, "refused", "the request is too big, so nothing was run", null);
           var bytes = new byte[(int)fs.Length];
           int got = 0;
           while (got < bytes.Length) { int n = fs.Read(bytes, got, bytes.Length - got); if (n <= 0) break; got += n; }
+          if (got != bytes.Length) return Answer(nonce, false, "refused", "the request could not be read whole, so nothing was run", null);
+          if (digest == null || !ShaRx.IsMatch(digest))
+            return Answer(nonce, false, "refused", "the administrator step was not bound to the request Windows asked about, so nothing was run", null);
+          if (Sha256Hex(bytes) != digest)
+            return Answer(nonce, false, "refused", "the request changed after Windows asked about it, so nothing was run", null);
           req = Json.Parse(new UTF8Encoding(false).GetString(bytes, 0, got)) as Dictionary<string, object>;
           if (req == null || Json.GetInt(req, "v", 0) != 1)
             return Answer(nonce, false, "refused", "the request is not one Mantle wrote, so nothing was run", null);
@@ -603,20 +659,16 @@ namespace Mantle {
           if (!req.TryGetValue("createdAt", out created) || !(created is double))
             return Answer(nonce, false, "refused", "the request has no time on it, so nothing was run", null);
           long now = NowMs();
-          long age = Math.Max(now - (long)(double)created, now - ToMs(File.GetLastWriteTimeUtc(path)));
+          BY_HANDLE_FILE_INFORMATION info;
+          long written = GetFileInformationByHandle(h, out info) ? ToMs(DateTime.FromFileTimeUtc(info.LastWriteTime)) : now;
+          long age = Math.Max(now - (long)(double)created, now - written);
           if (age > StaleMs)
             return Answer(nonce, false, "refused", "the request is " + (age / 1000) + " s old (the limit is " + (StaleMs / 1000) + " s), so nothing was run", null);
           if ((long)(double)created - now > FutureSlackMs)
             return Answer(nonce, false, "refused", "the request is dated in the future, so nothing was run", null);
-          why = SpendNonce(dir, nonce);
+          why = SpendNonce(pin, nonce);
           if (why != null) return Answer(nonce, false, "refused", why, null);
         }
-      } catch (FileNotFoundException) {
-        return Answer(nonce, false, "refused", "the request is gone (already used, or Mantle stopped waiting), so nothing was run", null);
-      } catch (UnauthorizedAccessException) {
-        return Answer(nonce, false, "refused", "the administrator step could not open the request (the administrator account is not the one that asked?), so nothing was run", null);
-      } catch (IOException ex) {
-        return Answer(nonce, false, "refused", "the request file is in use by another program (" + ex.Message + "), so nothing was run", null);
       }
 
       // Never trust the side that asked: the whitelist and the validator run again, here.
@@ -631,19 +683,24 @@ namespace Mantle {
         return Answer(nonce, false, "refused", "test mode (MANTLE_ELEVATE_TEST) runs test actions only: " + entry.Name + " was checked and NOT run", null);
 
       object result = null;
-      string err;
-      try { err = entry.Run(args, ref result); }
-      catch (Exception ex) { err = entry.Name + " failed: " + ex.GetType().Name + ": " + ex.Message; }
-      return err == null ? Answer(nonce, true, "ok", null, result) : Answer(nonce, false, "failed", err, null);
+      string err2;
+      try { err2 = entry.Run(args, ref result); }
+      catch (Exception ex) { err2 = entry.Name + " failed: " + ex.GetType().Name + ": " + ex.Message; }
+      return err2 == null ? Answer(nonce, true, "ok", null, result) : Answer(nonce, false, "failed", err2, null);
     }
 
     /// Each nonce runs once. The ledger keeps them longer than any request stays fresh.
-    static string SpendNonce(string dir, string nonce) {
-      string ledger = Path.Combine(dir, "used-nonces.txt");
+    static string SpendNonce(Pinned pin, string nonce) {
       long now = NowMs();
       for (int attempt = 0; attempt < 40; attempt++) {
-        try {
-          using (var fs = new FileStream(ledger, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) {
+        SafeFileHandle h;
+        int err;
+        string why = OpenInDir(pin, LedgerName, GENERIC_READ | GENERIC_WRITE, 0, OPEN_ALWAYS, "the list of used requests", out h, out err);
+        if (h == null && err == ERROR_SHARING_VIOLATION) { Thread.Sleep(50); continue; }
+        if (h == null) return why + ", so nothing was run";
+        using (h) {
+          if (why != null) return why + ", so nothing was run";
+          using (var fs = new FileStream(h, FileAccess.ReadWrite)) {
             string text;
             using (var r = new StreamReader(fs, new UTF8Encoding(false), false, 4096, true)) text = r.ReadToEnd();
             var keep = new StringBuilder();
@@ -661,8 +718,8 @@ namespace Mantle {
             fs.Position = 0;
             fs.Write(b, 0, b.Length);
           }
-          return null;
-        } catch (IOException) { Thread.Sleep(50); }
+        }
+        return null;
       }
       return "the administrator step could not record the request as used (its ledger stayed locked), so nothing was run";
     }
@@ -673,11 +730,108 @@ namespace Mantle {
         : Json.Obj("v", 1, "nonce", nonce, "ok", false, "kind", kind, "reason", reason);
     }
 
-    static void WriteAnswer(string resPath, IDictionary answer) {
-      string tmp = resPath + ".tmp";
-      File.WriteAllText(tmp, Json.Write(answer), new UTF8Encoding(false));
-      if (File.Exists(resPath)) File.Delete(resPath);
-      File.Move(tmp, resPath);
+    /// A fresh file under a temporary name (whatever was planted there is unlinked first: only its
+    /// NAME goes), then renamed over the answer's name, which replaces a planted name, never writes
+    /// through it.
+    static void WriteAnswer(Pinned pin, string nonce, IDictionary answer) {
+      string tmpName = nonce + ".res.json.tmp";
+      string tmp = pin.Full + "\\" + tmpName;
+      DeleteFileW(tmp);
+      SafeFileHandle h;
+      int err;
+      string why = OpenInDir(pin, tmpName, GENERIC_WRITE, 0, CREATE_NEW, "the answer file", out h, out err);
+      if (h == null) throw new IOException(why);
+      using (h) {
+        if (why != null) throw new IOException(why);
+        byte[] bytes = new UTF8Encoding(false).GetBytes(Json.Write(answer));
+        using (var fs = new FileStream(h, FileAccess.Write)) fs.Write(bytes, 0, bytes.Length);
+      }
+      if (!MoveFileExW(tmp, pin.Full + "\\" + nonce + ".res.json", MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+
+    // ------------------------------------------------------------------ link-safe files
+
+    /// The request folder, held open for the whole step without FILE_SHARE_DELETE: it cannot be
+    /// renamed, deleted or replaced by a junction until the step is done.
+    sealed class Pinned : IDisposable {
+      public SafeFileHandle Handle;
+      public string Full;    // \\?\C:\...  (for opening names inside it)
+      public string Plain;   // C:\...
+      public void Dispose() { if (Handle != null) Handle.Dispose(); }
+    }
+
+    static string PinDir(string dir, out Pinned pin) {
+      pin = null;
+      string expected = LongPath(Path.GetFullPath(dir).TrimEnd('\\', '/'));
+      SafeFileHandle h = CreateFileW(expected, FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                     IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+      if (h.IsInvalid) {
+        int err = Marshal.GetLastWin32Error();
+        h.Dispose();
+        return "the request folder could not be opened (" + new Win32Exception(err).Message + ")";
+      }
+      BY_HANDLE_FILE_INFORMATION info;
+      string why = null;
+      if (!GetFileInformationByHandle(h, out info)) why = "the request folder could not be checked";
+      else if ((info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) why = "the request folder is a link to somewhere else";
+      else if ((info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) why = "the request folder is not a folder";
+      string final = why == null ? FinalPath(h) : null;
+      if (why == null && (final == null || !string.Equals(final, expected, StringComparison.OrdinalIgnoreCase)))
+        why = "the request folder leads somewhere else (a link above it)";
+      if (why != null) { h.Dispose(); return why; }
+      pin = new Pinned();
+      pin.Handle = h;
+      pin.Plain = final;
+      pin.Full = @"\\?\" + final;
+      return null;
+    }
+
+    /// Opens `name` in the pinned folder WITHOUT following a link at it. h = null (and err set) when
+    /// it could not be opened, or when it is not really in the folder. Otherwise h is the handle and
+    /// the return is null for a plain file, or why not (a link, a second name, a folder) - the caller
+    /// still holds the handle, so it can remove that name without touching what it points at.
+    static string OpenInDir(Pinned pin, string name, uint access, uint share, uint disposition, string what,
+                            out SafeFileHandle h, out int err) {
+      err = 0;
+      h = CreateFileW(pin.Full + "\\" + name, access | FILE_READ_ATTRIBUTES, share, IntPtr.Zero, disposition,
+                      FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+      if (h.IsInvalid) {
+        err = Marshal.GetLastWin32Error();
+        h.Dispose();
+        h = null;
+        return what + " could not be opened (" + new Win32Exception(err).Message + ")";
+      }
+      string final = FinalPath(h);
+      if (final == null || !string.Equals(final, pin.Plain + "\\" + name, StringComparison.OrdinalIgnoreCase)) {
+        h.Dispose();
+        h = null;
+        return what + " is not where it should be (a link leads somewhere else)";
+      }
+      BY_HANDLE_FILE_INFORMATION info;
+      if (!GetFileInformationByHandle(h, out info)) return what + " could not be checked";
+      if ((info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return what + " is a link to somewhere else";
+      if ((info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) return what + " is a folder, not a file";
+      if (info.NumberOfLinks != 1) return what + " has a second name somewhere else on the disk (a hard link)";
+      return null;
+    }
+
+    /// The path Windows says a handle really is, without the \\?\ prefix; null when it cannot say
+    /// or it is a network path (never trusted here).
+    static string FinalPath(SafeFileHandle h) {
+      var sb = new StringBuilder(1024);
+      uint n = GetFinalPathNameByHandleW(h, sb, (uint)sb.Capacity, 0);
+      if (n == 0 || n >= sb.Capacity) return null;
+      string p = sb.ToString();
+      if (p.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return null;
+      if (p.StartsWith(@"\\?\", StringComparison.Ordinal)) p = p.Substring(4);
+      return p.TrimEnd('\\');
+    }
+
+    static string LongPath(string p) {
+      var sb = new StringBuilder(1024);
+      uint n = GetLongPathNameW(p, sb, (uint)sb.Capacity);
+      return n == 0 || n >= sb.Capacity ? p : sb.ToString().TrimEnd('\\');
     }
 
     static void Complain(string why) {
@@ -730,6 +884,37 @@ namespace Mantle {
     }
 
     const uint SEE_MASK_NOCLOSEPROCESS = 0x40, SEE_MASK_NOASYNC = 0x100, SEE_MASK_FLAG_NO_UI = 0x400;
+    const uint GENERIC_READ = 0x80000000, GENERIC_WRITE = 0x40000000, DELETE = 0x10000, READ_CONTROL = 0x20000;
+    const uint FILE_LIST_DIRECTORY = 0x1, FILE_READ_ATTRIBUTES = 0x80;
+    const uint FILE_SHARE_READ = 1, FILE_SHARE_WRITE = 2;
+    const uint CREATE_NEW = 1, OPEN_EXISTING = 3, OPEN_ALWAYS = 4;
+    const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000, FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+    const uint FILE_ATTRIBUTE_DIRECTORY = 0x10, FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
+    const uint MOVEFILE_REPLACE_EXISTING = 1, MOVEFILE_WRITE_THROUGH = 8;
+    const int FileDispositionInfo = 4;
+    const int ERROR_FILE_NOT_FOUND = 2, ERROR_PATH_NOT_FOUND = 3, ERROR_ACCESS_DENIED = 5, ERROR_SHARING_VIOLATION = 32;
+
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    struct BY_HANDLE_FILE_INFORMATION {
+      public uint FileAttributes;
+      public long CreationTime, LastAccessTime, LastWriteTime;
+      public uint VolumeSerialNumber, FileSizeHigh, FileSizeLow, NumberOfLinks, FileIndexHigh, FileIndexLow;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetFileInformationByHandle(SafeFileHandle h, out BY_HANDLE_FILE_INFORMATION info);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern uint GetFinalPathNameByHandleW(SafeFileHandle h, StringBuilder path, uint size, uint flags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetFileInformationByHandle(SafeFileHandle h, int infoClass, ref byte deleteFile, uint size);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool MoveFileExW(string from, string to, uint flags);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool DeleteFileW(string name);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern uint GetLongPathNameW(string shortPath, StringBuilder longPath, uint size);
     const uint STILL_ACTIVE = 259;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
