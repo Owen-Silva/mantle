@@ -14,6 +14,11 @@
  *   'corners.state' push     -> whenever it changes
  * A feature resting while a game runs, or switched off in the tray, answers with its reason.
  *
+ * WORDS AND STATES (quality pass 2026-09-29): before the first answer the row says "Loading" (it used
+ * to flash "Unavailable" on every open); every reason on screen is plain words - a technical one
+ * (a component name, a code) is swapped for what happened and what to do, the cause stays in the log.
+ * Esc closes an open corner's choices before it closes the panel.
+ *
  * Loaded as a plain <script> by the bar (window.MantleCorners) and by require() in node (`view` is pure). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -26,6 +31,15 @@
   var CHOICES = [{ id: 'off', label: 'Off' }, { id: 'taskview', label: 'Task view' }, { id: 'desktop', label: 'Show desktop' },
     { id: 'launcher', label: 'Launcher' }, { id: 'qs', label: 'Quick settings' }, { id: 'lock', label: 'Lock screen' }];
 
+  /* Anything that reads like a machine wrote it is not shown: the fallback says it instead. */
+  var TECH = /sidecar|koffi|\bipc\b|renderer|hwnd|dry ?run|0x[0-9a-f]{4,}|\bE[A-Z]{4,}\b|undefined|\bnull\b|\bNaN\b|\[object|npm |\.(js|cs|exe|dll)\b|hresult|exception|LockWorkStation|Shell\.Application|IShellDispatch|user32|runChord|\bms\b/i;
+  function plain(s, fallback) {
+    s = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+    if (!s || s.length > 200 || TECH.test(s)) return fallback;
+    s = s.charAt(0).toUpperCase() + s.slice(1);
+    return /[.!?)]$/.test(s) ? s : s + '.';
+  }
+
   function nameOf(choices, id) {
     for (var i = 0; i < choices.length; i++) if (choices[i].id === id) return choices[i].label;
     return id || 'Off';
@@ -33,15 +47,19 @@
 
   /** PURE: the state -> what the row shows. */
   function view(st) {
-    var v = { dead: false, sub: '', cells: [], choices: CHOICES, lines: [], warn: false };
-    if (st && st.error && /resting while/i.test(st.error)) {
-      v.dead = true; v.sub = 'Resting · a game runs';
-      v.lines.push({ text: st.error, warn: false });
+    var v = { dead: false, loading: false, sub: '', cells: [], choices: CHOICES, lines: [], warn: false };
+    if (!st) {   // the first answer is on its way: not a failure, and nothing to click yet
+      v.dead = true; v.loading = true; v.sub = 'Loading…';
       return v;
     }
-    if (!st || st.error) {
+    if (st.error && /resting while/i.test(st.error)) {
+      v.dead = true; v.sub = 'Resting · a game runs';
+      v.lines.push({ text: plain(st.error, 'Hot corners rest while a game runs. They are back when it closes.'), warn: false });
+      return v;
+    }
+    if (st.error) {
       v.dead = true; v.warn = true; v.sub = 'Unavailable';
-      v.lines.push({ text: 'Hot corners did not answer' + (st && st.error ? ': ' + st.error : ''), warn: true });
+      v.lines.push({ text: "Hot corners didn't answer: " + plain(st.error, 'Close quick settings and open it again. If it keeps happening, restart Mantle.'), warn: true });
       return v;
     }
     var choices = st.choices && st.choices.length ? st.choices : CHOICES;
@@ -57,14 +75,14 @@
     }
     v.sub = st.enabled === false ? 'Switched off in the tray' : n ? n + ' on · push the pointer in' : 'All off';
     if (st.enabled === false) v.lines.push({ text: "Hot corners are switched off in Mantle's tray menu; choices are kept for when they are on.", warn: true });
-    if (st.watch && st.watch.ok === false) v.lines.push({ text: 'The corners cannot fire: ' + (st.watch.reason || 'no reason came back'), warn: true });
+    if (st.watch && st.watch.ok === false) v.lines.push({ text: 'The corners are paused: ' + plain(st.watch.reason, "Mantle can't read the mouse right now. They come back on their own."), warn: true });
     for (var j = 0; j < ORDER.length; j++) {
       var f = fails[ORDER[j]];
-      if (f) v.lines.push({ text: LABEL[ORDER[j]] + ' (' + nameOf(choices, f.action) + '): ' + (f.said || 'failed, no reason came back'), warn: true });
+      if (f) v.lines.push({ text: LABEL[ORDER[j]] + ' (' + nameOf(choices, f.action) + '): ' + plain(f.said, nameOf(choices, f.action) + " didn't work last time. Push into the corner again; if it keeps failing, restart Mantle."), warn: true });
     }
     var l = st.last;
-    if (l && l.blocked) v.lines.push({ text: 'Last push, ' + (LABEL[l.corner] || l.corner).toLowerCase() + ': did nothing, ' + (l.said || 'no reason came back'), warn: false });
-    if (st.test) v.lines.push({ text: 'Test instance: every corner is a dry run.', warn: false });
+    if (l && l.blocked) v.lines.push({ text: 'Last push, ' + String(LABEL[l.corner] || 'a corner').toLowerCase() + ': did nothing, ' + (l.said && l.said.length <= 200 && !TECH.test(l.said) ? l.said : 'Mantle could not check for a game or a full-screen window in front'), warn: false });
+    if (st.test) v.lines.push({ text: 'This is a test copy of Mantle: corners only pretend to act.', warn: false });
     v.warn = v.lines.some(function (x) { return x.warn; });
     return v;
   }
@@ -100,6 +118,14 @@
     var pick = el('div', 'hcpick'); pick.hidden = true;
     var why = el('div', 'hcwhy'); why.hidden = true;
     row.appendChild(head); row.appendChild(grid); row.appendChild(pick); row.appendChild(why);
+    /* Esc closes the open corner's choices first (the panel on the next Esc), and puts focus back on its corner */
+    row.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape' || !me.open) return;
+      var back = cellEls[me.open] && cellEls[me.open].b;
+      ev.stopPropagation(); ev.preventDefault();
+      me.open = null; paint();
+      if (back) back.focus();
+    });
     if (before && before.parentNode === parent) parent.insertBefore(row, before); else parent.appendChild(row);
 
     function choose(c, id) {
@@ -107,12 +133,12 @@
       me.busy = c; me.note = null; paint();
       Promise.resolve().then(function () { return ctx.call('corners.set', { corner: c, action: id, via: 'quick settings' }); }).then(function (st) {
         me.busy = null;
-        if (st && st.ok === false) me.note = LABEL[c] + ' could not be set: ' + (st.reason || st.error || 'no reason came back');
+        if (st && st.ok === false) me.note = LABEL[c] + ' could not be set: ' + plain(st.reason || st.error, 'Mantle could not save it. Try again.');
         else me.open = null;
         if (st && st.actions) take(st); else paint();
       }, function (e) {
         me.busy = null;
-        me.note = LABEL[c] + ' could not be set: ' + (e && e.message || e);
+        me.note = LABEL[c] + ' could not be set: ' + plain(e && e.message || e, 'Mantle did not answer. Try again.');
         paint();
       });
     }
@@ -132,7 +158,8 @@
         ce.b.setAttribute('aria-expanded', me.open === cell.corner ? 'true' : 'false');
         ce.b.title = cell.label + ' corner: ' + cell.actionLabel + (cell.failed ? ' (its last push failed; the reason is below)' : '') + '. Click to change.';
       });
-      if (v.dead) { ORDER.forEach(function (c) { cellEls[c].act.textContent = '—'; }); me.open = null; }
+      row.classList.toggle('loading', v.loading);
+      if (v.dead) { ORDER.forEach(function (c) { cellEls[c].act.textContent = v.loading ? '' : '—'; }); me.open = null; }
       // the choices for the open corner
       pick.textContent = '';
       var cur = null;
@@ -174,5 +201,5 @@
     S = null;
   }
 
-  return { view: view, attach: attach, closed: closed, ORDER: ORDER, LABEL: LABEL, CHOICES: CHOICES };
+  return { view: view, attach: attach, closed: closed, plain: plain, ORDER: ORDER, LABEL: LABEL, CHOICES: CHOICES };
 }));
