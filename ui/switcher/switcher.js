@@ -43,9 +43,32 @@
   if (!M || typeof M.on !== 'function') {
     // Loaded with neither the preload nor the mock: say so where a person looking at it will see.
     body.classList.add('noting');
-    noteT.textContent = 'The switcher page has no bridge to Mantle';
-    noteX.textContent = 'window.mantle is missing, so this page can draw nothing (preload.js did not run).';
+    noteT.textContent = "The switcher couldn't connect to Mantle";
+    noteX.textContent = 'Restart Mantle from its tray icon to fix it. Alt+Tab still switches windows meanwhile.';
     return;
+  }
+
+  /* ---- the words on screen ---------------------------------------------------------------------
+   * Plain, short, and each one says what it means for the person (quality pass, 2026-09-29). The
+   * machinery behind them (DWM error codes, capture failures, a sidecar that did not answer) is in
+   * main's log, never here: BRIEF "no jargon on screen", and No Silent Failures still holds because
+   * every degraded thing below still says so, in words. */
+  var WORDS = {
+    noPreviews: "Previews aren't available right now",
+    offset: 'Previews may sit a little off their tiles',
+    noBlur: 'No background blur this time',
+    order: 'Shown in screen order, not most recent first',
+    pick: "That click didn't switch. Let go of Alt to switch instead.",
+  };
+
+  /** The reason inside a preview box that has no picture, in plain words. */
+  function plainThumb(reason) {
+    var r = String(reason || '');
+    if (/(has|window) closed/i.test(r)) return 'This window has closed';
+    if (/not allowed|refused access|access denied/i.test(r)) return "Windows doesn't let Mantle preview this window";
+    if (/cloak|hidden|another desktop|suspended/i.test(r)) return 'Windows is keeping this window out of sight, so there is no preview';
+    if (/0 x 0|no room/i.test(r)) return 'This window has no size right now, so there is no preview';
+    return "Windows didn't give Mantle a preview of this window";
   }
 
   function px(v) { return (Math.round(Number(v) * 100) / 100) + 'px'; }
@@ -192,8 +215,8 @@
           built: Math.round(built * 10) / 10,
           raf1: Math.round(raf1 * 10) / 10,
           vis: document.visibilityState,
-        }).catch(function (err) {
-          setFoot('thumbs', 'no previews: ' + err.message);
+        }).catch(function () {
+          setFoot('thumbs', WORDS.noPreviews);
         });
       });
     });
@@ -255,7 +278,7 @@
     rows.textContent = '';
     rows.appendChild(frag);
     select(typeof p.sel === 'number' ? p.sel : -1);
-    if (p.tracking === false) setFoot('order', "in Windows' stacking order (the most-recently-used watch is not running)");
+    if (p.tracking === false) setFoot('order', WORDS.order);
     report('session');
   });
 
@@ -297,18 +320,18 @@
     S.tiles.forEach(function (tile, i) {
       var t = by[S.list[i].hwnd];
       if (!t) return;                       // scrolled out of view: no box was sent for it
-      tile.why.textContent = t.ok ? '' : (t.reason || 'no picture, and DWM did not say why');
+      tile.why.textContent = t.ok ? '' : plainThumb(t.reason);
       if (!t.ok) failed++;
     });
-    if (p.ok === false) setFoot('thumbs', 'no previews: ' + (p.reason || 'main did not say why'));
-    else if (p.reason) setFoot('thumbs', p.reason);
-    else setFoot('thumbs', failed && failed === (p.thumbs || []).length ? 'no previews could be drawn' : '');
+    if (p.ok === false) setFoot('thumbs', WORDS.noPreviews);
+    else if (p.reason) setFoot('thumbs', WORDS.offset);
+    else setFoot('thumbs', failed && failed === (p.thumbs || []).length ? WORDS.noPreviews : '');
   });
 
   M.on('switcher.backdrop', function (p) {
     if (!p || p.seq !== S.seq || !S.open) return;
     if (!p.png) {
-      setFoot('blur', 'no blur: ' + (p.reason || 'the screen behind could not be captured'));
+      setFoot('blur', WORDS.noBlur);
       return;
     }
     var seq = p.seq;
@@ -317,14 +340,14 @@
     // decode() does the PNG work off this thread; what is left here is one small blur.
     img.decode().then(function () {
       if (S.seq !== seq || !S.open) return;
-      if (!paintBackdrop(img)) { setFoot('blur', 'no blur: the picture of the screen could not be drawn'); return; }
+      if (!paintBackdrop(img)) { setFoot('blur', WORDS.noBlur); return; }
       S.bseq = seq;
       // A picture that lands after the window came on screen cross-fades in; before, it snaps.
       body.classList.toggle('snap', !p.shown);
       bdrop.classList.add('on');
       body.classList.remove('no-backdrop');
     }, function () {
-      if (S.seq === seq && S.open) setFoot('blur', 'no blur: the picture of the screen would not decode');
+      if (S.seq === seq && S.open) setFoot('blur', WORDS.noBlur);
     });
   });
 
@@ -366,9 +389,9 @@
     if (!t || !S.open) return;
     var index = Number(t.dataset.i);
     M.call('switcher.pick', { seq: S.seq, index: index }).then(function (r) {
-      if (r && r.ok === false) setFoot('pick', 'that click did not switch: ' + (r.reason || 'no reason given'));
-    }).catch(function (err) {
-      setFoot('pick', 'that click did not switch: ' + err.message);
+      if (r && r.ok === false) setFoot('pick', WORDS.pick);
+    }).catch(function () {
+      setFoot('pick', WORDS.pick);
     });
   });
 

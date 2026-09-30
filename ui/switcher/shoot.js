@@ -18,7 +18,9 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
  *      screen, the ink (the darkest or lightest 1% of its box, the glyph cores) against the ground
  *      (its median), read off the screenshot itself. WCAG asks 4.5:1 of text this small.
  *
- * Refuses to start while a game is running (the coordinator's rule, 2026-09-23).
+ * Refuses to start while a game is running (the coordinator's rule, 2026-09-23). The games are the
+ * lanes' own list (VALORANT, Minecraft, Roblox): the Riot CLIENT idles in the tray all day and is not
+ * one, and counting it kept this harness from ever running (2026-09-29).
  *
  *   node ui/switcher/shoot.js            (MANTLE_SHOOT_OUT=<dir> to choose where the PNGs go)
  */
@@ -91,7 +93,7 @@ const CONTRAST = async (b64) => {
 
 function gamesRunning() {
   const out = execFileSync('powershell', ['-NoProfile', '-Command',
-    '@(Get-Process javaw,Minecraft*,RobloxPlayerBeta,*Riot*,VALORANT* -ErrorAction SilentlyContinue).Count'],
+    '@(Get-Process VALORANT*,javaw,Minecraft*,RobloxPlayerBeta -ErrorAction SilentlyContinue).Count'],
   { encoding: 'utf8' }).trim();
   return out === '0' ? 0 : (Number(out) || 1);
 }
