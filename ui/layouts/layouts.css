@@ -95,3 +95,28 @@ body[data-below] { align-items: flex-start; }
   content: ''; position: absolute; left: 0; top: 1.5px; width: 12px; height: 12px;
   background: currentColor; -webkit-mask: var(--warn-glyph) center / 12px 12px no-repeat;
 }
+
+/* UNDO (lane windows-layouts, 2026-09-29): a quiet text button at the pill's end, after a restore that
+   moved windows. Hover, pressed, focus-visible and disabled states; --lg-* tokens only. */
+.undo {
+  flex: none;
+  align-self: center;
+  margin-left: 6px;
+  height: 28px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--lg-acc);
+  background: transparent;
+  border: 1px solid var(--lg-edge-out);
+  border-radius: var(--lg-r-ctl);
+  cursor: default;
+  transition: background-color var(--lg-dur) var(--lg-ease), color var(--lg-dur) var(--lg-ease);
+}
+.undo[hidden] { display: none; }
+.undo:hover { background: var(--lg-hover); }
+.undo:active { background: var(--lg-press); }
+.undo:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
+.undo:disabled { color: var(--lg-ink-3); background: transparent; }
+@media (prefers-reduced-motion: reduce) { .undo, .toast { transition: none; } }

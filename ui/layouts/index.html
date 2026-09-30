@@ -20,6 +20,9 @@
     <svg viewBox="0 0 16 16" width="16" height="16"><rect x="1.8" y="2.8" width="7" height="10.4" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="10.2" y="2.8" width="4" height="4.6" rx="1.1" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="10.2" y="8.6" width="4" height="4.6" rx="1.1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
   </span>
   <span class="words"><span id="text" class="text"></span><span id="lines" class="lines"></span></span>
+  <!-- after a restore that moved windows: take it back (layouts.undo). The only thing here that
+       takes a click; the window lets clicks through everywhere else (layouts.pointer). -->
+  <button id="undo" class="undo" type="button" title="Put the windows back where they were" hidden>Undo</button>
 </div>
 <script src="layouts.js"></script>
 </body>
