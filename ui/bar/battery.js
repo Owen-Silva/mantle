@@ -59,11 +59,39 @@
     return Math.floor(s);
   }
 
-  /* Windows' shape: "3 hr 12 min", and "45 min" under an hour. */
+  /* Windows' shape: "3 hr 12 min", and "45 min" under an hour. 2026-09-29: a whole hour is
+     "2 hr" (not "2 hr 0 min") and under a minute is "under 1 min" (not "0 min"). */
   function hm(sec) {
     var m = Math.floor(sec / 60), h = Math.floor(m / 60);
     m = m % 60;
-    return h ? h + ' hr ' + m + ' min' : m + ' min';
+    if (!h && !m) return 'under 1 min';
+    return h ? h + ' hr' + (m ? ' ' + m + ' min' : '') : m + ' min';
+  }
+
+  /* PLAIN WORDS ON SCREEN (2026-09-29, the brief: no "sidecar", error codes, "undefined"...). A
+     reason is shown as it is when it is already plain; a trailing technical bracket ("(GetSystemPowerStatus
+     failed, Win32 error 5)") is dropped; anything still technical becomes one plain sentence. The
+     full technical text is main's log line, never the tooltip. */
+  var JARGON = /sidecar|npm |\.exe\b|\bIPC\b|renderer|hwnd|dryRun|undefined|\bnull\b|\bNaN\b|\[object|\bE[A-Z]{3,}\b|^Error\b|HRESULT|0x[0-9a-f]{4,}|Win32|\berror \d|exception|battery\.get|window\.mantle|preload|\.js\b|timed? ?out|within \d+ ?ms/i;
+  var PLAIN_FAIL = 'Mantle could not get the battery status from Windows. It updates by itself when Windows reports a change';
+  function plain(reason) {
+    var s = typeof reason === 'string' ? reason.trim() : '';
+    if (!s) return '';
+    s = s.replace(/\s*\([^()]*\b(?:error|Win32|HRESULT|0x[0-9a-f]+|failed)\b[^()]*\)/gi, '');
+    return JARGON.test(s) ? PLAIN_FAIL : s;
+  }
+
+  /* The warning level: the plan's own "Low battery level" / "Critical battery level" (Battery.cs
+     lowAt / criticalAt; 6 % and 2 % on Owen's plan), falling back to Windows' defaults (10 / 5) for
+     an older sidecar. BatteryFlag's "low" bit is NOT used: it means under 33 %. Only on battery. */
+  function warnLevel(r, pct, ac) {
+    if (ac !== false || pct === null) return null;
+    var lowAt = num(r.lowAt), critAt = num(r.criticalAt);
+    if (lowAt === null || lowAt < 0) lowAt = 10;
+    if (critAt === null || critAt < 0) critAt = 5;
+    if (pct <= critAt) return 'critical';
+    if (pct <= lowAt) return 'low';
+    return null;
   }
 
   function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
@@ -72,22 +100,31 @@
 
   /* describe(reading) -> everything the bar needs to draw the battery, as one object:
        show     draw the readout at all (false only for a machine with no battery)
-       state    charging | plugged | full | battery | unknown | error | none
+       state    loading | charging | plugged | full | battery | unknown | error | none
        short    the text beside the glyph ("72%", or "—")
        words    Windows' sentence, lower-case as it follows "Battery status: "
        tip      the readout's tooltip, ending with what a click does
        footer   the quick-settings footer, short enough for its one line
        level    0..1 for the fill, or null to draw it empty
        bolt / plug   which mark goes on the glyph (a bolt only while actually charging)
-       reason   why something is unknown, or null */
+       warn     null | 'low' | 'critical': on battery at or under the plan's warning levels
+       reason   why something is unknown, in plain words, or null */
   function describe(r) {
     var out = {
       show: true, state: 'error', percent: null, short: '—', words: '', tip: '', footer: '',
-      level: null, bolt: false, plug: false, saver: false, timeLeft: null, reason: null
+      level: null, bolt: false, plug: false, saver: false, timeLeft: null, warn: null, reason: null
     };
-    if (!r || typeof r !== 'object' || r.ok === false) {
-      out.reason = (r && typeof r === 'object' && r.reason) ||
-        (r && typeof r === 'object' ? 'the battery reading failed, and it gave no reason' : 'no battery reading has arrived yet');
+    // Nothing yet (the first draw, before main's replay): LOADING, not a failure (2026-09-29: it
+    // used to read "Battery status: unknown / no battery reading has arrived yet", greyed out).
+    if (r === null || r === undefined) {
+      out.state = 'loading';
+      out.words = 'reading…';
+      out.tip = 'Battery status: reading…\n' + CLICK;
+      out.footer = 'Reading the battery…';
+      return out;
+    }
+    if (typeof r !== 'object' || r.ok === false) {
+      out.reason = plain(typeof r === 'object' && r.reason) || 'Windows did not say why the battery could not be read';
       out.words = 'unknown';
       out.tip = 'Battery status: unknown\n' + out.reason + '\n' + CLICK;
       out.footer = 'Battery: ' + out.reason;
@@ -108,7 +145,7 @@
 
     if (p === null || n.ac === null || n.present === null) {
       out.state = 'unknown';
-      out.reason = (typeof r.reason === 'string' && r.reason) ||
+      out.reason = plain(r.reason) ||
         (p === null ? 'Windows does not know the battery percentage yet'
           : n.ac === null ? 'Windows does not know whether the charger is plugged in'
           : 'Windows cannot tell whether this machine has a battery');
@@ -130,20 +167,28 @@
         out.state = 'plugged'; out.plug = true;
         // An older sidecar cannot say whether it is charging: then exactly Windows' words, no claim.
         out.words = p + '% available (plugged in' + (n.charging === false ? ', not charging' : '') + ')';
-        out.footer = p + '% · ' + (n.charging === false ? 'not charging' : 'plugged in');
+        // "not charging" alone read like a fault; with "plugged in" it reads as the charge limit it
+        // almost always is (2026-09-29).
+        out.footer = p + '% · plugged in' + (n.charging === false ? ', not charging' : '');
       }
     } else {
       out.state = 'battery';
+      out.warn = warnLevel(r, p, n.ac);
       if (n.seconds !== null) {
         out.timeLeft = hm(n.seconds);
         out.words = out.timeLeft + ' (' + p + '%) remaining';
         out.footer = p + '% · ' + out.timeLeft + ' left';
       } else {
         out.words = p + '% remaining';
-        out.footer = p + '% · on battery';
+        // Windows sends no estimate for ~30 s after an unplug: say it is coming, not "on battery".
+        out.footer = p + '% · estimating time left';
       }
+      if (out.warn === 'critical') out.footer = p + '% · very low, plug in now';
+      else if (out.warn === 'low') out.footer = p + '% · low' + (out.timeLeft ? ', ' + out.timeLeft + ' left' : ', plug in soon');
     }
-    out.tip = 'Battery status: ' + out.words + (n.saver ? '\nEnergy saver on' : '') +
+    out.tip = 'Battery status: ' + out.words +
+      (out.warn === 'critical' ? '\nBattery very low: plug in now' : out.warn === 'low' ? '\nBattery low: plug in soon' : '') +
+      (n.saver ? '\nEnergy saver on' : '') +
       (out.reason ? '\n' + out.reason : '') + '\n' + CLICK;
     return out;
   }
@@ -163,15 +208,20 @@
         '<rect width="16" height="16" fill="#fff"/>' +
         '<path d="' + mark + '" fill="#000" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/></mask></defs>';
     }
-    s += '<rect x="1.2" y="4.7" width="11.6" height="6.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>';
+    // LOW / CRITICAL (2026-09-29): the fill turns --lg-warn (critical: the outline too). A style
+    // attribute is CSS, so var() works there where a presentation attribute would not. A low fill
+    // keeps a 1.2 px sliver so 3 % is still visibly "almost empty", not "no fill at all".
+    var warn = d.warn ? ' style="fill:var(--lg-warn)"' : '';
+    s += '<rect x="1.2" y="4.7" width="11.6" height="6.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"' +
+      (d.warn === 'critical' ? ' style="stroke:var(--lg-warn)"' : '') + '/>';
     s += '<rect x="13.5" y="6.7" width="1.5" height="2.6" rx=".7" fill="currentColor"/>';
     if (d.level !== null && d.level > 0) {
-      s += '<rect x="2.8" y="6.3" width="' + (8.4 * Math.min(1, d.level)).toFixed(2) + '" height="3.4" rx="1" fill="currentColor"' +
-        (mark ? ' mask="url(#mbat-ko)"' : '') + '/>';
+      s += '<rect x="2.8" y="6.3" width="' + Math.max(1.2, 8.4 * Math.min(1, d.level)).toFixed(2) + '" height="3.4" rx="1" fill="currentColor"' +
+        warn + (mark ? ' mask="url(#mbat-ko)"' : '') + '/>';
     }
     if (mark) s += '<path d="' + mark + '" fill="currentColor"/>';
     return s + '</svg>';
   }
 
-  return { describe: describe, svg: svg, MAX_SECONDS: MAX_SECONDS };
+  return { describe: describe, svg: svg, plain: plain, hm: hm, MAX_SECONDS: MAX_SECONDS };
 }));

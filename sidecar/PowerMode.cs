@@ -393,7 +393,7 @@ namespace Mantle {
 
     // ------------------------------------------------------------------ the switch
 
-    /// {mode: "efficiency"|"balanced"|"performance"} -> {ok, mode (asked), same, setMs, wroteFor,
+    /// {mode: "efficiency"|"balanced"|"performance", dryRun?} -> {ok, mode (asked), same, setMs, wroteFor,
     /// state (READ BACK), reason}. Writes the mode for the power source the PC is on NOW with the
     /// call Settings uses (PowerSetUserConfigured{AC,DC}PowerMode), and ok means that same value
     /// reads back as asked (Verify) - never merely that powrprof returned 0, and never judged on the
@@ -409,6 +409,18 @@ namespace Mantle {
         return null;
       }
       bool same = (string)before["mode"] == want;
+      // dryRun (2026-09-29): everything a real set checks - the argument, the plan, Energy saver's
+      // lock (all above) and which source's value would be written - and no write. Allowed in
+      // --passive, since it changes nothing; tests prove the set path with it (sidecar/test-power.js).
+      if (Json.GetBool(req, "dryRun", false)) {
+        string dryBy = before["by"] as string;
+        string dryFor = dryBy == "dc" ? "battery" : dryBy == "ac" ? "ac" : before["source"] as string;
+        result = Json.Obj("ok", true, "dryRun", true, "mode", want, "same", same, "from", before["mode"],
+                          "wroteFor", dryFor, "state", before, "reason", null,
+                          "would", same ? "nothing: " + FullName(want) + " is already chosen " + SourceWords(dryFor)
+                                        : "choose " + FullName(want) + " " + SourceWords(dryFor) + " (now " + FullName(before["mode"] as string) + ")");
+        return null;
+      }
       if (Program.Passive && !same) {
         result = Json.Obj("ok", false, "mode", want, "state", before,
                           "reason", FeatureTable.PassiveRefusal + ": it would have changed the power mode " +
@@ -469,7 +481,7 @@ namespace Mantle {
             if (v >= 0) {
               int was = Interlocked.Exchange(ref _saver, v);
               _saverFirst.Set();
-              if (was >= 0 && was != v) Changed("saver");
+              if (was >= 0 && was != v) { Changed("saver"); Battery.SaverChanged(); }   // the readout's "Energy saver on" too
             }
             return 0;
           };
@@ -511,6 +523,14 @@ namespace Mantle {
       }
       if (wantName == null) return "powermode.plan: no installed power plan has the GUID " + want;
       bool same = want == active;
+      if (Json.GetBool(req, "dryRun", false)) {     // validated above (a GUID, an installed plan); no switch
+        string fromName = PlanName(active) ?? active.ToString();
+        result = Json.Obj("ok", true, "dryRun", true, "plan", want.ToString(), "same", same, "from", fromName, "to", wantName,
+                          "state", Read(), "reason", null,
+                          "would", same ? "nothing: \"" + wantName + "\" is already the active plan"
+                                        : "switch the power plan from \"" + fromName + "\" to \"" + wantName + "\"");
+        return null;
+      }
       if (Program.Passive && !same) {
         result = Json.Obj("ok", false, "plan", want.ToString(), "same", false, "state", Read(),
                           "reason", FeatureTable.PassiveRefusal + ": it would have switched the power plan from \"" +
@@ -567,7 +587,8 @@ namespace Mantle {
                        "reason", "the power mode could not be read (" + ex.Message + ")");
         }
         string sig = Sig(s);
-        lock (_lock) { if (sig == _lastSig) return; _lastSig = sig; }
+        // A watch turned off while this read ran: no push after the feature stopped (2026-09-29).
+        lock (_lock) { if (!_watching || sig == _lastSig) return; _lastSig = sig; }
         Interlocked.Increment(ref _pushes);
         var ev = Json.Obj("via", (object)via);
         foreach (DictionaryEntry kv in s) ev[kv.Key] = kv.Value;

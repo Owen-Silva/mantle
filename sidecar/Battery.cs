@@ -90,6 +90,19 @@ namespace Mantle {
     public static readonly Guid GUID_ACDC_POWER_SOURCE = new Guid("5D3E9A59-E9D5-4B00-A6BD-FF34FF516548");
     public static readonly Guid GUID_BATTERY_PERCENTAGE_REMAINING = new Guid("A7AD8041-B45A-4CAE-87A3-EECBB468A9E1");
     public static readonly Guid GUID_POWER_SAVING_STATUS = new Guid("E00958C0-C213-4ACE-AC77-FECCED2EEEA5");
+
+    // The active plan's "Low battery level" / "Critical battery level" (Control Panel > Power
+    // Options > Battery; powercfg SUB_BATTERY BATLEVELLOW / BATLEVELCRIT): the levels at which
+    // Windows itself warns. Measured on Owen's plan 2026-09-29: low 6 %, critical 2 %.
+    public static readonly Guid GUID_BATTERY_SUBGROUP = new Guid("e73a048d-bf27-4f12-9731-8b2076e8891f");
+    public static readonly Guid GUID_BATTERY_LOW_LEVEL = new Guid("8183ba9a-e910-48da-8769-14ae6dc1170a");
+    public static readonly Guid GUID_BATTERY_CRITICAL_LEVEL = new Guid("9a66d8d7-4ff7-4ef9-b5a2-5a326ca2a469");
+    [DllImport("powrprof.dll")] public static extern uint PowerGetActiveScheme(IntPtr rootKey, out IntPtr scheme);
+    [DllImport("powrprof.dll")] public static extern uint PowerReadDCValueIndex(IntPtr rootKey, ref Guid scheme,
+        ref Guid subGroup, ref Guid setting, out uint value);
+    [DllImport("kernel32.dll")] public static extern IntPtr LocalFree(IntPtr p);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    public const int WM_APP_SAVER = 0x8000 + 0x51;   // WM_APP + n: Windows 11 Energy saver flipped (PowerMode.cs hears it)
   }
 
   static class Battery {
@@ -128,6 +141,11 @@ namespace Mantle {
       // sends 0xFFFFFFFF, and so it does for a while after an unplug (32 s, measured).
       object seconds = onBattery && s.BatteryLifeTime != 0xFFFFFFFF ? (object)(long)s.BatteryLifeTime : null;
 
+      // BatteryFlag's "low" bit means under 33 % (the documented meaning), far above the level at
+      // which Windows warns; the page warns at the plan's own levels instead (-1 = not readable).
+      int lowAt, criticalAt;
+      Levels(out lowAt, out criticalAt);
+
       object capacity = null;
       if (haveNt && b.BatteryPresent != 0 && b.MaxCapacity > 0)
         capacity = Json.Obj("remaining", (long)b.RemainingCapacity, "full", (long)b.MaxCapacity, "rate", b.Rate);
@@ -151,12 +169,40 @@ namespace Mantle {
 
       return Json.Obj("ok", true, "present", present, "percent", percent, "ac", ac, "charging", charging,
                       "secondsLeft", seconds, "saver", saver, "low", low, "critical", critical,
+                      "lowAt", lowAt, "criticalAt", criticalAt,
                       "capacity", capacity,
                       // `power`'s older names: the quick-settings panel and an older main read these.
                       "onBattery", onBattery,
                       "minutesLeft", seconds == null ? null : (object)((long)seconds / 60),
                       "hasBattery", present,
                       "raw", raw, "reason", reason);
+    }
+
+    /// The active plan's DC low / critical battery levels, in %, or -1 when Windows would not say.
+    /// Only the DC values: a warning matters only while the PC runs on its battery.
+    static void Levels(out int lowAt, out int criticalAt) {
+      lowAt = -1; criticalAt = -1;
+      IntPtr p;
+      try {
+        if (BatteryNative.PowerGetActiveScheme(IntPtr.Zero, out p) != 0 || p == IntPtr.Zero) return;
+        Guid plan = (Guid)Marshal.PtrToStructure(p, typeof(Guid));
+        BatteryNative.LocalFree(p);
+        Guid sub = BatteryNative.GUID_BATTERY_SUBGROUP, low = BatteryNative.GUID_BATTERY_LOW_LEVEL,
+             crit = BatteryNative.GUID_BATTERY_CRITICAL_LEVEL;
+        uint v;
+        if (BatteryNative.PowerReadDCValueIndex(IntPtr.Zero, ref plan, ref sub, ref low, out v) == 0 && v <= 100) lowAt = (int)v;
+        if (BatteryNative.PowerReadDCValueIndex(IntPtr.Zero, ref plan, ref sub, ref crit, out v) == 0 && v <= 100) criticalAt = (int)v;
+      } catch (Exception) { }
+    }
+
+    /// Windows 11 Energy saver flipped (PowerMode.cs's lifetime listener hears GUID_ENERGY_SAVER_STATUS,
+    /// which GUID_POWER_SAVING_STATUS above does not see). Any thread: it only posts to the watch
+    /// window, so the re-read runs on the message-loop thread like every other check. Without it the
+    /// readout's "Energy saver on" line waited for the 30 s re-check (2026-09-29).
+    internal static void SaverChanged() {
+      PowerWindow w = _win;
+      if (w == null) return;
+      try { BatteryNative.PostMessage(w.Handle, BatteryNative.WM_APP_SAVER, IntPtr.Zero, IntPtr.Zero); } catch (Exception) { }
     }
 
     // ------------------------------------------------------------ the watch
@@ -179,6 +225,11 @@ namespace Mantle {
           try { Battery.OnBroadcast(m.WParam.ToInt64(), m.LParam); }
           catch (Exception ex) { Program.EmitLog("warn", "battery: a power notification could not be handled (" + ex.Message + ")"); }
           m.Result = new IntPtr(1);
+          return;
+        }
+        if (m.Msg == BatteryNative.WM_APP_SAVER) {
+          try { Battery.Check("energySaver"); }
+          catch (Exception ex) { Program.EmitLog("warn", "battery: an Energy saver change could not be handled (" + ex.Message + ")"); }
           return;
         }
         base.WndProc(ref m);
