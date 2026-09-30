@@ -9,6 +9,9 @@
  *   node ui/files/shoot.js              every shot + the perf run
  *   node ui/files/shoot.js grid perf    only the shots whose name contains one of the words
  *   FILES_SHOTS=<dir>                   where the PNGs go
+ *   FILES_BD=dark,light                 each shot over a made-up DARK and/or LIGHT window behind a mock
+ *                                       of DWM's acrylic (<name>-dark.png, <name>-light.png), with the
+ *                                       grey each surface reads printed (lane lookfiles, 2026-09-29)
  */
 require('C:/Users/user/dev-tools/tools/lowcpu.js');
 
@@ -32,6 +35,7 @@ const OUT = process.env.FILES_SHOTS || 'C:/Users/user/AppData/Local/Temp/claude/
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const HOME = 'C:\\Users\\Robin';
 const LOCK = path.join(os.tmpdir(), 'mantle-electron-lock');
+const BDS = process.env.FILES_BD ? process.env.FILES_BD.split(',').filter((x) => x === 'dark' || x === 'light') : [null];
 const W = 1280;                                                  // the everyday window: 1280 wide
 const H = 760;
 
@@ -147,7 +151,73 @@ const SHOTS = [
     await page.evaluate(() => { const r = MF.app.list.sc.getBoundingClientRect(); MF.app.backgroundMenu(r.left + 500, r.top + 420); });
     await page.waitForTimeout(300);
   }],
+  // lane lookfiles (2026-09-29): the selection's look on tiles, and on This PC's cards
+  ['38-grid-selected', HOME + '\\Pictures', W, H, async (page) => {
+    await page.evaluate(() => MF.app.setView({ view: 'grid', size: 'medium' }));
+    await page.waitForTimeout(600);
+    await page.evaluate(() => { MF.app.list.selectKeys(['Canyon at night.png', 'Dunes at dusk.jpg']); MF.app.list.sc.focus(); });
+    await page.waitForTimeout(200);
+  }],
+  ['39-thispc-selected', 'mantle:thispc', W, H, async (page) => {
+    const r = await page.evaluate(() => { const b = document.querySelectorAll('.ptile')[7]; const q = b.getBoundingClientRect(); return { x: q.left + 30, y: q.top + 20 }; });
+    await page.mouse.click(r.x, r.y);
+    await page.mouse.move(5, 740);
+    await page.waitForTimeout(150);
+  }],
 ];
+
+/* made-up acrylic (the setlook lane's mock, calibrated to Owen's 2026-09-29 shot where a clear page read
+   139,139,139 over a dark terminal): the backdrop blurred, then the light tint, as fixed layers BEHIND the
+   page. The root's and body's own backgrounds paint under negative z-index layers, but in the real window
+   they are ON the acrylic: so they are lifted onto layers above it, kept in step with html's class
+   (.inactive). Everything shown is made up. */
+function ACRYLIC(bd) {
+  const BG = bd === 'dark'
+    ? 'repeating-linear-gradient(180deg, transparent 0 10px, rgba(204,204,204,.55) 10px 13px, transparent 13px 19px), repeating-linear-gradient(90deg, #0c0c0c 0 40px, #141414 40px 90px, #0c0c0c 90px 130px)'
+    : 'linear-gradient(90deg, #ffffff 0 30%, #f3f3f3 30% 32%, #ffffff 32% 100%), #fff';
+  const put = () => {
+    const mk = (id, z, st) => { const d = document.createElement('div'); d.id = id; Object.assign(d.style, { position: 'fixed', inset: '0', zIndex: String(z), pointerEvents: 'none' }, st || {}); return d; };
+    const d = mk('__bd', -4, { inset: '-80px', filter: 'blur(40px)', background: BG });
+    const t = mk('__tint', -3, { background: 'rgba(243,243,243,.50)' });
+    const r = mk('__root', -2), rb = mk('__body', -1);
+    document.body.prepend(d, t, r, rb);
+    const html = document.documentElement, body = document.body;
+    const lift = (el, layer) => { const cs = getComputedStyle(el); layer.style.backgroundColor = cs.backgroundColor; layer.style.backgroundImage = cs.backgroundImage; };
+    const sync = () => {
+      html.style.background = ''; body.style.background = '';
+      lift(html, r); lift(body, rb);
+      html.style.background = 'transparent'; body.style.background = 'transparent';
+    };
+    sync();
+    new MutationObserver(sync).observe(html, { attributes: true, attributeFilter: ['class'] });
+  };
+  if (document.body) put(); else document.addEventListener('DOMContentLoaded', put);
+}
+/* the grey (0-255) each surface reads in a shot: a point inside each region, away from its content */
+async function greys(browser, png, page) {
+  const pts = await page.evaluate(() => {
+    const out = [];
+    const at = (name, sel, fx, fy) => { const e = document.querySelector(sel); if (!e || e.hidden) return; const r = e.getBoundingClientRect(); if (!r.width) return; out.push([name, Math.round(fx(r)), Math.round(fy(r))]); };
+    at('tabstrip', '#titlebar', (r) => r.left + r.width * 0.62, (r) => r.top + 5);
+    at('cmdbar', '#cmdbar', (r) => r.right - 12, (r) => r.top + r.height / 2);
+    at('navpane', '#navpane', (r) => r.left + r.width - 14, (r) => r.bottom - 6);
+    at('list', '#main', (r) => r.right - 24, (r) => r.bottom - 8);
+    at('side', '#side', (r) => r.right - 8, (r) => r.bottom - 8);
+    at('status', '#status', (r) => r.left + r.width * 0.55, (r) => r.top + r.height / 2);
+    const sel = document.querySelector('.cell.sel');
+    if (sel) { const r = sel.getBoundingClientRect(); out.push(['selected', Math.round(r.right - 6), Math.round(r.top + r.height / 2)]); }
+    return out;
+  });
+  const p = await browser.newPage();
+  const vals = await p.evaluate(async ([b64, list]) => {
+    const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+    return list.map(([n, x, y]) => { const d = g.getImageData(Math.min(x, c.width - 1), Math.min(y, c.height - 1), 1, 1).data; return `${n} ${d[0]},${d[1]},${d[2]}`; });
+  }, [png.toString('base64'), pts]);
+  await p.close();
+  return vals.join('  ');
+}
 
 async function perf(browser, errors) {
   const page = await browser.newPage({ viewport: { width: 1100, height: 700 }, deviceScaleFactor: 1 });
@@ -213,10 +283,14 @@ async function perf(browser, errors) {
   const errors = [];
   let perfOut = null;
   try {
-    browser = await chromium.launch({ headless: true, executablePath: exe });
-    for (const [name, start, w, h, setup] of SHOTS) {
-      if (want.length && !want.some((x) => name.includes(x))) continue;
+    // FILES_BD shots are about the look: they keep the page's own scrollbars (Playwright hides them by default)
+    browser = await chromium.launch({ headless: true, executablePath: exe, ignoreDefaultArgs: BDS[0] ? ['--hide-scrollbars'] : [] });
+    for (const [name0, start, w, h, setup] of SHOTS) {
+      if (want.length && !want.some((x) => name0.includes(x))) continue;
+      for (const bd of BDS) {
+      const name = bd ? `${name0}-${bd}` : name0;
       const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
+      if (bd) await page.addInitScript(`(${ACRYLIC.toString()})(${JSON.stringify(bd)});`);
       page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
       page.on('console', (m) => { if (m.type() === 'error') errors.push(`${name}: console: ${m.text()}`); });
       await page.goto(`${PAGE}?path=${encodeURIComponent(start)}`);
@@ -226,13 +300,15 @@ async function perf(browser, errors) {
         if (setup) await setup(page);
         await page.waitForTimeout(250);
       } catch (e) { errors.push(`${name}: did not settle (${String(e.message).split(/\r?\n/)[0]})`); }
-      await page.screenshot({ path: path.join(OUT, `${name}.png`) });
+      const png = await page.screenshot({ path: path.join(OUT, `${name}.png`) });
+      if (bd) console.log(`GREY ${name}: ${await greys(browser, png, page)}`);
       const over = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
       if (over) errors.push(`${name}: the page scrolls sideways at ${w} px`);
       const toastErr = await page.evaluate(() => [...document.querySelectorAll('.toast.err .tt')].map((x) => x.textContent));
       if (toastErr.length && !name.includes('failure')) errors.push(`${name}: unexpected error toast: ${toastErr.join(' | ')}`);
       made++;
       await page.close();
+      }
     }
     if (!want.length || want.includes('perf')) perfOut = await perf(browser, errors);
   } finally {

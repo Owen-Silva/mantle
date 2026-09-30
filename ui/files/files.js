@@ -67,6 +67,7 @@
     hidden: sv('<path d="M1.8 8s2.3-4.3 6.2-4.3S14.2 8 14.2 8 11.9 12.3 8 12.3 1.8 8 1.8 8z"/><circle cx="8" cy="8" r="1.8"/>'),
     terminal: sv('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.2"/><path d="M4.5 6.5L6.8 8.5 4.5 10.5M8.5 10.5h3"/>'),
     filter: sv('<path d="M2 3h12l-4.6 5.4v4.4l-2.8 1.4V8.4z"/>'),
+    warn: sv('<path d="M8 2.2l6.2 10.9H1.8z"/><path d="M8 6.4v3M8 11.2v.01"/>', 14),   // Settings' warn glyph
   };
   const KNOWN = [['desktop', 'Desktop'], ['downloads', 'Downloads'], ['documents', 'Documents'], ['pictures', 'Pictures'], ['music', 'Music'], ['videos', 'Videos'], ['onedrive', 'OneDrive']];
   const VIRTUAL_LABEL = { 'mantle:home': 'Home', 'mantle:thispc': 'This PC', 'mantle:recycle': 'Recycle Bin', 'mantle:network': 'Network' };
@@ -1476,6 +1477,7 @@
     if (!text) { b.hidden = true; return; }
     b.hidden = false;
     if (quiet) b.classList.add('quiet');
+    else b.insertAdjacentHTML('beforeend', I.warn);                // a problem: the warn glyph before its words
     b.appendChild(el('span', null, text));
     if (retry) {
       b.appendChild(el('span', 'grow'));

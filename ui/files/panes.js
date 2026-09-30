@@ -13,6 +13,8 @@
   const X_SVG = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.2"/></svg>';
   const ARROW = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M3.5 1.5L7 5l-3.5 3.5" stroke="currentColor" fill="none" stroke-width="1.2"/></svg>';
   const CHECK = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l2.5 2.5L10 3.5" stroke="currentColor" fill="none" stroke-width="1.4"/></svg>';
+  // Settings' warn glyph: a failure or a reason is this glyph + its words in --lg-warn, never a filled pill
+  const WARN = (s) => `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2l6.2 10.9H1.8z"/><path d="M8 6.4v3M8 11.2v.01"/></svg>`;
 
   /* ---- menus ------------------------------------------------------------------------------------ */
   /* item = { label, icon (svg markup) | img (url), key (shortcut shown), act(), disabled, check, warn,
@@ -156,6 +158,7 @@
     const box = $('toasts');
     const t = el('div', 'toast ' + kind);
     t.setAttribute('role', kind === 'err' ? 'alert' : 'status');
+    if (kind === 'err') t.insertAdjacentHTML('beforeend', WARN(14).replace('<svg ', '<svg class="tg" '));
     const tv = el('div', 'tv');
     tv.appendChild(el('div', 'tt', text));
     if (opt.lines && opt.lines.length) {
@@ -407,12 +410,13 @@
           li.appendChild(el('span', 'rn-from', r.from));
           li.appendChild(el('span', 'rn-arrow', '→'));
           li.appendChild(el('span', 'rn-to', r.to));
-          if (r.why) li.appendChild(el('span', 'rn-why', r.why));
+          if (r.why) { const w = el('span', 'rn-why'); w.innerHTML = WARN(12); w.appendChild(el('span', null, r.why)); li.appendChild(w); }
           ul.appendChild(li);
         }
         if (plan.rows.length > 300) ul.appendChild(el('li', 'cmore', `and ${plan.rows.length - 300} more`));
         sum.textContent = plan.ok ? `${M.plural(plan.changed, 'item')} will be renamed. Ctrl+Z puts every one back.` : cap1(plan.why || 'nothing would change');
         sum.classList.toggle('bad', !plan.ok);
+        if (!plan.ok) sum.insertAdjacentHTML('afterbegin', WARN(12));
         const b = ctl.btn('go');
         if (b) b.disabled = !plan.ok;
       };

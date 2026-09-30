@@ -4,9 +4,17 @@
  * hairlines, one accent. No backdrop-filter (in a transparent Electron window it would blur this
  * page and nothing else), no text-shadow, no glow.
  *
+ * THE CALM PASS (lane lookhud, 2026-09-29, Settings' 377e901 applied to Alt+Tab): the bar's thin .45
+ * tint over the blurred screen left the pane mid-grey over a dark desktop (~130) with white caption
+ * strips on it: the old Settings look Owen called not very good. The pane is now Settings' window
+ * ground: --lg-fill-strong twice plus the --lg-sunk wash over the blur (three times when there is no
+ * blur under it), so it reads light whatever is behind; the caption strips are its cards. The chosen
+ * tile is a grey wash with the accent ring, never a tint; a hung window's 'not responding' is the warn
+ * glyph and warn words, not a filled pill; the foot line is quiet words, not a pill.
+ *
  * THE LAYERS, bottom to top, all clipped to the panel's radius:
  *   .bdrop (z0)    a PNG of the screen behind the panel, blurred here
- *   ::after (z1)   the tint and the two hairlines
+ *   ::after (z1)   the tint and the one hairline
  *   content (z2)   the tiles, the empty line, the notice, the foot line
  *   DWM            the window pictures, which the compositor draws OVER this page inside each
  *                  preview box. Nothing in a .pv box is ever seen while its picture is up; what
@@ -38,6 +46,10 @@
   --gw: 240px;          /* the visible grid */
   --gh: 179px;
   --first: 0;           /* the first visible row, when there are too many to show */
+  /* the calm pane (no new colour: existing tokens layered) and Settings' warn glyph as a mask */
+  --hud-ground: linear-gradient(var(--lg-sunk), var(--lg-sunk)), linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), var(--lg-fill-strong);
+  --hud-ground-bare: linear-gradient(var(--lg-sunk), var(--lg-sunk)), linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), var(--lg-fill-strong);
+  --warn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E");
 }
 
 * { box-sizing: border-box; }
@@ -69,15 +81,13 @@ html, body {
   height: var(--ph);
   border-radius: var(--panel-r);
   overflow: hidden;
-  --pane-fill: var(--lg-fill);
+  --pane-fill: var(--hud-ground);
   /* paints nothing but the drop shadow: a fill here would be buried under the backdrop <img> */
   background: transparent;
   box-shadow: var(--lg-shadow);
 }
-body.no-backdrop .panel { --pane-fill: var(--lg-fill-fb); }
-/* A notice and the empty pane carry nothing but text, so they get a real surface (the popovers'
-   token): over a dark screen the glass tint alone left the notice's first line at 3.1:1. */
-body.noting .panel, body.is-empty .panel { --pane-fill: var(--lg-fill-strong); }
+/* nothing blurred under the pane (the desktop shows through as it is): the face a third time over */
+body.no-backdrop .panel { --pane-fill: var(--hud-ground-bare); }
 
 /* the tint and the hairlines, drawn once on top of the blurred backdrop (the launcher's recipe) */
 .panel::after {
@@ -88,10 +98,8 @@ body.noting .panel, body.is-empty .panel { --pane-fill: var(--lg-fill-strong); }
   pointer-events: none;
   border: 1px solid var(--lg-edge-out);
   border-radius: inherit;
-  background-color: var(--pane-fill);
+  background: var(--pane-fill);
   background-clip: padding-box;
-  box-shadow: var(--lg-lip-up);
-  transition: background-color 150ms var(--lg-ease);
 }
 
 /* ---- the backdrop: 14px of overscan on every side so the blur's pale fringe falls outside the
@@ -150,9 +158,9 @@ body.snap .bdrop, body.snap .panel::after { transition: none; }
      box and main's rectangles (layout.js previewW) would no longer be the box on screen */
   transition: background-color 90ms steps(2);
 }
-.tile:hover { background: var(--lg-hover); }
+.tile:hover { background: var(--lg-sunk); }
 .tile.is-sel {
-  background: var(--lg-acc-soft);
+  background: var(--lg-hover);
   box-shadow: inset 0 0 0 2px var(--lg-acc);
 }
 
@@ -222,21 +230,23 @@ body.snap .bdrop, body.snap .panel::after { transition: none; }
 }
 .tile.is-sel .ttl { color: var(--lg-ink); font-weight: 600; }
 .chip {
-  flex: 0 1 auto;
+  flex: 0 0 auto;                   /* the words stay whole (up to 60%); the title ellipsizes first */
   min-width: 0;
   max-width: 60%;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 10.5px;
+  font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  background: var(--lg-sunk);
-  color: var(--lg-ink-2);            /* the chip IS the message here, so not the quiet ink */
+  color: var(--lg-ink-2);            /* the words ARE the message here, so not the quiet ink */
 }
-/* Solid, the one warning a tile can carry: brown ink on the soft brown measured 3.4-4.4:1 on the
-   strip; white on the warn fill is 7:1 (the accent's on-colour, on the warn colour). */
-.chip.warn { background: var(--lg-warn); color: var(--lg-acc-on); }
+/* the one warning a tile can carry: Settings' warn line, a small warn glyph and the words in warn ink,
+   no fill (on the calm pane's caption strip, ~250, the warn ink clears 4.5:1; on the old grey strip it
+   did not, which is why this used to be a solid pill) */
+.chip.warn { position: relative; padding-left: 16px; color: var(--lg-warn); }
+.chip.warn::before {
+  content: ''; position: absolute; left: 0; top: 50%; width: 12px; height: 12px; margin-top: -6px;
+  background: currentColor; -webkit-mask: var(--warn-glyph) center / 12px 12px no-repeat;
+}
 
 /* ---- the other faces of the panel ----------------------------------------------------------- */
 
@@ -265,9 +275,9 @@ body.noting .note {
   padding: 12px 20px;
 }
 /* One plain sentence first, in the reading ink; the machinery under it, smaller (lib/switcher.js
-   noticeWords). The warn dot is the only colour: a notice is news, not an alarm. */
+   noticeWords). The warn glyph is the only colour: a notice is news, not an alarm. */
 .note-t {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
   color: var(--lg-ink);
@@ -279,12 +289,12 @@ body.noting .note {
 .note-t::before {
   content: "";
   display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 8px;
-  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  margin-right: 7px;
+  vertical-align: -1px;
   background: var(--lg-warn);
-  vertical-align: 1px;
+  -webkit-mask: var(--warn-glyph) center / 12px 12px no-repeat;
 }
 .note-x {
   font-size: 11px;
@@ -304,12 +314,10 @@ body.noting .note {
   bottom: 1px;
   z-index: 2;
   max-width: 70%;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 12px;
   padding: 0 6px;
-  border-radius: 999px;
-  /* on a frosted pill for the same reason as the captions: grey ink on glass over a dark screen */
-  background: var(--lg-fill-strong);
+  /* quiet words on the calm pane, not a pill (it was a frosted pill while the pane was grey glass) */
   color: var(--lg-ink-2);
   white-space: nowrap;
   overflow: hidden;

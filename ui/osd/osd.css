@@ -9,6 +9,12 @@
  * has to be up within ~50 ms of a key, too soon to photograph the screen behind it for a blur the
  * way the bar and the switcher do, so the pane carries its text alone. Measured in the mock shots
  * over a black and a white desktop: ink-2 text on it clears 4.5:1 on both (ui/osd/shoot.js).
+ * THE CALM PASS (lane lookhud, 2026-09-29, Settings' 377e901 applied to the pop-ups): one layer of
+ * --lg-fill-strong left the pane ~190 grey over a dark desktop with the desktop's lines showing
+ * through it (there is no blur under it). The face is now that token three times over (--hud-face,
+ * ~98% white: ~250 over black, 255 over white, Settings' card), carried by ONE hairline, no white lip.
+ * On it the warn ink clears 4.5:1 again, so a reason is Settings' shape: a small warn glyph and the
+ * words in --lg-warn, no coloured bar beside ink.
  *
  * THE WINDOW is transparent and main sizes it to what the page reports (osd.size): the surface plus
  * --m of margin for the drop shadow. Bottom-docked bar: the surface sits at the bottom of the window
@@ -19,6 +25,9 @@
   --pill-w: 288px;
   --open-w: 348px;
   --row-h: 44px;
+  /* the face: --lg-fill-strong three times over (no new colour), and Settings' warn glyph as a mask */
+  --hud-face: linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), var(--lg-fill-strong);
+  --warn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E");
 }
 
 * { box-sizing: border-box; }
@@ -49,10 +58,10 @@ body[data-below] { align-items: flex-start; }
   width: var(--pill-w);
   display: flex;
   flex-direction: column;
-  background-color: var(--lg-fill-strong);
-  border: 1px solid var(--lg-edge-in);
+  background: var(--hud-face);
+  border: 1px solid var(--lg-edge-out);
   border-radius: var(--lg-r-pill);
-  box-shadow: inset 0 1px 0 var(--lg-edge-in), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  box-shadow: var(--lg-shadow);
   color: var(--lg-ink-2);
   /* IN: at once, like Windows' own flyout and the switcher (a key press wants the answer now).
      OUT: a short fade, the bar's own exit curve. */
@@ -74,8 +83,8 @@ body[data-below] .osd { flex-direction: column-reverse; }
 }
 .osd[data-kind="brightness"] .pill { grid-template-columns: 28px 1fr 30px; }
 .osd[data-kind="brightness"] .more { display: none; }
-.osd.open .pill { border-top: 1px solid var(--lg-edge-out); }
-body[data-below] .osd.open .pill { border-top: 0; border-bottom: 1px solid var(--lg-edge-out); }
+.osd.open .pill { border-top: 1px solid var(--lg-sunk); }
+body[data-below] .osd.open .pill { border-top: 0; border-bottom: 1px solid var(--lg-sunk); }
 
 .glyph, .more, .amute, .retry {
   display: grid;
@@ -142,16 +151,28 @@ body[data-below] .osd.open .more svg { transform: none; }
 .osd.dead .num { color: var(--lg-ink-2); font-weight: 400; }
 
 /* ---------------------------------------------------------------- a line of why
-   INK, NOT --lg-warn, for the words: with no backdrop blur the pane over a black desktop is ~72 %
-   white, where the burnt-orange warn measured 3.6:1 (ui/osd/shoot.js, 2026-09-24). The warn colour
-   stays as the hairline beside the words, which is what says "this is a problem". */
-.why {
-  margin: -3px 14px 9px;
-  padding-left: 8px;
-  border-left: 2px solid var(--lg-warn);
-  color: var(--lg-ink);
+   Settings' shape (settings.css .why): a small warn glyph and the words in --lg-warn, no fill, no bar.
+   On the calm face (~250 over a black desktop) the warn ink clears 4.5:1; on the old ~72 % pane it
+   measured 3.6:1, which is why this used to be ink beside a warn hairline (ui/osd/shoot.js, 2026-09-24). */
+.why, .aerr, .note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--lg-warn);
+  font-size: 12px;
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
+.why::before, .aerr::before, .note::before, .state.bad b::before {
+  content: '';
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  background: currentColor;
+  -webkit-mask: var(--warn-glyph) center / 12px 12px no-repeat;
+}
+.why { margin: -3px 14px 9px; }
 .why[hidden] { display: none; }
 
 /* ---------------------------------------------------------------- the per-app panel */
@@ -164,7 +185,7 @@ body[data-below] .osd.open .more svg { transform: none; }
   gap: 12px;
   margin-bottom: 4px;
 }
-.ptitle { font-weight: 600; color: var(--lg-ink); }
+.ptitle { font-size: 14px; font-weight: 600; color: var(--lg-ink); }
 .dev {
   min-width: 0;
   overflow: hidden;
@@ -175,8 +196,13 @@ body[data-below] .osd.open .more svg { transform: none; }
 .apps {
   max-height: 336px;                 /* six rows; more scroll */
   overflow-y: auto;
-  scrollbar-width: thin;
 }
+/* a long list scrolls: Settings' thin thumb that shows only while the pointer is over it, never Chromium's
+   arrowed grey gutter */
+.apps::-webkit-scrollbar { width: 6px; }
+.apps::-webkit-scrollbar-button { display: none; height: 0; }
+.apps::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+.apps:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); }
 .app {
   display: grid;
   grid-template-columns: 26px 1fr 28px;
@@ -184,7 +210,7 @@ body[data-below] .osd.open .more svg { transform: none; }
   gap: 2px 9px;
   padding: 6px 0;
 }
-.app + .app { border-top: 1px solid var(--lg-edge-out); }
+.app + .app { border-top: 1px solid var(--lg-sunk); }
 .aico {
   grid-row: 1 / 3;
   width: 24px;
@@ -217,7 +243,7 @@ body[data-below] .osd.open .more svg { transform: none; }
 .aval { flex: 0 0 auto; color: var(--lg-ink-2); font-variant-numeric: tabular-nums; }
 .app .level { grid-column: 2; }
 .amute { grid-column: 3; grid-row: 1 / 3; width: 28px; }
-.aerr { grid-column: 1 / -1; padding-left: 8px; border-left: 2px solid var(--lg-warn); color: var(--lg-ink); line-height: 1.4; }
+.aerr { grid-column: 1 / -1; }
 .aerr[hidden] { display: none; }
 .app.idle .aname::after { content: ' \00b7  stopped'; color: var(--lg-ink-2); }
 
@@ -227,7 +253,8 @@ body[data-below] .osd.open .more svg { transform: none; }
   color: var(--lg-ink-2);
 }
 .state b { display: block; font-weight: 600; color: var(--lg-ink); margin-bottom: 2px; }
-.state.bad { padding-left: 10px; border-left: 2px solid var(--lg-warn); }
+/* a panel that cannot list the apps: its title is the one warn line (glyph + words), the detail stays quiet ink */
+.state.bad b { display: flex; align-items: flex-start; gap: 6px; color: var(--lg-warn); }
 .retry { display: inline-grid; width: auto; padding: 0 10px; margin-top: 8px; background: var(--lg-sunk); }
-.note { margin: 4px 2px 6px; padding-left: 8px; border-left: 2px solid var(--lg-warn); color: var(--lg-ink); line-height: 1.4; }
+.note { margin: 4px 2px 6px; }
 .note[hidden] { display: none; }
