@@ -160,10 +160,10 @@ async function cpuOnly(P, C, d, dir) {
     await C['wallpaper.set']({ id });
     await sleep(6000);
     await capture(d, dir, `cpu-${id}`);
-    await cpu(`web ${P.S.lib.get(id).title} playing, test window`, 20000);
+    await cpu(`web ${id} playing, test window`, 20000);
     P.setOverride('pause');
     await sleep(2000);
-    await cpu(`web ${P.S.lib.get(id).title} paused, test window`, 20000);
+    await cpu(`web ${id} paused, test window`, 20000);
     P.setOverride('play');
   }
   if (def && P.S.lib.get(def)) await C['wallpaper.set']({ id: def });
@@ -188,7 +188,7 @@ exports.run = async function run(api, dirArg) {
     const t0 = Date.now();
     const imported = await waitFor(() => P.S.lib && P.S.lib.data.lively && P.S.lib.data.lively.importedAt, 120000);
     log(`import ${imported ? 'finished' : 'DID NOT FINISH'} after ${((Date.now() - t0) / 1000).toFixed(1)} s: ${P.S.lib.data.lively ? P.S.lib.data.lively.report.reason : 'no report'}`);
-    for (const l of (P.S.lib.data.lively && P.S.lib.data.lively.report.lines) || []) log(`  import ${l.livelyId} "${l.title}": ${l.ok ? 'ok' : 'FAILED'} - ${l.reason}`);
+    for (const l of (P.S.lib.data.lively && P.S.lib.data.lively.report.lines) || []) log(`  import ${l.livelyId}: ${l.ok ? 'ok' : 'FAILED'} - ${l.reason}`);
     log(`selected: ${P.S.lib.data.selected}`);
     if (process.env.MANTLE_WALL_PROBE_WEB) { await webTiming(P, C, d, dir); log('done'); return; }
     if (process.env.MANTLE_WALL_PROBE_CPU) { await cpuOnly(P, C, d, dir); log('done'); return; }
@@ -271,7 +271,7 @@ exports.run = async function run(api, dirArg) {
       if (frame) { try { inner += ` then ${JSON.stringify(await frame.executeJavaScript(FRAME_JS, true))}`; } catch (_) {} }
       log(`web ${it.id} before capture: pause=${JSON.stringify(P.S.pause.paused)} outer=${await js(d, OUTER_JS)} inner=${inner}`);
       await capture(d, dir, `web-${it.id}`);
-      log(`web ${it.id} "${it.title}": runtime=${JSON.stringify(rt)} page=${JSON.stringify(await js(d, VIDEO_STATE))}`);
+      log(`web ${it.id}: runtime=${JSON.stringify(rt)} page=${JSON.stringify(await js(d, VIDEO_STATE))}`);
     }
     // two frames of a web wallpaper, to show it animates too
     const rain = P.S.lib.get('abqqpcp4.hv3');
@@ -325,14 +325,14 @@ exports.run = async function run(api, dirArg) {
       await sleep(9000);
       for (const r of res.results.filter((x) => x.ok)) {
         const it = P.S.lib.get(r.id);
-        log(`after the thumbnail pass, ${r.title}: thumb=${it && it.thumb} error=${it && it.error}`);
+        log(`after the thumbnail pass, ${r.id}: thumb=${it && it.thumb} error=${it && it.error}`);
       }
       await js(lw, `(() => { const c = document.querySelector('.card[data-id="${(res.results[1] || {}).id}"]'); if (c) c.click(); return !!c; })()`);
       await sleep(1200);
       await capture(lw, dir, 'library-added');
       for (const r of res.results.filter((x) => x.ok)) {
         await C['wallpaper.remove']({ id: r.id });
-        log(`removed ${r.title}: still in library=${!!P.S.lib.get(r.id)} folder exists=${fs.existsSync(P.S.lib.itemDir(r.id))}`);
+        log(`removed ${r.id}: still in library=${!!P.S.lib.get(r.id)} folder exists=${fs.existsSync(P.S.lib.itemDir(r.id))}`);
       }
     }
 

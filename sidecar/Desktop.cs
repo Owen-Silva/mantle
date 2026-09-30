@@ -148,8 +148,18 @@ namespace Mantle {
       IntPtr progman = Win32.FindWindowW("Progman", null);
       if (progman == IntPtr.Zero)
         return "no Progman window: the desktop is not running (explorer may have crashed)";
-      if (Win32.GetAncestor(hwnd, Win32.GA_PARENT) != progman)
-        return "the desktop layer is no longer a child of Progman (explorer restarted?)";
+      if (Win32.GetAncestor(hwnd, Win32.GA_PARENT) != progman) {
+        // Explorer restarted (a crash, or Task Manager's Restart): the Progman we joined died and a
+        // new one runs, and our window survived as an orphan. This used to be reported every 30 s
+        // forever; now the layer simply joins the new desktop, the way it joined the first one.
+        string mode;
+        string aerr = Attach(hwnd, out mode);
+        if (aerr != null)
+          return "the desktop layer lost its place when explorer restarted and could not rejoin the desktop: " + aerr;
+        moved = true;
+        covering = "explorer restarted, so the layer rejoined the new desktop (" + mode + ")";
+        return null;
+      }
       IntPtr defView = Win32.FindWindowExW(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
       if (defView == IntPtr.Zero)
         return "Progman has no SHELLDLL_DefView any more, so there is no icon layer to sit under";

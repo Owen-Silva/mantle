@@ -153,8 +153,12 @@ async function main() {
   await baseline.advanceTo(10 * MIN - 1);
   const page = loadPage(SRC, { probe: () => REFUSED });
   await page.advanceTo(10 * MIN - 1);
-  check('baseline: HEAD probes 20 times in 10 min with the port closed (1 + 10min/30s)',
-    baseline.probes.length === 20, baseline.probes.length);
+  // The flat 30 s probe this was written against is no longer HEAD once the backoff is committed
+  // (it was, 2026-09-27), so the baseline is only pinned while HEAD still has the old probe.
+  if (!/function mcNextDelay/.test(OLD_SRC)) {
+    check('baseline: HEAD probes 20 times in 10 min with the port closed (1 + 10min/30s)',
+      baseline.probes.length === 20, baseline.probes.length);
+  }
   // PINNED: fails on the old code (20 probes).
   check('port closed 10 min: at most 5 probes', page.probes.length <= 5,
     page.probes.length + ' probes at ' + page.probes.map(s).join(','));
