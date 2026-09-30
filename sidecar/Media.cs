@@ -3,10 +3,25 @@
 // Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager.
 //
 //   {cmd:"media"}                                  get (op defaults to "get")
-//   {cmd:"media", op:"get", art:true, artSize:96, aumid:"..."}
+//   {cmd:"media", op:"get", art:true, artSize:192, aumid:"..."}
 //   {cmd:"media", op:"control", action:"play"|"pause"|"toggle"|"next"|"previous"|"stop"|"seek",
-//                 positionMs:<seek only>, aumid:"<optional; default = the current session>"}
+//                 positionMs:<seek only>, aumid:"<optional; default = the current session>",
+//                 dryRun:true -> finds the session, says which call it WOULD send, sends nothing
+//                 (the only control a --passive sidecar accepts)}
 //   {cmd:"media", op:"watch", on:true|false}      emits {ev:"media", ...} on changes
+//   --passive only, for sidecar/test-media.js: op "arttest" (the art encoder on an image made
+//   here), "stalltest" (keep the media thread busy), "changetest" (fire the change hook).
+// Every argument is type-checked (a wrong type is an error, never a silent default).
+//
+// ART (lane media-sc, 2026-09-29): the card draws art at 72 DIP, so the default is 192 px (sharp
+// to 250% scaling; 96 px was upscaled and soft at 150/200%). Opaque art is sent as JPEG q90, PNG
+// only when a pixel is transparent. Measured on generated 600x600 art: old PNG@96 41.7 KB /
+// 21 ms, PNG@192 162 KB / 40 ms, JPEG@192 14.1 KB / 35 ms; a 3000x3000 source ~435 ms either way.
+// Images over 16 megapixels are refused from the header before any decode.
+//
+// TIME (same lane): a request's WinRT calls share one deadline (BudgetMs from when it was asked),
+// so one hung app cannot push the answer past RequestMs; a job whose caller already gave up is
+// dropped, never run late (a pause the user was told failed must not land seconds later).
 //
 // HOW THIS BUILDS WITHOUT THE WINDOWS SDK (measured 2026-09-22). build.ps1's
 // MANTLE_WINRT route wants the SDK's UNION Windows.winmd because
@@ -70,19 +85,42 @@ namespace Mantle {
     /// "cannot do that right now" is an answer in `result` with ok:false and a
     /// plain-English reason, like the Quick Settings replies.
     public static string Run(Dictionary<string, object> req, ref object result) {
+      object opv;
+      if (Json.TryGet(req, "op", out opv) && !(opv is string)) return "media: op must be a string (get, control or watch)";
       string op = Json.GetString(req, "op");
       if (string.IsNullOrEmpty(op)) op = "get";
-      if (op != "get" && op != "control" && op != "watch")
-        return "media: unknown op '" + op + "' (use get, control or watch)";
+      bool testOp = op == "arttest" || op == "stalltest" || op == "changetest";
+      if (op != "get" && op != "control" && op != "watch" && !testOp)
+        return "media: unknown op '" + Clip(op) + "' (use get, control or watch)";
+      // Test ops never touch a media session; they exist so the art encoder and
+      // the busy-thread paths can be driven without a real player.
+      if (testOp && !Program.Passive) return "media: " + op + " is a test op and only runs in --passive";
+
+      // Every optional argument is type-checked, so a wrong type is a clear
+      // error rather than a silent default (on:"false" used to mean TRUE).
+      object v;
+      if (Json.TryGet(req, "aumid", out v) && !(v is string)) return "media: aumid must be a string (the app's id from a get)";
+      if (Json.TryGet(req, "art", out v) && !(v is bool)) return "media: art must be true or false";
+      if (Json.TryGet(req, "dryRun", out v) && !(v is bool)) return "media: dryRun must be true or false";
+      int artSize = DefaultArtPx;
+      if (Json.TryGet(req, "artSize", out v)) {
+        if (!(v is double) || double.IsNaN((double)v) || double.IsInfinity((double)v))
+          return "media: artSize must be a number of pixels (16 to 256)";
+        // Clamped as a double first: (int) of a huge double is int.MinValue.
+        artSize = (int)Math.Round(Math.Max(16.0, Math.Min(256.0, (double)v)));
+      }
+      bool dryRun = Json.GetBool(req, "dryRun", false);
 
       string action = null;
       long seekMs = 0;
       if (op == "control") {
+        object av;
+        if (Json.TryGet(req, "action", out av) && !(av is string)) return "media: action must be a string";
         action = Json.GetString(req, "action");
         if (action != "play" && action != "pause" && action != "toggle" && action != "next" &&
             action != "previous" && action != "stop" && action != "seek")
           return "media: control needs action play, pause, toggle, next, previous, stop or seek" +
-                 (string.IsNullOrEmpty(action) ? "" : " (got '" + action + "')");
+                 (string.IsNullOrEmpty(action) ? "" : " (got '" + Clip(action) + "')");
         if (action == "seek") {
           object pv;
           if (!Json.TryGet(req, "positionMs", out pv) || !(pv is double) || (double)pv < 0 ||
@@ -91,23 +129,31 @@ namespace Mantle {
           seekMs = (long)Math.Round((double)pv);
         }
         // Checked BEFORE anything reaches WinRT, so a passive test run can
-        // never press a button on whatever is playing.
-        if (Program.Passive) return PassiveRefusal + ": media control would change live playback";
+        // never press a button on whatever is playing. dryRun is allowed: it
+        // finds the target and says what it WOULD send, and sends nothing.
+        if (Program.Passive && !dryRun) return PassiveRefusal + ": media control would change live playback";
       }
-      if (op == "watch" && !Json.HasKey(req, "on")) return "media: watch needs on:true or on:false";
+      if (op == "watch") {
+        object ov;
+        if (!Json.TryGet(req, "on", out ov)) return "media: watch needs on:true or on:false";
+        if (!(ov is bool)) return "media: watch needs on:true or on:false (a boolean)";
+      }
 
 #if MANTLE_WINMD
       string aumid = Json.GetString(req, "aumid");
       if (op == "get") {
-        bool art = Json.GetBool(req, "art", true);
-        int size = Json.GetInt(req, "artSize", DefaultArtPx);
-        if (size < 16) size = 16;
-        if (size > 256) size = 256;
-        result = Get(art, size, aumid);
+        result = Get(Json.GetBool(req, "art", true), artSize, aumid);
       } else if (op == "control") {
-        result = Control(action, seekMs, aumid);
-      } else {
+        result = Control(action, seekMs, aumid, dryRun);
+      } else if (op == "watch") {
         result = Watch(Json.GetBool(req, "on", true));
+      } else if (op == "arttest") {
+        string terr = ArtTest(req, artSize, ref result);
+        if (terr != null) return terr;
+      } else if (op == "stalltest") {
+        result = StallTest(req);
+      } else {
+        result = ChangeTest(req);
       }
       return null;
 #else
@@ -116,16 +162,31 @@ namespace Mantle {
 #endif
     }
 
+    /// An argument echoed in an error, cut short so a huge string cannot
+    /// flood the reply.
+    static string Clip(string s) {
+      if (s == null) return "";
+      return s.Length <= 40 ? s : s.Substring(0, 40) + "...";
+    }
+
 #if !MANTLE_WINMD
     const string Unavailable =
       "media controls are not built into this sidecar: build.ps1 did not find the WinRT metadata " +
       "(System32\\WinMetadata\\Windows.Media.winmd and its companions) or the System.Runtime facade, " +
       "so MANTLE_WINMD was not defined";
 #else
-    public const int DefaultArtPx = 96;
+    // The card draws art at 72 DIP; 192 px stays sharp up to 250% scaling
+    // (96 px was upscaled, and looked soft, at 150% and 200%).
+    public const int DefaultArtPx = 192;
     const int CallMs = 2000;       // one WinRT call (props, a button, opening the artwork)
     const int RequestMs = 3500;    // a whole request, under the 4 s the client waits
+    const int BudgetMs = RequestMs - 300;   // what the work itself may spend, so the answer beats RequestMs
+    const int MinCallMs = 50;      // less time left than this: skip the call, say so
     const long MaxArtBytes = 8L * 1024 * 1024;
+    // Decoding costs memory and time by PIXELS, not file size: a small PNG can
+    // claim 30000x30000 (3.6 GB to decode). Album art is ~300-3000 px a side.
+    const long MaxArtPixels = 4096L * 4096;
+    const int JpegQuality = 90;
 
     // ------------------------------------------------------------ the thread
 
@@ -135,10 +196,18 @@ namespace Mantle {
     static Thread _thread;                                              // under _gate
     static volatile string _busy;                                       // what the thread is doing, for timeouts
 
+    sealed class Job { public bool Abandoned; }                         // Abandoned under _gate
+    static long _deadlineTs;                                            // media thread only; 0 = no deadline
+    static long _dropped;                                               // Interlocked: jobs skipped because their caller gave up
+
     /// Runs `fn` on the media thread and waits for it. If the thread does not
-    /// finish in time the caller gets the reason; the late work still finishes
-    /// on its own and its answer is dropped (it writes only to its own locals).
-    static IDictionary OnMediaThread(string what, Func<IDictionary> fn) {
+    /// finish in time the caller gets the reason. A job whose caller has
+    /// already given up is DROPPED when its turn comes (never run late: a
+    /// pause the user was told failed must not land seconds afterwards, and
+    /// a hung app must not grow a queue of dead reads). A job that has started
+    /// runs under a deadline (BudgetMs from when it was asked), so one slow app
+    /// cannot eat the whole answer.
+    static void EnsureThread() {
       lock (_gate) {
         if (_thread == null) {
           _thread = new Thread(Loop);
@@ -148,16 +217,27 @@ namespace Mantle {
           _thread.Start();
         }
       }
+    }
+
+    static IDictionary OnMediaThread(string what, Func<IDictionary> fn) {
+      EnsureThread();
       var done = new ManualResetEvent(false);
+      var job = new Job();
+      long asked = Stopwatch.GetTimestamp();
       IDictionary answer = null;
       lock (_gate) {
         _work.Enqueue(delegate {
+          lock (_gate) {
+            if (job.Abandoned) { Interlocked.Increment(ref _dropped); return; }
+          }
           _busy = what;
+          _deadlineTs = asked + BudgetMs * Stopwatch.Frequency / 1000;
           try {
             answer = fn();
           } catch (Exception ex) {
             answer = Json.Obj("ok", false, "reason", "media: " + what + " failed (" + Why(ex) + ")");
           } finally {
+            _deadlineTs = 0;
             _busy = null;
             done.Set();
           }
@@ -165,6 +245,7 @@ namespace Mantle {
       }
       _wake.Set();
       if (!done.WaitOne(RequestMs)) {
+        lock (_gate) job.Abandoned = true;
         string busy = _busy;
         return Json.Obj("ok", false, "reason",
                         "media: " + what + " did not finish within " + (RequestMs / 1000.0) + " s" +
@@ -173,6 +254,18 @@ namespace Mantle {
       done.Close();
       return answer;
     }
+
+    /// Media thread: the time one more WinRT call may take, or 0 when the
+    /// current job's deadline is too close to start one.
+    static int CallBudget() {
+      long due = _deadlineTs;
+      if (due == 0) return CallMs;
+      long ms = (due - Stopwatch.GetTimestamp()) * 1000 / Stopwatch.Frequency;
+      if (ms < MinCallMs) return 0;
+      return (int)Math.Min(CallMs, ms);
+    }
+
+    const string OutOfTime = "skipped: the request ran out of time (another app was slow to answer)";
 
     static void Loop() {
       while (true) {
@@ -246,7 +339,9 @@ namespace Mantle {
     static string EnsureManager() {
       if (_mgr != null) return null;
       GlobalSystemMediaTransportControlsSessionManager m;
-      string err = WinRt.Await(GlobalSystemMediaTransportControlsSessionManager.RequestAsync(), CallMs,
+      int ms = CallBudget();
+      if (ms == 0) return OutOfTime;
+      string err = WinRt.Await(GlobalSystemMediaTransportControlsSessionManager.RequestAsync(), ms,
                                "Windows' media session manager", out m);
       if (err != null) return err;
       if (m == null) return "Windows returned no media session manager";
@@ -309,7 +404,13 @@ namespace Mantle {
       // Light on purpose: no artwork (a data URL per event would be tens of
       // KB). `artKey` changes when the track does, which is the client's cue
       // to call get for the new art.
-      var snap = Snapshot(false, false, DefaultArtPx, null);
+      IDictionary snap;
+      _deadlineTs = Stopwatch.GetTimestamp() + BudgetMs * Stopwatch.Frequency / 1000;
+      try {
+        snap = Snapshot(false, false, DefaultArtPx, null);
+      } finally {
+        _deadlineTs = 0;
+      }
       Program.Emit(Json.Obj("ev", "media", "rev", Interlocked.Read(ref _rev), "reasons", reasons,
                             "present", snap["present"], "current", snap["current"],
                             "count", snap["count"], "reason", snap["reason"]));
@@ -345,7 +446,7 @@ namespace Mantle {
       });
     }
 
-    static IDictionary Control(string action, long seekMs, string aumid) {
+    static IDictionary Control(string action, long seekMs, string aumid, bool dryRun) {
       return OnMediaThread("media " + action, delegate {
         string err = EnsureManager();
         if (err != null)
@@ -371,49 +472,71 @@ namespace Mantle {
         if (c == null)
           return Json.Obj("ok", false, "action", action, "reason", app + " did not say which buttons it accepts");
 
-        IAsyncOperation<bool> op = null;
-        string verb = action, via = action;
+        // First decide WHICH call this press becomes (nothing is sent yet), so
+        // dryRun can answer exactly what a real press would do.
+        string verb = action, via = null;
+        bool isPlaying = pb.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
         switch (action) {
-          case "play":     if (c.IsPlayEnabled) op = s.TryPlayAsync(); break;
-          case "pause":    if (c.IsPauseEnabled) op = s.TryPauseAsync(); break;
-          case "stop":     if (c.IsStopEnabled) op = s.TryStopAsync(); break;
-          case "next":     verb = "next track"; if (c.IsNextEnabled) op = s.TrySkipNextAsync(); break;
-          case "previous": verb = "previous track"; if (c.IsPreviousEnabled) op = s.TrySkipPreviousAsync(); break;
-          case "seek":
-            verb = "seeking";
-            if (c.IsPlaybackPositionEnabled) op = s.TryChangePlaybackPositionAsync(TimeSpan.FromMilliseconds(seekMs).Ticks);
-            break;
+          case "play":     if (c.IsPlayEnabled) via = "play"; break;
+          case "pause":    if (c.IsPauseEnabled) via = "pause"; break;
+          case "stop":     if (c.IsStopEnabled) via = "stop"; break;
+          case "next":     verb = "next track"; if (c.IsNextEnabled) via = "next"; break;
+          case "previous": verb = "previous track"; if (c.IsPreviousEnabled) via = "previous"; break;
+          case "seek":     verb = "seeking"; if (c.IsPlaybackPositionEnabled) via = "seek"; break;
           case "toggle":
             verb = "play/pause";
-            if (c.IsPlayPauseToggleEnabled) op = s.TryTogglePlayPauseAsync();
+            if (c.IsPlayPauseToggleEnabled) via = "toggle";
             // Some apps publish play and pause but not the toggle: do the half
             // that matches what it is doing now, and say which one was sent.
-            else if (pb.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing && c.IsPauseEnabled) {
-              op = s.TryPauseAsync(); via = "pause";
-            } else if (c.IsPlayEnabled) {
-              op = s.TryPlayAsync(); via = "play";
-            }
+            else if (isPlaying && c.IsPauseEnabled) via = "pause";
+            else if (c.IsPlayEnabled) via = "play";
             break;
         }
-        if (op == null)
-          return Json.Obj("ok", false, "action", action, "aumid", s.SourceAppUserModelId,
+        string target = s.SourceAppUserModelId;
+        if (via == null)
+          return Json.Obj("ok", false, "action", action, "aumid", target, "dryRun", dryRun,
                           "reason", app + " does not accept " + verb + " right now");
+        if (dryRun)
+          return Json.Obj("ok", true, "dryRun", true, "sent", false, "action", action, "via", via,
+                          "aumid", target, "positionMs", action == "seek" ? (object)seekMs : null,
+                          "rev", Interlocked.Read(ref _rev));
+
+        // A press that could only land late is not sent at all.
+        int ms = CallBudget();
+        if (ms == 0)
+          return Json.Obj("ok", false, "action", action, "aumid", target, "reason", app + " (" + verb + ") " + OutOfTime);
+        IAsyncOperation<bool> op = null;
+        switch (via) {
+          case "play":     op = s.TryPlayAsync(); break;
+          case "pause":    op = s.TryPauseAsync(); break;
+          case "stop":     op = s.TryStopAsync(); break;
+          case "next":     op = s.TrySkipNextAsync(); break;
+          case "previous": op = s.TrySkipPreviousAsync(); break;
+          case "seek":     op = s.TryChangePlaybackPositionAsync(TimeSpan.FromMilliseconds(seekMs).Ticks); break;
+          case "toggle":   op = s.TryTogglePlayPauseAsync(); break;
+        }
         bool accepted;
-        string cerr = WinRt.Await(op, CallMs, app + " (" + verb + ")", out accepted);
+        string cerr = WinRt.Await(op, ms, app + " (" + verb + ")", out accepted);
         if (cerr != null)
-          return Json.Obj("ok", false, "action", action, "aumid", s.SourceAppUserModelId, "reason", cerr);
+          return Json.Obj("ok", false, "action", action, "aumid", target, "reason", cerr);
         if (!accepted)
-          return Json.Obj("ok", false, "action", action, "aumid", s.SourceAppUserModelId,
+          return Json.Obj("ok", false, "action", action, "aumid", target,
                           "reason", app + " refused " + verb);
-        return Json.Obj("ok", true, "action", action, "via", via, "aumid", s.SourceAppUserModelId,
+        return Json.Obj("ok", true, "action", action, "via", via, "aumid", target,
                         "rev", Interlocked.Read(ref _rev));
       });
     }
 
     static GlobalSystemMediaTransportControlsSession FindSession(string aumid) {
       foreach (var s in _mgr.GetSessions())
-        if (string.Equals(s.SourceAppUserModelId, aumid, StringComparison.OrdinalIgnoreCase)) return s;
+        if (string.Equals(AumidOf(s), aumid, StringComparison.OrdinalIgnoreCase)) return s;
       return null;
+    }
+
+    /// A session's app id, or null when the session closed under us (its
+    /// RCW then throws on every call; seen as RPC_E_DISCONNECTED).
+    static string AumidOf(GlobalSystemMediaTransportControlsSession s) {
+      try { return s.SourceAppUserModelId; } catch (Exception) { return null; }
     }
 
     // ------------------------------------------------------------- snapshot
@@ -429,32 +552,59 @@ namespace Mantle {
       var all = new List<GlobalSystemMediaTransportControlsSession>(_mgr.GetSessions());
       // The same COM object comes back as the same RCW, so reference equality
       // is the precise match; the AUMID is the fallback if it ever is not.
+      // Sessions come and go WHILE this reads them (a tab closes, a player
+      // quits): a session that throws is left out and counted, instead of
+      // failing the whole read.
+      int skipped = 0;
+      string curAumid = cur == null ? null : AumidOf(cur);
       int curIdx = -1;
       if (cur != null) {
         for (int i = 0; i < all.Count && curIdx < 0; i++) if (ReferenceEquals(all[i], cur)) curIdx = i;
         for (int i = 0; i < all.Count && curIdx < 0; i++)
-          if (all[i].SourceAppUserModelId == cur.SourceAppUserModelId) curIdx = i;
+          if (curAumid != null && AumidOf(all[i]) == curAumid) curIdx = i;
       }
       var list = new List<object>();
       for (int i = 0; i < all.Count; i++) {
-        var d = Describe(all[i], false, false, artSize);
+        IDictionary d;
+        try {
+          d = Describe(all[i], false, false, artSize);
+        } catch (Exception) {
+          skipped++;
+          continue;
+        }
         d["current"] = i == curIdx;
         list.Add(d);
       }
-      IDictionary current = cur == null ? null : Describe(cur, full, full && art, artSize);
+      IDictionary current = null;
+      string curGone = null;
+      if (cur != null) {
+        try {
+          current = Describe(cur, full, full && art, artSize);
+        } catch (Exception ex) {
+          curGone = "the playing app's media session closed while Mantle was reading it (" + Why(ex) + ")";
+        }
+      }
       IDictionary picked = null;
       string pickedReason = null;
       if (!string.IsNullOrEmpty(aumid)) {
         var s = FindSession(aumid);
-        if (s != null) picked = Describe(s, true, art, artSize);
-        else pickedReason = "no media session from " + aumid + " is open";
+        if (s != null) {
+          try {
+            picked = Describe(s, true, art, artSize);
+          } catch (Exception ex) {
+            pickedReason = "that app's media session closed while Mantle was reading it (" + Why(ex) + ")";
+          }
+        } else pickedReason = "no media session from " + aumid + " is open";
       }
-      var r = Json.Obj("ok", true, "present", all.Count > 0, "via", "winrt",
-                       "rev", Interlocked.Read(ref _rev), "count", all.Count,
+      int count = all.Count - skipped;
+      var r = Json.Obj("ok", true, "present", count > 0, "via", "winrt",
+                       "rev", Interlocked.Read(ref _rev), "count", count,
                        "current", current, "sessions", list,
                        "events", HookReason == null, "eventsReason", HookReason);
+      if (skipped > 0) r["skipped"] = skipped;
       if (!string.IsNullOrEmpty(aumid)) { r["session"] = picked; r["sessionReason"] = pickedReason; }
-      if (all.Count == 0) r["reason"] = "nothing is playing: no app has a media session open";
+      if (count == 0) r["reason"] = "nothing is playing: no app has a media session open";
+      else if (curGone != null) r["currentReason"] = curGone;
       else if (cur == null) r["currentReason"] = "Windows has not picked a current session";
       return r;
     }
@@ -464,8 +614,10 @@ namespace Mantle {
       var app = AppFor(aumid, false);
       var d = Json.Obj("aumid", aumid, "app", app);
 
-      GlobalSystemMediaTransportControlsSessionMediaProperties p;
-      string perr = WinRt.Await(s.TryGetMediaPropertiesAsync(), CallMs, "the track details from " + app["name"], out p);
+      GlobalSystemMediaTransportControlsSessionMediaProperties p = null;
+      int ms = CallBudget();
+      string perr = ms == 0 ? OutOfTime
+        : WinRt.Await(s.TryGetMediaPropertiesAsync(), ms, "the track details from " + app["name"], out p);
       string title = null, artist = null, album = null;
       if (p != null) {
         title = Blank(p.Title);
@@ -548,8 +700,9 @@ namespace Mantle {
 
     static readonly Dictionary<string, string> _art = new Dictionary<string, string>();   // under _art
 
-    /// Media thread. The session's thumbnail as a PNG data URL no larger than
-    /// `size` px on its long side. Cached per track and size; a failure is
+    /// Media thread. The session's thumbnail as a data URL no larger than
+    /// `size` px on its long side (JPEG when opaque, PNG when it has any
+    /// transparency; see Encode). Cached per track and size; a failure is
     /// never cached, because apps often publish the art a moment after the
     /// title.
     static string Artwork(GlobalSystemMediaTransportControlsSessionMediaProperties p, string key, int size, out string why) {
@@ -560,8 +713,10 @@ namespace Mantle {
         if (_art.TryGetValue(ck, out hit)) return hit;
       }
       if (p.Thumbnail == null) { why = "the app did not publish artwork"; return null; }
+      int ms = CallBudget();
+      if (ms == 0) { why = OutOfTime; return null; }
       IRandomAccessStreamWithContentType st;
-      why = WinRt.Await(p.Thumbnail.OpenReadAsync(), CallMs, "opening the artwork", out st);
+      why = WinRt.Await(p.Thumbnail.OpenReadAsync(), ms, "opening the artwork", out st);
       if (why != null) return null;
       if (st == null) { why = "the artwork stream was empty"; return null; }
       byte[] bytes;
@@ -569,9 +724,11 @@ namespace Mantle {
         ulong n = st.Size;
         if (n == 0) { why = "the artwork stream was empty"; return null; }
         if ((long)n > MaxArtBytes) { why = "the artwork is " + (n / 1024) + " KB, over the " + (MaxArtBytes / 1048576) + " MB limit"; return null; }
+        ms = CallBudget();
+        if (ms == 0) { why = OutOfTime; return null; }
         using (var rd = new DataReader(st)) {
           uint got;
-          why = WinRt.Await(rd.LoadAsync((uint)n), CallMs, "reading the artwork", out got);
+          why = WinRt.Await(rd.LoadAsync((uint)n), ms, "reading the artwork", out got);
           if (why != null) return null;
           bytes = new byte[got];
           rd.ReadBytes(bytes);
@@ -579,13 +736,10 @@ namespace Mantle {
       } finally {
         try { st.Dispose(); } catch (Exception) { }
       }
-      string url;
-      try {
-        url = Png(bytes, size);
-      } catch (Exception ex) {
-        why = "the artwork could not be decoded (" + Why(ex) + ")";
-        return null;
-      }
+      string url, type;
+      int ow, oh;
+      why = Encode(bytes, size, null, out url, out type, out ow, out oh);
+      if (why != null) return null;
       lock (_art) {
         if (_art.Count >= 16) _art.Clear();   // a handful of tracks; no LRU needed
         _art[ck] = url;
@@ -593,29 +747,229 @@ namespace Mantle {
       return url;
     }
 
-    static string Png(byte[] bytes, int size) {
-      using (var ms = new MemoryStream(bytes))
-      using (var img = SD.Image.FromStream(ms, false, true)) {
-        int w = img.Width, h = img.Height;
-        double k = Math.Min(1.0, (double)size / Math.Max(w, h));
-        int tw = Math.Max(1, (int)Math.Round(w * k)), th = Math.Max(1, (int)Math.Round(h * k));
-        using (var bmp = new SD.Bitmap(tw, th, SD.Imaging.PixelFormat.Format32bppArgb)) {
-          using (var g = SD.Graphics.FromImage(bmp))
-          using (var ia = new SD.Imaging.ImageAttributes()) {
-            g.InterpolationMode = SD.Drawing2D.InterpolationMode.HighQualityBicubic;
-            g.PixelOffsetMode = SD.Drawing2D.PixelOffsetMode.HighQuality;
-            g.CompositingQuality = SD.Drawing2D.CompositingQuality.HighQuality;
-            // TileFlipXY stops bicubic from pulling transparent black in at
-            // the edges, which otherwise leaves a dark hairline round the art.
-            ia.SetWrapMode(SD.Drawing2D.WrapMode.TileFlipXY);
-            g.DrawImage(img, new SD.Rectangle(0, 0, tw, th), 0, 0, w, h, SD.GraphicsUnit.Pixel, ia);
-          }
-          using (var outp = new MemoryStream()) {
-            bmp.Save(outp, SD.Imaging.ImageFormat.Png);
-            return "data:image/png;base64," + Convert.ToBase64String(outp.ToArray());
+    static SD.Imaging.ImageCodecInfo _jpeg;   // under _art
+
+    /// Any thread. Decodes `bytes`, scales to `size` px on the long side with
+    /// high-quality bicubic, and encodes a data URL: JPEG (quality 90) when
+    /// every output pixel is opaque, which is ~5-10x smaller than PNG for a
+    /// photo, else PNG so transparent art keeps its edges. `force` ("png" /
+    /// "jpeg") is for the test op's before/after measurement only. Returns the
+    /// plain-words reason on failure; never throws.
+    static string Encode(byte[] bytes, int size, string force, out string url, out string type, out int ow, out int oh) {
+      url = null; type = null; ow = 0; oh = 0;
+      if (bytes == null || bytes.Length == 0) return "the artwork stream was empty";
+      try {
+        using (var ms = new MemoryStream(bytes))
+        // validateImageData:false reads only the header, so the pixel count is
+        // known BEFORE anything big is decoded; DrawImage decodes afterwards.
+        using (var img = SD.Image.FromStream(ms, false, false)) {
+          int w = img.Width, h = img.Height;
+          if (w <= 0 || h <= 0) return "the artwork has no size";
+          if ((long)w * h > MaxArtPixels)
+            return "the artwork is " + w + " x " + h + " px, too large to decode (the limit is " + (MaxArtPixels / 1000000) + " megapixels)";
+          double k = Math.Min(1.0, (double)size / Math.Max(w, h));
+          int tw = Math.Max(1, (int)Math.Round(w * k)), th = Math.Max(1, (int)Math.Round(h * k));
+          using (var bmp = new SD.Bitmap(tw, th, SD.Imaging.PixelFormat.Format32bppArgb)) {
+            using (var g = SD.Graphics.FromImage(bmp))
+            using (var ia = new SD.Imaging.ImageAttributes()) {
+              g.InterpolationMode = SD.Drawing2D.InterpolationMode.HighQualityBicubic;
+              g.PixelOffsetMode = SD.Drawing2D.PixelOffsetMode.HighQuality;
+              g.CompositingQuality = SD.Drawing2D.CompositingQuality.HighQuality;
+              // TileFlipXY stops bicubic from pulling transparent black in at
+              // the edges, which otherwise leaves a dark hairline round the art.
+              ia.SetWrapMode(SD.Drawing2D.WrapMode.TileFlipXY);
+              g.DrawImage(img, new SD.Rectangle(0, 0, tw, th), 0, 0, w, h, SD.GraphicsUnit.Pixel, ia);
+            }
+            bool jpeg = force == "jpeg" || (force != "png" && Opaque(bmp));
+            using (var outp = new MemoryStream()) {
+              SD.Imaging.ImageCodecInfo codec = jpeg ? JpegCodec() : null;
+              if (jpeg && codec != null) {
+                using (var ep = new SD.Imaging.EncoderParameters(1)) {
+                  ep.Param[0] = new SD.Imaging.EncoderParameter(SD.Imaging.Encoder.Quality, (long)JpegQuality);
+                  bmp.Save(outp, codec, ep);
+                }
+                type = "jpeg";
+              } else {
+                bmp.Save(outp, SD.Imaging.ImageFormat.Png);
+                type = "png";
+              }
+              url = "data:image/" + type + ";base64," + Convert.ToBase64String(outp.ToArray());
+              ow = tw; oh = th;
+              return null;
+            }
           }
         }
+      } catch (Exception) {
+        // GDI+ answers a corrupt or truncated file with "Out of memory" or
+        // "Parameter is not valid"; neither means anything to a user.
+        url = null; type = null;
+        return "the artwork is not an image Mantle can read (the file is damaged or in an unknown format)";
       }
+    }
+
+    /// True when every pixel of a 32bpp ARGB bitmap has alpha 255. Scans the
+    /// output (at most 256 x 256), not the source's pixel format, because a
+    /// paletted PNG can carry transparency its format flag does not show and
+    /// an "ARGB" PNG is often fully opaque.
+    static bool Opaque(SD.Bitmap bmp) {
+      var rect = new SD.Rectangle(0, 0, bmp.Width, bmp.Height);
+      var data = bmp.LockBits(rect, SD.Imaging.ImageLockMode.ReadOnly, SD.Imaging.PixelFormat.Format32bppArgb);
+      try {
+        int stride = Math.Abs(data.Stride);
+        var row = new byte[stride];
+        for (int y = 0; y < bmp.Height; y++) {
+          System.Runtime.InteropServices.Marshal.Copy(IntPtr.Add(data.Scan0, y * data.Stride), row, 0, stride);
+          for (int x = 0; x < bmp.Width; x++) if (row[x * 4 + 3] != 255) return false;
+        }
+        return true;
+      } finally {
+        bmp.UnlockBits(data);
+      }
+    }
+
+    static SD.Imaging.ImageCodecInfo JpegCodec() {
+      lock (_art) {
+        if (_jpeg == null)
+          foreach (var c in SD.Imaging.ImageCodecInfo.GetImageEncoders())
+            if (c.MimeType == "image/jpeg") { _jpeg = c; break; }
+        return _jpeg;
+      }
+    }
+
+    // ---------------------------------------------------- test ops (--passive only)
+
+    /// {op:"arttest", kind, w, h, artSize, force?} - runs Encode on an image
+    /// made HERE, so the art path is testable without a real player. Kinds:
+    /// photo (opaque JPEG), png (opaque PNG), alpha (PNG, transparent corners),
+    /// corrupt (random bytes), truncated (half a JPEG), huge (a valid PNG
+    /// header claiming 30000 x 30000, no pixels), empty.
+    static string ArtTest(Dictionary<string, object> req, int artSize, ref object result) {
+      string kind = Json.GetString(req, "kind") ?? "photo";
+      string force = Json.GetString(req, "force");
+      int w = Json.GetInt(req, "w", 600), h = Json.GetInt(req, "h", 600);
+      if (w < 1 || h < 1 || w > 5000 || h > 5000) return "media: arttest needs w and h from 1 to 5000";
+      byte[] src;
+      switch (kind) {
+        case "photo": src = MakeImage(w, h, false, SD.Imaging.ImageFormat.Jpeg); break;
+        case "png": src = MakeImage(w, h, false, SD.Imaging.ImageFormat.Png); break;
+        case "alpha": src = MakeImage(w, h, true, SD.Imaging.ImageFormat.Png); break;
+        case "truncated": {
+          byte[] full = MakeImage(w, h, false, SD.Imaging.ImageFormat.Jpeg);
+          src = new byte[full.Length / 2];
+          Array.Copy(full, src, src.Length);
+          break;
+        }
+        case "corrupt": src = new byte[4096]; new Random(7).NextBytes(src); break;
+        case "huge": src = PngHeaderOnly(30000, 30000); break;
+        case "empty": src = new byte[0]; break;
+        default: return "media: arttest kind must be photo, png, alpha, truncated, corrupt, huge or empty";
+      }
+      var sw = Stopwatch.StartNew();
+      string url, type;
+      int ow, oh;
+      string why = Encode(src, artSize, force, out url, out type, out ow, out oh);
+      sw.Stop();
+      result = Json.Obj("ok", why == null, "kind", kind, "srcBytes", src.Length, "type", type,
+                        "urlBytes", url == null ? 0 : url.Length, "w", ow, "h", oh,
+                        "ms", Math.Round(sw.Elapsed.TotalMilliseconds, 1), "reason", why,
+                        "prefix", url == null ? null : url.Substring(0, Math.Min(32, url.Length)));
+      return null;
+    }
+
+    /// A photo-like test image: smooth gradients plus noise (so it compresses
+    /// like real art, not like a flat fill). `alpha` makes the corners clear.
+    static byte[] MakeImage(int w, int h, bool alpha, SD.Imaging.ImageFormat fmt) {
+      var rnd = new Random(42);
+      using (var bmp = new SD.Bitmap(w, h, SD.Imaging.PixelFormat.Format32bppArgb)) {
+        var rect = new SD.Rectangle(0, 0, w, h);
+        var data = bmp.LockBits(rect, SD.Imaging.ImageLockMode.WriteOnly, SD.Imaging.PixelFormat.Format32bppArgb);
+        var row = new byte[data.Stride];
+        double r2 = Math.Min(w, h) * 0.5;
+        for (int y = 0; y < h; y++) {
+          for (int x = 0; x < w; x++) {
+            int n = rnd.Next(-24, 25);
+            row[x * 4 + 0] = (byte)Math.Max(0, Math.Min(255, 255 * x / w + n));
+            row[x * 4 + 1] = (byte)Math.Max(0, Math.Min(255, 255 * y / h + n));
+            row[x * 4 + 2] = (byte)Math.Max(0, Math.Min(255, 128 + (int)(100 * Math.Sin(x * 0.05 + y * 0.03)) + n));
+            double dx = x - w / 2.0, dy = y - h / 2.0;
+            row[x * 4 + 3] = (byte)(alpha && dx * dx + dy * dy > r2 * r2 ? 0 : 255);
+          }
+          System.Runtime.InteropServices.Marshal.Copy(row, 0, IntPtr.Add(data.Scan0, y * data.Stride), row.Length);
+        }
+        bmp.UnlockBits(data);
+        using (var ms = new MemoryStream()) {
+          bmp.Save(ms, fmt);
+          return ms.ToArray();
+        }
+      }
+    }
+
+    /// A PNG that is only a signature and a valid IHDR (with its CRC): what a
+    /// hostile or broken app could hand over to make the decoder allocate GBs.
+    static byte[] PngHeaderOnly(int w, int h) {
+      var ms = new MemoryStream();
+      ms.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, 0, 8);
+      var chunk = new byte[17];
+      chunk[0] = (byte)'I'; chunk[1] = (byte)'H'; chunk[2] = (byte)'D'; chunk[3] = (byte)'R';
+      BigEndian(chunk, 4, (uint)w);
+      BigEndian(chunk, 8, (uint)h);
+      chunk[12] = 8; chunk[13] = 2;              // 8-bit RGB, deflate, no filter, no interlace
+      var len = new byte[4];
+      BigEndian(len, 0, 13);
+      ms.Write(len, 0, 4);
+      ms.Write(chunk, 0, 17);
+      var crc = new byte[4];
+      BigEndian(crc, 0, Crc32(chunk));
+      ms.Write(crc, 0, 4);
+      return ms.ToArray();
+    }
+
+    static void BigEndian(byte[] b, int at, uint v) {
+      b[at] = (byte)(v >> 24); b[at + 1] = (byte)(v >> 16); b[at + 2] = (byte)(v >> 8); b[at + 3] = (byte)v;
+    }
+
+    static uint Crc32(byte[] b) {
+      uint c = 0xFFFFFFFF;
+      foreach (byte x in b) {
+        c ^= x;
+        for (int k = 0; k < 8; k++) c = (c & 1) != 0 ? 0xEDB88320 ^ (c >> 1) : c >> 1;
+      }
+      return c ^ 0xFFFFFFFF;
+    }
+
+    /// {op:"stalltest", ms} - keeps the media thread busy for `ms` (max 10 s)
+    /// WITHOUT waiting, so a test can prove a request behind a hung app
+    /// answers in time, and that work its caller gave up on is dropped, not
+    /// run late. ms 0 just reports the dropped count.
+    static IDictionary StallTest(Dictionary<string, object> req) {
+      int ms = Json.GetInt(req, "ms", 0);
+      if (ms < 0) ms = 0;
+      if (ms > 10000) ms = 10000;
+      if (ms > 0) {
+        EnsureThread();
+        lock (_gate) {
+          _work.Enqueue(delegate {
+            _busy = "a test stall";
+            try { Thread.Sleep(ms); } finally { _busy = null; }
+          });
+        }
+        _wake.Set();
+      }
+      return Json.Obj("ok", true, "stalled", ms, "dropped", Interlocked.Read(ref _dropped));
+    }
+
+    /// {op:"changetest", reason, n} - fires the same change hook WinRT's
+    /// events call, n times in a burst, so a test can prove the debounce
+    /// (one event per burst), the emit while watching and the silence after
+    /// watch off, without touching any real player.
+    static IDictionary ChangeTest(Dictionary<string, object> req) {
+      string reason = Json.GetString(req, "reason") ?? "media";
+      if (reason != "media" && reason != "playback" && reason != "timeline")
+        return Json.Obj("ok", false, "reason", "changetest reason must be media, playback or timeline");
+      int n = Math.Max(1, Math.Min(100, Json.GetInt(req, "n", 1)));
+      EnsureThread();
+      for (int i = 0; i < n; i++) Changed(reason);
+      return Json.Obj("ok", true, "fired", n, "watching", _watching, "rev", Interlocked.Read(ref _rev));
     }
 
     // ----------------------------------------------------------- app names
