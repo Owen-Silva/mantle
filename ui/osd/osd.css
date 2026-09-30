@@ -258,3 +258,15 @@ body[data-below] .osd.open .more svg { transform: none; }
 .retry { display: inline-grid; width: auto; padding: 0 10px; margin-top: 8px; background: var(--lg-sunk); }
 .note { margin: 4px 2px 6px; }
 .note[hidden] { display: none; }
+
+/* ---------------------------------------------------------------- focus and reduced motion
+   (capture-osd 2026-09-29) The window never takes the keyboard, but if one ever reaches it the ring is
+   the accent hairline every other Mantle control uses. Reduced motion: no fade, no chevron turn; the
+   page's fade timer reads 0 too (osd.js fadeMs), so the window goes the moment the pop-up does. */
+.glyph:focus-visible, .more:focus-visible, .amute:focus-visible, .retry:focus-visible {
+  outline: 1px solid var(--lg-acc);
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .osd, .more svg, .glyph, .more, .amute, .retry { transition: none; }
+}

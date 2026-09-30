@@ -39,7 +39,7 @@
   var kind = 'volume';
   var st = { volume: null, brightness: null };  // the newest reading of each, as main reports it
   var why = null;                                // a master set that did not take
-  var open = false, shown = false, fading = 0, pollT = 0, gen = 0;
+  var open = false, shown = false, fading = 0, pollT = 0, gen = 0, seq = null;
   var mix = { data: null, memo: null, rows: {}, keys: '' };
   var dragging = false;
 
@@ -65,11 +65,11 @@
     return call('qs.set', { part: k, value: v }).then(function (r) {
       r = r || { ok: false, reason: 'qs.set answered with nothing' };
       if (r.state && typeof r.state === 'object') st[k] = Object.assign({}, r.state);
-      why = r.ok === false ? label(k) + ' did not change: ' + (r.reason || 'no reason was given') : null;
+      why = r.ok === false ? label(k) + ' did not change: ' + M.plain(r.reason) : null;
       if (!held()) paint();
       return r;
     }, function (e) {
-      why = label(k) + ' did not change: ' + msg(e);
+      why = label(k) + ' did not change: ' + M.plain(msg(e));
       paint();
       return { ok: false, reason: msg(e) };
     });
@@ -92,12 +92,12 @@
       r = r || { ok: false, reason: 'qs.set answered with nothing' };
       if (r.state && typeof r.state === 'object') st.volume = Object.assign({}, r.state);  // ...the read-back decides
       else if (r.ok === false) st.volume = cur;                                             // refused: spring back
-      why = r.ok === false ? (want ? 'Mute' : 'Unmute') + ' did not take: ' + (r.reason || 'no reason was given') : null;
+      why = r.ok === false ? (want ? 'Mute' : 'Unmute') + ' did not take: ' + M.plain(r.reason) : null;
       paint();
     }, function (e) {
       mutePending = false;
       st.volume = cur;
-      why = (want ? 'Mute' : 'Unmute') + ' did not take: ' + msg(e);
+      why = (want ? 'Mute' : 'Unmute') + ' did not take: ' + M.plain(msg(e));
       paint();
     });
   });
@@ -130,7 +130,7 @@
     el.osd.classList.toggle('dead', !!d.dead);
     if (kind === 'volume') {
       el.glyph.innerHTML = M.volumeSvg(d.dead ? null : d.fill, !!d.muted);
-      el.glyph.title = d.dead ? d.aria : d.muted ? 'Unmute' : 'Mute';
+      el.glyph.title = d.dead ? d.aria : d.muted ? 'Unmute (mute key)' : 'Mute (mute key)';
       el.glyph.setAttribute('aria-pressed', String(!!d.muted));
       el.glyph.classList.toggle('on', !!d.muted);
       el.glyph.classList.toggle('pending', mutePending);
@@ -150,7 +150,7 @@
       el.num.textContent = d.value;
     }
     el.pill.title = d.aria;
-    var line = d.dead ? sentence(label(kind) + ' is unavailable: ' + (s.reason || 'no reason was given')) : why ? sentence(why) : '';
+    var line = d.dead ? sentence(label(kind) + ' is unavailable: ' + M.plain(s.reason)) : why ? sentence(why) : '';
     el.why.textContent = line;
     el.why.hidden = !line;
     el.more.setAttribute('aria-expanded', String(open));
@@ -168,6 +168,7 @@
     if (p.state && typeof p.state === 'object' && !(held() && k === kind)) st[k] = Object.assign({}, p.state);
     if (k !== kind) { why = null; kind = k; if (k !== 'volume') setOpen(false); }
     document.body.toggleAttribute('data-below', !!p.below);
+    if (typeof p.seq === 'number') seq = p.seq;   // echoed in osd.faded, so main never hides a newer show
     if (fading) { clearTimeout(fading); fading = 0; }
     el.osd.classList.remove('fading');
     el.osd.hidden = false;
@@ -186,13 +187,24 @@
     if (!fader.state().hovered) fader.poke();
   }
 
+  /* The fade is the CSS one (--lg-dur-out on --lg-ease); with reduced motion there is none, so the
+     window goes at once instead of sitting there invisible for the length of a fade nobody sees. */
+  var reduce = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  function fadeMs() {
+    if (reduce && reduce.matches) return 0;
+    var raw = getComputedStyle(document.documentElement).getPropertyValue('--lg-dur-out').trim();
+    var v = parseFloat(raw) * (/[^m]s$/.test(raw) ? 1000 : 1);   // '260ms' or '.26s'
+    return isFinite(v) && v >= 0 && v <= 1000 ? v : 260;
+  }
+
   function fadeOut() {
     el.osd.classList.add('fading');
+    var s = seq;
     fading = setTimeout(function () {
       fading = 0;
       gone();
-      call('osd.faded', {}).catch(function () { /* main hides it on its own backstop */ });
-    }, 280);
+      call('osd.faded', { seq: s }).catch(function () { /* main hides it on its own backstop */ });
+    }, fadeMs());
   }
 
   function gone() {
@@ -207,12 +219,21 @@
   el.osd.addEventListener('mouseenter', function () { fader.hover(true); });
   el.osd.addEventListener('mouseleave', function () { fader.hover(false); });
   el.osd.addEventListener('pointerdown', function () { fader.poke(); }, true);
+  var wheelAcc = 0;
   el.osd.addEventListener('wheel', function (e) {
     // the wheel over the pop-up nudges whatever it shows, 2 per notch like Windows' own keys
     if (el.level.disabled) return;
     if (e.target && e.target.closest && e.target.closest('.apps')) return;   // the list scrolls
     e.preventDefault();
-    var v = Math.max(0, Math.min(100, Number(el.level.value) + (e.deltaY < 0 ? 2 : -2)));
+    // a mouse notch is one step; a touchpad's many small deltas add up to one per notch's worth
+    var w = M.wheel(wheelAcc, e.deltaY, e.deltaMode);
+    wheelAcc = w.acc;
+    if (!w.steps) return;
+    // snapped to the even steps the keys use (33 -> 34 up, 33 -> 32 down), so wheel and keys agree
+    var v = Number(el.level.value);
+    for (var i = 0; i < Math.abs(w.steps); i++) v = w.steps > 0 ? Math.floor(v / 2) * 2 + 2 : Math.ceil(v / 2) * 2 - 2;
+    v = Math.max(0, Math.min(100, v));
+    if (v === Number(el.level.value)) { fader.poke(); return; }
     el.level.value = String(v);
     el.level.dispatchEvent(new Event('input'));
   }, { passive: false });
@@ -288,7 +309,7 @@
       mix.rows = {};
       el.apps.textContent = '';
       if (r.ok === false) {
-        stateBlock('The apps can’t be read', r.reason || 'no reason was given', true);
+        stateBlock('The apps can’t be read', M.plain(r.reason), true);
       } else if (!listed.rows.length) {
         stateBlock('No apps are playing sound', 'An app appears here while it plays sound' +
           (r.device && r.device.name ? ' on ' + r.device.name : '') + '.', false);
@@ -429,7 +450,7 @@
       if (change.muted !== undefined) row.pendingMute = false;
       if (g !== gen) return r;
       var what = change.muted !== undefined ? (change.muted ? 'Mute' : 'Unmute') : 'The level';
-      row.err = r.ok ? null : what + ' did not take: ' + (r.reason || 'no reason was given');
+      row.err = r.ok ? null : what + ' did not take: ' + M.plain(r.reason);
       // THE READ-BACK WINS: the row shows what the session holds now, never the click
       if (r.session) paintApp(row, Object.assign({}, row.s, r.session, { icon: row.s.icon, iconReason: row.s.iconReason }));
       else paintApp(row, row.s.muted !== undefined && change.muted !== undefined ? Object.assign({}, row.s, { muted: !change.muted }) : row.s);
