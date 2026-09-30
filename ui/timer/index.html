@@ -12,7 +12,7 @@
 </head>
 <body>
 <!-- "Timer done" (lib/features/timer.js): made when a timer reaches zero, at the primary screen's
-     top-right under the top bar, destroyed on Again / Dismiss or after 2 minutes. It never takes the
+     top-right under the top bar, destroyed on +1 min / +5 min / Restart / Dismiss or after 2 minutes. It never takes the
      keyboard (focusable:false); its buttons still take a click. A soft two-note chime is made here
      with Web Audio (no files); a chime that cannot play says why on the card. -->
 <div id="card" class="card" role="alertdialog" aria-labelledby="title" aria-describedby="sub" hidden>
@@ -23,9 +23,12 @@
     <div id="title" class="title"></div>
     <div id="sub" class="sub"></div>
   </div>
+  <!-- one primary action (Dismiss, the accent); the quiet ones beside it ring the same timer again -->
   <div class="acts">
-    <button id="again" class="b" type="button">Again</button>
-    <button id="dismiss" class="b" type="button">Dismiss</button>
+    <button class="b" type="button" data-snooze="60000" title="Snooze: ring again in 1 minute">+1 min</button>
+    <button class="b" type="button" data-snooze="300000" title="Snooze: ring again in 5 minutes">+5 min</button>
+    <button id="restart" class="b" type="button" title="Run the same timer again">Restart</button>
+    <button id="dismiss" class="b pri" type="button" title="Close this pop-up">Dismiss</button>
   </div>
   <i id="life" class="life" aria-hidden="true"></i>
 </div>
