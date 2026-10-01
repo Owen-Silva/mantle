@@ -37,6 +37,10 @@
      body.no-backdrop switches to it — an honest fallback, not a guess. */
   --lg-fill-fb:     rgba(255,255,255,.62);
   --lg-fill-strong: rgba(255,255,255,.72);   /* popovers carry LISTS: they get a real surface */
+  /* r6-art (2026-09-30): the bar's popovers. They have no blurred strip under them (only the bar has
+     one, and blur on tall cards made Chromium drop raster tiles), so at .72 a busy screen (a
+     terminal) read straight through the card. .88 keeps the glass hint and lets the text win. */
+  --lg-fill-pop:    rgba(255,255,255,.88);
 
   /* the two hairlines. INNER is the white lip just inside the top edge (Northwind's border colour);
      OUTER separates the pane from the screen. It is .10 ink, NOT the .35 black the dark set

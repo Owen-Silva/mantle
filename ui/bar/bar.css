@@ -569,7 +569,7 @@ button.chip:hover { background: var(--lg-press); }
   /* denser than the bar (it has to hold readable rows over anything) but the same glass. Its
      shadow is the Northwind stack the right way up: the popover floats above the bar exactly like
      the nav pill floats above the page. */
-  background-color: var(--lg-fill-strong);
+  background-color: var(--lg-fill-pop);   /* r6-art: not --lg-fill-strong, see glass-light.css */
   border: 1px solid var(--lg-edge-in);
   border-radius: var(--lg-r-pop);
   box-shadow: inset 0 1px 0 var(--lg-edge-in), var(--lg-shadow);
