@@ -320,3 +320,9 @@
 @media (prefers-reduced-motion: reduce) {
   .spq *, .spq *::after, .spq *::before { transition: none !important; }
 }
+
+/* ---------------------------------------------------------------- Spotify auto-pause (r5-autopause lane)
+   One quiet line under the head while it acts; otherwise its state at the foot of More. */
+.spq-ap { padding: 0 8px 4px 30px; color: var(--lg-ink-2); font-size: 12px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spq-ap.bad { color: var(--lg-warn); }
+.spq-ap-more { padding: 6px 8px 2px; color: var(--lg-ink-3); font-size: 12px; line-height: 1.45; }

@@ -404,7 +404,7 @@ async function pageTests() {
       check('Alt+Up moves a queued song up', (await H.last('spotify.move') || {}).dir === 'up');
       await H.close();
       check('closed(): no timer left running', (await H.pg.evaluate(() => T.live())) === 0, await H.pg.evaluate(() => T.live()));
-      check('closed(): the status subscription is released', (await H.pg.evaluate(() => T.unsubs())) === 1 && (await H.pg.evaluate(() => T.subs())) === 0);
+      check('closed(): the status and auto-pause subscriptions are released (r5-autopause: two)', (await H.pg.evaluate(() => T.unsubs())) === 2 && (await H.pg.evaluate(() => T.subs())) === 0);
       const n = (await H.calls()).length;
       await H.tick(30000);
       check('closed(): nothing is read afterwards', (await H.calls()).length === n);
@@ -700,6 +700,27 @@ async function pageTests() {
       await H.tick(2500);                                 // t=5.5 s: card 1's old timer would have fired here
       check('an old card’s timer never disarms a new card', /Click again to quit/.test(await H.text('.spq-more')));
     });
+    // r5-autopause lane: Spotify auto-pause's line under the head (only while it acts) and its words under More.
+    await run('autopause-line', async (H) => {
+      await H.fresh();
+      await H.open();
+      check('autopause: no line before anything is pushed', !(await H.vis('.spq-ap')));
+      await H.push('autopause.status', { ok: true, state: 'holding', words: 'Paused while LessonPlayer plays', card: 'Paused while LessonPlayer plays', mode: 'media' });
+      check('autopause: holding shows its line', (await H.text('.spq-ap')) === 'Paused while LessonPlayer plays' && (await H.vis('.spq-ap')), await H.text('.spq-ap'));
+      await H.push('autopause.status', { ok: true, state: 'error', words: 'Spotify could not be paused: Windows did not answer', card: 'Couldn’t pause Spotify', mode: 'media' });
+      check('autopause: a failure is said in the warn colour, its reason on hover', String(await H.attr('.spq-ap', 'class')).includes('bad') && String(await H.attr('.spq-ap', 'title')).includes('Windows did not answer'));
+      await H.push('autopause.status', { ok: true, state: 'standby', words: 'The separate Spotify auto-pause helper on this PC is in charge, so Mantle’s stays off', card: '', mode: 'media' });
+      check('autopause: standby puts no line under the head', !(await H.vis('.spq-ap')));
+      await H.expand(); await H.clickText('More');
+      check('autopause: standby is said under More', /^Auto-pause: The separate Spotify auto-pause helper/.test((await H.text('.spq-ap-more')) || ''), await H.text('.spq-ap-more'));
+      await H.push('autopause.status', { ok: true, state: 'off', words: 'Off', card: '', mode: 'media' });
+      check('autopause: off says nothing anywhere', !(await H.vis('.spq-ap')) && !(await H.vis('.spq-ap-more')));
+      await H.push('autopause.status', { ok: true, state: 'holding', words: 'Paused while Opera GX plays a video', card: 'Paused while Opera GX plays a video', mode: 'media' });
+      check('autopause: while it acts, More does not repeat the line', !(await H.vis('.spq-ap-more')) && (await H.vis('.spq-ap')));
+      await H.shot('autopause-holding-more-open');
+      await noJargon(H, 'autopause');
+    });
+
     await run('push-and-dead-sub', async (H) => {
       await H.fresh();
       await H.pg.evaluate(() => { T.deadReason = 'the live channel closed'; });

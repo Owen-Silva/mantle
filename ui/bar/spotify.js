@@ -888,6 +888,20 @@
   }
 
   /* quiet: called from inside bar.js's own repaint, which measures the card itself afterwards */
+  /* r5-autopause lane: the line under the head while auto-pause acts, and its whole state under More. */
+  function renderAp() {
+    if (!S || !S.apLine) return;
+    var a = S.ap || null;
+    var line = a && a.card ? String(a.card) : '';
+    S.apLine.textContent = line;
+    S.apLine.title = a && a.words ? String(a.words) : '';
+    S.apLine.hidden = !line;
+    S.apLine.classList.toggle('bad', !!a && a.state === 'error');
+    var full = a && a.words && a.state !== 'off' ? 'Auto-pause: ' + String(a.words) : '';
+    S.apMore.textContent = full;
+    S.apMore.hidden = !moreOpen || !full || !!line;   // never the same words twice
+  }
+
   function render(quiet) {
     if (!S) return;
     var st = S.status ? S.status.state : 'checking';
@@ -962,6 +976,7 @@
     S.moreBtn.classList.toggle('flag', !!prob && !moreOpen);
     S.moreBtn.title = (moreOpen ? 'Hide' : 'Show') + ' window, quit and game options' + (prob && !moreOpen ? ' (something needs a look)' : '');
     S.more.hidden = !moreOpen;
+    renderAp();
     if (moreOpen) {
       redraw('more', [st, JSON.stringify(S.win), JSON.stringify(S.info && { m: S.info.memory, r: S.info.memoryReason, v: S.info.visible, w: S.info.window }), S.infoErr, S.infoLoading,
         JSON.stringify(S.status && S.status.revive), JSON.stringify(S.status && S.status.window), S.quitArmed, JSON.stringify(S.optPending)].join('\u0001'), function () { drawMore(st); });
@@ -1060,6 +1075,10 @@
       var chev = mk('span', 'spq-chev'); chev.innerHTML = svg(G.chev, 14);
       head.appendChild(ico); head.appendChild(label); head.appendChild(hint); head.appendChild(chev);
       root.appendChild(head);
+      /* r5-autopause lane: what Spotify auto-pause is doing, only while it acts ("Paused while LessonPlayer
+         plays"); lib/features/autopause.js pushes autopause.status. Otherwise its state sits under More. */
+      var apLine = mk('div', 'spq-ap'); apLine.hidden = true; apLine.setAttribute('role', 'status');
+      root.appendChild(apLine);
       var idle = mk('div', 'spq-idle'); idle.hidden = true;
       root.appendChild(idle);
 
@@ -1104,10 +1123,12 @@
       body.appendChild(moreBtn);
       var more = mk('div', 'spq-more'); more.hidden = true;
       body.appendChild(more);
+      var apMore = mk('div', 'spq-ap-more'); apMore.hidden = true;
+      body.appendChild(apMore);
       root.appendChild(body);
       pop.insertBefore(root, before || null);
 
-      S = { api: api, root: root, head: head, hint: hint, idle: idle, body: body, warn: warn, bar: bar, scroll: scroll, state: state, list: list,
+      S = { api: api, root: root, apLine: apLine, apMore: apMore, ap: null, head: head, hint: hint, idle: idle, body: body, warn: warn, bar: bar, scroll: scroll, state: state, list: list,
         addRow: addRow, input: input, tab: 'queue', lib: null, libErr: null, libLoading: false, info: null, infoErr: '', infoLoading: false, quitArmed: false,
         sqLine: sqLine, clear: clear, kbdLine: kbdLine, noteEl: noteEl, moreBtn: moreBtn, more: more, liked: null, optPending: {}, sigs: {},
         status: null, q: null, qErr: null, results: null, query: '', added: {}, busy: '', noteText: '', noteBad: false, noteRaw: '', noteTimer: 0, armTimer: 0,
@@ -1139,6 +1160,7 @@
       S.unsub = api.on ? api.on('spotify.status', function (st) { if (S === mine) setStatus(st); }, function (reason) {
         if (S === mine) say('Live updates from Spotify are off (' + plain(reason) + '), so this list refreshes every 8 s instead', true, reason);
       }) : null;
+      S.apUnsub = api.on ? api.on('autopause.status', function (st) { if (S === mine) { S.ap = st; renderAp(); relayout(); } }, function () { /* no line: the card works without it */ }) : null;
       loadStatus();
       return root;
     },
@@ -1178,6 +1200,7 @@
       if (S.armTimer) clearTimeout(S.armTimer);
       if (S.noteTimer) clearTimeout(S.noteTimer);
       if (S.unsub) { try { S.unsub(); } catch (e) { /* gone */ } }
+      if (S.apUnsub) { try { S.apUnsub(); } catch (e) { /* gone */ } }
       if (S.kbd === 'yes') S.api.call('qs.keyboard', { on: false }).catch(function () {});
       S = null;
     }
