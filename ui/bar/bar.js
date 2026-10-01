@@ -605,6 +605,8 @@
      here rather than read back with getComputedStyle because this runs on every resize frame. */
   var CELL = 36, GAP = 6, DIV = 7;
   var settleTimer = 0, lastKey = '', frozen = { cap: 'none', shift: 0, hidden: 0 };
+  var onStrip = Infinity;              // how many icons applyOverflow left on the strip (Infinity: all of them)
+  var upFit = null;                    // the last LANDED, revealed measurement, { m, mode }: see settleDock
 
   /* THE FIT RULE, rebuilt 2026-09-21 after build 20 cut Riot in half and dropped Comet. The old
      rule measured the SYMMETRIC room (twice the distance to the nearer cluster) and clipped when
@@ -666,10 +668,13 @@
 
   /* How many cells actually survive a given width, so the chip can say how many are hidden rather
      than just that some are. The divider counts as part of the first running item. */
+  function cellAdd(i) {
+    return (i ? GAP : 0) + CELL + (items[i].kind === 'running' && i > 0 && items[i - 1].kind !== 'running' ? DIV : 0);
+  }
   function fitInfo(width) {
     var used = 0, n = 0;
     for (var i = 0; i < items.length; i++) {
-      var add = (i ? GAP : 0) + CELL + (items[i].kind === 'running' && i > 0 && items[i - 1].kind !== 'running' ? DIV : 0);
+      var add = cellAdd(i);
       if (used + add > width) break;
       used += add; n++;
     }
@@ -677,29 +682,59 @@
   }
   function fitCount(width) { return fitInfo(width).n; }
 
-  /* decide(): the whole rule in one pure function of (measurement, need). Returns the cap, the
-     shift off centre, and how many icons are lost — nothing here touches the DOM. */
-  function decide(m, need) {
-    if (!need) return { cap: 'none', shift: 0, hidden: 0 };
-    if (need <= m.span) {
-      var l = m.centre - need / 2, r = m.centre + need / 2;
+  /* The strip's width with the first `keep` icons on it, the "+N" button included when any wait
+     behind it. */
+  function stripWidth(keep) {
+    if (keep >= items.length) return needWidth();
+    var used = 0;
+    for (var i = 0; i < keep; i++) used += cellAdd(i);
+    return keep ? used + GAP + CELL : CELL;
+  }
+
+  /* How many icons the strip keeps in a given room: all of them while they fit the span, else
+     (OVERFLOW, 2026-09-29) as many as fit with room kept for the "+N" button; the rest wait behind
+     that button. They used to be clipped off the end with a chip saying how many, and could not
+     be reached at all. */
+  function keepFor(m, need) {
+    if (!need || need <= m.span) return items.length;
+    return fitInfo(m.span - CELL - GAP).n;
+  }
+
+  /* Where a strip `w` wide sits in this room. Centred on the bar while it fits the span, slid by the
+     minimum that keeps it inside; with apps behind "+N" (`behind`), filled from the span's left
+     edge. A strip wider than the room it has THIS frame (the pill still growing) is filled from
+     the left edge too and cut at the right one: the icons come in with the pill, never over the
+     clock. */
+  function placeStrip(m, w, behind) {
+    if (!behind && w <= m.span) {
+      var l = m.centre - w / 2, r = m.centre + w / 2;
       var shift = 0;
       if (l < m.spanL) shift = m.spanL - l;          // pushed right, off the launcher
       else if (r > m.spanR) shift = m.spanR - r;     // pushed left, off the clock (the usual one)
-      return { cap: 'none', shift: shift, hidden: 0 };
+      return { cap: 'none', shift: shift };
     }
-    /* Genuinely too many (OVERFLOW, 2026-09-29): as many as fit with room kept for the "+N" button,
-       filled from the span's left edge; the rest wait behind that button. They used to be clipped
-       off the end with a chip saying how many, and could not be reached at all. `n` is how many
-       icons stay on the strip; `w` is the strip's width with the button, which the shift centres. */
-    var fit = fitInfo(m.span - CELL - GAP);
-    var w = fit.n ? fit.used + GAP + CELL : CELL;
-    return {
-      cap: Math.max(Math.round(m.span), CELL) + 'px',
-      shift: m.spanL - (m.centre - w / 2),
-      hidden: Math.max(1, items.length - fit.n),
-      n: fit.n
-    };
+    var box = Math.max(Math.round(m.span), CELL);
+    return { cap: box + 'px', shift: m.spanL - (m.centre - Math.min(w, box) / 2) };
+  }
+
+  /* decide(): the whole rule in one pure function. `m` is the room the strip is placed in NOW;
+     `basis` is the room the "+N" judgement is made in: the landed, revealed bar, or null when no
+     such room is known yet, and then nothing goes behind "+N". Returns the cap, the shift off
+     centre, how many icons are lost and how many stay (`n`) — nothing here touches the DOM. */
+  function decide(m, need, basis) {
+    if (!need) return { cap: 'none', shift: 0, hidden: 0, n: 0 };
+    var keep = basis ? keepFor(basis, need) : items.length;
+    var behind = keep < items.length;
+    var p = placeStrip(m, behind ? stripWidth(keep) : need, behind);
+    return { cap: p.cap, shift: p.shift, hidden: behind ? items.length - keep : 0, n: keep };
+  }
+
+  /* One frame of a resize, between judgements: the strip AS IT STANDS (the icons applyOverflow
+     left on it, "+N" if it is showing) placed in this frame's room. Nothing is judged here, so no
+     frame of an entrance or an exit can move an app behind "+N" or bring one out. */
+  function follow(m) {
+    var behind = onStrip < items.length;
+    return placeStrip(m, behind ? stripWidth(onStrip) : needWidth(), behind);
   }
 
   /* The settled answer's key. `revealed` is in it (2026-09-23) because the judgement made while
@@ -742,6 +777,7 @@
       i++;
     }
     if (el.dock.lastChild !== ovfBtn) el.dock.appendChild(ovfBtn);   // renders insert cells before it; keep it last
+    onStrip = hidden ? keep : Infinity;  // Infinity: an app added before the next judgement shows, never blinks behind "+N"
     ovfBtn.hidden = !hidden;
     var label = '+' + hidden;
     if (ovfBtn.textContent !== label) ovfBtn.textContent = label;
@@ -766,8 +802,14 @@
        in edge mode, where they do, measure() says why it converges. */
     var key = dockKey(m, need);
     /* Already settled at this width, with this many icons, against this wall? Then this resize is
-       something INSIDE the bar changing width (our own status chips) and the settled answer stands. */
-    applyDock(key === lastKey ? frozen : decide(m, need));
+       something INSIDE the bar changing width (our own status chips) and the settled answer stands.
+       Otherwise the strip as it stands follows the frame; a render may have added icons past the
+       ones kept, and those join the others behind "+N" at once. */
+    if (key === lastKey) applyDock(frozen);
+    else {
+      if (onStrip !== Infinity) applyOverflow(onStrip);
+      applyDock(follow(m));
+    }
     if (settleTimer) clearTimeout(settleTimer);
     settleTimer = setTimeout(settleDock, 50);
   }
@@ -790,6 +832,9 @@
        still tracks every frame in layoutDock; the judgement waits for the transition to finish and
        is made against the width the pill lands at. */
     if (revealed && widthInFlight()) return;
+    /* The clock and the chips are text: judged before the face has loaded, the wall is in the
+       wrong place. Wait for it (a local face: in practice this never waits). */
+    if (revealed && fontsPending()) return;
     /* The media chip is judged FIRST: if it gives up its title, the wall moves and the dock is
        judged against the new one, so "apps hidden" is never raised for the instant between. */
     if (revealed && Date.now() >= mediaFitAfter && mediaFit(m, need)) {
@@ -799,7 +844,18 @@
     var key = dockKey(m, need);
     if (key !== lastKey) {
       lastKey = key;
-      frozen = decide(m, need);
+      /* "+N" IS JUDGED ONLY ON THE LANDED, REVEALED BAR (r5-overflow, 2026-09-30). Live on c9b245a,
+         Owen: "it says this when i first open the taskbar and then it goes to the full thing": the
+         bar came up with no app icons, only "+11" and Downloads. mantle.log: parked at 868x60 px,
+         695 dip at 125 %, and a down pill is 62 % of its window, so the settle after every exit
+         measured a 431 dip bar with room for no icon at all and put all 11 behind "+N"; the
+         entrance then kept that until the pill had landed, 560 ms later. So a bar that is down
+         (leaving, parked, never yet revealed) never judges its own room: it judges against the last
+         landed room (upFit), which only changes the answer when the apps changed while it was down,
+         and with no landed room yet nothing goes behind "+N". bar.page.test.js 'reveal' replays it. */
+      if (revealed) upFit = { m: m, mode: barMode };
+      var basis = revealed ? m : (upFit && upFit.mode === barMode ? upFit.m : null);
+      frozen = decide(m, need, basis);
       /* No "N apps hidden" chip any more (2026-09-29): the "+N" button at the end of the strip
          says it where the apps are, and opens them. The numbers stay in the log. */
       if (revealed && frozen.hidden)
@@ -826,6 +882,19 @@
       landing = a;
       a.finished.then(function () { if (landing === a) landing = null; layoutDock(); },
         function () { if (landing === a) landing = null; });
+    }
+    return true;
+  }
+
+  /* Is a face still loading (document.fonts)? Then the judgement is re-run once it has. `ready`
+     also settles when a load fails, so this cannot wait for ever. */
+  var fontWait = false;
+  function fontsPending() {
+    var f = document.fonts;
+    if (!f || f.status !== 'loading') return false;
+    if (!fontWait) {
+      fontWait = true;
+      f.ready.then(function () { fontWait = false; layoutDock(); }, function () { fontWait = false; layoutDock(); });
     }
     return true;
   }

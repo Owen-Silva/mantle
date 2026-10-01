@@ -336,6 +336,95 @@ async function run() {
       await pg.close();
     }
 
+    /* ------------------------------------ a reveal from parked shows the apps (r5-overflow lane) */
+    /* LIVE 2026-09-30 16:44 (Owen's screenshot): the bar came up with no app icons, only "+11" and
+       Downloads, and a moment later showed every app. mantle.log: parked at 868x60 physical px
+       (695 dip at 125 %), revealed as a 1400 px (1120 dip) pill that the page grows over 560 ms.
+       The settle after each exit judged the fit on the PARKED bar (62 % of 695 dip: room for no
+       icon at all) and put every app behind "+N", and the entrance kept that until the pill landed.
+       Reproduced as live: open at the pill's width, hide, shrink the window to the parked width,
+       then the pill rect and 'bar.reveal' together (from the resize event, as main does it). The
+       animation clock is frozen for the entrance's first frame (late frames, as check-reveal.js
+       does), then every frame is sampled until the pill has landed and settled. */
+    if (t.want('reveal')) {
+      const DOWN = 0.62;                                   // bar.css --pane-w at rest
+      /* What the user sees of the dock, in one frame. Installed before the page's scripts. */
+      const snap = function () {
+        var dock = document.getElementById('dock'), bar = document.getElementById('bar'), more = document.getElementById('dock-more');
+        var dr = dock.getBoundingClientRect();
+        var cells = Array.prototype.slice.call(dock.querySelectorAll('.cell'));
+        var shown = cells.filter(function (c) { return !c.classList.contains('ovf'); });
+        var inBox = shown.filter(function (c) { var r = c.getBoundingClientRect(); return r.width > 0 && r.left >= dr.left - 1 && r.right <= dr.right + 1; }).length;
+        var moreOn = !!more && !more.hidden && getComputedStyle(more).display !== 'none';
+        return {
+          up: document.body.classList.contains('up'),
+          bw: Math.round(bar.getBoundingClientRect().width),
+          /* the pill's width transition is still running: the entrance has not landed */
+          fly: !!bar.getAnimations && bar.getAnimations().some(function (a) { return a.transitionProperty === 'width' && a.playState === 'running'; }),
+          cells: cells.length,
+          ovf: cells.length - shown.length,
+          more: moreOn ? more.textContent : '',
+          inBox: inBox,
+          x: shown.map(function (c) { return Math.round(c.getBoundingClientRect().left); }).join(',')
+        };
+      };
+      const INIT = 'window.__snap = ' + snap.toString() + ';';
+      for (const c of [
+        { name: 'fits', q: PILL, w: 1120, fits: true },                  // the mock's 14 icons (589 px) in the live 1120 pill
+        { name: 'too many', q: PILL + '&apps=40', w: 1000, fits: false }  // genuinely too many: "+N" must hold steady
+      ]) {
+        const tag = 'reveal (' + c.name + '): ';
+        const pg = await open(c.q, { w: c.w, h: 480, settle: 1400, init: INIT });
+        const landed = await pg.eval(() => window.__snap());
+        t.check(tag + 'the first reveal lands at the pill\'s width', landed.up && Math.abs(landed.bw - c.w) <= 1, landed);
+        if (c.fits) t.check(tag + 'every app is on the strip and there is no "+N"', landed.ovf === 0 && landed.more === '' && landed.inBox === landed.cells, landed);
+        else t.check(tag + 'some apps wait behind "+N", which says how many', landed.ovf > 0 && landed.more === '+' + landed.ovf, landed);
+
+        /* down, then parked: the window shrinks to the pill's down width, as main parks it */
+        await pg.eval(() => window.__mockMain.hide());
+        await pg.wait(500);
+        await pg.page.setViewportSize({ width: Math.round(c.w * DOWN), height: 480 });
+        await pg.wait(400);
+        const parked = await pg.eval(() => window.__snap());
+        t.check(tag + 'parking the bar does not change which apps wait behind "+N"', !parked.up && parked.ovf === landed.ovf && parked.more === landed.more, [parked, landed]);
+
+        /* the entrance's first frame: clock frozen, then the pill rect and the reveal together */
+        const cdp = await pg.page.context().newCDPSession(pg.page);
+        await cdp.send('Animation.enable');
+        await cdp.send('Animation.setPlaybackRate', { playbackRate: 0 });
+        await pg.eval(() => {
+          window.addEventListener('resize', () => window.__mockMain.reveal('harness: reveal from parked'), { once: true });
+          window.__frames = [];
+          const t0 = performance.now();
+          const tick = () => { const s = window.__snap(); s.t = Math.round(performance.now() - t0); window.__frames.push(s); if (s.t < 2400) requestAnimationFrame(tick); };
+          requestAnimationFrame(tick);
+        });
+        await pg.page.setViewportSize({ width: c.w, height: 480 });
+        await pg.wait(450);                                // the pins answer at 30 ms, a settle runs 50 ms later
+        const first = await pg.eval(() => window.__snap());
+        t.check(tag + 'reproduced: revealed, the pill still at its down width', first.up && first.bw < c.w - 50, first);
+        if (c.fits) t.check(tag + 'the entrance\'s first frame has the apps and no "+N"', first.ovf === 0 && first.more === '' && first.inBox > 0, first);
+        else t.check(tag + 'the entrance\'s first frame has the same "+N" as the landed bar', first.ovf === landed.ovf && first.more === landed.more, [first, landed]);
+
+        /* the frames come: the pill grows, lands and settles */
+        await cdp.send('Animation.setPlaybackRate', { playbackRate: 1 });
+        await pg.wait(1300);
+        const frames = (await pg.eval(() => window.__frames)).filter((f) => f.up);
+        const end = await pg.eval(() => window.__snap());
+        const off = frames.filter((f) => f.ovf !== landed.ovf || f.more !== landed.more);
+        t.check(tag + 'no frame of the entrance changes what waits behind "+N" (' + frames.length + ' frames)', frames.length > 5 && off.length === 0,
+          { frames: frames.length, off: off.slice(0, 3) });
+        t.check(tag + 'landed again exactly as the first time', Math.abs(end.bw - c.w) <= 1 && end.ovf === landed.ovf && end.more === landed.more && end.x === landed.x, [end, landed]);
+        const home = frames.filter((f) => !f.fly && Math.abs(f.bw - c.w) <= 1);   // landed: the transition is over
+        const moved = home.filter((f) => f.x !== end.x);
+        t.check(tag + 'nothing jumps when the landed fit is judged (' + home.length + ' landed frames)', home.length > 0 && moved.length === 0,
+          { home: home.length, moved: moved.slice(0, 2), end: end.x });
+        await cdp.detach().catch(() => {});
+        t.check(tag + 'no page errors', pg.errors.length === 0, pg.errors);
+        await pg.close();
+      }
+    }
+
     /* ------------------------------------------ Spotify ready, no media session (barfix lane) */
     /* The Spotify Mantle starts hidden with nothing loaded has no Windows media session. The chip
        and card must still offer it (Play Liked Songs), and go the moment the link is gone. */
