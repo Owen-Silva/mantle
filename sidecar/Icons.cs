@@ -30,6 +30,15 @@ namespace Mantle {
       new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
     /// data:image/png;base64,... or null. Never throws.
+    /// The answer ForPath already has for a path, without extracting anything. -> true when it is
+    /// known (url may then be null: that path has no icon). The window list on the ui lane uses this;
+    /// the extraction runs off it (WindowList.QueueIcon, lane r7-fg).
+    public static bool TryCached(string path, out string url) {
+      url = null;
+      if (string.IsNullOrEmpty(path)) return true;
+      lock (_cache) return _cache.TryGetValue(path, out url);
+    }
+
     public static string ForPath(string path) {
       if (string.IsNullOrEmpty(path)) return null;
       string hit;

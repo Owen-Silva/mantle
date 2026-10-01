@@ -240,6 +240,14 @@ namespace Mantle {
 
     /// The cached icon path, for the window list. Never throws, never blocks
     /// twice on the same app.
+    /// The icon IconFor already has for an app id, without reading the package. -> true when known
+    /// (png may then be null: that app has no icon). See Icons.TryCached.
+    public static bool TryIconCached(string aumid, out string png) {
+      png = null;
+      if (string.IsNullOrEmpty(aumid)) return true;
+      lock (_iconCache) return _iconCache.TryGetValue(aumid, out png);
+    }
+
     public static string IconFor(string aumid) {
       if (string.IsNullOrEmpty(aumid)) return null;
       string hit;

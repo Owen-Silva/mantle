@@ -2516,6 +2516,7 @@ function groupRunning(list) {
       groups.set(key, g);
     }
     if (!g.icon && w.icon) g.icon = w.icon;
+    g.iconPending = !g.icon && (!!g.iconPending || !!w.iconPending);   // its icon is on its way (buildPinned)
     // A group can learn its other identifier from a later window: one window of an
     // app may carry an aumid and the next only an exe.
     if (!g.aumid && aumid) g.aumid = aumid;
@@ -2697,7 +2698,12 @@ async function buildPinned() {
     if (isClaimed(g)) continue;
     // Mantle's app windows (markMantleApp): never electron.exe's icon, and named as themselves
     const ico = g.icon ? { icon: g.icon, reason: null }
-      : g.mantleApp ? { icon: null, reason: g.iconReason || 'Mantle\'s icon file is missing' } : await iconFor([g.exeRaw, g.aumid ? APPS_FOLDER + g.aumid : null]);
+      : g.mantleApp ? { icon: null, reason: g.iconReason || 'Mantle\'s icon file is missing' }
+      // The sidecar is still reading this app's icon off its ui lane (Windows.cs QueueIcon, lane
+      // r7-fg) and sends the list again with it within ~1 s: no icon until then, never a guessed one
+      // (asking by exe first would give a Store app its exe's picture, not its own).
+      : g.iconPending ? { icon: null, reason: 'still loading' }
+      : await iconFor([g.exeRaw, g.aumid ? APPS_FOLDER + g.aumid : null]);
     items.push(Object.assign({
       id: `running:${key}`,
       name: g.mantleApp ? mantleApps.APPS[g.mantleApp].title : nameForExe(g.exeRaw, g.title),

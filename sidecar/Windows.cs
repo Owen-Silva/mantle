@@ -99,10 +99,14 @@ namespace Mantle {
       if (Program.ParkWanted) Program.ParkLoopIfAsked();
       _ticks++;
       bool poll = (_ticks % PollEveryTicks) == 0;
-      if (!_dirty && !poll && _firstEmitted) return;
+      // Icons read off the ui lane have landed (QueueIcon): the list is sent again even though the
+      // signature (which leaves icons out) has not moved.
+      bool landed = _iconsLanded;
+      if (landed) _iconsLanded = false;
+      if (!_dirty && !poll && _firstEmitted && !landed) return;
       _dirty = false;
       try {
-        EmitIfChanged(!_firstEmitted);
+        EmitIfChanged(!_firstEmitted || landed);
       } catch (Exception ex) {
         Program.EmitLog("error", "window poll failed: " + ex.Message);
       }
@@ -183,14 +187,19 @@ namespace Mantle {
             icon = OwnIcon(hwnd, key, ownSeen);
             if (icon != null) iconFrom = "window";
           }
-          if (icon == null && app.Aumid != null && (app.Host == "frame" || Apps.IsPackagedPath(exe))) {
-            icon = Apps.IconFor(app.Aumid);
-            if (icon != null) iconFrom = "package";
+          // Same order as ever (a Store app's package icon, else the exe's), but ONLY from what is
+          // already known: reading an icon is never done here, on the ui lane (see QueueIcon).
+          bool pkg = icon == null && app.Aumid != null && (app.Host == "frame" || Apps.IsPackagedPath(exe));
+          bool pending = false;
+          if (pkg) {
+            if (!Apps.TryIconCached(app.Aumid, out icon)) pending = true;
+            else if (icon != null) iconFrom = "package";
           }
-          if (icon == null && exe.Length > 0) {
-            icon = Icons.ForPath(exe);
-            if (icon != null) iconFrom = "exe";
+          if (icon == null && !pending && exe.Length > 0) {
+            if (!Icons.TryCached(exe, out icon)) pending = true;
+            else if (icon != null) iconFrom = "exe";
           }
+          if (pending) pending = QueueIcon(pkg ? app.Aumid : null, exe);
 
           found.Add(Json.Obj(
             "hwnd", hwnd.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -207,7 +216,10 @@ namespace Mantle {
             "icon", icon,
             // where the icon came from: "window" (its own, Mantle's app windows only),
             // "package" (a Store app), "exe", or null (none)
-            "iconFrom", iconFrom));
+            "iconFrom", iconFrom,
+            // true: its icon is being read off the ui lane and a fresh list follows within ~1 s
+            // (icon is null meanwhile; a caller shows no icon rather than guess one).
+            "iconPending", pending));
         } catch (Exception ex2) {
           // One bad window must never truncate the list.
           Program.EmitLog("warn", "skipped a window while listing: " + ex2.Message);
@@ -219,6 +231,69 @@ namespace Mantle {
       _appCache = seen;   // windows that have closed drop out of the cache here
       _ownIcons = ownSeen;
       return found;
+    }
+
+    // ------------------------------------------- app icons, read OFF the ui lane
+    //
+    // Lane r7-fg, 2026-10-01. MEASURED (a diagnostic build, 2 ship-style --test starts): the first
+    // list after the sidecar starts took 1025-1093 ms, 952-961 ms of it reading icons (2 Store apps'
+    // package icons ~580 ms, 6 exe icons ~380 ms; app ids only 15-84 ms). That ran on the ui lane, so
+    // every quick request queued behind it at start waited 1.4-1.9 s (ping, place, glass, foreground),
+    // and a front-window check with a 1.5 s budget ran out. Now Build takes only icons already known;
+    // one it lacks is read here, on a background STA thread (a package icon is a shell COM read), in
+    // the same order as before, and the next 250 ms tick sends the whole list again with it. Nothing
+    // is guessed meanwhile: the window says iconPending and has no icon. The caches are never emptied,
+    // so each app's icon is read once per sidecar run, as before.
+    static readonly object _warmLock = new object();
+    static readonly List<string[]> _warmQueue = new List<string[]>();     // { aumid or null, exe, key }
+    static readonly HashSet<string> _warmQueued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    static readonly HashSet<string> _warmTried = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    static System.Threading.Thread _warmThread;
+    static volatile bool _iconsLanded;     // read by OnTick: send the list again, with the new icons
+
+    /// A window's icon is not known yet: read it off the ui lane. -> true while it is being read;
+    /// false once it was read and is still unknown (that app has no icon: never asked again).
+    static bool QueueIcon(string aumid, string exe) {
+      string key = (aumid ?? "") + "|" + (exe ?? "");
+      lock (_warmLock) {
+        if (_warmTried.Contains(key)) return false;
+        if (_warmQueued.Add(key)) _warmQueue.Add(new string[] { aumid, exe, key });
+        if (_warmThread != null) return true;
+        try {
+          var t = new System.Threading.Thread(WarmIcons);
+          t.IsBackground = true;
+          t.Name = "mantle-icon-read";
+          t.SetApartmentState(System.Threading.ApartmentState.STA);
+          t.Start();
+          _warmThread = t;
+          return true;
+        } catch (Exception ex) {
+          foreach (string[] j in _warmQueue) { _warmQueued.Remove(j[2]); _warmTried.Add(j[2]); }
+          _warmQueue.Clear();
+          Program.EmitLog("warn", "app icons could not be read in the background, so the bar shows those apps without one (" + ex.Message + ")");
+          return false;
+        }
+      }
+    }
+
+    static void WarmIcons() {
+      while (true) {
+        string[] job;
+        lock (_warmLock) {
+          if (_warmQueue.Count == 0) { _warmThread = null; break; }
+          job = _warmQueue[0];
+          _warmQueue.RemoveAt(0);
+        }
+        try {
+          // Fills the same caches Build reads (Apps._iconCache, Icons._cache); both remember a miss too.
+          string icon = job[0] != null ? Apps.IconFor(job[0]) : null;
+          if (icon == null && !string.IsNullOrEmpty(job[1])) Icons.ForPath(job[1]);
+        } catch (Exception ex) {
+          Program.EmitLog("warn", "an app icon could not be read: " + ex.Message);
+        }
+        lock (_warmLock) { _warmQueued.Remove(job[2]); _warmTried.Add(job[2]); }
+      }
+      _iconsLanded = true;   // all read: one fresh list on the next tick, not one per icon
     }
 
     // ------------------------------------------------------ a window's OWN icon
