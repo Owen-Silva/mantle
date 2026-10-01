@@ -372,6 +372,14 @@ flags.edgeclip = !ARGV.some((a) => a === '--no-edgeclip');
  * and an Explorer restart clear it with no Mantle at all.
  */
 flags.tbhide = !ARGV.some((a) => a === '--no-tbhide');
+/*
+ * --test-tbhide (TEST ONLY, 2026-10-01): a --test run hides a TEST'S STAND-IN taskbar the
+ * way a live start hides the real one (ready -> tbhide -> retries), so the start-up timing
+ * can be proven without touching Windows. Honoured only with --test AND
+ * MANTLE_TBHIDE_TEST_CLASS set: the sidecar then sees that stand-in window and nothing else,
+ * and refuses tbhide outright without it (passive).
+ */
+flags.testTbhide = !!flags.test && ARGV.some((a) => a === '--test-tbhide') && !!process.env.MANTLE_TBHIDE_TEST_CLASS;
 
 /*
  * --os-morph: animate the WINDOW with the sidecar's per-frame SetWindowPos, the
@@ -1536,8 +1544,11 @@ async function raiseBar(why) {
       setBar({ ok: false, revealed: true, reason: `something sits over the bar and takes its clicks: ${what}` });
       if (raiseComplaint !== what) {
         raiseComplaint = what;
-        // The class and pid only: a window's title can be an app's or a song's name, and logs carry none.
-        process.stdout.write(`mantle: the bar is covered by ${o.cls || 'an unnamed window'} (pid ${o.pid === undefined ? '?' : o.pid}), so its buttons will not respond (${why})\n`);
+        // No class and no title: either can name an app or a song, and logs carry none.
+        // The pid only, worded as lib/raise.js words it.
+        const whose = typeof o.pid !== 'number' ? 'another window'
+          : o.pid === process.pid ? 'another Mantle window' : `another app's window (pid ${o.pid})`;
+        process.stdout.write(`mantle: the bar is covered by ${whose}, so its buttons will not respond (${why})\n`);
       }
       return;
     }
@@ -5005,6 +5016,10 @@ async function applyMode() {
     } else {
       process.stdout.write(`mantle: ${age.reason}\n`);
     }
+    // --test-tbhide: the live start's taskbar-hiding path (asked as soon as the sidecar is ready,
+    // retried the same way), against the test's stand-in window only. Not awaited: the tray
+    // probe below must not decide when it is asked.
+    if (flags.testTbhide) applyTaskbarHide({ fresh: true }).catch(() => {});
     // One probe, not a poll: the tray list is worth knowing about in a test run,
     // but a five-second poll is not worth the CPU for a window nobody is watching.
     // Up to three TRIES of that one probe (2026-09-22): on a loaded machine the first
@@ -5475,6 +5490,7 @@ function releaseEdgeClip(why) {
   });
 }
 
+// <mainrel:tbhide> (lib/main-tbhide.test.js runs this region with a fake sidecar and clock)
 /**
  * Make the Windows taskbar invisible while Mantle runs (sidecar/TaskbarHide.cs):
  * an EMPTY WINDOW REGION on Shell_TrayWnd / Shell_SecondaryTrayWnd. Explorer
@@ -5483,21 +5499,28 @@ function releaseEdgeClip(why) {
  *
  * The sidecar refuses to set a region until its guard process is armed, so a
  * sidecar killed any way at all cannot leave the taskbar invisible. Called on
- * every sidecar 'ready', so a restarted sidecar picks it straight back up.
+ * every sidecar 'ready' ({fresh: true}: a new sidecar starts the retries over),
+ * so a restarted sidecar picks it straight back up.
  */
-async function applyTaskbarHide() {
+async function applyTaskbarHide(opts) {
   if (!flags.tbhide) {
     state.set('tbhide', { on: false, applied: false, reason: '--no-tbhide: the Windows taskbar can show when Explorer reveals it (a foreground change, a flashing app, the Win key)' });
     return;
+  }
+  if (opts && opts.fresh) {
+    if (tbhideRetry) { clearTimeout(tbhideRetry); tbhideRetry = null; }
+    tbhideTries = 0;
   }
   try {
     const r = await sidecar.call('tbhide', { on: true }, 9000);
     const applied = !!(r && r.applied);
     const said = (r && r.reason) || 'the sidecar did not say why';
     const guard = r && r.guard ? `; guard ${r.guard}` : '';
+    // How long after the sidecar's ready line: the number a slow start is judged by.
+    const since = applied && sidecar.readyAt ? ` (${((Date.now() - sidecar.readyAt) / 1000).toFixed(1)} s after the sidecar was ready)` : '';
     const again = applied ? (tbhideTries = 0, '') : retryTaskbarHide();
     state.set('tbhide', { on: true, applied, reason: `${said}${guard}${again}` });
-    process.stdout.write(`mantle: taskbar hiding ${applied ? 'in force' : 'NOT in force'}: ${said}${guard}${again}\n`);
+    process.stdout.write(`mantle: taskbar hiding ${applied ? 'in force' : 'NOT in force'}: ${said}${guard}${since}${again}\n`);
   } catch (err) {
     const old = Sidecar.isOldExeError(err);
     const why = old
@@ -5510,15 +5533,20 @@ async function applyTaskbarHide() {
 }
 
 /*
- * A refused tbhide is retried instead of left off for the whole run (2026-09-25:
- * a go-live under 80% CPU let the guard miss its arming window, and the taskbar
- * stayed revealable until the next restart). 15 s, 45 s, 2 min, then every 5 min;
- * never in test mode, never once quitting. Returns the note for the reason line.
+ * A refused tbhide is retried instead of left off for the whole run. The FIRST tries
+ * are quick (2026-10-01): the go-lives of 2026-09-30 17:56 and 2026-10-01 13:28 missed
+ * the guard's arming window and the old first retry came 15 s later, so the Windows
+ * taskbar showed for those 15 s. The guard now starts with the sidecar and is kept while
+ * it starts (TaskbarHide.cs), so asking again every second for the first ~10 s puts the
+ * hiding in force within ~1 s of the guard arming; each ask holds the sidecar's ui lane
+ * for at most 1 s. Then 2 s, 4 s, 8 s, 15 s, 45 s, 2 min, and every 5 min after that.
+ * Never in test mode (but --test-tbhide), never once quitting. Returns the note for the
+ * reason line.
  */
-const TBHIDE_RETRY_MS = [15000, 45000, 120000];
+const TBHIDE_RETRY_MS = [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 2000, 4000, 8000, 15000, 45000, 120000];
 let tbhideRetry = null, tbhideTries = 0, tbhideQuitting = false;
 function retryTaskbarHide() {
-  if (!flags.tbhide || flags.test || tbhideQuitting) return '';
+  if (!flags.tbhide || (flags.test && !flags.testTbhide) || tbhideQuitting) return '';
   if (tbhideRetry) return '; trying again soon';
   const ms = TBHIDE_RETRY_MS[tbhideTries] || 300000;
   tbhideTries++;
@@ -5531,7 +5559,7 @@ function retryTaskbarHide() {
 function releaseTaskbarHide(why) {
   tbhideQuitting = true;
   if (tbhideRetry) { clearTimeout(tbhideRetry); tbhideRetry = null; }
-  if (!flags.tbhide || flags.test) return Promise.resolve();
+  if (!flags.tbhide || (flags.test && !flags.testTbhide)) return Promise.resolve();
   if (sidecar.blockedReason()) return Promise.resolve();
   return sidecar.call('tbhide', { on: false }, 3000).then((r) => {
     const said = (r && r.reason) || 'released';
@@ -5543,6 +5571,7 @@ function releaseTaskbarHide(why) {
     process.stdout.write(`mantle: the taskbar region was not cleared by hand (${err.message}); the sidecar and its guard clear it as it exits\n`);
   });
 }
+// </mainrel:tbhide>
 
 // A "traywatch" that times out is retried: the sidecar's one command thread is
 // often backed up for several seconds right after start (every piece asks for
@@ -5709,7 +5738,7 @@ async function applyLive() {
     await applyEdgeClip();
     // ...and the reveals no clip can stop (a foreground change, a flash, the Win
     // key) are made invisible: an empty window region, guarded (TaskbarHide.cs).
-    await applyTaskbarHide();
+    await applyTaskbarHide({ fresh: true });
   } else {
     try {
       const hwnd = hwndOf(barWin);
@@ -5765,7 +5794,7 @@ async function applyLive() {
       // calls whatever rePlaceBar currently is.
       rePlaceBar = (why) => recheck(why);
       await armTrayWatch();
-      await applyTaskbarHide();
+      await applyTaskbarHide({ fresh: true });
     } catch (err) {
       if (Sidecar.isOldExeError(err)) { oldExeBaseline(`the sidecar refused "appbar": ${err.message}`); return; }
       state.set('workarea', {

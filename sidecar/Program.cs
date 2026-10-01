@@ -167,6 +167,12 @@ namespace Mantle {
       }
       OwnPid = Process.GetCurrentProcess().Id;
 
+      // Start the taskbar guard NOW (spawn only, ~15-50 ms), so it has armed by the time
+      // main asks for tbhide. Started only then, it missed its window twice at a
+      // go-live (2026-09-30, 2026-10-01) and the Windows taskbar showed for ~15 s.
+      // A guard with no region to guard is harmless: it waits, then finds nothing.
+      if (!Passive || TaskbarHide.StandInOnly) TaskbarHide.Prestart(GuardNotePath());
+
       // UTF-8 with NO BOM, LF line endings: a BOM would be part of the first
       // line and JSON.parse on the Electron side would choke on it.
       _out = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false));
@@ -210,6 +216,11 @@ namespace Mantle {
       // Feature commands register their lanes now, before the first request is dispatched
       // (Lanes picks the lane before Run is ever reached).
       var featureTable = Features.Table;
+
+      // TEST ONLY: a slow start (the go-live of 2026-10-01 took ~2 s to its ready line
+      // on a busy machine). Honoured only with a test stand-in class (TaskbarHide).
+      int slow = TaskbarHide.TestDelayMs("MANTLE_TEST_READY_DELAY_MS");
+      if (slow > 0) Thread.Sleep(slow);
 
       Emit(Json.Obj("ev", "ready", "pid", OwnPid, "passive", Passive, "version", Version));
 
@@ -1030,7 +1041,7 @@ namespace Mantle {
           if (Json.GetBool(req, "status", false)) { result = TaskbarHide.Status(); return null; }
           if (!Json.HasKey(req, "on"))
             return "tbhide needs on:true or on:false (or status:true, or decide:[...] to see what it would do)";
-          if (Passive) return PassiveRefusal + ": tbhide would change the live Windows taskbar";
+          if (Passive && !TaskbarHide.StandInOnly) return PassiveRefusal + ": tbhide would change the live Windows taskbar";
           if (!Json.GetBool(req, "on", false)) {
             string offWhy;
             bool released = TaskbarHide.TurnOff(out offWhy);

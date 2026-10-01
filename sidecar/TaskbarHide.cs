@@ -64,6 +64,9 @@
 // Passive (test) sidecars never set, take over or clear a region: `tbhide on`
 // and `off` are refused, the startup clear is skipped, and the decision logic
 // is exercised with made-up window states through `tbhide {decide:[...]}`.
+// The one exception is a passive sidecar that can only see a TEST's stand-in
+// window (MANTLE_TBHIDE_TEST_CLASS, StandInOnly): it may turn tbhide on and off,
+// so an Electron --test --test-tbhide run proves Mantle's start-up path.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -181,7 +184,7 @@ namespace Mantle {
       [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
       [DllImport("kernel32.dll")] public static extern uint WaitForSingleObject(IntPtr h, uint ms);
       public const uint CREATE_NO_WINDOW = 0x08000000, CREATE_BREAKAWAY_FROM_JOB = 0x01000000,
-                        BELOW_NORMAL_PRIORITY_CLASS = 0x00004000;
+                        NORMAL_PRIORITY_CLASS = 0x00000020;
     }
 
     const uint WM_NULL = 0x0000, SMTO_ABORTIFHUNG = 0x0002;
@@ -198,6 +201,21 @@ namespace Mantle {
     static string TestClass() {
       string t = Environment.GetEnvironmentVariable("MANTLE_TBHIDE_TEST_CLASS");
       return string.IsNullOrEmpty(t) ? null : t;
+    }
+
+    /// True when this process can only ever see a test's stand-in window (never the
+    /// real taskbar). A passive TEST sidecar may then turn tbhide on and off: it is
+    /// how an Electron --test run proves the start-up path without touching Windows.
+    public static bool StandInOnly { get { return TestClass() != null; } }
+
+    /// TEST ONLY: a delay in ms from env var `name`, honoured only with a stand-in
+    /// class (0 otherwise, and capped at 30 s), so a live sidecar is never slowed.
+    public static int TestDelayMs(string name) {
+      if (TestClass() == null) return 0;
+      int ms;
+      string raw = Environment.GetEnvironmentVariable(name);
+      if (string.IsNullOrEmpty(raw) || !int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out ms)) return 0;
+      return ms < 0 ? 0 : (ms > 30000 ? 30000 : ms);
     }
 
     static string[] ClassesNow() {
@@ -310,8 +328,17 @@ namespace Mantle {
     }
 
     /// True when process `pid` is a taskbar guard (same exe name as a sidecar, so
-    /// every "is another sidecar running?" check must ask this first).
+    /// every "is another sidecar running?" check must ask this first). That includes
+    /// THIS sidecar's own guard while it is still starting (no marker yet): it is
+    /// started with the sidecar now, before the stale-clip check at startup asks.
     public static bool IsGuard(int pid) {
+      if (pid != 0 && pid == _pendingPid) return true;
+      return GuardArmed(pid);
+    }
+
+    /// True when guard `pid` has ARMED: its marker exists, which it creates only
+    /// once it holds a handle to the sidecar it watches.
+    static bool GuardArmed(int pid) {
       EventWaitHandle h;
       if (EventWaitHandle.TryOpenExisting(GuardPrefix + pid.ToString(CultureInfo.InvariantCulture), out h)) {
         h.Dispose();
@@ -348,7 +375,7 @@ namespace Mantle {
     public static string TurnOn(string guardNote, out bool applied, out string reason, out string guard) {
       // No region without a guard: a sidecar killed mid-run must not be able to
       // leave the taskbar invisible.
-      string gerr = EnsureGuard(guardNote);
+      string gerr = EnsureGuard(guardNote, GuardWaitOnCallMs);
       if (gerr != null) {
         lock (_lock) { _guardState = gerr; }
         applied = false;
@@ -472,7 +499,7 @@ namespace Mantle {
       // The guard is what makes a region safe to hold. If it died (someone
       // killed it), start another; if that fails, give the taskbar back.
       if (!GuardAlive()) {
-        string gerr = EnsureGuard(null);
+        string gerr = EnsureGuard(null, GuardWaitInPassMs);
         if (gerr != null) {
           string why;
           ReleaseAll(true, out why);
@@ -570,27 +597,134 @@ namespace Mantle {
     }
 
     // -------------------------------------------------------------- the guard
+    //
+    // A guard is STARTED once and then ADOPTED when it arms; a slow one is never
+    // killed for being slow. MEASURED 2026-10-01 (lane r7-start): the go-lives of
+    // 2026-09-30 17:56 and 2026-10-01 13:28 both missed the old 5 s arming
+    // window, and the Windows taskbar showed until main's 15 s retry. The guard
+    // was started at BELOW_NORMAL priority while Mantle's start keeps every core
+    // busy, so it barely ran. Measured on this 8-thread machine, guard started
+    // with 6 threads kept busy: below-normal armed after 21.1 s, normal after
+    // 0.13 s; with all 8 busy, below-normal had not armed after 30 s. Idle, both
+    // arm in 0.1-0.4 s; a freshly built exe's FIRST launch adds ~0.85 s (Defender
+    // scans it inside CreateProcess) - real, but never the 5 s. Each miss KILLED
+    // the half-started guard and the retry paid its whole start again. Now:
+    //   - it starts at NORMAL priority (it only ever waits, so that costs nothing);
+    //   - the sidecar starts it AT ITS OWN START (Prestart), long before main
+    //     asks for tbhide, so it is normally armed already;
+    //   - a call waits at most `waitMs` for it (1 s on the ui lane, not 5, so `place`
+    //     and `foreground` are not starved), and a guard still starting is KEPT
+    //     for the next call; only one that has not armed after 30 s is replaced.
+    const int GuardPendingMaxMs = 30000;
+    public const int GuardWaitOnCallMs = 1000;    // TurnOn (ui lane): covers a normal start (0.1-0.9 s); main asks again every ~1 s
+    const int GuardWaitInPassMs = 5000;            // the worker's re-arm (off the ui lane)
+    static readonly object _guardLock = new object();
+    static Process _pending;                       // started, not armed yet
+    static Stopwatch _pendingAge;
+    static bool _pendingInJob;
+    static volatile int _pendingPid;               // _pending.Id, readable without the lock (IsGuard)
 
     static bool GuardAlive() {
-      try { return _guard != null && !_guard.HasExited; } catch (Exception) { return false; }
+      lock (_guardLock) {
+        try { return _guard != null && !_guard.HasExited; } catch (Exception) { return false; }
+      }
     }
 
-    /// Start the guard if there is none, and CONFIRM it is armed (it creates
-    /// GuardPrefix+<its pid> only after it holds a handle to this process).
-    /// Returns null when armed, else the reason in plain words.
-    static string EnsureGuard(string guardNote) {
-      if (GuardAlive()) return null;
-      if (guardNote == null) guardNote = _lastNote;
-      _lastNote = guardNote;
+    /// Start the guard now, without waiting for it to arm, so it has armed by the
+    /// time main asks for tbhide (Program.Main calls this before its ready line).
+    /// On THIS thread, not a pool thread: CreateProcess costs ~15-50 ms here (the
+    /// exe was already scanned when the sidecar itself started), and it means the
+    /// guard's pid is known (IsGuard) before the startup stale-clip check counts
+    /// "other sidecars". A failure is not lost: the tbhide call starts one again
+    /// and says why.
+    public static void Prestart(string guardNote) {
+      try {
+        lock (_guardLock) {
+          if (_lastNote == null) _lastNote = guardNote;
+          GuardStep();
+        }
+      } catch (Exception) { }
+    }
+
+    /// Make sure an ARMED guard exists (its marker GuardPrefix+<its pid> exists only
+    /// once it holds a handle to this process). Starts one if there is none, waits up
+    /// to `waitMs` for the one starting, and leaves a late one running for the next
+    /// call. Returns null when armed, else the reason in plain words.
+    static string EnsureGuard(string guardNote, int waitMs) {
+      var sw = Stopwatch.StartNew();
+      while (true) {
+        string s;
+        lock (_guardLock) {
+          if (guardNote != null) _lastNote = guardNote;
+          s = GuardStep();
+        }
+        if (s == null) return null;
+        if (s.Length > 0) return s;
+        if (sw.ElapsedMilliseconds >= waitMs) break;
+        Thread.Sleep(25);
+      }
+      // The same words every time (no seconds): Say() reports a CHANGE once, and main
+      // asks every second while this lasts.
+      return "the taskbar guard is still starting (the computer is busy), and the taskbar is never made invisible without it";
+    }
+
+    /// One step, under _guardLock: null = armed; "" = one is starting; else the reason.
+    static string GuardStep() {
+      if (_guard != null) {
+        bool gone;
+        try { gone = _guard.HasExited; } catch (Exception) { gone = true; }
+        if (!gone) return null;
+        try { _guard.Dispose(); } catch (Exception) { }
+        _guard = null;
+      }
+      if (_pending == null) {
+        string serr = StartGuard();
+        if (serr != null) return serr;
+      }
+      Process p = _pending;
+      if (GuardArmed(p.Id)) {
+        _guard = p;
+        _pending = null;
+        _pendingPid = 0;
+        lock (_lock) {
+          _guardState = "armed (pid " + p.Id + (_pendingInJob
+            ? "; inside Mantle's job object because breakaway was refused, so killing that whole job takes the guard too"
+            : "; outside Electron's job, so it outlives a killed Mantle") + ")";
+        }
+        return null;
+      }
+      bool exited;
+      try { exited = p.HasExited; } catch (Exception) { exited = true; }
+      if (exited) {
+        int code = -1;
+        try { code = p.ExitCode; } catch (Exception) { }
+        p.Dispose();
+        _pending = null;
+        _pendingPid = 0;
+        return "the taskbar guard exited before it was armed (exit code " + code + ")";
+      }
+      if (_pendingAge.ElapsedMilliseconds > GuardPendingMaxMs) {
+        try { p.Kill(); } catch (Exception) { }
+        p.Dispose();
+        _pending = null;
+        _pendingPid = 0;
+        return "the taskbar guard did not arm within " + (GuardPendingMaxMs / 1000) + " s, so it was stopped; a new one is started on the next try";
+      }
+      return "";
+    }
+
+    /// Start a guard process (no waiting). Sets _pending; returns null, or why not.
+    static string StartGuard() {
       string exe;
       try { exe = Process.GetCurrentProcess().MainModule.FileName; }
       catch (Exception ex) { return "the taskbar guard could not be started: this exe's own path is unreadable (" + ex.Message + ")"; }
       string args = "\"" + exe + "\" --taskbar-guard=" + Program.OwnPid.ToString(CultureInfo.InvariantCulture) +
-                    (string.IsNullOrEmpty(guardNote) ? "" : " \"--guard-note=" + guardNote + "\"");
+                    (string.IsNullOrEmpty(_lastNote) ? "" : " \"--guard-note=" + _lastNote + "\"");
       var si = new Api.STARTUPINFO();
       si.cb = Marshal.SizeOf(typeof(Api.STARTUPINFO));
       Api.PROCESS_INFORMATION pi;
-      uint baseFlags = Api.CREATE_NO_WINDOW | Api.BELOW_NORMAL_PRIORITY_CLASS;
+      // NORMAL, not below-normal: see the note at the top of this section.
+      uint baseFlags = Api.CREATE_NO_WINDOW | Api.NORMAL_PRIORITY_CLASS;
       bool inJob = false;
       // Break away from Electron's job object: node puts the sidecar in a job that
       // kills everything in it when Electron dies - the very death this guards.
@@ -609,31 +743,11 @@ namespace Mantle {
       Api.CloseHandle(pi.hThread);
       Api.CloseHandle(pi.hProcess);
       if (p == null) return "the taskbar guard exited as soon as it started";
-      // Armed = its marker exists. ~100-300 ms for a .NET start on this machine.
-      var sw = Stopwatch.StartNew();
-      while (sw.ElapsedMilliseconds < 5000) {   // 3 s was missed under 80% CPU at a go-live (2026-09-25); main retries after this too
-        if (IsGuard(p.Id)) {
-          _guard = p;
-          lock (_lock) {
-            _guardState = "armed (pid " + p.Id + (inJob
-              ? "; inside Mantle's job object because breakaway was refused, so killing that whole job takes the guard too"
-              : "; outside Electron's job, so it outlives a killed Mantle") + ")";
-          }
-          return null;
-        }
-        bool exited;
-        try { exited = p.HasExited; } catch (Exception) { exited = true; }
-        if (exited) {
-          int code = -1;
-          try { code = p.ExitCode; } catch (Exception) { }
-          p.Dispose();
-          return "the taskbar guard exited before it was armed (exit code " + code + ")";
-        }
-        Thread.Sleep(25);
-      }
-      try { p.Kill(); } catch (Exception) { }
-      p.Dispose();
-      return "the taskbar guard did not arm within 5 s, so it was stopped";
+      _pending = p;
+      _pendingPid = p.Id;
+      _pendingAge = Stopwatch.StartNew();
+      _pendingInJob = inJob;
+      return null;
     }
     static string _lastNote;
 
@@ -658,6 +772,10 @@ namespace Mantle {
       try { target = Process.GetProcessById(watch); }
       catch (Exception) { GuardSay(note, "taskbar guard: sidecar " + watch + " was not running, so there was nothing to guard"); return 2; }
       int me = Process.GetCurrentProcess().Id;
+      // TEST ONLY: a guard that arms late, the way a starved one did at a go-live.
+      // Honoured only with a stand-in class, so the live guard can never be slowed.
+      int late = TestDelayMs("MANTLE_TEST_GUARD_ARM_DELAY_MS");
+      if (late > 0) Thread.Sleep(late);
       EventWaitHandle marker = null;
       try {
         marker = new EventWaitHandle(false, EventResetMode.ManualReset, GuardPrefix + me.ToString(CultureInfo.InvariantCulture));

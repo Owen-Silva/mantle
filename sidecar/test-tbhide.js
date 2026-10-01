@@ -200,6 +200,36 @@ async function main() {
         : `no log event; region kind ${kindNow}; logs: ${s.events.filter((e) => e.ev === 'log').map((e) => e.message).join(' | ').slice(0, 300)}`);
     s.send('quit', {}).catch(() => {});
     await s.waitExit(4000).catch(() => {});
+
+    // ---- 8. a SLOW start (the 2026-10-01 go-live): the ready line AND the guard both come 6 s
+    // late (test-only delays, honoured only with the stand-in class). The guard starts with the
+    // sidecar and is kept while it starts, so asking the way main does (now, then every 1 s) puts
+    // the hiding in force within ~1 s of the ready line, and no ask holds the ui lane for long.
+    // The old code started the guard only when asked, stopped it after 5 s, and never armed.
+    process.env.MANTLE_TEST_READY_DELAY_MS = '6000';
+    process.env.MANTLE_TEST_GUARD_ARM_DELAY_MS = '6000';
+    const t0 = Date.now();
+    s = startLive(stateFile); sidecars.push(s);
+    delete process.env.MANTLE_TEST_READY_DELAY_MS;
+    delete process.env.MANTLE_TEST_GUARD_ARM_DELAY_MS;
+    await s.waitEvent('ready', 20000);
+    const readyMs = Date.now() - t0;
+    let inForce = null, longest = 0, asks = 0;
+    while (Date.now() - t0 < readyMs + 15000) {
+      const c0 = Date.now();
+      const x = await s.send('tbhide', { on: true }, 9000);
+      longest = Math.max(longest, Date.now() - c0);
+      asks++;
+      if (x.ok && x.result && x.result.applied) { inForce = Date.now() - t0; break; }
+      await sleep(1000);
+    }
+    t.check('slow start (ready line and guard both 6 s late): in force within 2 s of the ready line',
+      inForce !== null && inForce - readyMs <= 2000, `ready at ${readyMs} ms, in force at ${inForce} ms, ${asks} asks`);
+    t.check('...and no ask held the sidecar\'s ui lane for more than 1.5 s', longest <= 1500, `longest ask ${longest} ms`);
+    t.check('...and the stand-in really has its empty region', (await fake.kind()) === 1);
+    console.log(`  slow start: ready at ${readyMs} ms, in force at ${inForce} ms, ${asks} asks, longest ask ${longest} ms`);
+    s.send('quit', {}).catch(() => {});
+    await s.waitExit(4000).catch(() => {});
   } catch (e) {
     t.fail('tbhide live path', e.stack || e.message);
   } finally {
