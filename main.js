@@ -19,6 +19,7 @@ const { probe } = require('./lib/net-probe');
 const { createCallLog, createSetLog } = require('./lib/call-log');
 const { placeholderUrl } = require('./lib/placeholder');
 const { createBar, createLauncher, createDesktop, hwndOf, BAR_H } = require('./lib/windows');
+const raiseWin = require('./lib/raise');   // every pop-up on top, every time it shows (r7-ontop)
 // The hover flyout's live window previews (DWM thumbnails through koffi). Requiring it is free:
 // koffi itself is only loaded the first time a flyout asks for a picture. See lib/thumbs.js.
 const thumbs = require('./lib/thumbs');
@@ -1535,7 +1536,8 @@ async function raiseBar(why) {
       setBar({ ok: false, revealed: true, reason: `something sits over the bar and takes its clicks: ${what}` });
       if (raiseComplaint !== what) {
         raiseComplaint = what;
-        process.stdout.write(`mantle: the bar is covered by ${what}, so its buttons will not respond (${why})\n`);
+        // The class and pid only: a window's title can be an app's or a song's name, and logs carry none.
+        process.stdout.write(`mantle: the bar is covered by ${o.cls || 'an unnamed window'} (pid ${o.pid === undefined ? '?' : o.pid}), so its buttons will not respond (${why})\n`);
       }
       return;
     }
@@ -2079,6 +2081,10 @@ function showLauncher() {
     } else {
       launcherWin.show();
       launcherWin.focus();
+      // On top EVERY time (r7-ontop, 2026-10-01): show() and focus() never re-order a window Windows
+      // has let sink, and focus() is refused when Mantle is not the foreground app. 'floating' is the
+      // level it was made with (lib/windows.js createLauncher).
+      raiseWin.up(launcherWin, { level: 'floating', what: 'the launcher', wanted: () => !!launcherWin && !launcherWin.isDestroyed() && launcherWin.isVisible() });
     }
     broadcast('launcher:visible', true);
     launcherBackdrop.start('the launcher is open');
@@ -2093,6 +2099,15 @@ function hideLauncher() {
   launcherBackdrop.stop('the launcher closed');
   launcherWin.hide();
   broadcast('launcher:visible', false);
+}
+
+/** The volume pop-up down now, if it is up (a bar popover is opening where it would cover it). Never throws. */
+function dismissOsd(why) {
+  const hide = COMMANDS['osd.faded'];
+  if (typeof hide !== 'function') return;   // the volume pop-up feature is off or not loaded: nothing is up
+  Promise.resolve().then(() => hide({})).catch((err) => {
+    process.stdout.write(`mantle: the volume pop-up could not be taken down when ${why}: ${err && err.message}\n`);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -4016,6 +4031,10 @@ const COMMANDS = {
     if (!barWin || barWin.isDestroyed()) throw new Error('the bar window is gone, so there is nothing to make room in');
     const open = !!(a && a.open);
     if (traceMarks) traceMarks.push({ t: traceNow(), what: 'popover', open, key: (a && a.key) || null, height: Number(a && a.height) || 0 });
+    // A popover takes the volume pop-up down AT ONCE (r7-ontop, 2026-10-01). The app-volumes panel is
+    // now really on top, so a left-click on the speaker within its ~1.5 s fade opened Quick settings
+    // UNDER it. osd.faded with no seq is the pop-up's own unconditional hide (lib/features/osd.js).
+    if (open) dismissOsd(`the bar opened a popover (${String((a && a.key) || 'unnamed').slice(0, 40)})`);
     // A popover is the bar being used, so it pins the bar on screen for as long
     // as it is open (the hover poll checks barPopover on every tick) and brings
     // it back if something raced it into hiding.
