@@ -3,8 +3,8 @@
 // lane, 2026-09-30), which ports Owen's standalone PowerShell bridge (~/spotify-autopause) into
 // Mantle.
 //
-//   {cmd:"autopause.peaks"} -> {ok, readMs, devices, sessions:[{pid, sys, active, peak,
-//                               chain:[{pid, exe, pkg}, ...]}], reason}
+//   {cmd:"autopause.peaks", everyMs?:250} -> {ok, warming, ageMs, readMs, devices,
+//                               sessions:[{pid, sys, active, peak, chain:[{pid, exe, pkg}, ...]}], reason}
 //
 // READ ONLY. Nothing here writes a volume, a mute or a process; there is no write op at all, so a
 // --passive sidecar answers it like a live one.
@@ -23,8 +23,23 @@
 // read. The bridge's threshold is 0.0008 (measured: a real lesson's quietest beat was 0.000846), so
 // peaks are sent with 6 decimals.
 //
-// COST: one Toolhelp snapshot (cached 1 s) + one COM walk. The page asks only while Spotify plays or
-// a hold is held (every 250 ms then, the bridge's pollMs); otherwise never.
+// THE METER RUNS ON ITS OWN THREAD (r6-apfix, 2026-09-30, after the first live day). The first cut did
+// the whole read inside the request: a new device enumerator, every device's session manager, every
+// session, a Toolhelp snapshot each second and a package lookup per pid, 4 times a second, on the
+// AboveNormal audio lane. Measured: 6.4 ms of CPU a read (2.5% of a core at 250 ms, passive build); the
+// live sidecar at ~12% of a core while Spotify played against ~7% with auto-pause off; and the first
+// live start had "foreground", "place" and "gamemode.scan" time out. Now (same bench: 0.4 ms a read,
+// 0.16% of a core, and a ping beside 40 asks never above 150 ms):
+//   - the request NEVER does audio work: it answers at once with the newest reading (ageMs says how old;
+//     warming:true before the first one), so no other command can ever wait behind a meter read;
+//   - one background thread (MTA, BELOW-normal priority, so it never takes the CPU from a request lane)
+//     reads every `everyMs` (250, the bridge's pollMs) only while someone asked in the last 2.5 s, then
+//     drops every COM object and sleeps on an event: no reads, no CPU, while auto-pause is idle;
+//   - the enumerator and each device's session manager are kept (devices re-listed every 15 s), the
+//     session list is re-taken once a second (new sessions show within 1 s) and only the cached
+//     meters are read in between;
+//   - each pid's chain is built ONCE (one snapshot, at most every 2 s, only when a new pid appears)
+//     and kept until its session goes; every chain is re-checked every 30 s against a reused pid.
 //
 // PRIVACY: exe names and package families travel to main (it needs them to match); main never logs
 // them (counts and peaks only).
@@ -35,6 +50,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace Mantle {
   [MantleFeature]
@@ -47,12 +63,17 @@ namespace Mantle {
     const int MaxHops = 8;
     const uint TH32CS_SNAPPROCESS = 0x2;
     const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    const int InterestMs = 2500;          // the meter keeps reading this long after the last request
+    const int DevicesEveryMs = 15000;     // re-list the playback devices (and at once after a failed read)
+    const int SessionsEveryMs = 1000;     // re-take each device's session list
+    const int SnapshotMinGapMs = 2000;    // at most one process snapshot this often (only for a new pid)
+    const int ChainsFreshMs = 30000;      // forget every chain this often (a reused pid)
     static readonly IntPtr INVALID_HANDLE = new IntPtr(-1);
     static readonly Guid CLSID_MMDeviceEnumerator = new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E");
     static readonly Guid IID_IAudioSessionManager2 = new Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F");
 
     public static void Register(FeatureTable t) {
-      t.Add("autopause.peaks", Lanes.Audio, Peaks);   // {} -> every audio session's peak + its process chain, read only
+      t.Add("autopause.peaks", Lanes.Audio, Peaks);   // {everyMs?} -> the newest reading, at once; read only
     }
 
     // ------------------------------------------------------------ interop (vtable order is the ABI)
@@ -157,56 +178,330 @@ namespace Mantle {
       public static extern int GetPackageFamilyName(IntPtr hProcess, ref uint length, StringBuilder name);
     }
 
-    // ------------------------------------------------------------ the process map (cached 1 s)
+    // ------------------------------------------------------------ the request (never does audio work)
+
+    sealed class Reading {
+      public bool Ok;
+      public long ReadMs;
+      public int Devices;
+      public List<object> Sessions;
+      public string Reason;
+      public long At;             // _clock ms when it was taken
+    }
+
+    static readonly object _gate = new object();
+    static readonly Stopwatch _clock = Stopwatch.StartNew();   // Environment.TickCount64 is not in .NET 4
+    static readonly AutoResetEvent _wake = new AutoResetEvent(false);
+    static Thread _thread;              // under _gate
+    static long _interestUntil = -1;    // under _gate
+    static int _everyMs = 250;          // under _gate
+    static bool _idle = true;           // under _gate: the meter is asleep on _wake
+    static Reading _last;               // under _gate
+
+    static string Peaks(Dictionary<string, object> req, ref object result) {
+      int every = Json.GetInt(req, "everyMs", 250);
+      if (every < 100) every = 100;
+      if (every > 2000) every = 2000;
+      Reading r;
+      long now;
+      bool wake = false;
+      lock (_gate) {
+        now = _clock.ElapsedMilliseconds;
+        _interestUntil = now + Math.Max(InterestMs, every * 4);
+        _everyMs = every;
+        if (_thread == null) {
+          var t = new Thread(MeterLoop);
+          t.IsBackground = true;                     // must never hold the process open
+          t.Name = "mantle-autopause-meter";
+          t.SetApartmentState(ApartmentState.MTA);  // CoreAudio is happy in the MTA and needs no pumping
+          t.Priority = ThreadPriority.BelowNormal;  // never takes the CPU from a request lane
+          _thread = t;
+          t.Start();
+        } else if (_idle) {
+          wake = true;
+        }
+        r = _last;
+      }
+      if (wake) _wake.Set();
+      // A reading older than 4 rounds is from before the meter last slept: say "warming", never stale peaks.
+      if (r == null || now - r.At > Math.Max(1500, every * 4)) {
+        result = Json.Obj("ok", true, "warming", true, "ageMs", -1, "readMs", 0, "devices", 0, "sessions", new List<object>(),
+                          "reason", null);
+        return null;
+      }
+      result = Json.Obj("ok", r.Ok, "warming", false, "ageMs", now - r.At, "readMs", r.ReadMs, "devices", r.Devices,
+                        "sessions", r.Sessions, "reason", r.Reason);
+      return null;
+    }
+
+    // ------------------------------------------------------------ the meter thread
+
+    static void MeterLoop() {
+      var m = new Meter();
+      while (true) {
+        long now;
+        int every;
+        bool want;
+        lock (_gate) {
+          now = _clock.ElapsedMilliseconds;
+          want = now < _interestUntil;
+          every = _everyMs;
+          _idle = !want;
+          if (!want) _last = null;     // what it read before sleeping is not news after it
+        }
+        if (!want) {
+          m.Drop();                    // every COM object and cache goes; nothing runs until a request
+          _wake.WaitOne();
+          continue;
+        }
+        Reading r;
+        try {
+          r = m.Read();
+        } catch (Exception ex) {
+          m.Drop();
+          r = new Reading();
+          r.Ok = false;
+          r.Sessions = new List<object>();
+          r.Reason = "the apps' sound levels could not be read (" + ex.GetType().Name + ")";
+        }
+        r.At = _clock.ElapsedMilliseconds;
+        r.ReadMs = r.At - now;
+        lock (_gate) _last = r;
+        long wait = every - (_clock.ElapsedMilliseconds - now);
+        if (wait < 20) wait = 20;
+        _wake.WaitOne((int)wait);
+      }
+    }
 
     sealed class Proc { public uint Parent; public string Exe; }
 
-    static readonly object _gate = new object();
-    static Dictionary<uint, Proc> _procs;            // under _gate
-    static long _procsAt;                            // Environment.TickCount64 is not in .NET 4: Stopwatch ms
-    static readonly Stopwatch _clock = Stopwatch.StartNew();
-    static readonly Dictionary<uint, string> _pkg = new Dictionary<uint, string>();   // pid -> family ("" = none), under _gate
-    static long _pkgAt;
+    sealed class Sess { public object Raw; public IAudioSessionControl2 Ctl; public IAudioMeterInformation Meter; public uint Pid; public bool Sys; }
 
-    static Dictionary<uint, Proc> ProcessMap(out string why) {
-      why = null;
-      lock (_gate) {
-        long now = _clock.ElapsedMilliseconds;
-        if (_procs != null && now - _procsAt < 1000) return _procs;
-        IntPtr snap = Native.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if (snap == INVALID_HANDLE || snap == IntPtr.Zero) {
-          why = "Windows would not list the running programs (error " + Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture) + ")";
-          return _procs ?? new Dictionary<uint, Proc>();
+    sealed class Dev { public IMMDevice Device; public object Raw; public IAudioSessionManager2 Mgr; public List<Sess> Sessions = new List<Sess>(); }
+
+    sealed class Row { public uint Pid; public bool Sys; public bool Active; public float Peak; }
+
+    /// Everything here lives on the meter thread only.
+    sealed class Meter {
+      object _enRaw;
+      IMMDeviceEnumerator _en;
+      readonly List<Dev> _devs = new List<Dev>();
+      string _devReason;
+      long _devsAt = -100000, _sessAt = -100000, _snapAt = -100000, _chainsAt = -100000;
+      readonly Dictionary<uint, List<object>> _chains = new Dictionary<uint, List<object>>();
+      Dictionary<uint, Proc> _procs;
+      string _procWhy;
+
+      static void Free(object o) {
+        if (o != null && Marshal.IsComObject(o)) { try { Marshal.ReleaseComObject(o); } catch (Exception) { } }
+      }
+
+      static void FreeSessions(Dev d) {
+        foreach (Sess s in d.Sessions) Free(s.Raw);
+        d.Sessions.Clear();
+      }
+
+      void FreeDevices() {
+        foreach (Dev d in _devs) { FreeSessions(d); Free(d.Raw); Free(d.Device); }
+        _devs.Clear();
+      }
+
+      public void Drop() {
+        FreeDevices();
+        Free(_enRaw);
+        _enRaw = null;
+        _en = null;
+        _chains.Clear();
+        _procs = null;
+        _devsAt = _sessAt = _snapAt = _chainsAt = -100000;
+      }
+
+      long Now() { return _clock.ElapsedMilliseconds; }
+
+      public Reading Read() {
+        var r = new Reading();
+        long now = Now();
+        if (_en == null) {
+          Type t = Type.GetTypeFromCLSID(CLSID_MMDeviceEnumerator);
+          _enRaw = t == null ? null : Activator.CreateInstance(t);
+          _en = _enRaw as IMMDeviceEnumerator;
+          if (_en == null) {
+            Free(_enRaw);
+            _enRaw = null;
+            r.Ok = false;
+            r.Sessions = new List<object>();
+            r.Reason = "Windows' sound system could not be reached, so no app's sound can be measured";
+            return r;
+          }
         }
-        var map = new Dictionary<uint, Proc>();
+        if (now - _devsAt >= DevicesEveryMs) { ListDevices(); _devsAt = now; _sessAt = -100000; }
+        if (now - _sessAt >= SessionsEveryMs) {
+          string why = null;
+          foreach (Dev d in _devs) { string e = ListSessions(d); if (e != null && why == null) why = e; }
+          _sessAt = now;
+          if (_devReason == null) _devReason = why;
+          ForgetGonePids();
+        }
+        // The cheap part, 4 times a second: each cached session's state and peak.
+        var rows = new Dictionary<string, Row>(StringComparer.Ordinal);
+        var order = new List<Row>();
+        foreach (Dev d in _devs) {
+          foreach (Sess s in d.Sessions) {
+            int state;
+            int hs = s.Ctl.GetState(out state);
+            if (hs != S_OK) { _devsAt = -100000; continue; }   // a device went away: re-list on the next read
+            if (state == AudioSessionStateExpired) continue;
+            float peak = 0f;
+            if (s.Meter == null || s.Meter.GetPeakValue(out peak) != S_OK) peak = 0f;
+            if (float.IsNaN(peak) || peak < 0f) peak = 0f;
+            if (peak > 1f) peak = 1f;
+            string key = s.Sys ? "sys" : s.Pid.ToString(CultureInfo.InvariantCulture);
+            Row row;
+            if (!rows.TryGetValue(key, out row)) {
+              row = new Row();
+              row.Pid = s.Sys ? 0 : s.Pid;
+              row.Sys = s.Sys;
+              rows[key] = row;
+              order.Add(row);
+            }
+            if (peak > row.Peak) row.Peak = peak;
+            if (state == AudioSessionStateActive) row.Active = true;
+          }
+        }
+        if (now - _chainsAt >= ChainsFreshMs) { _chains.Clear(); _procs = null; _chainsAt = now; }   // a reused pid
+        var list = new List<object>();
+        foreach (Row x in order) {
+          list.Add(Json.Obj("pid", (long)x.Pid, "sys", x.Sys, "active", x.Active,
+                            "peak", Math.Round((double)x.Peak, 6),
+                            "chain", x.Pid == 0 ? new List<object>() : ChainOf(x.Pid)));
+        }
+        r.Ok = true;
+        r.Devices = _devs.Count;
+        r.Sessions = list;
+        r.Reason = _procWhy ?? _devReason;
+        return r;
+      }
+
+      void ListDevices() {
+        FreeDevices();
+        _devReason = null;
+        IMMDeviceCollection col;
+        int hr = _en.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, out col);
         try {
-          var e = new PROCESSENTRY32();
-          e.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
-          if (Native.Process32First(snap, ref e)) {
-            do {
-              var p = new Proc();
-              p.Parent = e.th32ParentProcessID;
-              p.Exe = (e.szExeFile ?? "").ToLowerInvariant();
-              map[e.th32ProcessID] = p;
-            } while (Native.Process32Next(snap, ref e));
+          uint count = 0;
+          if (hr != S_OK || col == null || col.GetCount(out count) != S_OK) {
+            _devReason = "Windows would not list the playback devices (HRESULT 0x" + hr.ToString("x8") + ")";
+            return;
+          }
+          for (uint i = 0; i < count && i < 8; i++) {
+            IMMDevice dev;
+            if (col.Item(i, out dev) != S_OK || dev == null) continue;
+            Guid iid = IID_IAudioSessionManager2;
+            object raw;
+            int h2 = dev.Activate(ref iid, CLSCTX_ALL, IntPtr.Zero, out raw);
+            var mgr = raw as IAudioSessionManager2;
+            if (h2 != S_OK || mgr == null) {
+              Free(raw);
+              Free(dev);
+              if (_devReason == null) _devReason = "a playback device refused its session list (HRESULT 0x" + h2.ToString("x8") + ")";
+              continue;
+            }
+            var d = new Dev();
+            d.Device = dev;
+            d.Raw = raw;
+            d.Mgr = mgr;
+            _devs.Add(d);
           }
         } finally {
-          Native.CloseHandle(snap);
+          Free(col);
         }
-        _procs = map;
-        _procsAt = now;
-        // A pid's package cannot change, but a pid is reused: forget them all every 30 s.
-        if (now - _pkgAt > 30000) { _pkg.Clear(); _pkgAt = now; }
+      }
+
+      /// One device's sessions, taken again (the old ones released after the new ones are held).
+      static string ListSessions(Dev d) {
+        var old = new List<Sess>(d.Sessions);
+        d.Sessions.Clear();
+        IAudioSessionEnumerator se;
+        int hr = d.Mgr.GetSessionEnumerator(out se);
+        try {
+          int n;
+          if (hr != S_OK || se == null || se.GetCount(out n) != S_OK) return "Windows would not list a device's audio sessions";
+          for (int i = 0; i < n && i < 256; i++) {
+            object so;
+            if (se.GetSession(i, out so) != S_OK || so == null) continue;
+            var ctl = so as IAudioSessionControl2;
+            int state;
+            if (ctl == null || ctl.GetState(out state) != S_OK || state == AudioSessionStateExpired) { Free(so); continue; }
+            var s = new Sess();
+            s.Raw = so;
+            s.Ctl = ctl;
+            s.Meter = so as IAudioMeterInformation;
+            s.Sys = ctl.IsSystemSoundsSession() == S_OK;
+            uint pid;
+            if (ctl.GetProcessId(out pid) < 0) pid = 0;   // AUDCLNT_S_NO_SINGLE_PROCESS is a success code
+            s.Pid = pid;
+            d.Sessions.Add(s);
+          }
+          return null;
+        } finally {
+          Free(se);
+          foreach (Sess s in old) Free(s.Raw);
+        }
+      }
+
+      void ForgetGonePids() {
+        if (_chains.Count == 0) return;
+        var live = new HashSet<uint>();
+        foreach (Dev d in _devs) foreach (Sess s in d.Sessions) live.Add(s.Pid);
+        var gone = new List<uint>();
+        foreach (uint pid in _chains.Keys) if (!live.Contains(pid)) gone.Add(pid);
+        foreach (uint pid in gone) _chains.Remove(pid);
+      }
+
+      /// A session pid's chain, built once. A pid the last snapshot did not have waits for the next one
+      /// (at most every 2 s) and comes back empty until then.
+      List<object> ChainOf(uint pid) {
+        List<object> hit;
+        if (_chains.TryGetValue(pid, out hit)) return hit;
+        long now = Now();
+        if (_procs == null || (!_procs.ContainsKey(pid) && now - _snapAt >= SnapshotMinGapMs)) {
+          _procs = Snapshot(out _procWhy);
+          _snapAt = now;
+        }
+        if (!_procs.ContainsKey(pid)) return new List<object>();
+        var chain = Chain(pid, _procs);
+        _chains[pid] = chain;
+        return chain;
+      }
+    }
+
+    static Dictionary<uint, Proc> Snapshot(out string why) {
+      why = null;
+      var map = new Dictionary<uint, Proc>();
+      IntPtr snap = Native.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+      if (snap == INVALID_HANDLE || snap == IntPtr.Zero) {
+        why = "Windows would not list the running programs (error " + Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture) + ")";
         return map;
       }
+      try {
+        var e = new PROCESSENTRY32();
+        e.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
+        if (Native.Process32First(snap, ref e)) {
+          do {
+            var p = new Proc();
+            p.Parent = e.th32ParentProcessID;
+            p.Exe = (e.szExeFile ?? "").ToLowerInvariant();
+            map[e.th32ProcessID] = p;
+          } while (Native.Process32Next(snap, ref e));
+        }
+      } finally {
+        Native.CloseHandle(snap);
+      }
+      return map;
     }
 
     /// The package family of a packaged process ("" for a classic one or one we may not open).
     static string PackageOf(uint pid) {
-      lock (_gate) {
-        string hit;
-        if (_pkg.TryGetValue(pid, out hit)) return hit;
-      }
       string fam = "";
       IntPtr h = Native.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
       if (h != IntPtr.Zero) {
@@ -223,7 +518,6 @@ namespace Mantle {
           Native.CloseHandle(h);
         }
       }
-      lock (_gate) _pkg[pid] = fam;
       return fam;
     }
 
@@ -242,112 +536,6 @@ namespace Mantle {
         cur = p.Parent;
       }
       return chain;
-    }
-
-    // ------------------------------------------------------------ the read
-
-    sealed class Row { public uint Pid; public bool Sys; public bool Active; public float Peak; }
-
-    static string Peaks(Dictionary<string, object> req, ref object result) {
-      var sw = Stopwatch.StartNew();
-      var rcws = new List<object>();
-      var rows = new Dictionary<string, Row>(StringComparer.Ordinal);
-      var order = new List<Row>();
-      int devices = 0;
-      string reason = null;
-      try {
-        Type t = Type.GetTypeFromCLSID(CLSID_MMDeviceEnumerator);
-        object o = t == null ? null : Activator.CreateInstance(t);
-        if (o != null) rcws.Add(o);
-        var en = o as IMMDeviceEnumerator;
-        if (en == null) {
-          result = Json.Obj("ok", false, "readMs", sw.ElapsedMilliseconds, "devices", 0, "sessions", new List<object>(),
-                            "reason", "Windows' sound system could not be reached, so no app's sound can be measured");
-          return null;
-        }
-        IMMDeviceCollection col;
-        int hr = en.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, out col);
-        if (col != null) rcws.Add(col);
-        uint count = 0;
-        if (hr != S_OK || col == null || col.GetCount(out count) != S_OK) {
-          result = Json.Obj("ok", false, "readMs", sw.ElapsedMilliseconds, "devices", 0, "sessions", new List<object>(),
-                            "reason", "Windows would not list the playback devices (HRESULT 0x" + hr.ToString("x8") + ")");
-          return null;
-        }
-        for (uint d = 0; d < count && d < 8; d++) {
-          IMMDevice dev;
-          if (col.Item(d, out dev) != S_OK || dev == null) continue;
-          rcws.Add(dev);
-          devices++;
-          string err = ReadDevice(dev, rcws, rows, order);
-          if (err != null && reason == null) reason = err;
-        }
-      } catch (Exception ex) {
-        result = Json.Obj("ok", false, "readMs", sw.ElapsedMilliseconds, "devices", devices, "sessions", new List<object>(),
-                          "reason", "the apps' sound levels could not be read (" + ex.GetType().Name + ")");
-        return null;
-      } finally {
-        for (int i = rcws.Count - 1; i >= 0; i--) {
-          object x = rcws[i];
-          if (x != null && Marshal.IsComObject(x)) { try { Marshal.ReleaseComObject(x); } catch (Exception) { } }
-        }
-      }
-
-      string mapWhy;
-      var map = ProcessMap(out mapWhy);
-      var list = new List<object>();
-      foreach (Row r in order) {
-        list.Add(Json.Obj("pid", (long)r.Pid, "sys", r.Sys, "active", r.Active,
-                          "peak", Math.Round((double)r.Peak, 6),
-                          "chain", r.Pid == 0 ? new List<object>() : Chain(r.Pid, map)));
-      }
-      result = Json.Obj("ok", true, "readMs", sw.ElapsedMilliseconds, "devices", devices, "sessions", list,
-                        "reason", mapWhy ?? reason);
-      return null;
-    }
-
-    /// One device's sessions, folded by process (louder wins) into rows.
-    static string ReadDevice(IMMDevice dev, List<object> rcws, Dictionary<string, Row> rows, List<Row> order) {
-      Guid iid = IID_IAudioSessionManager2;
-      object raw;
-      int hr = dev.Activate(ref iid, CLSCTX_ALL, IntPtr.Zero, out raw);
-      if (raw != null) rcws.Add(raw);
-      var mgr = raw as IAudioSessionManager2;
-      if (hr != S_OK || mgr == null) return "a playback device refused its session list (HRESULT 0x" + hr.ToString("x8") + ")";
-      IAudioSessionEnumerator se;
-      hr = mgr.GetSessionEnumerator(out se);
-      if (se != null) rcws.Add(se);
-      int n;
-      if (hr != S_OK || se == null || se.GetCount(out n) != S_OK) return "Windows would not list a device's audio sessions";
-      for (int i = 0; i < n && i < 256; i++) {
-        object so;
-        if (se.GetSession(i, out so) != S_OK || so == null) continue;
-        rcws.Add(so);
-        var ctl = so as IAudioSessionControl2;
-        if (ctl == null) continue;
-        int state;
-        if (ctl.GetState(out state) != S_OK || state == AudioSessionStateExpired) continue;
-        bool sys = ctl.IsSystemSoundsSession() == S_OK;
-        uint pid;
-        if (ctl.GetProcessId(out pid) < 0) pid = 0;   // AUDCLNT_S_NO_SINGLE_PROCESS is a success code
-        float peak = 0f;
-        var meter = so as IAudioMeterInformation;
-        if (meter == null || meter.GetPeakValue(out peak) != S_OK) peak = 0f;
-        if (float.IsNaN(peak) || peak < 0f) peak = 0f;
-        if (peak > 1f) peak = 1f;
-        string key = sys ? "sys" : pid.ToString(CultureInfo.InvariantCulture);
-        Row row;
-        if (!rows.TryGetValue(key, out row)) {
-          row = new Row();
-          row.Pid = sys ? 0 : pid;
-          row.Sys = sys;
-          rows[key] = row;
-          order.Add(row);
-        }
-        if (peak > row.Peak) row.Peak = peak;
-        if (state == AudioSessionStateActive) row.Active = true;
-      }
-      return null;
     }
   }
 }

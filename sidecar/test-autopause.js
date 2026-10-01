@@ -1,4 +1,5 @@
-// test-autopause.js - `autopause.peaks` on a PASSIVE sidecar (r5-autopause lane, 2026-09-30).
+// test-autopause.js - `autopause.peaks` on a PASSIVE sidecar (r5-autopause lane, 2026-09-30; the
+// background meter, its warming answer, no delay to other commands and sleep-when-idle: r6-apfix).
 //   node sidecar/test-autopause.js --exe=<your private build>
 // READ ONLY: the command has no write op at all. The real machine's sessions are read and only
 // COUNTS and shapes are printed (never an exe name). To prove the process-tree walk end to end, the
@@ -27,8 +28,21 @@ function silentWav(file, seconds) {
   let player = null;
   const wav = path.join(os.tmpdir(), `mantle-autopause-silent-${process.pid}.wav`);
   try {
+    // 0. The request never does audio work (r6-apfix): the FIRST ask answers at once, "warming", and the
+    //    meter thread's first reading follows within a second.
+    let t0 = Date.now();
+    const first = await s.call('autopause.peaks', {}, 5000);
+    const firstMs = Date.now() - t0;
+    c.check('the first ask answers at once (no audio work in the request)', firstMs < 300 && first.ok === true, `${firstMs} ms`);
+    c.check('the first answer says warming, with no peaks yet', first.warming === true && Array.isArray(first.sessions) && first.sessions.length === 0, String(first.warming));
+    async function fresh() {
+      for (let i = 0; i < 40; i++) { const x = await s.call('autopause.peaks', {}, 5000); if (!x.warming) return x; await T.sleep(50); }
+      return null;
+    }
+    t0 = Date.now();
     // 1. Shape of a real read (counts only).
-    const r = await s.call('autopause.peaks', {}, 5000);
+    const r = await fresh();
+    c.check('the first reading lands within 2 s', !!r && Date.now() - t0 < 2000, `${Date.now() - t0} ms`);
     c.check('answers ok', r && r.ok === true, r && r.reason);
     c.check('devices counted', typeof r.devices === 'number' && r.devices >= 0, String(r.devices));
     const rows = Array.isArray(r.sessions) ? r.sessions : [];
@@ -42,7 +56,7 @@ function silentWav(file, seconds) {
     c.check('every session row has pid/sys/active/peak 0..1/chain', shapeBad === 0, `${shapeBad} bad of ${rows.length}`);
     c.check('every chain starts at its own pid; entries are {pid, exe lower-case, pkg|null}', chainBad === 0, `${chainBad} bad`);
     c.check('chains stop at 9 entries (the process + 8 ancestors)', maxChain <= 9, String(maxChain));
-    c.check('read is fast', typeof r.readMs === 'number' && r.readMs < 500, `${r.readMs} ms`);
+    c.check('the reading is fresh (ageMs under 1.5 s)', typeof r.ageMs === 'number' && r.ageMs >= 0 && r.ageMs < 1500, `${r.ageMs} ms`);
     console.log(`  real read: ${rows.length} sessions on ${r.devices} devices, ${rows.filter((x) => x.active).length} active, ` +
       `${rows.filter((x) => x.peak > 0.0008).length} audible, ${r.readMs} ms, deepest chain ${maxChain}`);
 
@@ -66,8 +80,27 @@ function silentWav(file, seconds) {
       c.check('a classic exe has no package family', found.x.chain[0].pkg === null, String(found.x.chain[0].pkg));
     }
 
+    // 4. Never delays another command: 40 asks at the live rate with a ui-lane ping beside each; every
+    //    peaks answer and every ping is quick (the meter reads on its own thread).
+    const pk = [], pg = [];
+    for (let i = 0; i < 40; i++) {
+      const a = Date.now();
+      await Promise.all([s.call('autopause.peaks', { everyMs: 250 }, 5000).then(() => pk.push(Date.now() - a)),
+        s.send('ping', {}, 5000).then(() => pg.push(Date.now() - a))]);
+      await T.sleep(25);
+    }
+    const mx = (xs) => Math.max.apply(null, xs);
+    c.check('peaks answers stay quick while the meter works (max under 150 ms)', mx(pk) < 150, `max ${mx(pk)} ms`);
+    c.check('a ping beside it stays quick (max under 150 ms)', mx(pg) < 150, `max ${mx(pg)} ms`);
+    // 5. Idle = asleep: 3.5 s with no ask and the meter has dropped everything (the next ask is "warming").
+    await T.sleep(3500);
+    const after = await s.call('autopause.peaks', {}, 5000);
+    c.check('no asks for 3.5 s: the meter slept (next answer warming)', after.warming === true, String(after.warming));
+    const woke = await fresh();
+    c.check('and it wakes on the next ask', !!woke && woke.ok === true, woke ? 'ok' : 'never');
+
     // 3. Passive changes nothing: the command takes no write arguments (an unknown one is ignored, still a read).
-    const again = await s.call('autopause.peaks', { level: 0, dryRun: false }, 5000);
+    const again = await s.call('autopause.peaks', { level: 0, dryRun: false, everyMs: 5 }, 5000);
     c.check('extra arguments never turn it into a write', again && again.ok === true && Array.isArray(again.sessions));
   } catch (e) {
     c.fail('crashed', (e && e.message) || String(e));
