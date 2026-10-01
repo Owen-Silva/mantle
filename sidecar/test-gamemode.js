@@ -31,6 +31,19 @@ const T = require('./test-lib');
       gameish.map((p) => `${p.file}:${p.pid}:${'path' in p ? 'OPENED' : 'not opened'}`).join(' '));
     t.check('scan took under 250 ms', b.result && b.result.ms < 250, `${b.result && b.result.ms} ms`);
 
+    // ---- the idle cost (lane r6-cpu, 2026-09-30): the top bar asks for this list once a second and game
+    // mode every 3 s, so a steady list must not ask Windows about processes it already knows. It used to
+    // ask about every process it could not read (~110 here) on every scan.
+    const asks = [], walls = [];
+    for (let i = 0; i < 6; i++) {
+      const r = (await s.send('gamemode.scan', { procs: true }, 10000)).result || {};
+      asks.push(r.sessionAsks); walls.push(r.ms);
+      await T.sleep(50);
+    }
+    t.check('scan: once the list is known, a scan asks Windows about almost no process (sessionAsks <= 5)',
+      asks.slice(3).every((n) => typeof n === 'number' && n <= 5), `sessionAsks per scan: ${asks.join(',')}`);
+    console.log(`  process list: ${procs.length} processes, wall ms per scan ${walls.join(',')}, sessionAsks ${asks.join(',')}`);
+
     // ---- guard (pure)
     const G = async (args) => ((await s.send('gamemode.guard', Object.assign({ session: 1, ownSession: 1 }, args), 4000)).result || {});
     const rows = [

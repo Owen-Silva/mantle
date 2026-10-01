@@ -13,8 +13,8 @@
 //
 // ANTI-CHEAT (the brief, non-negotiable). The game and its anti-cheat are NEVER opened with more
 // than PROCESS_QUERY_LIMITED_INFORMATION - and this file barely does that: the process list is a
-// Toolhelp snapshot (no handle; each process's session is asked once per run of it, which Windows
-// answers through a QUERY_LIMITED open - see Snapshot), the foreground window's exe comes from
+// system-wide process read (no handle; each process's session is asked once per run of it, which
+// Windows answers through a QUERY_LIMITED open - see Snapshot), the foreground window's exe comes from
 // Foreground.Read() (PROCESS_QUERY_LIMITED_INFORMATION, the same read the bar has always made), and
 // every write target is refused below if it is a game, an anti-cheat, the foreground process, a
 // Windows component, another session, elevated, or this sidecar - whatever main asked for. No
@@ -37,22 +37,10 @@ namespace Mantle {
   [MantleFeature]
   static class GameMode {
     static class N {
-      public const uint TH32CS_SNAPPROCESS = 0x2;
-      [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-      public struct PROCESSENTRY32W {
-        public uint dwSize, cntUsage, th32ProcessID;
-        public IntPtr th32DefaultHeapID;
-        public uint th32ModuleID, cntThreads, th32ParentProcessID;
-        public int pcPriClassBase;
-        public uint dwFlags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile;
-      }
       [StructLayout(LayoutKind.Sequential)]
       public struct PROCESS_POWER_THROTTLING_STATE { public uint Version, ControlMask, StateMask; }
 
-      [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
-      [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool Process32FirstW(IntPtr snap, ref PROCESSENTRY32W e);
-      [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool Process32NextW(IntPtr snap, ref PROCESSENTRY32W e);
+      [DllImport("ntdll.dll")] public static extern int NtQuerySystemInformation(int cls, IntPtr buf, int len, out int ret);
       [DllImport("kernel32.dll", SetLastError = true)] public static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
       [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
       [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool QueryFullProcessImageNameW(IntPtr h, uint flags, StringBuilder sb, ref uint size);
@@ -99,7 +87,7 @@ namespace Mantle {
     /// why?}], trimmed}. EmptyWorkingSet on Mantle's OWN Electron processes only: the one that started
     /// this sidecar (--parent-pid) and its direct children running the same exe. Never this sidecar (its
     /// keyboard hook must never wait on a page fault), never anything else: every other pid is refused
-    /// by name, from the Toolhelp list, before any handle is opened. Measured on the --test instance:
+    /// by name, from the process list, before any handle is opened. Measured on the --test instance:
     /// the kept processes' working set 429 MB -> 77 MB 30 s later. Allowed in passive (--test) too, like
     /// MenuBar's fixture: the only processes it can reach are the calling instance's own.
     static string Trim(Dictionary<string, object> req, ref object result) {
@@ -214,43 +202,82 @@ namespace Mantle {
 
     sealed class Proc { public uint Pid, Ppid, Session; public string File; }
 
-    /// A process's session never changes while it lives, so it is asked ONCE per process (lane
-    /// sysmon-game, 2026-09-29). ProcessIdToSessionId opens the process (QUERY_LIMITED) under the hood:
-    /// before this, the 3 s game watch did that to all ~320 processes, anti-cheat included, every tick.
-    /// Keyed by pid and checked against the parent pid and the exe name, so a reused pid is asked again.
-    /// MEASURED (this PC, ~320 processes, passive build): the scan stays ~18-20 ms either way (the Toolhelp
-    /// snapshot itself is the cost); what changes is that the game and its anti-cheat are opened once
-    /// per run instead of every 3 s.
-    sealed class SessionSeen { public uint Ppid, Session; public string File; }
+    /// THE PROCESS LIST: one NtQuerySystemInformation(SystemProcessInformation) read (lane r6-cpu,
+    /// 2026-09-30). It was a Toolhelp snapshot, which is a copy of this very read: the rows are the same
+    /// (pid, parent, exe name). WHY: the top bar asks for this list once a second (a game starting or
+    /// exiting) and game mode every 3 s, and it was the live sidecar's biggest idle cost. MEASURED (this
+    /// PC, ~310 processes, ~3,700 threads, thread cycle time): Toolhelp 6.5 ms of CPU a list, this read
+    /// 3.1 ms. The buffer is kept (~0.5 MB) and grown when the list outgrows it: no allocation per call.
+    ///
+    /// THE SESSION keeps its old meaning: null when Windows will not let Mantle read the process (the
+    /// ProcessIdToSessionId answer). Game mode's plan counts such a process as Windows' own and leaves
+    /// it out of its lists; the record's own session field would put ~6 of Windows' own processes (the
+    /// compositor, the logon process) on the panel as "could not be read". It is asked ONCE per
+    /// process (lane sysmon-game, 2026-09-29: ProcessIdToSessionId opens the process with QUERY_LIMITED
+    /// under the hood, and the game watch must not open the game and its anti-cheat every tick), and
+    /// now an unreadable answer is remembered too, after it failed on three scans in a row (a process
+    /// caught while it starts can refuse once): it was asked again on every scan, ~110 refused opens a
+    /// second. Keyed by pid and checked against the parent pid and the exe name, so a reused pid is
+    /// asked again.
+    sealed class SessionSeen { public uint Ppid, Session; public string File; public int Tries; }
+    const int UnreadableTries = 3;
     static Dictionary<uint, SessionSeen> _sessions = new Dictionary<uint, SessionSeen>();
-    static readonly object _sessionLock = new object();
+    const int SystemProcessInformation = 5;
+    const int STATUS_INFO_LENGTH_MISMATCH = unchecked((int)0xC0000004);
+    static IntPtr _procBuf = IntPtr.Zero;
+    static int _procBufLen = 512 * 1024;
+    static readonly object _procLock = new object();
 
-    static List<Proc> Snapshot(out string err) {
+    static List<Proc> Snapshot(out string err) { int asks; return Snapshot(out err, out asks); }
+
+    /// asks = how many sessions this read had to ask Windows for (the scan reply says it; a test holds it down).
+    static List<Proc> Snapshot(out string err, out int asks) {
       err = null;
+      asks = 0;
       var list = new List<Proc>();
-      IntPtr snap = N.CreateToolhelp32Snapshot(N.TH32CS_SNAPPROCESS, 0);
-      if (snap == IntPtr.Zero || snap == new IntPtr(-1)) { err = "Windows would not list the processes (error " + Marshal.GetLastWin32Error() + ")"; return list; }
-      lock (_sessionLock) {
-        var next = new Dictionary<uint, SessionSeen>();
-        try {
-          var e = new N.PROCESSENTRY32W();
-          e.dwSize = (uint)Marshal.SizeOf(typeof(N.PROCESSENTRY32W));
-          if (!N.Process32FirstW(snap, ref e)) return list;
-          do {
-            SessionSeen seen;
-            uint s;
-            if (!_sessions.TryGetValue(e.th32ProcessID, out seen) || seen.Ppid != e.th32ParentProcessID || !string.Equals(seen.File, e.szExeFile, StringComparison.Ordinal)) {
-              // An unreadable session is not remembered: it is asked again next time.
-              seen = new SessionSeen { Ppid = e.th32ParentProcessID, File = e.szExeFile,
-                                       Session = N.ProcessIdToSessionId(e.th32ProcessID, out s) ? s : uint.MaxValue };
-            }
-            if (seen.Session != uint.MaxValue) next[e.th32ProcessID] = seen;
-            list.Add(new Proc { Pid = e.th32ProcessID, Ppid = e.th32ParentProcessID, File = e.szExeFile, Session = seen.Session });
-          } while (N.Process32NextW(snap, ref e));
-        } finally {
-          N.CloseHandle(snap);
-          if (next.Count > 0) _sessions = next;   // only live processes are kept: the cache never grows
+      lock (_procLock) {
+        int rc = STATUS_INFO_LENGTH_MISMATCH, got = 0;
+        for (int tries = 0; tries < 4 && rc == STATUS_INFO_LENGTH_MISMATCH; tries++) {
+          if (_procBuf == IntPtr.Zero) _procBuf = Marshal.AllocHGlobal(_procBufLen);
+          rc = N.NtQuerySystemInformation(SystemProcessInformation, _procBuf, _procBufLen, out got);
+          if (rc == STATUS_INFO_LENGTH_MISMATCH) {
+            Marshal.FreeHGlobal(_procBuf);
+            _procBuf = IntPtr.Zero;
+            _procBufLen = Math.Max(got, _procBufLen) + 128 * 1024;   // room for the processes that start meanwhile
+          }
         }
+        if (rc != 0) { err = "Windows would not list the processes (status 0x" + rc.ToString("X8") + ")"; return list; }
+        // SYSTEM_PROCESS_INFORMATION: ImageName (UNICODE_STRING) at 56, then BasePriority,
+        // UniqueProcessId, InheritedFromUniqueProcessId.
+        bool x64 = IntPtr.Size == 8;
+        int oBuf = x64 ? 64 : 60, oPid = x64 ? 80 : 68, oPpid = x64 ? 88 : 72;
+        long at = _procBuf.ToInt64();
+        var next = new Dictionary<uint, SessionSeen>();
+        for (int n = 0; n < 65536; n++) {
+          IntPtr e = new IntPtr(at);
+          uint pid = (uint)Marshal.ReadIntPtr(e, oPid).ToInt64();
+          uint ppid = (uint)Marshal.ReadIntPtr(e, oPpid).ToInt64();
+          int len = Marshal.ReadInt16(e, 56) & 0xFFFF;
+          IntPtr name = Marshal.ReadIntPtr(e, oBuf);
+          // Toolhelp's names, exactly: the idle process has no image name and is "[System Process]" there.
+          string file = len > 0 && name != IntPtr.Zero ? Marshal.PtrToStringUni(name, len / 2) : pid == 0 ? "[System Process]" : "";
+          SessionSeen seen;
+          if (!_sessions.TryGetValue(pid, out seen) || seen.Ppid != ppid || !string.Equals(seen.File, file, StringComparison.Ordinal)) {
+            seen = new SessionSeen { Ppid = ppid, File = file, Session = uint.MaxValue };
+          }
+          if (seen.Session == uint.MaxValue && seen.Tries < UnreadableTries) {
+            uint s;
+            seen.Tries++;
+            asks++;
+            if (N.ProcessIdToSessionId(pid, out s)) seen.Session = s;
+          }
+          next[pid] = seen;
+          list.Add(new Proc { Pid = pid, Ppid = ppid, File = file, Session = seen.Session });
+          int step = Marshal.ReadInt32(e, 0);
+          if (step <= 0) break;
+          at += step;
+        }
+        _sessions = next;   // only live processes are kept: the cache never grows
       }
       return list;
     }
@@ -278,7 +305,7 @@ namespace Mantle {
     }
 
     /// {procs?, detail?} -> {fg:{...Foreground.Read(), game verdict}, procs?:[{pid, ppid, file, session,
-    /// path?, created?, cpuMs?, prio?, elevated?}], ownPid, parentPid, ownSession, fgPid, ms}
+    /// path?, created?, cpuMs?, prio?, elevated?}], sessionAsks?, ownPid, parentPid, ownSession, fgPid, ms}
     static string Scan(Dictionary<string, object> req, ref object result) {
       var sw = Stopwatch.StartNew();
       IDictionary fg = Foreground.Read();
@@ -294,7 +321,8 @@ namespace Mantle {
                          "ownSession", (long)OwnSession());
       if (Json.GetBool(req, "procs", false)) {
         string err;
-        List<Proc> all = Snapshot(out err);
+        int asks;
+        List<Proc> all = Snapshot(out err, out asks);
         bool detail = Json.GetBool(req, "detail", false);
         uint own = OwnSession();
         var rows = new List<object>();
@@ -307,6 +335,7 @@ namespace Mantle {
           rows.Add(row);
         }
         res["procs"] = rows;
+        res["sessionAsks"] = asks;
         if (err != null) res["procsReason"] = err;
       }
       res["ms"] = sw.ElapsedMilliseconds;
