@@ -10,7 +10,8 @@
 //                 (the only control a --passive sidecar accepts)}
 //   {cmd:"media", op:"watch", on:true|false}      emits {ev:"media", ...} on changes
 //   --passive only, for sidecar/test-media.js: op "arttest" (the art encoder on an image made
-//   here), "stalltest" (keep the media thread busy), "changetest" (fire the change hook).
+//   here), "stalltest" (keep the media thread busy), "changetest" (fire the change hook;
+//   its "artmiss" and "midread" drive the art retry and the as-of rev).
 // Every argument is type-checked (a wrong type is an error, never a silent default).
 //
 // ART (lane media-sc, 2026-09-29): the card draws art at 72 DIP, so the default is 192 px (sharp
@@ -301,6 +302,7 @@ namespace Mantle {
     static string _mgrHookReason, _sessionHookReason;                   // media thread only
     static string HookReason { get { return _mgrHookReason ?? _sessionHookReason; } }
     static volatile bool _watching;
+    static volatile bool _testMidRead;                                  // --passive changetest "midread": one change during the next read
     static long _rev;                                                   // Interlocked
     static readonly List<string> _reasons = new List<string>();         // under _gate
     static long _eventDueTs;                                            // under _gate; 0 = nothing pending
@@ -548,6 +550,13 @@ namespace Mantle {
       if (err != null)
         return Json.Obj("ok", false, "present", false, "via", "winrt",
                         "reason", "media: Windows' media sessions are unavailable (" + err + ")");
+      // The revision this answer is AS OF, taken before anything is read (lane
+      // r6-art, 2026-09-30). It used to be taken at the end: a change that
+      // landed DURING the read (Spotify publishes the art a moment after the
+      // title) gave a reply with the NEW rev but the old picture, and main
+      // skips an event whose rev it already has, so the art never came.
+      long rev = Interlocked.Read(ref _rev);
+      if (full && _testMidRead) { _testMidRead = false; Changed("media"); }   // --passive changetest "midread": a get only
       var cur = _mgr.GetCurrentSession();
       var all = new List<GlobalSystemMediaTransportControlsSession>(_mgr.GetSessions());
       // The same COM object comes back as the same RCW, so reference equality
@@ -598,7 +607,7 @@ namespace Mantle {
       }
       int count = all.Count - skipped;
       var r = Json.Obj("ok", true, "present", count > 0, "via", "winrt",
-                       "rev", Interlocked.Read(ref _rev), "count", count,
+                       "rev", rev, "count", count,
                        "current", current, "sessions", list,
                        "events", HookReason == null, "eventsReason", HookReason);
       if (skipped > 0) r["skipped"] = skipped;
@@ -657,9 +666,13 @@ namespace Mantle {
 
       if (art) {
         string why = "no track details, so no artwork";
-        string url = p == null ? null : Artwork(p, (string)d["artKey"], artSize, out why);
+        bool again = true;
+        string url = p == null ? null : Artwork(p, (string)d["artKey"], artSize, out why, out again);
         d["artwork"] = url;
-        if (url == null) d["artworkReason"] = why;
+        if (url == null) {
+          d["artworkReason"] = why;
+          if (again) ArtRetry((string)d["artKey"]);
+        }
       }
       return d;
     }
@@ -700,13 +713,60 @@ namespace Mantle {
 
     static readonly Dictionary<string, string> _art = new Dictionary<string, string>();   // under _art
 
+    // ART RETRY (lane r6-art, 2026-09-30). Owen's card showed the note glyph
+    // over a paused Spotify song and never got the picture. A read that finds
+    // no art is not cached (the app may publish it a moment later), but the
+    // card only reads again on a change event, and a PAUSED player sends
+    // none: so a missed picture stayed missed until the next song. Now a read
+    // that found no art for a reason that can pass (none published yet, a
+    // slow app, an empty stream) makes the watch send one more change event,
+    // reason "art", at the next of these times after the track's FIRST miss;
+    // a read in between (a click, another change) uses none up. A too-big or
+    // damaged image is refused for good and never retried. At most 4 extra
+    // reads per artless track, over 45 s, then quiet.
+    static readonly int[] ArtRetryAtMs = { 1000, 4000, 15000, 45000 };
+    static readonly Dictionary<string, long> _artMiss = new Dictionary<string, long>();   // under _art: track -> first miss
+
+    /// Media thread. Schedules the next "art" event for `key` (a track), or
+    /// nothing when its retries are spent or no one is watching. Every
+    /// artless read calls this, so a debounced event that flushed EARLY (and
+    /// cleared the due time) cannot lose the later retries.
+    static long ArtRetry(string key) {
+      if (!_watching || key == null) return -1;
+      long now = Stopwatch.GetTimestamp(), f = Stopwatch.Frequency, due = 0;
+      lock (_art) {
+        long first;
+        // a song played again later (over 10 min) starts afresh
+        if (!_artMiss.TryGetValue(key, out first) || now - first > 600L * f) {
+          if (_artMiss.Count >= 32) _artMiss.Clear();   // a handful of tracks; no LRU needed
+          first = now;
+          _artMiss[key] = first;
+        }
+        foreach (int at in ArtRetryAtMs) {
+          long t = first + at * f / 1000;
+          if (t > now) { due = t; break; }
+        }
+        if (due == 0) return -1;                         // spent: the app has no art for this track
+      }
+      // A NEW revision, so the event is not one the client already has (main
+      // skips an event whose rev equals its last read's).
+      Interlocked.Increment(ref _rev);
+      lock (_gate) {
+        if (!_reasons.Contains("art")) _reasons.Add("art");
+        if (_eventDueTs == 0 || due < _eventDueTs) _eventDueTs = due;
+      }
+      _wake.Set();
+      return (due - now) * 1000 / f;   // ms until the event, for the test op
+    }
+
     /// Media thread. The session's thumbnail as a data URL no larger than
     /// `size` px on its long side (JPEG when opaque, PNG when it has any
     /// transparency; see Encode). Cached per track and size; a failure is
     /// never cached, because apps often publish the art a moment after the
     /// title.
-    static string Artwork(GlobalSystemMediaTransportControlsSessionMediaProperties p, string key, int size, out string why) {
+    static string Artwork(GlobalSystemMediaTransportControlsSessionMediaProperties p, string key, int size, out string why, out bool again) {
       why = null;
+      again = true;   // every failure below is worth another look, except a too-big or unreadable image
       string ck = size + "|" + key;
       lock (_art) {
         string hit;
@@ -723,7 +783,7 @@ namespace Mantle {
       try {
         ulong n = st.Size;
         if (n == 0) { why = "the artwork stream was empty"; return null; }
-        if ((long)n > MaxArtBytes) { why = "the artwork is " + (n / 1024) + " KB, over the " + (MaxArtBytes / 1048576) + " MB limit"; return null; }
+        if ((long)n > MaxArtBytes) { again = false; why = "the artwork is " + (n / 1024) + " KB, over the " + (MaxArtBytes / 1048576) + " MB limit"; return null; }
         ms = CallBudget();
         if (ms == 0) { why = OutOfTime; return null; }
         using (var rd = new DataReader(st)) {
@@ -739,10 +799,12 @@ namespace Mantle {
       string url, type;
       int ow, oh;
       why = Encode(bytes, size, null, out url, out type, out ow, out oh);
+      again = false;   // decoded, or refused for good (damaged, too large): either way no retry
       if (why != null) return null;
       lock (_art) {
         if (_art.Count >= 16) _art.Clear();   // a handful of tracks; no LRU needed
         _art[ck] = url;
+        _artMiss.Remove(key);
       }
       return url;
     }
@@ -873,6 +935,9 @@ namespace Mantle {
                         "urlBytes", url == null ? 0 : url.Length, "w", ow, "h", oh,
                         "ms", Math.Round(sw.Elapsed.TotalMilliseconds, 1), "reason", why,
                         "prefix", url == null ? null : url.Substring(0, Math.Min(32, url.Length)));
+      // r6-art: withUrl:true hands back the whole data URL, so a page test can draw exactly
+      // what the card gets (an opaque image comes out as JPEG).
+      if (Json.GetBool(req, "withUrl", false)) ((IDictionary)result)["url"] = url;
       return null;
     }
 
@@ -964,8 +1029,23 @@ namespace Mantle {
     /// watch off, without touching any real player.
     static IDictionary ChangeTest(Dictionary<string, object> req) {
       string reason = Json.GetString(req, "reason") ?? "media";
+      // r6-art: "artmiss" runs the art retry for a made-up `track` (as an
+      // artless read does) and answers in how many ms its event is due (-1 =
+      // none); "midread" fires one change in the middle of the NEXT read, so a
+      // test can prove the reply's rev is as of the start of that read.
+      if (reason == "artmiss") {
+        string track = Json.GetString(req, "track");
+        if (string.IsNullOrEmpty(track)) return Json.Obj("ok", false, "reason", "changetest artmiss needs a track string");
+        EnsureThread();
+        long dueMs = ArtRetry("test|" + track);
+        return Json.Obj("ok", true, "dueMs", dueMs, "watching", _watching, "rev", Interlocked.Read(ref _rev));
+      }
+      if (reason == "midread") {
+        _testMidRead = true;
+        return Json.Obj("ok", true, "armed", true, "rev", Interlocked.Read(ref _rev));
+      }
       if (reason != "media" && reason != "playback" && reason != "timeline")
-        return Json.Obj("ok", false, "reason", "changetest reason must be media, playback or timeline");
+        return Json.Obj("ok", false, "reason", "changetest reason must be media, playback, timeline, artmiss or midread");
       int n = Math.Max(1, Math.Min(100, Json.GetInt(req, "n", 1)));
       EnsureThread();
       for (int i = 0; i < n; i++) Changed(reason);

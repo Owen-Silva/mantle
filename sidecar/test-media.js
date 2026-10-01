@@ -148,7 +148,8 @@ function cpuMs(pid) {
     await T.sleep(1500);   // let any real change settle
     const n0 = s.collect('media').length;
     const c1 = await s.call('media', { op: 'changetest', reason: 'playback', n: 20 }, 4000);
-    const ev = await s.waitEvent('media', 3000, (e) => s.events.indexOf(e) >= 0 && s.collect('media').indexOf(e) >= n0);
+    // the playback one: a real player's own timeline event can land in between (r6-art: seen with Spotify playing)
+    const ev = await s.waitEvent('media', 3000, (e) => s.collect('media').indexOf(e) >= n0 && (e.reasons || []).includes('playback'));
     t.check('watch: a burst of 20 changes arrives as a media event', c1.ok && ev && typeof ev.rev === 'number' && Array.isArray(ev.reasons) && ev.reasons.includes('playback'), JSON.stringify({ reasons: ev && ev.reasons }));
     t.check('watch: the event carries count/present but no artwork', typeof ev.count === 'number' && typeof ev.present === 'boolean' && !(ev.current && 'artwork' in ev.current), '');
     await T.sleep(600);
@@ -160,6 +161,39 @@ function cpuMs(pid) {
     await s.call('media', { op: 'changetest', reason: 'media', n: 5 }, 4000);
     await T.sleep(1500);
     t.check('watch off: no events after it', s.collect('media').length === n1, String(s.collect('media').length - n1));
+
+    // ---- 6b. lane r6-art (2026-09-30): a missed picture is looked for again, and a reply's rev is
+    // as of the START of its read. Owen's card kept a note glyph over a paused Spotify song: Spotify
+    // publishes no thumbnail for some songs (or late), and a paused player sends no more events.
+    const offMiss = await s.call('media', { op: 'changetest', reason: 'artmiss', track: 'off-' + Date.now() }, 4000);
+    t.check('art retry: nothing is scheduled while no one watches', offMiss.ok && offMiss.dueMs === -1, JSON.stringify(offMiss));
+    await s.call('media', { op: 'watch', on: true }, 8000);
+    await T.sleep(1500);   // any real change settles
+    const trk = 'trk-' + Date.now();
+    const n2 = s.collect('media').length;
+    const tM1 = Date.now();
+    const m1 = await s.call('media', { op: 'changetest', reason: 'artmiss', track: trk }, 4000);
+    t.check('art retry: the first miss asks again in ~1 s', m1.ok && m1.dueMs >= 900 && m1.dueMs <= 1000, JSON.stringify(m1));
+    const m1b = await s.call('media', { op: 'changetest', reason: 'artmiss', track: trk }, 4000);
+    t.check('art retry: a second miss before then keeps the same time (no extra event)', m1b.dueMs > 0 && m1b.dueMs <= m1.dueMs, `${m1b.dueMs} vs ${m1.dueMs}`);
+    const tA = Date.now();
+    const evA = await s.waitEvent('media', 2500, (e) => s.collect('media').indexOf(e) >= n2 && (e.reasons || []).includes('art'));
+    const lagA = Date.now() - tA;
+    t.check('art retry: an "art" event arrives at about 1 s', !!evA && lagA >= 600 && lagA <= 1600, `${lagA} ms`);
+    t.check('art retry: its rev is new (main skips an event whose rev it already has)', !!evA && evA.rev >= m1b.rev, JSON.stringify({ ev: evA && evA.rev, m1: m1.rev, m1b: m1b.rev }));
+    const m2 = await s.call('media', { op: 'changetest', reason: 'artmiss', track: trk }, 4000);
+    const elM = Date.now() - tM1, markM = elM < 4000 ? 4000 : 15000;   // the call itself can be slow on a loaded machine
+    t.check('art retry: the next miss waits for the next mark (4 s, not 1 s again)', m2.dueMs > 0 && Math.abs(m2.dueMs - (markM - elM)) <= 400, `${m2.dueMs} ms, ${elM} ms after the first miss`);
+    const other = await s.call('media', { op: 'changetest', reason: 'artmiss', track: trk + '-next' }, 4000);
+    t.check('art retry: a new track starts its own schedule (~1 s)', other.dueMs >= 900 && other.dueMs <= 1000, String(other.dueMs));
+    // the rev a get answers is the rev BEFORE its read: a change during the read gets an event with a newer rev
+    await T.sleep(3500);   // the retries above have fired
+    const armed = await s.call('media', { op: 'changetest', reason: 'midread' }, 4000);
+    const n3 = s.collect('media').length;
+    const gm = await s.call('media', { op: 'get', art: false }, 8000);
+    const evB = await s.waitEvent('media', 2000, (e) => s.collect('media').indexOf(e) >= n3 && (e.reasons || []).includes('media'));
+    t.check('rev: a change during a read gets an event whose rev the reply does NOT have', armed.ok && gm.ok && !!evB && evB.rev > gm.rev && gm.rev >= armed.rev, JSON.stringify({ armed: armed.rev, get: gm.rev, ev: evB && evB.rev }));
+    await s.call('media', { op: 'watch', on: false }, 8000);
 
     // ---- 7. idle CPU with the watch on (Owen's real sessions keep running)
     await s.call('media', { op: 'watch', on: true }, 8000);
