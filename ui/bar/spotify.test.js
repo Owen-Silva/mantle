@@ -721,6 +721,45 @@ async function pageTests() {
       await noJargon(H, 'autopause');
     });
 
+    // r6-apfix: auto-pause's own switch under More (the feature's real on/off; replies faked, nothing real moves).
+    await run('autopause-switch', async (H) => {
+      await H.fresh();
+      await H.open();
+      await H.push('autopause.status', { ok: true, state: 'holding', words: 'Paused while LessonPlayer plays', card: 'Paused while LessonPlayer plays', mode: 'media' });
+      await H.expand();
+      check('switch: hidden while More is closed (the closed card does not move)', !(await H.vis('.spq-apsw')));
+      await H.clickText('More');
+      check('switch: one row under More, on, with plain words', (await H.vis('.spq-apsw')) && (await H.attr('.spq-apsw-btn', 'aria-checked')) === 'true'
+        && (await H.text('.spq-apsw-btn')) === 'Pause Spotify for videos' && (await H.attr('.spq-apsw-btn', 'role')) === 'switch', await H.text('.spq-apsw'));
+      await H.set('autopause.switch', { ok: true, on: false, state: 'off', words: 'Off', card: '', mode: 'media' });
+      await H.click('.spq-apsw-btn');
+      const sent = await H.pg.evaluate(() => T.calls.filter((c) => c[0] === 'autopause.switch').map((c) => c[1]));
+      check('switch off: asks the feature to turn off', JSON.stringify(sent) === JSON.stringify([{ on: false }]), JSON.stringify(sent));
+      check('switch off: shows off at once, and the "Paused while" line goes', (await H.attr('.spq-apsw-btn', 'aria-checked')) === 'false' && !(await H.vis('.spq-ap')));
+      await H.push('autopause.status', { ok: true, state: 'standby', words: 'The separate Spotify auto-pause helper on this PC is in charge, so Mantle’s stays off', card: '', mode: 'media' });
+      await H.push('autopause.status', { ok: true, state: 'off', words: 'Off', card: '', mode: 'media' });
+      check('off: no line and no standby words', !(await H.vis('.spq-ap')) && !(await H.vis('.spq-ap-more')));
+      await H.set('autopause.switch', { ok: false, on: false, reason: 'Spotify auto-pause was stopped when Mantle put Windows back; it comes back when Mantle restarts' });
+      await H.click('.spq-apsw-btn');
+      check('a refused switch says why on the row, and stays off', (await H.vis('.spq-apsw-err')) && /Couldn’t turn auto-pause on: Spotify auto-pause was stopped/.test((await H.text('.spq-apsw-err')) || '')
+        && (await H.attr('.spq-apsw-btn', 'aria-checked')) === 'false', await H.text('.spq-apsw-err'));
+      await H.set('autopause.switch', { __throw: 'the call timed out' });
+      await H.click('.spq-apsw-btn');
+      check('a failed call is said too', /Couldn’t turn auto-pause on: The call timed out/i.test((await H.text('.spq-apsw-err')) || ''), await H.text('.spq-apsw-err'));
+      await H.set('autopause.switch', { ok: true, on: true, state: 'idle', words: 'On: Spotify pauses while another app plays video or sound', card: '', mode: 'media' });
+      await H.click('.spq-apsw-btn');
+      check('switch on: on, the error line gone, and idle words not repeated under More', (await H.attr('.spq-apsw-btn', 'aria-checked')) === 'true' && !(await H.vis('.spq-apsw-err')) && !(await H.vis('.spq-ap-more')));
+      await H.shot('autopause-switch-on');
+      for (const w of [393, 320]) {
+        await H.pg.setViewportSize({ width: w, height: 760 });
+        await H.flush();
+        const fit = await H.pg.evaluate(() => { const b = document.querySelector('.spq-apsw-btn'); const r = b.getBoundingClientRect(); return { right: r.right, vw: document.documentElement.clientWidth, over: b.scrollWidth - b.clientWidth, h: Math.round(r.height) }; });
+        check(`switch row fits at ${w}px (no overflow, one 28 px row)`, fit.right <= fit.vw + 0.5 && fit.over <= 0 && fit.h === 28, JSON.stringify(fit));
+      }
+      await H.pg.setViewportSize({ width: 380, height: 760 });
+      await noJargon(H, 'autopause-switch');
+    });
+
     await run('push-and-dead-sub', async (H) => {
       await H.fresh();
       await H.pg.evaluate(() => { T.deadReason = 'the live channel closed'; });

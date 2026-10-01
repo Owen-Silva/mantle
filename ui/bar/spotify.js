@@ -892,14 +892,48 @@
   function renderAp() {
     if (!S || !S.apLine) return;
     var a = S.ap || null;
-    var line = a && a.card ? String(a.card) : '';
+    var on = !!a && a.state !== 'off';
+    var line = on && a.card ? String(a.card) : '';     // off: no "Paused while ..." line, whatever came before
     S.apLine.textContent = line;
     S.apLine.title = a && a.words ? String(a.words) : '';
     S.apLine.hidden = !line;
     S.apLine.classList.toggle('bad', !!a && a.state === 'error');
-    var full = a && a.words && a.state !== 'off' ? 'Auto-pause: ' + String(a.words) : '';
+    // Under More, the words only when they say more than the switch does (standing by, a failure, backing off).
+    var full = on && a.words && a.state !== 'idle' && a.state !== 'holding' ? 'Auto-pause: ' + String(a.words) : '';
     S.apMore.textContent = full;
     S.apMore.hidden = !moreOpen || !full || !!line;   // never the same words twice
+    // r6-apfix: the on/off row. Shown under More once auto-pause has said anything (an old Mantle never does).
+    S.apSw.hidden = !moreOpen || !a;
+    S.apBtn.classList.toggle('on', on);
+    S.apBtn.setAttribute('aria-checked', on ? 'true' : 'false');
+    S.apBtn.classList.toggle('pending', !!S.apBusy);
+    S.apBtn.setAttribute('aria-busy', S.apBusy ? 'true' : 'false');
+    S.apBtn.title = (on ? 'On: ' : 'Off: ') + 'Spotify pauses while another app plays video or sound, then comes back. The same switch as in Settings (Win+I)';
+    S.apErrText.textContent = S.apFail || '';
+    S.apErr.hidden = !S.apFail || !moreOpen;
+  }
+
+  /* r6-apfix: the card's switch is the feature's real on/off (lib/features/autopause.js "switch": the
+     same setting as Settings and the tray, kept across restarts; off hands a held Spotify back). The push
+     that follows moves the switch; a refusal or an error stays on the row in words until the next try. */
+  function apToggle() {
+    if (!S || S.apBusy || !S.ap) return;
+    var mine = S, want = S.ap.state === 'off';
+    var fail = function (why) {
+      if (S !== mine) return;
+      S.apBusy = false;
+      S.apFail = 'Couldn’t turn auto-pause ' + (want ? 'on' : 'off') + ': ' + plain(why, 'Mantle gave no reason');
+      renderAp(); relayout();
+    };
+    S.apBusy = true; S.apFail = '';
+    renderAp();
+    S.api.call('autopause.switch', { on: want }).then(function (r) {
+      if (S !== mine) return;
+      if (!r || r.ok === false) { fail(r && r.reason); return; }
+      S.apBusy = false;
+      if (r.state) S.ap = r;          // the push follows; this keeps the switch honest at once
+      renderAp(); relayout();
+    }, function (e) { fail(S.api.msg ? S.api.msg(e) : (e && e.message)); });
   }
 
   function render(quiet) {
@@ -1123,12 +1157,28 @@
       body.appendChild(moreBtn);
       var more = mk('div', 'spq-more'); more.hidden = true;
       body.appendChild(more);
+      /* r6-apfix: Spotify auto-pause's on/off, right here (Owen: "can you just have it avaible somewere
+         here ... in more below"). One row: what it does, then the switch; a failure is one warn line. */
+      var apSw = mk('div', 'spq-apsw'); apSw.hidden = true;
+      var apBtn = mk('button', 'spq-apsw-btn'); apBtn.type = 'button'; apBtn.setAttribute('role', 'switch');
+      apBtn.appendChild(mk('span', 'spq-apsw-text', 'Pause Spotify for videos'));
+      var apTrack = mk('span', 'spq-apsw-track'); apTrack.setAttribute('aria-hidden', 'true');
+      apTrack.appendChild(mk('span', 'spq-apsw-knob'));
+      apBtn.appendChild(apTrack);
+      apBtn.addEventListener('click', function () { apToggle(); });
+      apSw.appendChild(apBtn);
+      var apErr = mk('div', 'spq-apsw-err'); apErr.hidden = true; apErr.setAttribute('role', 'alert');
+      var apGlyph = mk('span', 'spq-apsw-glyph'); apGlyph.setAttribute('aria-hidden', 'true'); apGlyph.innerHTML = svg(G.warn, 12);
+      var apErrText = mk('span', 'spq-apsw-errtext');
+      apErr.appendChild(apGlyph); apErr.appendChild(apErrText);
+      apSw.appendChild(apErr);
+      body.appendChild(apSw);
       var apMore = mk('div', 'spq-ap-more'); apMore.hidden = true;
       body.appendChild(apMore);
       root.appendChild(body);
       pop.insertBefore(root, before || null);
 
-      S = { api: api, root: root, apLine: apLine, apMore: apMore, ap: null, head: head, hint: hint, idle: idle, body: body, warn: warn, bar: bar, scroll: scroll, state: state, list: list,
+      S = { api: api, root: root, apLine: apLine, apMore: apMore, ap: null, apSw: apSw, apBtn: apBtn, apErr: apErr, apErrText: apErrText, apBusy: false, apFail: '', head: head, hint: hint, idle: idle, body: body, warn: warn, bar: bar, scroll: scroll, state: state, list: list,
         addRow: addRow, input: input, tab: 'queue', lib: null, libErr: null, libLoading: false, info: null, infoErr: '', infoLoading: false, quitArmed: false,
         sqLine: sqLine, clear: clear, kbdLine: kbdLine, noteEl: noteEl, moreBtn: moreBtn, more: more, liked: null, optPending: {}, sigs: {},
         status: null, q: null, qErr: null, results: null, query: '', added: {}, busy: '', noteText: '', noteBad: false, noteRaw: '', noteTimer: 0, armTimer: 0,
