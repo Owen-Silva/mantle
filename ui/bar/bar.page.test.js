@@ -141,7 +141,9 @@ async function run() {
       await pg.click('#pop .calbtn[aria-label="Previous month"]', { wait: 120 });
       await pg.click('#pop .calbtn[aria-label="Previous month"]', { wait: 120 });
       t.check('cal: previous month (twice)', await title() === await month(-1), await title());
-      t.check('cal: no "today" in another month', await pg.count('#pop .calday.today') === 0);
+      // A day from the next/previous month can be today (on the 1st, September's grid ends on October 1), so
+      // only the shown month's own days must not carry the mark.
+      t.check('cal: no "today" in another month', await pg.count('#pop .calday.today:not(.other)') === 0);
       const today = await pg.page.$('#pop .calbtn.today');
       await today.click(); await pg.wait(120);
       t.check('cal: Today comes back to this month', await title() === await month(0), await title());
