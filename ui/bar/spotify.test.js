@@ -745,7 +745,10 @@ async function pageTests() {
         && (await H.attr('.spq-apsw-btn', 'aria-checked')) === 'false', await H.text('.spq-apsw-err'));
       await H.set('autopause.switch', { __throw: 'the call timed out' });
       await H.click('.spq-apsw-btn');
-      check('a failed call is said too', /Couldn’t turn auto-pause on: The call timed out/i.test((await H.text('.spq-apsw-err')) || ''), await H.text('.spq-apsw-err'));
+      check('a failed call is said too, as Mantle’s (the switch never talks to Spotify)', /Couldn’t turn auto-pause on: Mantle didn’t answer in time/i.test((await H.text('.spq-apsw-err')) || ''), await H.text('.spq-apsw-err'));
+      await H.set('autopause.switch', { __throw: 'TypeError: x is not a function' });
+      await H.click('.spq-apsw-btn');
+      check('a crash in the call is said as Mantle’s too', /Couldn’t turn auto-pause on: Mantle ran into a problem/i.test((await H.text('.spq-apsw-err')) || ''), await H.text('.spq-apsw-err'));
       await H.set('autopause.switch', { ok: true, on: true, state: 'idle', words: 'On: Spotify pauses while another app plays video or sound', card: '', mode: 'media' });
       await H.click('.spq-apsw-btn');
       check('switch on: on, the error line gone, and idle words not repeated under More', (await H.attr('.spq-apsw-btn', 'aria-checked')) === 'true' && !(await H.vis('.spq-apsw-err')) && !(await H.vis('.spq-ap-more')));

@@ -916,13 +916,20 @@
   /* r6-apfix: the card's switch is the feature's real on/off (lib/features/autopause.js "switch": the
      same setting as Settings and the tray, kept across restarts; off hands a held Spotify back). The push
      that follows moves the switch; a refusal or an error stays on the row in words until the next try. */
+  /* The switch talks to Mantle's own auto-pause, never to Spotify, so a timeout or a crash is Mantle's. */
+  function apPlain(why) {
+    var t = String(why == null ? '' : why);
+    if (/gave no answer|did not answer|didn’t answer|timed? ?out|hung\b|no answer/i.test(t)) return 'Mantle didn’t answer in time. Try again in a moment';
+    if (/page threw|TypeError|ReferenceError|is not a function|Cannot read propert/i.test(t)) return 'Mantle ran into a problem. Try again in a moment';
+    return plain(why, 'Mantle gave no reason');
+  }
   function apToggle() {
     if (!S || S.apBusy || !S.ap) return;
     var mine = S, want = S.ap.state === 'off';
     var fail = function (why) {
       if (S !== mine) return;
       S.apBusy = false;
-      S.apFail = 'Couldn’t turn auto-pause ' + (want ? 'on' : 'off') + ': ' + plain(why, 'Mantle gave no reason');
+      S.apFail = 'Couldn’t turn auto-pause ' + (want ? 'on' : 'off') + ': ' + apPlain(why);
       renderAp(); relayout();
     };
     S.apBusy = true; S.apFail = '';
