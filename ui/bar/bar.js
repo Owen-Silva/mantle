@@ -3002,9 +3002,12 @@
   /* The artwork, else the app's own icon on a tile, else a note glyph. Keyed on the source so a
      push that changed only the position never re-creates the <img>. */
   function paintArt(box, s) {
-    var src = s.artwork || (s.app && s.app.icon) || null;
-    var kind = s.artwork ? 'art' : (src ? 'app' : 'none');
-    box.title = s.artwork ? '' : (s.artworkReason ? 'no artwork: ' + s.artworkReason : '');
+    /* r6-art lane: Spotify publishes no Windows thumbnail for some songs; its own cover (the
+       card's queue read, spotify.js cover()) stands in, so the card is not left on a note glyph. */
+    var art = s.artwork || (window.MantleSpotify && MantleSpotify.cover ? MantleSpotify.cover(s) : null) || null;
+    var src = art || (s.app && s.app.icon) || null;
+    var kind = art ? 'art' : (src ? 'app' : 'none');
+    box.title = art ? '' : (s.artworkReason ? 'no artwork: ' + s.artworkReason : '');
     if (box._src === src && box.dataset.kind === kind) return;
     box._src = src;
     box.dataset.kind = kind;

@@ -1241,6 +1241,20 @@
       if (pop) fit(pop);
     },
 
+    /* r6-art lane (2026-09-30): the playing song's cover from Spotify itself (the queue read's
+       current row, data: only), for the card's art when Windows has none: Spotify publishes no
+       Windows thumbnail for some songs, and the card showed a note glyph. Only for a Spotify
+       session, and only while the queue's song is the one the session names. The queue read that
+       brings it repaints the card (render -> relayout -> the bar's mediaPaint). */
+    cover: function (s) {
+      if (!S || !S.q || !S.q.current || !isSpotify(s)) return null;
+      var c = S.q.current;
+      if (typeof c.image !== 'string' || !/^data:image\/[a-z0-9.+-]+;base64,/i.test(c.image)) return null;
+      var a = String((s && s.title) || '').trim().toLowerCase(), b = String(c.name || '').trim().toLowerCase();
+      if (a && b && a !== b) return null;   // the queue still names the last song: no wrong picture
+      return c.image;
+    },
+
     closed: function () {
       if (!S) return;
       if (S.timer) clearInterval(S.timer);
