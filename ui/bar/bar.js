@@ -2617,8 +2617,14 @@
   function openMixer() {
     closePop();
     callR('osd.mixer').then(function () { clearFail('osdmixer'); }, function (e) {
-      fail('osdmixer', 'app volumes', 'the per-app volume panel did not open (' + msg(e) + '), so quick settings opened instead', 'warn');
+      /* NO SILENT FAILURE (r5-overflow, 2026-09-30; Owen: "its not letting me right click the sound
+         thing to see what apps are playing sound"). The reason is said in plain words in the panel
+         that opens instead, where the user is looking (a pip on the More button is read by nobody),
+         and the raw reason goes to the log with the warning fail() writes. */
+      var raw = msg(e), why = said('osd.mixer', raw, 'Mantle could not open it');
+      fail('osdmixer', 'App volumes did not open', why + '. Quick settings opened instead', 'warn', 'osd.mixer: ' + raw);
       openQs(el.volume);
+      if (popKey === 'qs') { qsNote.mixer = 'App volumes did not open: ' + why; if (qsPaint) qsPaint(); }
     });
   }
   el.volume.addEventListener('contextmenu', function (ev) { ev.preventDefault(); openMixer(); });

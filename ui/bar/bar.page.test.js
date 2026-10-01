@@ -285,8 +285,33 @@ async function run() {
       await pg.reset();
       await pg.click('#volume', { button: 'right', wait: 150 });
       t.check('vol: right-click opens the volume mixer', (await pg.calls('osd.mixer')).length === 1);
+      await pg.reset();
+      await pg.click('#volume', { button: 'middle', wait: 150 });
+      t.check('vol: middle-click opens the volume mixer', (await pg.calls('osd.mixer')).length === 1);
+      // as a person does it: the pointer rests on the speaker, its tooltip comes, then the right button
+      await pg.reset();
+      await pg.page.hover('#volume'); await pg.wait(1200);
+      await pg.page.mouse.down({ button: 'right' }); await pg.page.mouse.up({ button: 'right' }); await pg.wait(200);
+      t.check('vol: right-click with the tooltip up opens the volume mixer', (await pg.calls('osd.mixer')).length === 1);
+      t.check('vol: ...and nothing else opens in the bar', await popKey(pg) === null, await popKey(pg));
       await pg.click('#volume', { wait: 350 });
       t.check('vol: a click opens Quick Settings', await pg.count('#pop .qstile') > 0);
+      await pg.close();
+    }
+
+    /* The app volumes refused (the pop-up switched off in the tray): never a silent right-click. Quick
+       settings opens instead, says why in plain words, and a line goes to the log (r5-overflow). */
+    if (t.want('volfail')) {
+      const pg = await open(PILL, Object.assign({}, W, { reply: '(ch, p) => ch === "osd.mixer" ? { ok: false, reason: "the pop-up is switched off in the tray" } : undefined' }));
+      const logs = [];
+      pg.page.on('console', (m) => logs.push(m.type() + ': ' + m.text()));
+      await pg.click('#volume', { button: 'right', wait: 450 });
+      t.check('volfail: the right-click still asked for the app volumes', (await pg.calls('osd.mixer')).length === 1);
+      t.check('volfail: Quick settings opens instead', await pg.count('#pop .qstile') > 0, await popKey(pg));
+      const note = await pg.eval(() => Array.from(document.querySelectorAll('#pop .qsnotes .note')).map((n) => n.textContent).join(' | '));
+      t.check('volfail: the panel says why, in plain words', /app volumes did not open/i.test(note) && /switched off in the tray/i.test(note) && !JARGON.test(note), note);
+      t.check('volfail: ...and a line goes to the log', logs.some((l) => /^warning: .*App volumes did not open.*osd\.mixer/i.test(l)), logs);
+      t.check('volfail: no page errors', pg.errors.length === 0, pg.errors);
       await pg.close();
     }
 
