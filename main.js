@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFileSync } = require('child_process');
+// A --test run keeps every window off Owen's screen (lib/test-quiet.js); live it returns before touching anything.
+require('./lib/test-quiet').install(process.argv, process.env);
 const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, screen, shell, powerMonitor } = require('electron');
 
 const { parseArgs, ArgError } = require('./lib/args');
