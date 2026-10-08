@@ -510,6 +510,197 @@ async function run() {
       t.check('spotidle: no session and no Spotify link: no chip', await hid(p3, '#media'));
       await p3.close();
     }
+
+    /* ---------------------------------------------------------------- drag to reorder (dragfix lane) */
+    /* Pressing an icon and moving it puts it somewhere else on the strip. Driven with REAL mouse
+       input (page.mouse goes through Chromium's own input path), never with made-up pointer events:
+       the made-up ones never met Chromium's own image drag, which took the press away at 4 px, so the
+       drop never landed and no order was ever saved (2026-10-08). */
+    if (t.want('drag')) {
+      const ORDER_OK = '(ch, p) => ch === "jumplist.order" ? { ok: true, reason: null } : undefined';
+      const ORDER_BAD = '(ch, p) => ch === "jumplist.order" ? Promise.reject(new Error("disk full")) : undefined';
+      const mouse = (pg) => pg.page.mouse;
+      // the icons of one group, in the order they stand on the strip
+      const group = (pg, kind) => pg.eval((k) => Array.from(document.querySelectorAll('#dock .cell'))
+        .filter((c) => c._item && (c._item.kind === 'running') === (k === 'running')).map((c) => c.dataset.id), kind);
+      const mid = (pg, id) => pg.eval((i) => { const r = document.querySelector('#dock .cell[data-id="' + i + '"]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, id);
+      const shiftOf = (pg, id) => pg.eval((i) => { const m = /translateX\((-?[\d.]+)px\)/.exec(document.querySelector('#dock .cell[data-id="' + i + '"]').style.transform || ''); return m ? Number(m[1]) : 0; }, id);
+      // anything a drag leaves behind once it is over
+      const left = (pg) => pg.eval(() => {
+        const cs = Array.from(document.querySelectorAll('#dock .cell'));
+        const dock = document.getElementById('dock');
+        return {
+          transforms: cs.filter((c) => c.style.transform).map((c) => c.dataset.id + ':' + c.style.transform),
+          lifted: cs.filter((c) => c.classList.contains('lifted') || c.classList.contains('settle')).map((c) => c.dataset.id),
+          dock: ['dragging', 'no-anim'].filter((k) => dock.classList.contains(k))
+        };
+      });
+      const clean = (l) => !l.transforms.length && !l.lifted.length && !l.dock.length;
+      /* Counts Chromium's own drag giving up (pointercancel) and its own drags starting (dragstart):
+         a dragstart is fine only if the bar cancelled it, which is known once every listener ran. */
+      const watch = (pg) => pg.eval(() => {
+        const w = window.__DRAGWATCH__ = { cancels: 0, starts: [] };
+        window.addEventListener('pointercancel', () => { w.cancels++; }, true);
+        window.addEventListener('dragstart', (e) => { setTimeout(() => w.starts.push(e.defaultPrevented), 0); }, true);
+      });
+      const watched = (pg) => pg.eval(() => window.__DRAGWATCH__);
+      // a press on `id`, moved in steps to (x, y), held there
+      const press = async (pg, id, to, hold) => {
+        const a = await mid(pg, id);
+        await mouse(pg).move(a.x, a.y);
+        await pg.wait(60);
+        await mouse(pg).down();
+        await mouse(pg).move(to.x, to.y === undefined ? a.y : to.y, { steps: 10 });
+        await pg.wait(hold === undefined ? 200 : hold);
+        return a;
+      };
+
+      // 1. the first pin, two slots right: it lifts, its neighbours slide aside, and the drop sticks
+      const pg = await open(PILL, Object.assign({}, W, { reply: ORDER_OK }));
+      const pins0 = await group(pg, 'pinned');
+      t.check('drag: the mock has at least four pins to move between', pins0.length >= 4, pins0);
+      const [A, B, C] = pins0;
+      await watch(pg);
+      await pg.reset();
+      const cA = await mid(pg, A), cC = await mid(pg, C);
+      const pitch = (await mid(pg, B)).x - cA.x;
+      await press(pg, A, cC);
+      const during = await pg.eval((i) => { const c = document.querySelector('#dock .cell[data-id="' + i + '"]'); return { lifted: c.classList.contains('lifted'), transform: c.style.transform }; }, A);
+      const dA = await shiftOf(pg, A), dB = await shiftOf(pg, B), dC = await shiftOf(pg, C);
+      t.check('drag: past a few pixels the icon lifts', during.lifted, during);
+      t.check('drag: ...and follows the pointer (two slots right)', Math.abs(dA - 2 * pitch) <= 2, { dA, pitch, transform: during.transform });
+      t.check('drag: the two icons it passed slide one slot left', Math.abs(dB + pitch) <= 0.5 && Math.abs(dC + pitch) <= 0.5, { dB, dC, pitch });
+      t.check('drag: the icon after them stays put', (await shiftOf(pg, pins0[3])) === 0, await shiftOf(pg, pins0[3]));
+      await mouse(pg).up();
+      await pg.wait(500);
+      const pins1 = await group(pg, 'pinned');
+      const want1 = [B, C, A].concat(pins0.slice(3));
+      t.check('drag: let go, it stays where it was dropped', JSON.stringify(pins1) === JSON.stringify(want1), { was: pins0, now: pins1 });
+      const l1 = await left(pg);
+      t.check('drag: no slide, lift or glide is left on any icon', clean(l1), l1);
+      const ord = await pg.calls('jumplist.order');
+      t.check('drag: the new order is saved, once, for the pins', ord.length === 1 && ord[0].p.group === 'pinned' && ord[0].p.from === 0 && ord[0].p.to === 2 && JSON.stringify(ord[0].p.ids) === JSON.stringify(pins1), ord);
+      t.check('drag: a drop never opens the app', (await pg.calls('bar.open')).length === 0, await pg.calls('bar.open'));
+      const w1 = await watched(pg);
+      t.check('drag: Chromium never took the press away (no pointercancel)', w1.cancels === 0, w1);
+      t.check('drag: ...and never started its own image drag', w1.starts.every((p) => p === true), w1);
+      t.check('drag: no page errors', pg.errors.length === 0, pg.errors);
+
+      // 2. the bar still answers after a drop: a plain click on another pin that is not running opens it
+      await pg.wait(450);   // past the 400 ms in which the click that ended the drag is swallowed
+      const idle = await pg.eval((ids) => ids.filter((i) => { const c = document.querySelector('#dock .cell[data-id="' + i + '"]'); return c && !c.classList.contains('run'); }), pins1.slice(1));
+      const other = idle.filter((i) => i !== A)[0];
+      t.check('drag: there is another pin that is not running to click', !!other, pins1);
+      if (other) {
+        await pg.reset();
+        const o = await mid(pg, other);
+        await mouse(pg).move(o.x, o.y, { steps: 4 });
+        await mouse(pg).down(); await mouse(pg).up();
+        await pg.wait(250);
+        const op = await pg.calls('bar.open');
+        t.check('drag: after a drop, a click on another pin still opens it', op.length === 1 && op[0].p.id === other, op);
+        t.check('drag: ...and saves no order', (await pg.calls('jumplist.order')).length === 0);
+      }
+      await pg.close();
+
+      // 3. a press that barely moves is the click it always was
+      const p3 = await open(PILL, Object.assign({}, W, { reply: ORDER_OK }));
+      const pins3 = await group(p3, 'pinned');
+      const still = await p3.eval((ids) => ids.filter((i) => !document.querySelector('#dock .cell[data-id="' + i + '"]').classList.contains('run'))[0], pins3);
+      await p3.reset();
+      const s = await mid(p3, still);
+      await mouse(p3).move(s.x, s.y);
+      await mouse(p3).down();
+      await mouse(p3).move(s.x + 3, s.y, { steps: 3 });
+      await p3.wait(150);
+      const lifted3 = await p3.count('#dock .cell.lifted');
+      await mouse(p3).up();
+      await p3.wait(250);
+      const op3 = await p3.calls('bar.open');
+      t.check('drag: a 3 px wobble never lifts the icon', lifted3 === 0, lifted3);
+      t.check('drag: ...it is a click: the app is asked to open, once', op3.length === 1 && op3[0].p.id === still, op3);
+      t.check('drag: ...and no order is saved', (await p3.calls('jumplist.order')).length === 0);
+      t.check('drag: ...and the strip is unchanged', JSON.stringify(await group(p3, 'pinned')) === JSON.stringify(pins3));
+      await p3.close();
+
+      // 4. cancelling: Esc mid-drag, and dragging it off the bar, both put it back
+      const p4 = await open(PILL, Object.assign({}, W, { reply: ORDER_OK }));
+      const pins4 = await group(p4, 'pinned');
+      await p4.reset();
+      // (on the real machine the bar rarely has the keyboard; this headless page does)
+      await press(p4, pins4[0], await mid(p4, pins4[2]));
+      t.check('drag: (Esc case) the icon lifted', await p4.count('#dock .cell.lifted') === 1);
+      await p4.page.keyboard.press('Escape');
+      await p4.wait(300);
+      await mouse(p4).up();
+      await p4.wait(450);
+      t.check('drag: Esc mid-drag puts it back', JSON.stringify(await group(p4, 'pinned')) === JSON.stringify(pins4), await group(p4, 'pinned'));
+      const l4 = await left(p4);
+      t.check('drag: ...with nothing left on the icons', clean(l4), l4);
+      t.check('drag: ...and saves no order', (await p4.calls('jumplist.order')).length === 0);
+      t.check('drag: ...and opens nothing', (await p4.calls('bar.open')).length === 0, await p4.calls('bar.open'));
+      // off the bar: more than 24 px above it
+      const barTop = await p4.eval(() => document.getElementById('bar').getBoundingClientRect().top);
+      const c2 = await mid(p4, pins4[2]);
+      await press(p4, pins4[0], c2);
+      t.check('drag: (off-the-bar case) the icon lifted', await p4.count('#dock .cell.lifted') === 1);
+      await mouse(p4).move(c2.x, barTop - 40, { steps: 6 });
+      await p4.wait(250);
+      await mouse(p4).up();
+      await p4.wait(450);
+      t.check('drag: dragged off the bar and let go, it goes back', JSON.stringify(await group(p4, 'pinned')) === JSON.stringify(pins4), await group(p4, 'pinned'));
+      const l4b = await left(p4);
+      t.check('drag: ...with nothing left on the icons', clean(l4b), l4b);
+      t.check('drag: ...and saves no order', (await p4.calls('jumplist.order')).length === 0, await p4.calls('jumplist.order'));
+      t.check('drag: no page errors (cancels)', p4.errors.length === 0, p4.errors);
+      await p4.close();
+
+      // 5. a save that fails springs back and says why
+      const p5 = await open(PILL, Object.assign({}, W, { reply: ORDER_BAD }));
+      const pins5 = await group(p5, 'pinned');
+      await p5.reset();
+      await press(p5, pins5[0], await mid(p5, pins5[2]));
+      await mouse(p5).up();
+      await p5.wait(1000);
+      t.check('drag: (failed save) the order was asked for', (await p5.calls('jumplist.order')).length === 1, await p5.calls('jumplist.order'));
+      t.check('drag: a save that fails puts the icons back', JSON.stringify(await group(p5, 'pinned')) === JSON.stringify(pins5), { was: pins5, now: await group(p5, 'pinned') });
+      const why = await p5.eval(() => {
+        const more = document.getElementById('more');
+        const pip = more.querySelector('.mpip');
+        const chip = Array.from(document.querySelectorAll('#chips .chip')).find((c) => /order not saved/i.test(c.title)) || null;
+        return { pip: !!pip && !pip.hidden, more: more.title, chip: chip ? chip.title : null };
+      });
+      t.check('drag: ...and the bar says so (the More pip, and the chip)', why.pip && /order not saved/i.test(why.more) && !!why.chip, why);
+      t.check('drag: ...with the reason, in plain words', /not saved/i.test(why.chip || '') && /disk full/i.test(why.chip || '') && !JARGON.test(why.chip || ''), why.chip);
+      const l5 = await left(p5);
+      t.check('drag: ...with nothing left on the icons', clean(l5), l5);
+      t.check('drag: no page errors (failed save)', p5.errors.length === 0, p5.errors);
+      await p5.close();
+
+      // 6. a running-only app dragged left past the divider stays with the running apps
+      const p6 = await open(PILL, Object.assign({}, W, { reply: ORDER_OK }));
+      const run6 = await group(p6, 'running');
+      const pins6 = await group(p6, 'pinned');
+      t.check('drag: (running case) the mock has two running-only apps', run6.length >= 2, run6);
+      if (run6.length >= 2) {
+        await p6.reset();
+        const last = run6[run6.length - 1];
+        const far = await mid(p6, pins6[pins6.length - 3]);   // well in among the pins
+        await press(p6, last, far);
+        await mouse(p6).up();
+        await p6.wait(500);
+        const order6 = await p6.eval(() => Array.from(document.querySelectorAll('#dock > *')).map((n) => n.classList.contains('div') ? '|' : n.dataset.id));
+        const run6b = await group(p6, 'running');
+        t.check('drag: a running app dragged among the pins lands first among the running', run6b[0] === last && JSON.stringify(await group(p6, 'pinned')) === JSON.stringify(pins6), order6);
+        t.check('drag: ...after the divider, never among the pins', order6.indexOf(last) > order6.indexOf('|'), order6);
+        const o6 = await p6.calls('jumplist.order');
+        t.check('drag: ...and its order is saved with the running apps', o6.length === 1 && o6[0].p.group === 'running' && o6[0].p.to === 0 && o6[0].p.from === run6.length - 1 && JSON.stringify(o6[0].p.ids) === JSON.stringify(run6b), o6);
+        const l6 = await left(p6);
+        t.check('drag: ...with nothing left on the icons', clean(l6), l6);
+      }
+      t.check('drag: no page errors (running)', p6.errors.length === 0, p6.errors);
+      await p6.close();
+    }
   });
 }
 

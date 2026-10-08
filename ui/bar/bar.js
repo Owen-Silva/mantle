@@ -484,6 +484,9 @@
         ico.className = 'ico';
         var img = document.createElement('img');
         img.alt = '';
+        /* Never Chromium's own image drag: it took over every press-and-move on an icon, so drag
+           to reorder never got its drop (DRAG TO REORDER, el.dock's dragstart). */
+        img.draggable = false;
         /* A broken data URL would otherwise leave an empty square: fall back to the letter tile
            and say so in the tooltip rather than showing a hole. */
         img.onerror = function () {
@@ -1472,11 +1475,22 @@
      main.js buildPinned applies it, so it survives a restart. Running-only order: main keeps it
      for this session. A save that fails springs back and says why on the strip.
      While lifted, and until the pointer leaves the icon it let go on, no tooltip or flyout opens
-     and a right-click opens no jump list. */
+     and a right-click opens no jump list.
+     Chromium's own drag (fixed 2026-10-08, Owen: "it lifts and follows the mouse and then when you
+     let go it stays where you stopped"): an icon is an <img>, and Chromium drags images itself. At
+     its 4 px threshold it started a Windows drag-and-drop, sent this code a pointercancel (the lift
+     sprang back, or never came) and kept the button-up for itself: a see-through copy of the icon
+     followed the pointer and letting go did nothing, so no order was ever saved. Now the images are
+     draggable=false and the dock cancels every dragstart, so a press-and-move is only ever this
+     code's. Tests that DISPATCHED pointer events never met it; ui/bar/drag.e2e.test.js drives real
+     input into a --test bar. While lifted, the page also keeps telling main the pointer is in the
+     bar (main's cursor poll cannot see a drag that drifts just above the strip, and hid the bar
+     180 ms later). */
   var DRAG_PX = 5;              // a press that moves less is a click
   var DRAG_OUT = 24;            // px past the bar's edge that cancels
   var SETTLE_MS = 150;          // the dropped icon's glide into its slot (matches bar.css .settle)
   var ORDER_HOLD_MS = 4000;     // how long a dropped order outranks replies built before its save
+  var DRAG_HOVER_MS = 100;      // "the pointer is in the bar", re-said while lifted (main hides 180 ms after the last)
   var drag = null;              // the press, then the lift (dragLift), until the button comes up
   var dragSettle = 0;           // the glide is running: renders wait for dragCommit
   var dragPending = null;       // a bar.pinned reply that arrived mid-drag
@@ -1555,6 +1569,9 @@
     if (flyDwell) { clearTimeout(flyDwell); flyDwell = 0; }
     if (popKey) closePop();
     dragQuietOn();
+    // the bar stays up for the whole drag, even with the pointer just above the strip
+    hover(true);
+    d.hover = setInterval(function () { hover(true); }, DRAG_HOVER_MS);
     try { b.setPointerCapture(d.pid); } catch (_) { /* a pointer that is already gone: the window listeners still follow it */ }
     el.dock.classList.add('dragging');
     b.classList.add('lifted');
@@ -1592,6 +1609,7 @@
     if (!d || d.ended) return;
     d.ended = true;
     if (d.raf) { cancelAnimationFrame(d.raf); d.raf = 0; }
+    if (d.hover) { clearInterval(d.hover); d.hover = 0; }
     if (!d.lifted) return;
     try { if (d.b.hasPointerCapture && d.b.hasPointerCapture(d.pid)) d.b.releasePointerCapture(d.pid); } catch (_) { /* already released */ }
     if (cancel) { d.to = d.from; dragShift(d); }
@@ -1637,6 +1655,8 @@
   }
   function orderRefresh() { if (pinInFlight) setTimeout(orderRefresh, 120); else refreshPinned(); }
 
+  // Chromium's own drag-and-drop never starts here (see the top of this section)
+  el.dock.addEventListener('dragstart', function (ev) { ev.preventDefault(); });
   el.dock.addEventListener('pointerdown', function (ev) {
     // a press or a finished drag whose button-up never came is over now; a stuck lift springs back
     if (drag && (drag.ended || !drag.lifted)) drag = null;
