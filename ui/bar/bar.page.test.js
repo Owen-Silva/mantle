@@ -259,7 +259,7 @@ async function run() {
       t.check('dark: (dark) a white tray glyph needs no plate on dark glass', D.white === 'rgba(0, 0, 0, 0)', D);
       t.check('dark: (dark) a black tray glyph sits on the light ink plate', D.black === 'rgb(196, 199, 206)', D);
       t.check('dark: (dark) a coloured glyph still gets none', D.plain === 'rgba(0, 0, 0, 0)', D);
-      t.check('dark: (dark) the backdrop blur is the theme\'s, which dims the capture', /brightness\(0?\.8\)/.test(D.blur), D.blur);
+      t.check('dark: (dark) the backdrop blur is the theme\'s, with no extra dimming (50%, Helm\'s look)', /saturate\(1\.4\)/.test(D.blur) && !/brightness/.test(D.blur), D.blur);
       t.check('dark: (dark) game mode\'s checkboxes are a dark box', D.scheme === 'dark', D.scheme);
       t.check('dark: (light) the separators are the dark hairline', L.sep === 'rgba(11, 14, 26, 0.1)' && L.div === L.sep, L);
       t.check('dark: (dark) the separators are the faint WHITE hairline, not a black groove', D.sep === 'rgba(255, 255, 255, 0.1)' && D.div === D.sep, D);

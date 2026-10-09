@@ -150,9 +150,14 @@
    accent taken down to a desaturated light indigo used for state only.
 
    Why each number:
-   - fill .56 on #1E1F22: the light set's .45 white, mirrored. A dark tint needs a touch more to
-     keep light ink legible when the wallpaper behind is bright; --lg-blur also dims the capture
-     a fifth (brightness .80) for the same reason, so .56 stays a breath and not a slab.
+   - fill .50 on #1E1F22 (strong .50 too; fb .56 and pop .82 are for surfaces with nothing blurred
+     behind them). The first dark set (10-09 00:55) was .56 / .76 / .80 / .92 with the capture dimmed
+     to .80, and Owen, looking at it over his mountain wallpaper: "mantle needs to be more see through
+     everything". It went to .34 for an hour, then Owen: "can you change it to 50% since that is the
+     same as i set helm to" -- Helm's Background "Dim 50%" (~/helm ui/shell/settings.js: a wash at
+     --bg-dim .5 over the blurred photo behind every panel). So .50 over the blurred capture with NO
+     extra brightness dimming is Helm's look, and the two apps match. Surfaces that stacked fills to
+     fake a surface must not do it in dark; one layer, the blur keeps text legible.
    - ink #F1F2F4 / #C4C7CE / #8E94A0: --lg-ink-3 clears 4.5:1 on --lg-fill-pop.
    - accent #9D97EC is #4436E8's hue, lighter and less saturated; ink on it (--lg-acc-on, near
      black) is ~7:1. White on it would not be, which is why --lg-acc-on flips too.
@@ -160,10 +165,10 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --lg-fill:        rgba(30,31,34,.56);
-  --lg-fill-fb:     rgba(30,31,34,.76);
-  --lg-fill-strong: rgba(32,33,36,.80);
-  --lg-fill-pop:    rgba(32,33,36,.92);
+  --lg-fill:        rgba(30,31,34,.50);
+  --lg-fill-fb:     rgba(30,31,34,.56);
+  --lg-fill-strong: rgba(32,33,36,.50);
+  --lg-fill-pop:    rgba(32,33,36,.82);
 
   --lg-edge-in:  rgba(255,255,255,.10);
   --lg-edge-out: rgba(0,0,0,.42);
@@ -203,5 +208,5 @@
   --lg-warn-soft: rgba(224,160,89,.14);
 
   --lg-ground: #1B1C1F;
-  --lg-blur:   blur(12px) saturate(130%) brightness(.80);
+  --lg-blur:   blur(12px) saturate(140%);
 }
