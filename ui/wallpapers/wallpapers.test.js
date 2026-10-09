@@ -44,19 +44,55 @@ const FAKE = String.raw`(() => {
     mk('w6', 'Night city'),
   ];
   let selected = items.length ? 'w1' : null;
+  // The built-in photos: the REAL catalog and thumbs (window.__PRESETS, set by the test), with
+  // failure modes: nopresets (catalog unreadable), badpreset (a photo gone, a thumb gone, a damaged
+  // line), oldmain (a main that sends no presets), builtinpick (a built-in one is on the desktop).
+  const presetItems = (window.__PRESETS || []).map((p) => Object.assign({ type: 'picture', typeLabel: 'Picture', preset: true, origin: 'Built in',
+    health: { ok: true, reason: '' }, runtime: null, thumbNote: '' }, p));
+  if (mode === 'badpreset') {
+    presetItems[1].health = { ok: false, reason: 'its photo "cloud-peaks.jpg" is missing from Mantle\'s built-in wallpapers folder' };
+    presetItems[2].thumbNote = 'Its small preview is missing, so the full photo is shown instead.';
+  }
+  if (mode === 'builtinpick') selected = 'builtin:night-fjord';
+  const presetsOf = () => (mode === 'nopresets'
+    ? { ok: false, reason: 'the list of built-in wallpapers (catalog.json) is missing from this copy of Mantle', note: '', categories: [], items: [] }
+    : { ok: true, reason: '', note: mode === 'badpreset' ? 'In the list of built-in wallpapers, 1 line was damaged and left out.' : '',
+      categories: presetItems.map((p) => p.category).filter((c, i, a) => a.indexOf(c) === i),
+      items: presetItems.map((p) => Object.assign({}, p, { selected: p.id === selected })) });
+  const currentOf = () => {
+    const it = items.concat(presetItems).find((i) => i.id === selected);
+    return it ? { id: it.id, title: it.title, type: it.type, typeLabel: it.typeLabel, preset: !!it.preset, category: it.category || '', credit: it.credit || '',
+      creditUrl: it.creditUrl || '', thumbUrl: it.thumbUrl, health: it.health } : null;
+  };
   let userPaused = false;
   const undo = new Map();
   let cb = null;
-  const listing = () => ({
+  const listing = () => Object.assign({
     dir: 'C:\\made\\up', loadError: '', importing: null, lively: null, livelyInstalled: false, test: false, userPaused,
     items: items.map((it) => Object.assign({}, it, { selected: it.id === selected })),
     playback: { ok: true, reason: selected ? (userPaused ? 'paused: you paused it' : 'playing') : 'no wallpaper is chosen', paused: userPaused, rulesOk: true },
     rules: { from: 'lively', reason: '', lines: [{ label: 'An app is full screen or maximised', value: 'pause', honoured: true, note: '' }] },
-  });
+  }, mode === 'oldmain' ? {} : { presets: presetsOf(), current: currentOf() });
   const push = () => setTimeout(() => cb && cb(listing()), 10);
   const call = async (cmd, a) => {
     window.__calls.push([cmd, a || {}]);
-    if (cmd === 'wallpaper.set') { if (!items.find((i) => i.id === a.id)) throw new Error('no such wallpaper'); selected = a.id; push(); return { ok: true }; }
+    if (cmd === 'wallpaper.set') {
+      const it = items.concat(presetItems).find((i) => i.id === a.id);
+      if (!it) throw new Error('no such wallpaper');
+      if (!it.health.ok) throw new Error('"' + it.title + '" cannot play: ' + it.health.reason);
+      selected = a.id; push(); return { ok: true, id: a.id };
+    }
+    if (cmd === 'wallpaper.shuffle') {
+      if (mode === 'shufflefail') throw new Error('none of the Snow photos can be used right now');
+      const pool = presetItems.filter((p) => p.health.ok && p.id !== selected && (!a.category || a.category === 'All' || p.category === a.category));
+      if (!pool.length) throw new Error('none of the built-in photos can be used right now');
+      selected = pool[pool.length - 1].id; push(); return { ok: true, id: selected, title: pool[pool.length - 1].title };
+    }
+    if (cmd === 'wallpaper.creditOpen') {
+      const p = presetItems.find((x) => x.id === a.id);
+      if (!p) throw new Error('only a built-in wallpaper has a photo page');
+      return { ok: true, dryRun: true, url: p.creditUrl, reason: 'Test run, nothing opened: Mantle would open ' + p.creditUrl };
+    }
     if (cmd === 'wallpaper.remove') {
       const i = items.findIndex((x) => x.id === a.id);
       undo.set(a.id, { it: items[i], i, sel: selected === a.id });
@@ -85,6 +121,14 @@ const FAKE = String.raw`(() => {
 
 const JARGON = /sidecar|hwnd|\bIPC\b|renderer|dryRun|undefined|\bnull\b|NaN|\[object|Chromium|ENOENT|0x8007/;
 
+// The real built-in catalog (assets/backgrounds, read-only), shaped the way lib/wallpaper.js lists it.
+const BG = path.join(ROOT, 'assets', 'backgrounds');
+const fileUrl = (p) => 'file:///' + p.replace(/\\/g, '/').split('/').map((s, i) => (i === 0 ? s : encodeURIComponent(s))).join('/');
+const PRESETS = JSON.parse(fs.readFileSync(path.join(BG, 'catalog.json'), 'utf8')).map((x) => ({
+  id: 'builtin:' + x.file.replace(/\.[^.]+$/, '').toLowerCase(), title: x.title, category: x.category, credit: x.credit, creditUrl: x.url,
+  thumbUrl: fileUrl(path.join(BG, 'thumbs', x.file)),
+}));
+
 async function run() {
   fs.mkdirSync(OUT, { recursive: true });
   const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
@@ -92,6 +136,7 @@ async function run() {
   themeEvery(browser);   // MANTLE_THEME=dark|light: <html data-theme> + the mantle-theme event, as dm-core's plumbing does
   try {
     const ctx = await browser.newContext({ viewport: { width: 1100, height: 720 }, deviceScaleFactor: 1 });
+    await ctx.addInitScript(`window.__PRESETS = ${JSON.stringify(PRESETS)};`);
     await ctx.addInitScript(FAKE);
     if (BASE) {
       await ctx.route(/\/ui\/wallpapers\/(wallpapers\.(js|css)|index\.html)(\?.*)?$/, (route) => {
@@ -227,6 +272,146 @@ async function run() {
     const txt = await page.evaluate(() => document.body.innerText);
     check('words: no jargon anywhere on the page', !JARGON.test(txt), (txt.match(JARGON) || [])[0]);
 
+    /* ---- the built-in photos (lane mantle-bg-presets): their own view, never mixed in ---- */
+    await page.goto(PAGE + '?m=main', { waitUntil: 'load' });
+    await page.waitForSelector('#grid .card[data-id]');
+    const cardIds = () => page.$$eval('#grid .card[data-id]', (a) => a.map((c) => c.dataset.id));
+    const tickIds = () => page.$$eval('#grid .card .tick', (a) => a.map((t) => t.closest('.card').dataset.id).join());
+    const vw = await page.evaluate(() => ({ yours: document.getElementById('view-yours').getAttribute('aria-selected'), n1: document.getElementById('n-yours').textContent,
+      n2: document.getElementById('n-builtin').textContent, cats: document.getElementById('cats').hidden, sh: document.getElementById('shuffle').hidden, credit: document.getElementById('credit').hidden }));
+    check('views: opens on Your library when one of his own is on the desktop, with both counts', vw.yours === 'true' && vw.n1 === '6' && vw.n2 === '23' && vw.cats && vw.sh && vw.credit, JSON.stringify(vw));
+    check('views: his library shows only his own cards', (await cardIds()).join() === 'w1,w2,w3,w4,w5,w6');
+    await page.click('#view-builtin');
+    await page.waitForTimeout(80);
+    const bIds = await cardIds();
+    check('built-in: 23 cards, in the catalog\'s order, none of his', bIds.length === 23 && bIds.join() === PRESETS.map((p) => p.id).join(), bIds.length);
+    const chips = await page.$$eval('#cats .cat', (a) => a.map((c) => c.textContent + (c.getAttribute('aria-pressed') === 'true' ? '*' : '')));
+    check('built-in: Helm\'s category chips, All first and chosen', chips.join('|') === 'All*|Mountains|Forest|Water|Coast|Desert|Sky & Night|Snow|City|Abstract|Minimal', chips.join('|'));
+    check('built-in: Shuffle is there', await page.$eval('#shuffle', (b) => !b.hidden && b.textContent.trim() === 'Shuffle'));
+    check('built-in: the credit line says where the photos are from while one of his is on the desktop', /Photos from Unsplash, free under the Unsplash License/.test(await page.textContent('#credit')));
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('#grid .card .thumb img')).slice(0, 6).every((i) => i.complete && i.naturalWidth > 0), null, { timeout: 5000 }).catch(() => {});
+    const th = await page.$$eval('#grid .card .thumb img', (a) => ({ n: a.length, thumbs: a.every((i) => /\/assets\/backgrounds\/thumbs\/.+\.jpg$/.test(i.src)), loaded: a.slice(0, 6).filter((i) => i.complete && i.naturalWidth > 0).length }));
+    check('built-in: every card shows its real thumb (the first row loaded)', th.n === 23 && th.thumbs && th.loaded === 6, JSON.stringify(th));
+    check('built-in: the card names the category and says "Photo"', /Photo/i.test(await page.textContent('.card[data-id="builtin:stone"] .chip')) && /Mountains/.test(await page.textContent('.card[data-id="builtin:stone"] .card-meta')));
+    check('built-in: the hover text credits the photographer', /Photo by Fabrizio Conti on Unsplash/.test(await page.getAttribute('.card[data-id="builtin:stone"]', 'title')));
+    check('built-in: no tick while one of his own is on the desktop', (await tickIds()) === '');
+    await page.click('#cats .cat[data-cat="Snow"]');
+    await page.waitForTimeout(60);
+    check('chips: Snow shows its 2 photos and is the chosen chip', (await cardIds()).join() === 'builtin:snow-peak,builtin:snow-ridge' &&
+      (await page.$$eval('#cats .cat[aria-pressed="true"]', (a) => a.map((c) => c.dataset.cat).join())) === 'Snow' && /Snow/.test(await page.getAttribute('#grid', 'aria-label')));
+    await page.screenshot({ path: path.join(OUT, 'wp-08-builtin-snow.png') });
+    await page.click('#shuffle');
+    await page.waitForTimeout(120);
+    const shCall = await lastCall('wallpaper.shuffle');
+    check('shuffle: sends the chosen category', JSON.stringify(shCall) === JSON.stringify(['wallpaper.shuffle', { category: 'Snow' }]), JSON.stringify(shCall));
+    check('shuffle: the photo it picked gets the tick', (await tickIds()) === 'builtin:snow-ridge');
+    check('shuffle: the credit line names it and its photographer', /^Windswept ridge · /.test((await page.textContent('#credit')).trim()) && /· Photo by .+ on Unsplash/.test(await page.textContent('#credit')), await page.textContent('#credit'));
+    check('header: says the built-in one is on the desktop', /on your desktop: .+ \(built in\)/.test(await page.textContent('#head-sub')), await page.textContent('#head-sub'));
+    await page.click('#cats .cat[data-cat="All"]');
+    await page.click('.card[data-id="builtin:stone"]');
+    await page.waitForTimeout(60);
+    const det = await page.evaluate(() => ({ t: document.querySelector('#detail .d-title').textContent, m: document.querySelector('#detail .d-meta').textContent,
+      c: (document.querySelector('#detail .d-credit') || {}).textContent, set: document.getElementById('d-set').textContent, dis: document.getElementById('d-set').disabled,
+      rm: !!document.getElementById('d-remove'), pz: !!document.getElementById('d-pause'), props: document.querySelector('#detail .props').hidden }));
+    check('details: a built-in photo shows its title, "Built-in photo · Mountains" and the credit', det.t === 'Stone summit' && det.m === 'Built-in photo · Mountains' && det.c === 'Photo by Fabrizio Conti on Unsplash', JSON.stringify(det));
+    check('details: Set is offered; no Remove, Pause or customising for a built-in one', det.set === 'Set as wallpaper' && !det.dis && !det.rm && !det.pz && det.props, JSON.stringify(det));
+    await page.click('#d-set');
+    await page.waitForTimeout(80);
+    check('set: "Set as wallpaper" sets the built-in photo', JSON.stringify(await lastCall('wallpaper.set')) === JSON.stringify(['wallpaper.set', { id: 'builtin:stone' }]));
+    check('set: the tick moves to it, and only it', (await tickIds()) === 'builtin:stone');
+    check('set: its details say it is on the desktop', (await page.textContent('#d-set')).trim() === 'On your desktop' && await page.$eval('#d-set', (b) => b.disabled));
+    check('set: the credit line under the grid names it', (await page.textContent('#credit')).replace(/\s+/g, ' ').trim() === 'Stone summit · Photo by Fabrizio Conti on Unsplash', await page.textContent('#credit'));
+    await page.screenshot({ path: path.join(OUT, 'wp-09-builtin.png') });
+    await page.dblclick('.card[data-id="builtin:lake"]');
+    await page.waitForTimeout(80);
+    check('set: a double-click sets a built-in photo', ((await lastCall('wallpaper.set')) || [])[1].id === 'builtin:lake' && (await tickIds()) === 'builtin:lake');
+    await page.focus('.card[data-id="builtin:lake"]');
+    await page.keyboard.press('ArrowRight');
+    check('keys: arrows move between built-in cards', (await activeId()) === 'builtin:misty-lake', await activeId());
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(80);
+    check('keys: Enter sets the built-in card', ((await lastCall('wallpaper.set')) || [])[1].id === 'builtin:misty-lake');
+    await page.keyboard.press('Delete');
+    await page.waitForTimeout(50);
+    check('keys: Delete on a built-in card removes nothing and says why', !(await page.evaluate(() => window.__calls.some((c) => c[0] === 'wallpaper.remove' && /^builtin:/.test(c[1].id)))) &&
+      /is built in: it ships with Mantle, so it cannot be removed/.test(await page.textContent('#notice')) && await page.$eval('#notice', (n) => !n.hidden));
+    await page.click('#detail .d-credit .credit-link');
+    await page.waitForTimeout(60);
+    check('credit: its link asks main to open that photo\'s page', JSON.stringify(await lastCall('wallpaper.creditOpen')) === JSON.stringify(['wallpaper.creditOpen', { id: 'builtin:misty-lake' }]));
+    check('credit: a test run says it opened nothing', /Test run, nothing opened: Mantle would open https:\/\/unsplash\.com\//.test(await page.textContent('#notice')));
+    const tok = await page.evaluate(() => {
+      const probe = (v, prop) => { const d = document.createElement('div'); d.style[prop] = 'var(' + v + ')'; document.body.appendChild(d); const c = getComputedStyle(d)[prop]; d.remove(); return c; };
+      const cs = (sel, prop) => { const e = document.querySelector(sel); return e ? getComputedStyle(e)[prop] : 'missing'; };
+      return {
+        chip: cs('#cats .cat[aria-pressed="true"]', 'backgroundColor') === probe('--lg-press', 'backgroundColor'),
+        seg: cs('#view-builtin', 'backgroundColor') === probe('--lg-press', 'backgroundColor'),
+        segInk: cs('#view-builtin', 'color') === probe('--lg-ink', 'color'),
+        credit: cs('#credit', 'color') === probe('--lg-ink-3', 'color'),
+        link: cs('#credit .credit-link', 'color') === probe('--lg-acc', 'color'),
+        tick: cs('.card .tick', 'backgroundColor') === probe('--lg-acc', 'backgroundColor'),
+        rule: cs('#credit', 'borderTopColor') === probe('--lg-edge-out', 'borderTopColor'),
+      };
+    });
+    check('theme: the new parts resolve to the --lg-* tokens (' + (process.env.MANTLE_THEME || 'light') + ')', Object.values(tok).every(Boolean), JSON.stringify(tok));
+    await page.focus('#view-builtin');
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForTimeout(60);
+    check('tabs: Left moves to Your library, and the keyboard goes with it', await page.evaluate(() => document.activeElement.id === 'view-yours' && document.getElementById('view-yours').getAttribute('aria-selected') === 'true') && (await cardIds()).length === 6);
+    check('views: his library is untouched and none of his cards has the tick', (await cardIds()).join() === 'w1,w2,w3,w4,w5,w6' && (await tickIds()) === '');
+    await page.dblclick('.card[data-id="w2"]');
+    await page.waitForTimeout(80);
+    check('switch back: one of his own is set again', ((await lastCall('wallpaper.set')) || [])[1].id === 'w2' && (await tickIds()) === 'w2' && !/built in/.test(await page.textContent('#head-sub')));
+    await page.click('#view-builtin');
+    await page.waitForTimeout(60);
+    check('switch back: no built-in card keeps a tick', (await tickIds()) === '' && /Photos from Unsplash/.test(await page.textContent('#credit')));
+    check('built-in: no jargon on the page', !JARGON.test(await page.evaluate(() => document.body.innerText)));
+
+    await page.goto(PAGE + '?m=builtinpick', { waitUntil: 'load' });
+    await page.waitForSelector('#grid .card[data-id]');
+    await page.waitForTimeout(80);
+    check('opens on Built-in when a built-in photo is on the desktop, its details shown', (await page.getAttribute('#view-builtin', 'aria-selected')) === 'true' && (await tickIds()) === 'builtin:night-fjord' &&
+      (await page.textContent('#detail .d-title')) === 'Fjord at night' && /Photo by .+ on Unsplash/.test(await page.textContent('#credit')), await page.textContent('#detail .d-title'));
+
+    await page.goto(PAGE + '?m=badpreset', { waitUntil: 'load' });
+    await page.waitForSelector('#grid .card[data-id]');
+    await page.click('#view-builtin');
+    await page.waitForTimeout(60);
+    const bad = await page.$eval('.card[data-id="builtin:cloud-peaks"]', (c) => ({ bad: c.classList.contains('is-bad'), text: c.textContent }));
+    check('a missing photo: its card is marked and says why', bad.bad && /missing from Mantle's built-in wallpapers folder/.test(bad.text), JSON.stringify(bad));
+    await page.focus('.card[data-id="builtin:cloud-peaks"]');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(50);
+    check('a missing photo: Enter says why instead of trying', !(await page.evaluate(() => window.__calls.some((c) => c[0] === 'wallpaper.set'))) && /Can't use "Peaks in cloud"/.test(await page.textContent('#notice')));
+    await page.click('.card[data-id="builtin:cloud-peaks"]');
+    check('a missing photo: its Set button is off, and its details say why', await page.$eval('#d-set', (b) => b.disabled) && /missing from Mantle's built-in wallpapers folder/.test(await page.textContent('#detail .d-state')));
+    check('a damaged catalog line: the note says so', /1 line was damaged and left out/.test(await page.textContent('#views-note')) && await page.$eval('#views-note', (n) => !n.hidden));
+    await page.click('.card[data-id="builtin:valley-fog"]');
+    check('a missing thumb: the card and the details say the full photo is shown', /small preview is missing/.test(await page.getAttribute('.card[data-id="builtin:valley-fog"]', 'title')) && /small preview is missing/.test(await page.textContent('#detail')));
+    await page.screenshot({ path: path.join(OUT, 'wp-10-builtin-bad.png') });
+
+    await page.goto(PAGE + '?m=nopresets', { waitUntil: 'load' });
+    await page.waitForSelector('#grid .card[data-id]');
+    check('no catalog: the Built-in tab is marked and says why on hover', (await page.textContent('#n-builtin')) === '!' && /Can't read them: the list of built-in wallpapers/.test(await page.getAttribute('#view-builtin', 'title')));
+    await page.click('#view-builtin');
+    await page.waitForTimeout(60);
+    const np = await page.evaluate(() => ({ empty: !document.getElementById('empty').hidden, text: document.getElementById('empty').textContent, cats: document.getElementById('cats').hidden, sh: document.getElementById('shuffle').hidden, cards: document.querySelectorAll('#grid .card').length }));
+    check('no catalog: the view says why, with no chips, Shuffle or cards', np.empty && /The built-in wallpapers could not be read/.test(np.text) && /catalog\.json\) is missing/.test(np.text) && /Your own library is not affected/.test(np.text) && np.cats && np.sh && np.cards === 0, JSON.stringify(np));
+    await page.screenshot({ path: path.join(OUT, 'wp-11-builtin-none.png') });
+
+    await page.goto(PAGE + '?m=shufflefail', { waitUntil: 'load' });
+    await page.waitForSelector('#grid .card[data-id]');
+    await page.click('#view-builtin');
+    await page.click('#shuffle');
+    await page.waitForTimeout(60);
+    check('shuffle refused: the reason is on screen', /Could not shuffle: none of the Snow photos can be used right now/.test(await page.textContent('#notice')) && await page.$eval('#notice', (n) => n.classList.contains('bad')) && await page.$eval('#shuffle', (b) => !b.disabled));
+
+    await page.goto(PAGE + '?m=oldmain', { waitUntil: 'load' });
+    await page.waitForSelector('#grid .card[data-id]');
+    check('an older main (no presets sent): his library still works', (await cardIds()).length === 6);
+    await page.click('#view-builtin');
+    await page.waitForTimeout(60);
+    check('an older main: the Built-in view says why it is empty', /sent no built-in wallpapers/.test(await page.textContent('#empty')));
+
     /* ---- empty, and a library that cannot be read ---- */
     await page.goto(PAGE + '?m=empty', { waitUntil: 'load' });
     await page.waitForTimeout(150);
@@ -240,6 +425,9 @@ async function run() {
       check('empty: its button opens the add dialog', JSON.stringify(await lastCall('wallpaper.add')) === JSON.stringify(['wallpaper.add', { pick: 'files' }]));
     }
     await page.screenshot({ path: path.join(OUT, 'wp-05-empty.png') });
+    await page.click('#empty-builtin').catch(() => {});
+    await page.waitForTimeout(60);
+    check('empty: "Or pick one of the built-in photos" opens the Built-in view', (await page.getAttribute('#view-builtin', 'aria-selected')) === 'true' && (await page.$$eval('#grid .card[data-id]', (a) => a.length)) === 23);
     await page.goto(PAGE + '?m=down', { waitUntil: 'load' });
     await page.waitForTimeout(150);
     const dn = await page.$eval('#empty', (e) => ({ shown: !e.hidden, text: e.textContent }));
@@ -256,6 +444,12 @@ async function run() {
     const setVis = await page.evaluate(() => { const b = document.getElementById('d-set'); if (!b) return 'no button'; const r = b.getBoundingClientRect(); return r.bottom <= innerHeight ? 'ok' : 'below the fold at ' + Math.round(r.bottom); });
     check('narrow: the details show "Set as wallpaper" without scrolling', setVis === 'ok', setVis);
     await page.screenshot({ path: path.join(OUT, 'wp-07-narrow.png') });
+    await page.click('#view-builtin');
+    await page.waitForTimeout(80);
+    const nb = await page.evaluate(() => ({ over: document.documentElement.scrollWidth > window.innerWidth, cards: document.querySelectorAll('#grid .card').length,
+      gridH: Math.round(document.getElementById('grid').getBoundingClientRect().height), chipsIn: Array.from(document.querySelectorAll('#cats .cat')).every((c) => c.getBoundingClientRect().right <= document.querySelector('.grid-pane').getBoundingClientRect().right) }));
+    check('narrow: the Built-in view wraps its chips and still shows cards, no sideways scroll', !nb.over && nb.chipsIn && nb.cards === 23 && nb.gridH >= 120, JSON.stringify(nb));
+    await page.screenshot({ path: path.join(OUT, 'wp-12-narrow-builtin.png') });
     check('page: no script errors', !errors.length, errors.join(' | '));
   } finally {
     await browser.close();

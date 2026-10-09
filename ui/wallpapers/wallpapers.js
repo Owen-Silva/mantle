@@ -22,6 +22,16 @@
  * KEYBOARD (2026-09-29, lane launch-desk): the grid is one tab stop; arrows / Home / End move
  * between cards, Enter puts the card on the desktop, Delete removes it (with Undo in the notice),
  * Esc dismisses the notice, then closes the window. Remove has Undo instead of "are you sure".
+ *
+ * BUILT-IN (2026-10-09, lane mantle-bg-presets): Owen: "can you also make it so that mantle can have
+ * the same backrounds preset as quartz and helm". The listing's `presets` (Helm's 23 photos, read by
+ * lib/wallpaper-presets.js) get their own view, "Built-in", beside "Your library": never mixed into
+ * his own cards, so his Lively library is not buried under 23 photos. The Built-in view has Helm's
+ * category chips (All first), Shuffle (wallpaper.shuffle in the chosen category) and the credit line
+ * under the grid, as Helm and Quartz show it; the details pane credits the photo too, and its link
+ * opens the photo's page (wallpaper.creditOpen). A built-in one is set like any other (Enter, a
+ * double-click, Set as wallpaper) and has no Remove, Pause or customising. The window opens on the
+ * view that holds what is on the desktop.
  */
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -34,6 +44,8 @@
     detail: $('detail'), playLine: $('play-line'), rules: $('rules'), livelyLine: $('lively-line'),
     report: $('report'), livelyActions: $('lively-actions'), libDir: $('lib-dir'),
     notice: $('notice'), noticeText: $('notice-text'), drop: $('drop'),
+    views: $('views'), viewYours: $('view-yours'), viewBuiltin: $('view-builtin'), nYours: $('n-yours'), nBuiltin: $('n-builtin'),
+    cats: $('cats'), shuffle: $('shuffle'), viewsNote: $('views-note'), credit: $('credit'),
   };
 
   if (!M || typeof M.call !== 'function') {
@@ -46,6 +58,8 @@
   let undoTimer = 0;         // hides the Undo notice when the undo window closes
   let propsFor = null;        // the id the property editor was built for
   const cards = new Map();    // id -> card element
+  let view = null;            // 'yours' | 'builtin'; null until the first listing picks one
+  let cat = 'All';            // the Built-in view's category chip
 
   function h(tag, cls, text) {
     const e = document.createElement(tag);
@@ -54,7 +68,27 @@
     return e;
   }
 
-  function byId(id) { return L ? L.items.find((i) => i.id === id) || null : null; }
+  // An older main (no presets in the listing) reads as a Built-in view that says why it is empty.
+  function presets() {
+    return (L && L.presets) || { ok: false, reason: 'this copy of Mantle sent no built-in wallpapers', note: '', categories: [], items: [] };
+  }
+  function byId(id) {
+    if (!L) return null;
+    return L.items.find((i) => i.id === id) || presets().items.find((i) => i.id === id) || null;
+  }
+  /** The cards the grid shows now: his library, or the built-in photos in the chosen category. */
+  function shown() {
+    if (!L) return [];
+    if (view !== 'builtin') return L.items;
+    const all = presets().items;
+    return cat === 'All' ? all : all.filter((i) => i.category === cat);
+  }
+  /** What is on the desktop, either kind (an older main has no `current`). */
+  function current() {
+    if (!L) return null;
+    if (L.current !== undefined) return L.current;
+    return L.items.find((i) => i.selected) || null;
+  }
 
   // ---- the notice under the header -------------------------------------
   function notice(html, bad) {
@@ -80,14 +114,15 @@
     if (it.selected) {
       const pb = L.playback;
       if (pb && pb.paused) return { bad: false, text: 'On your desktop, paused' };
-      if (rt && (rt.state === 'playing' || rt.state === 'ready')) return { bad: false, text: 'On your desktop, playing' };
+      // A still photo does not "play": it is on the desktop once it has drawn.
+      if (rt && (rt.state === 'playing' || rt.state === 'ready')) return { bad: false, text: it.preset ? 'On your desktop' : 'On your desktop, playing' };
       return { bad: false, text: 'On your desktop, loading' };
     }
-    return { bad: false, text: it.origin };
+    return { bad: false, text: it.preset ? (it.category || 'Built in') : it.origin };
   }
 
   // ---- the grid ----------------------------------------------------------
-  function renderCard(it) {
+  function renderCard(it, tabId) {
     let c = cards.get(it.id);
     if (!c) {
       c = h('button', 'card');
@@ -100,11 +135,13 @@
     }
     const st = stateOf(it);
     c.className = 'card' + (it.id === focusId ? ' is-focus' : '') + (it.selected ? ' is-selected' : '') + (st.bad ? ' is-bad' : '');
-    c.tabIndex = it.id === (focusId || (L.items[0] && L.items[0].id)) ? 0 : -1;
+    c.tabIndex = it.id === tabId ? 0 : -1;
     c.setAttribute('aria-selected', it.id === focusId ? 'true' : 'false');
-    c.setAttribute('aria-label', it.title + (it.selected ? ', on your desktop' : ''));
+    c.setAttribute('aria-label', it.title + (it.preset ? ', built-in photo' : '') + (it.selected ? ', on your desktop' : ''));
     // The full name on hover (long ones are cut with an ellipsis), and how to use the card.
-    c.title = it.title + (it.selected ? '\nOn your desktop' : (it.health.ok ? '\nDouble-click or press Enter to set as wallpaper' : ''));
+    c.title = it.title + (it.preset && it.credit ? '\nPhoto by ' + it.credit + ' on Unsplash' : '') +
+      (it.selected ? '\nOn your desktop' : (it.health.ok ? '\nDouble-click or press Enter to set as wallpaper' : '')) +
+      (it.thumbNote ? '\n' + it.thumbNote : '');
     const thumb = h('div', 'thumb');
     if (it.thumbUrl) {
       const img = h('img');
@@ -124,7 +161,7 @@
     }
     const title = h('div', 'card-title', it.title);
     const meta = h('div', 'card-meta');
-    meta.appendChild(h('span', 'chip', it.typeLabel));
+    meta.appendChild(h('span', 'chip', it.preset ? 'Photo' : it.typeLabel));
     const parts = [thumb, title, meta];
     if (st.bad) {
       const bad = h('div', 'card-bad');
@@ -140,27 +177,136 @@
 
   function renderGrid() {
     const seen = new Set();
-    const order = L.items.map((it) => { seen.add(it.id); return renderCard(it); });
+    const list = shown();
+    const tabId = list.some((x) => x.id === focusId) ? focusId : (list[0] && list[0].id);
+    const order = list.map((it) => { seen.add(it.id); return renderCard(it, tabId); });
     for (const [id, c] of cards) if (!seen.has(id)) { c.remove(); cards.delete(id); }
     // Re-append only when the order changed, so keyboard focus survives a push.
     const now = Array.from(els.grid.children);
     if (now.length !== order.length || now.some((c, i) => c !== order[i])) els.grid.replaceChildren.apply(els.grid, order);
     els.grid.classList.remove('is-loading');
-    els.empty.hidden = L.items.length > 0;
-    if (!L.items.length) {
-      const kids = [];
-      if (L.importing) {
-        kids.push(h('b', null, 'Copying your Lively wallpapers…'), h('span', null, L.importing.done + ' of ' + L.importing.total + ' so far. They appear here as they arrive.'));
-      } else {
-        kids.push(h('b', null, 'No wallpapers yet'), h('span', null, 'Add a video, GIF or picture, or drop files on this window.'));
-        const b = h('button', 'btn primary', 'Add wallpapers…');
-        b.type = 'button';
-        b.addEventListener('click', () => add({ pick: 'files' }));
-        kids.push(b);
+    els.grid.setAttribute('aria-label', view === 'builtin' ? 'Built-in wallpapers' + (cat === 'All' ? '' : ', ' + cat) : 'Your wallpapers');
+    els.empty.hidden = list.length > 0;
+    if (list.length) return;
+    const kids = [];
+    if (view === 'builtin') {
+      // The only way this view is empty is a catalog that could not be read: say why.
+      kids.push(h('b', null, 'The built-in wallpapers could not be read'), h('span', null, cap(presets().reason || 'no reason came back') + '. Your own library is not affected.'));
+    } else if (L.importing) {
+      kids.push(h('b', null, 'Copying your Lively wallpapers…'), h('span', null, L.importing.done + ' of ' + L.importing.total + ' so far. They appear here as they arrive.'));
+    } else {
+      kids.push(h('b', null, 'No wallpapers yet'), h('span', null, 'Add a video, GIF or picture, or drop files on this window.'));
+      const b = h('button', 'btn primary', 'Add wallpapers…');
+      b.type = 'button';
+      b.addEventListener('click', () => add({ pick: 'files' }));
+      kids.push(b);
+      if (presets().items.length) {
+        const bi = h('button', 'link', 'Or pick one of the built-in photos');
+        bi.type = 'button';
+        bi.id = 'empty-builtin';
+        bi.addEventListener('click', () => setView('builtin', true));
+        kids.push(bi);
       }
-      els.empty.replaceChildren.apply(els.empty, kids);
+    }
+    els.empty.replaceChildren.apply(els.empty, kids);
+  }
+
+  // ---- the two views: Your library | Built-in (chips, Shuffle, credit) --------------------------
+
+  function creditLine(box, it, lead) {
+    // "<title> · Photo by <credit> on Unsplash", the credit a link to the photo's page.
+    const kids = [];
+    if (lead) kids.push(h('span', 'credit-title', it.title), document.createTextNode(' · '));
+    if (!it.credit) { kids.push(document.createTextNode('Photographer not listed')); box.replaceChildren.apply(box, kids); return; }
+    kids.push(document.createTextNode('Photo by '));
+    if (it.creditUrl) {
+      const a = h('button', 'link credit-link', it.credit);
+      a.type = 'button';
+      a.title = 'Open the photo\'s page: ' + it.creditUrl;
+      a.addEventListener('click', () => openCredit(it));
+      kids.push(a);
+    } else kids.push(h('span', null, it.credit));
+    kids.push(document.createTextNode(' on Unsplash'));
+    box.replaceChildren.apply(box, kids);
+  }
+
+  function renderViews() {
+    const P = presets();
+    const b = view === 'builtin';
+    els.views.hidden = false;
+    els.viewYours.setAttribute('aria-selected', b ? 'false' : 'true');
+    els.viewBuiltin.setAttribute('aria-selected', b ? 'true' : 'false');
+    els.viewYours.tabIndex = b ? -1 : 0;
+    els.viewBuiltin.tabIndex = b ? 0 : -1;
+    els.nYours.textContent = String(L.items.length);
+    els.nBuiltin.textContent = P.ok ? String(P.items.length) : '!';
+    els.viewBuiltin.title = P.ok ? 'Helm\'s photos, free under the Unsplash License' : 'Can\'t read them: ' + (P.reason || 'no reason came back');
+    els.viewBuiltin.classList.toggle('is-bad', !P.ok);
+    if (cat !== 'All' && !P.categories.includes(cat)) cat = 'All';
+    els.cats.hidden = !b || !P.ok;
+    els.shuffle.hidden = !b || !P.ok;
+    if (b && P.ok) {
+      const want = ['All'].concat(P.categories);
+      const have = Array.from(els.cats.children).map((c) => c.dataset.cat);
+      if (want.join('|') !== have.join('|')) {
+        els.cats.replaceChildren.apply(els.cats, want.map((name) => {
+          const c = h('button', 'cat', name);
+          c.type = 'button';
+          c.dataset.cat = name;
+          return c;
+        }));
+      }
+      for (const c of els.cats.children) c.setAttribute('aria-pressed', c.dataset.cat === cat ? 'true' : 'false');
+      els.shuffle.title = cat === 'All' ? 'Use a random built-in photo' : 'Use a random ' + cat + ' photo';
+    }
+    els.viewsNote.hidden = !(b && P.note);
+    els.viewsNote.textContent = b && P.note ? P.note : '';
+    // Under the grid, as Helm and Quartz show it: the built-in photo on the desktop and its photographer.
+    els.credit.hidden = !b || !P.ok;
+    if (b && P.ok) {
+      const cur = current();
+      if (cur && cur.preset) creditLine(els.credit, cur, true);
+      else els.credit.textContent = 'Photos from Unsplash, free under the Unsplash License. Pick one to use it; its photographer is credited here.';
     }
   }
+
+  function setView(v, moveKeyboard) {
+    if (!L || view === v) return;
+    view = v;
+    // The card shown on the right follows the view: what is on the desktop if it is here, else the first.
+    const list = shown();
+    const sel = list.find((x) => x.selected);
+    focusId = sel ? sel.id : (list[0] ? list[0].id : null);
+    renderViews();
+    renderGrid();
+    renderDetail();
+    if (moveKeyboard && focusId) focus(focusId, true);
+  }
+
+  function setCat(name) {
+    if (!L || cat === name) return;
+    cat = name;
+    const list = shown();
+    if (!list.some((x) => x.id === focusId)) { const sel = list.find((x) => x.selected); focusId = sel ? sel.id : (list[0] ? list[0].id : null); }
+    renderViews();
+    renderGrid();
+    renderDetail();
+  }
+
+  els.viewYours.addEventListener('click', () => setView('yours'));
+  els.viewBuiltin.addEventListener('click', () => setView('builtin'));
+  // The two tabs are one tab stop; Left/Right move between them (the ARIA tabs pattern).
+  for (const t of [els.viewYours, els.viewBuiltin]) {
+    t.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const to = t === els.viewYours ? els.viewBuiltin : els.viewYours;
+      setView(to === els.viewYours ? 'yours' : 'builtin');
+      to.focus();
+    });
+  }
+  els.cats.addEventListener('click', (e) => { const c = e.target.closest('.cat'); if (c) setCat(c.dataset.cat); });
+  els.shuffle.addEventListener('click', () => shuffle());
 
   // Before the first listing: grey placeholder cards, so nothing jumps when the library arrives.
   function renderLoading() {
@@ -184,7 +330,7 @@
     const box = els.detail;
     if (!it) {
       propsFor = null;
-      box.replaceChildren(h('p', 'detail-empty', L.items.length ? 'Pick a wallpaper to see it here. Double-click one to put it on the desktop.' : ''));
+      box.replaceChildren(h('p', 'detail-empty', shown().length ? 'Pick a wallpaper to see it here. Double-click one to put it on the desktop.' : ''));
       return;
     }
     let head = box.querySelector('.d-head');
@@ -200,12 +346,24 @@
     const big = h('div', 'big');
     if (it.thumbUrl) { const img = h('img'); img.alt = ''; img.src = it.thumbUrl; big.appendChild(img); } else big.appendChild(h('div', 'no-thumb', 'No thumbnail'));
     const kids = [big, h('h2', 'd-title', it.title)];
-    const meta = [it.typeLabel, it.origin];
-    if (it.author) meta.push('by ' + it.author);
-    kids.push(h('p', 'd-meta', meta.join(' · ')));
+    if (it.preset) {
+      kids.push(h('p', 'd-meta', ['Built-in photo', it.category].filter(Boolean).join(' · ')));
+      // The photographer's credit, with the link to the photo's page (the Unsplash License asks nothing
+      // more, and Helm and Quartz credit the same way).
+      const cr = h('p', 'd-credit');
+      creditLine(cr, it, false);
+      kids.push(cr);
+      if (it.thumbNote) kids.push(h('p', 'd-note', it.thumbNote));
+    } else {
+      const meta = [it.typeLabel, it.origin];
+      if (it.author) meta.push('by ' + it.author);
+      kids.push(h('p', 'd-meta', meta.join(' · ')));
+    }
     if (it.desc) kids.push(h('p', 'd-note', it.desc));
     const st = stateOf(it);
-    kids.push(h('p', 'd-state' + (st.bad ? ' bad' : ''), st.text));
+    // A built-in photo that is fine and not on the desktop has no state to tell beyond its category,
+    // which the line above already says.
+    if (!(it.preset && !it.selected && !st.bad)) kids.push(h('p', 'd-state' + (st.bad ? ' bad' : ''), st.text));
     if (it.runtime && it.runtime.state === 'ready' && it.runtime.reason) kids.push(h('p', 'd-state bad', cap(it.runtime.reason)));
     if (it.sysinfo) kids.push(h('p', 'd-note', 'Its GPU and network charts read 0: Mantle feeds it CPU and memory only (the same numbers as the System pane).'));
     if (it.runtime && it.runtime.notes && it.runtime.notes.length) {
@@ -221,6 +379,15 @@
     setBtn.disabled = it.selected || !it.health.ok;
     setBtn.addEventListener('click', () => setWallpaper(it.id));
     acts.appendChild(setBtn);
+    if (it.preset) {
+      // Built in: nothing to pause (a still photo), nothing to remove or customise.
+      kids.push(acts);
+      head.replaceChildren.apply(head, kids);
+      propsFor = it.id;
+      props.hidden = true;
+      props.replaceChildren();
+      return;
+    }
     if (it.selected) {
       // The wallpaper's own Pause: held until pressed again, even across restarts.
       const paused = !!L.userPaused;
@@ -435,10 +602,10 @@
 
   function renderHead() {
     const n = L.items.length;
-    const sel = L.items.find((i) => i.selected);
+    const sel = current();
     const bits = [n + ' in your library'];
     if (L.importing) bits.push('copying from Lively ' + L.importing.done + '/' + L.importing.total);
-    if (sel) bits.push((L.playback && L.playback.paused ? 'paused: ' : 'on your desktop: ') + sel.title);
+    if (sel) bits.push((L.playback && L.playback.paused ? 'paused: ' : 'on your desktop: ') + sel.title + (sel.preset ? ' (built in)' : ''));
     if (L.test) bits.push('test mode');
     els.headSub.textContent = bits.join(' · ');
     if (L.loadError) notice([h('b', null, 'The library file was damaged: '), document.createTextNode(L.loadError)], true);
@@ -450,9 +617,12 @@
 
   function render(listing) {
     L = listing;
-    if (focusId && !byId(focusId)) focusId = null;
-    if (!focusId) { const sel = L.items.find((i) => i.selected); if (sel) focusId = sel.id; }
+    // First listing: open on the view that holds what is on the desktop (his library otherwise).
+    if (view === null) { const cur = current(); view = cur && cur.preset ? 'builtin' : 'yours'; }
+    if (focusId && !shown().some((x) => x.id === focusId)) focusId = null;
+    if (!focusId) { const sel = shown().find((i) => i.selected); if (sel) focusId = sel.id; }
     renderHead();
+    renderViews();
     renderGrid();
     renderDetail();
     renderSide();
@@ -482,7 +652,7 @@
     return n < 0 ? list.length : n;
   }
   els.grid.addEventListener('keydown', (e) => {
-    if (!L || !L.items.length || !e.target.classList || !e.target.classList.contains('card')) return;
+    if (!L || !shown().length || !e.target.classList || !e.target.classList.contains('card')) return;
     const ids = Array.from(els.grid.children).map((c) => c.dataset.id);
     const at = Math.max(0, ids.indexOf(e.target.dataset.id));
     const cols = columns();
@@ -516,6 +686,34 @@
     try { await M.call('wallpaper.set', { id }); } catch (err) { sayError('Could not set "' + (it ? it.title : id) + '"', err); }
   }
 
+  // Shuffle: a random built-in photo from the chosen category, never the one on the desktop now.
+  async function shuffle() {
+    els.shuffle.disabled = true;
+    try {
+      const r = await M.call('wallpaper.shuffle', { category: cat });
+      if (r && r.id) {
+        if (!shown().some((x) => x.id === r.id)) setCat('All');
+        if (byId(r.id)) focus(r.id, false);
+        else focusId = r.id;   // the listing push that follows draws it
+      }
+    } catch (err) {
+      sayError('Could not shuffle', err);
+    } finally {
+      els.shuffle.disabled = false;
+    }
+  }
+
+  // The credit's link: the photo's page on Unsplash, in the default browser (main opens only the
+  // catalog's own link for that photo). A test run opens nothing and says so here.
+  async function openCredit(it) {
+    try {
+      const r = await M.call('wallpaper.creditOpen', { id: it.id });
+      if (r && r.dryRun) notice([document.createTextNode(r.reason || 'Test run, nothing opened')], false);
+    } catch (err) {
+      sayError('Could not open the photo\'s page', err);
+    }
+  }
+
   async function setPaused(on, btn) {
     if (btn) btn.disabled = true;   // feedback now; the listing push redraws it
     try { await M.call('wallpaper.setPaused', { paused: on }); } catch (err) { sayError(on ? 'Could not pause it' : 'Could not play it', err); if (btn) btn.disabled = false; }
@@ -525,6 +723,8 @@
   async function doRemove(id) {
     const it = byId(id);
     if (!it) return;
+    // Delete on a built-in card: it ships with Mantle, so say so rather than doing nothing.
+    if (it.preset) { notice([h('b', null, '"' + it.title + '" is built in: '), document.createTextNode('it ships with Mantle, so it cannot be removed. It only shows on your desktop while you pick it.')], false); return; }
     const ids = L.items.map((x) => x.id);
     const next = ids[ids.indexOf(id) + 1] || ids[ids.indexOf(id) - 1] || null;
     let r;

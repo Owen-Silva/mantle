@@ -52,8 +52,23 @@
 
   <main class="body">
     <section class="pane grid-pane" aria-label="Library">
+      <!-- Two lists, never mixed (2026-10-09): Owen's own library first, then Mantle's built-in photos
+           (Helm's 23, assets/backgrounds/), with Helm's category chips, Shuffle and the photo credit. -->
+      <div class="views" id="views" hidden>
+        <div class="views-row">
+          <div class="seg" role="tablist" aria-label="Which wallpapers">
+            <button class="seg-btn" id="view-yours" type="button" role="tab" aria-selected="true" aria-controls="grid">Your library <span class="seg-n" id="n-yours"></span></button>
+            <button class="seg-btn" id="view-builtin" type="button" role="tab" aria-selected="false" aria-controls="grid">Built-in <span class="seg-n" id="n-builtin"></span></button>
+          </div>
+          <span class="views-gap"></span>
+          <button class="btn" id="shuffle" type="button" title="Use a random built-in photo from this category" hidden>Shuffle</button>
+        </div>
+        <div class="cats" id="cats" role="toolbar" aria-label="Categories" hidden></div>
+        <p class="views-note" id="views-note" hidden></p>
+      </div>
       <div class="grid" id="grid" role="listbox" aria-label="Your wallpapers"></div>
       <div class="empty" id="empty" hidden></div>
+      <p class="credit" id="credit" hidden></p>
     </section>
 
     <aside class="pane side" id="side" aria-label="Details">
