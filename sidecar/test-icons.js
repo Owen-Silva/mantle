@@ -28,6 +28,36 @@ function pngInfo(url) {
   if (b.length < 33 || b.toString('latin1', 12, 16) !== 'IHDR') return null;
   return { w: b.readUInt32BE(16), h: b.readUInt32BE(20), colorType: b[25], bytes: b.length };
 }
+/** How many pixels of an RGBA PNG data URL are fully see-through and fully solid, or null. */
+function alphaSpread(url) {
+  if (typeof url !== 'string' || !url.startsWith(PREFIX)) return null;
+  const b = Buffer.from(url.slice(PREFIX.length), 'base64');
+  let p = 8, w = 0, h = 0, ctype = 0, depth = 0, interlace = 0;
+  const idat = [];
+  while (p + 8 <= b.length) {
+    const len = b.readUInt32BE(p), type = b.toString('latin1', p + 4, p + 8), data = b.subarray(p + 8, p + 8 + len);
+    if (type === 'IHDR') { w = data.readUInt32BE(0); h = data.readUInt32BE(4); depth = data[8]; ctype = data[9]; interlace = data[12]; }
+    if (type === 'IDAT') idat.push(data);
+    p += 12 + len;
+  }
+  if (ctype !== 6 || depth !== 8 || interlace) return null;
+  const raw = require('zlib').inflateSync(Buffer.concat(idat));
+  const stride = w * 4, img = Buffer.alloc(stride * h);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)], src = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= 4 ? img[y * stride + x - 4] : 0, up = y > 0 ? img[(y - 1) * stride + x] : 0, c = x >= 4 && y > 0 ? img[(y - 1) * stride + x - 4] : 0;
+      let v = src[x];
+      if (f === 1) v += a; else if (f === 2) v += up; else if (f === 3) v += (a + up) >> 1;
+      else if (f === 4) { const pp = a + up - c, pa = Math.abs(pp - a), pb = Math.abs(pp - up), pc = Math.abs(pp - c); v += pa <= pb && pa <= pc ? a : pb <= pc ? up : c; }
+      img[y * stride + x] = v & 255;
+    }
+  }
+  let clear = 0, solid = 0;
+  for (let i = 3; i < img.length; i += 4) { if (img[i] === 0) clear++; else if (img[i] === 255) solid++; }
+  return { clear, solid };
+}
+
 function save(name, url) {
   if (!saveArg || !url) return;
   fs.mkdirSync(saveArg, { recursive: true });
@@ -112,6 +142,56 @@ function save(name, url) {
     const t3 = Date.now();
     for (const f of files) await s.call('icon', { path: f }, 8000);
     t.check('icon: asked again, every one comes from the cache', Date.now() - t3 < 200 * files.length, `${Date.now() - t3} ms for ${files.length}`);
+
+    // ---- an exe's picture is read from the file and keeps its alpha (mantle-icon, 2026-10-08) -----
+    const exeAlpha = alphaSpread(exes[0] ? (await s.call('icon', { path: exes[0] }, 8000)).icon : null);
+    t.check('icon: an exe read from the file keeps its see-through edge (alpha 0 and 255 both present)',
+      !!exeAlpha && exeAlpha.clear > 0 && exeAlpha.solid > 0, exeAlpha ? `${exeAlpha.clear} clear, ${exeAlpha.solid} solid px` : 'no picture');
+
+    // ---- a REBUILT app shows its new picture without a restart -----------------------------------------
+    // Owen's bar kept Helm's old icon after helm.exe was rebuilt at the same path. Windows' own icon
+    // cache still answers the OLD picture for a rewritten file (measured), and the sidecar kept it for
+    // good. Here: a copy of one exe, a shortcut to it, then the copy is rewritten with a different exe.
+    const A = exes.find((p) => /notepad\.exe$/i.test(p)), B = exes.find((p) => /cmd\.exe$/i.test(p));
+    if (!A || !B) {
+      t.check('setup: notepad.exe and cmd.exe to rebuild with', false, 'one of them is missing');
+    } else {
+      const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mantle-icons-'));
+      try {
+        const app = path.join(dir, 'App.exe');
+        const lnkPath = path.join(dir, 'App.lnk');
+        const later = path.join(dir, 'Later.exe');
+        const ask = async (p) => (await s.call('icon', { path: p }, 8000)).icon;
+        const refA = await ask(A), refB = await ask(B);
+        const which = (u) => (u === refA ? 'the first exe\'s picture' : u === refB ? 'the second exe\'s picture' : u === null ? 'no picture' : 'another picture');
+        t.check('setup: the two exes have different pictures', !!refA && !!refB && refA !== refB, `${refA ? refA.length : 0} / ${refB ? refB.length : 0} chars`);
+        fs.writeFileSync(app, fs.readFileSync(A));
+        execFileSync('powershell', ['-NoProfile', '-Command',
+          `$l = (New-Object -ComObject WScript.Shell).CreateShortcut('${lnkPath.replace(/'/g, "''")}'); $l.TargetPath = '${app.replace(/'/g, "''")}'; $l.Save()`],
+          { timeout: 30000, windowsHide: true });
+        const before = await ask(app), lnkBefore = await ask(lnkPath);
+        const missing = await ask(later);
+        t.check('rebuild: the copy shows the first exe\'s picture', before === refA, which(before));
+        t.check('rebuild: its shortcut shows the same picture', lnkBefore === refA, which(lnkBefore));
+        t.check('rebuild: a file that is not there yet has no picture', missing === null, String(missing).slice(0, 30));
+
+        // "rebuild" it: new bytes at the same path, new write time, a different icon
+        fs.writeFileSync(app, fs.readFileSync(B));
+        fs.writeFileSync(later, fs.readFileSync(A));
+        const quick = await ask(app);
+        t.check('rebuild: within 2 s the cached picture is still served (one stat per 2 s at most)', quick === refA, which(quick));
+        await T.sleep(2300);
+        const after = await ask(app), lnkAfter = await ask(lnkPath), appeared = await ask(later);
+        t.check('rebuild: after the rewrite the exe shows its NEW picture', after === refB, which(after));
+        t.check('rebuild: the shortcut to it shows the new picture too', lnkAfter === refB, which(lnkAfter));
+        t.check('rebuild: a file that appeared later gets its picture (a miss is not kept forever)', appeared === refA, which(appeared));
+        const t4 = Date.now();
+        for (let i = 0; i < 5; i++) await ask(app);
+        t.check('rebuild: the new picture is cached again', Date.now() - t4 < 500, `${Date.now() - t4} ms for 5`);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
   } finally {
     await s.stop();
   }

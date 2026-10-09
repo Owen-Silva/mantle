@@ -11,6 +11,7 @@ const { parseArgs, ArgError } = require('./lib/args');
 const { ShellState } = require('./lib/state');
 const { Sidecar } = require('./lib/sidecar');
 const { Apps, modulePathFor } = require('./lib/apps');
+const iconFresh = require('./lib/icon-fresh');
 const { stats } = require('./lib/sys-stats');
 const MediaPick = require('./lib/media-pick');
 const { trayImage } = require('./lib/tray-icon');
@@ -840,7 +841,12 @@ let pinnedPushTimer = null;
 let pinnedPushWhy = null;
 let pinnedBuilding = null;     // in-flight build, so ten triggers make one list
 let unwatchPins = null;
-const iconCache = new Map();   // path (lowercased) -> {icon, reason}
+const iconCache = new Map();   // path (lowercased) -> {icon, reason} + its file stamp (lib/icon-fresh.js)
+// A cached icon is asked for again when its file changed (a stat every 2 s at most) or after this
+// long (a .lnk does not change when its target exe is rebuilt; the sidecar checks that, and answers
+// from its own cache otherwise). Before 2026-10-08 an entry was kept until Mantle restarted, so a
+// rebuilt app (Helm) kept its old picture on the bar.
+const ICON_RECHECK_MS = 60 * 1000;
 const pinById = new Map();     // Item id -> the pin record, for bar.open's lnkPath
 // The key sequences the bar's system buttons are allowed to press. A whitelist,
 // not a filter: 'keys' can type ANYTHING into the foreground window, and a bar
@@ -2375,7 +2381,8 @@ function featureDisplay() {
 // ---------------------------------------------------------------------------
 
 /**
- * Ask the sidecar for one icon, once per path, and remember what happened.
+ * Ask the sidecar for one icon per path, and remember what happened -- until the file changes or
+ * the answer is ICON_RECHECK_MS old (lib/icon-fresh.js): a rebuilt app then shows its new picture.
  * `index` is the icon index out of a pin's IconLocation ("shell32.dll,14"); the
  * sidecar ignores it if its `icon` command does not take one, which is why it is
  * sent rather than used to pick a different call.
@@ -2387,14 +2394,19 @@ async function iconFor(candidates, index) {
     if (!raw) continue;
     const p = String(raw);
     const key = idx ? `${p.toLowerCase()}#${idx}` : p.toLowerCase();
-    if (iconCache.has(key)) {
-      const hit = iconCache.get(key);
+    const hit = iconCache.get(key);
+    if (hit && iconFresh.isFresh(hit, p, { recheckMs: ICON_RECHECK_MS })) {
       if (hit.icon) return hit;
       tried.push(`${path.basename(p)}: ${hit.reason}`);
       continue;
     }
+    // `hit` (if any) is an answer due to be asked again. Its picture beats a blank while the sidecar
+    // cannot answer: an unreachable sidecar never takes an icon off the bar.
     const blocked = sidecar.blockedReason();
-    if (blocked) return { icon: null, reason: `no icon: the sidecar cannot be asked (${blocked})` };
+    if (blocked) {
+      if (hit && hit.icon) return { icon: hit.icon, reason: null };
+      return { icon: null, reason: `no icon: the sidecar cannot be asked (${blocked})` };
+    }
     let entry;
     // A Store app's id (a pin or a running app that has no exe picture) asks `app`, the way the
     // launcher does (makeIconResolver); an id that is not a package app id is not sent at all.
@@ -2413,9 +2425,10 @@ async function iconFor(candidates, index) {
           : { icon: null, reason: 'Windows had no icon for it' };
       }
     } catch (err) {
-      entry = { icon: null, reason: err.message };
+      // the ask failed (not "Windows has no icon"): keep the picture it had; asked again next time round
+      entry = hit && hit.icon ? { icon: hit.icon, reason: null } : { icon: null, reason: err.message };
     }
-    iconCache.set(key, entry);
+    iconCache.set(key, iconFresh.stamp(entry, p));
     if (entry.icon) return entry;
     tried.push(`${path.basename(p)}: ${entry.reason}`);
   }

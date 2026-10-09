@@ -100,9 +100,11 @@ namespace Mantle {
       _ticks++;
       bool poll = (_ticks % PollEveryTicks) == 0;
       // Icons read off the ui lane have landed (QueueIcon): the list is sent again even though the
-      // signature (which leaves icons out) has not moved.
+      // signature (which leaves icons out) has not moved. Same when an app's exe changed on disk
+      // and its new picture was read in the background (Icons.TakeRefreshed: a rebuilt app).
       bool landed = _iconsLanded;
       if (landed) _iconsLanded = false;
+      if (Icons.TakeRefreshed()) landed = true;
       if (!_dirty && !poll && _firstEmitted && !landed) return;
       _dirty = false;
       try {
@@ -243,7 +245,8 @@ namespace Mantle {
     // one it lacks is read here, on a background STA thread (a package icon is a shell COM read), in
     // the same order as before, and the next 250 ms tick sends the whole list again with it. Nothing
     // is guessed meanwhile: the window says iconPending and has no icon. The caches are never emptied,
-    // so each app's icon is read once per sidecar run, as before.
+    // so each app's icon is read once per sidecar run, as before -- except an exe that changes on
+    // disk (a rebuilt or updated app): Icons re-reads that one itself (Icons.TryCached, TakeRefreshed).
     static readonly object _warmLock = new object();
     static readonly List<string[]> _warmQueue = new List<string[]>();     // { aumid or null, exe, key }
     static readonly HashSet<string> _warmQueued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
