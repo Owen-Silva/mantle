@@ -145,7 +145,7 @@ html, body {
   background-position: 0 0;
   background-repeat: no-repeat;
   background-attachment: fixed;
-  filter: blur(12px) saturate(150%);
+  filter: var(--lg-blur);         /* light: blur(12px) saturate(150%), as before; dark adds brightness(.80) */
 }
 
 /* THE TINT, and the only place the two hairlines live. background-clip: padding-box keeps the

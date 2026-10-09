@@ -126,6 +126,17 @@ body.up .panel { opacity: 1; transform: translateY(0) scale(1); }
 body.no-backdrop .panel::after {
   background-image: linear-gradient(var(--lg-sunk), var(--lg-sunk)), linear-gradient(var(--pane-fill), var(--pane-fill)), linear-gradient(var(--pane-fill), var(--pane-fill));
 }
+/* DARK: the chip recess goes. In light --lg-sunk is an ink wash that keeps a white window behind from
+   going paper-white; in dark it is a WHITE wash that only lifts the grey, and over a bright busy
+   desktop the lift took the subtitle and placeholder (--lg-ink-3) under 4.5:1 (4.23 measured on the
+   mock, ui/launcher/shoot.js MANTLE_THEME=dark). Without it the pane sits ~6 darker, as Win11's own
+   dark flyouts do; the rows' washes still read on it. (lane dm-files-launcher, 2026-10-08) */
+:root[data-theme="dark"] .panel::after {
+  background-image: linear-gradient(var(--pane-fill), var(--pane-fill)), linear-gradient(var(--lg-fill), var(--lg-fill));
+}
+:root[data-theme="dark"] body.no-backdrop .panel::after {
+  background-image: linear-gradient(var(--pane-fill), var(--pane-fill)), linear-gradient(var(--pane-fill), var(--pane-fill));
+}
 
 /* ---- the backdrop ------------------------------------------------------
    .bdrop is the clip; the image inside it is deliberately 14px LARGER on every side than the box,
@@ -152,7 +163,7 @@ body.no-backdrop .panel::after {
   height: calc(100% + 28px);
   display: block;
   object-fit: fill;              /* the frame is a downscale of this window's rect: stretch it back */
-  filter: blur(12px) saturate(150%);
+  filter: var(--lg-blur);        /* the bar's material: blur(12px) saturate(150%) in light; dark also dims it a fifth */
   transform: translateZ(0);
 }
 

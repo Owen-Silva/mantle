@@ -22,7 +22,19 @@ const path = require('path');
 const fs = require('fs');
 const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
 
-const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+/* the newest ms-playwright chromium on the machine (the pinned 1234 build was removed 2026-10-05) */
+const CHROME = (() => {
+  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  for (const d of fs.readdirSync(base).filter(n => n.startsWith('chromium-')).sort().reverse())
+    for (const sub of ['chrome-win64/chrome.exe', 'chrome-win/chrome.exe']) {
+      const p = path.join(base, d, sub);
+      if (fs.existsSync(p)) return p;
+    }
+  return base + '/chromium-*/chrome-win64/chrome.exe';
+})();
+/* MANTLE_THEME=dark|light forces <html data-theme> before first paint and fires 'mantle-theme',
+   the harness stand-in for the CLI's --theme= (lane dm-launcher, 2026-10-08) */
+const THEME = ['dark', 'light'].includes(process.env.MANTLE_THEME) ? process.env.MANTLE_THEME : null;
 const PAGE = 'file:///C:/Users/user/mantle/ui/launcher/index.html';
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/edd3247c-6214-4642-9069-bbf7e50b1555/scratchpad/lanes/launcher';
@@ -30,16 +42,13 @@ const OUT = process.env.MANTLE_SHOOT_OUT ||
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 const DPR = 1.25;
 
-/* The three text colours that sit on the glass, straight out of tokens.css. */
-const TEXT = {
-  'name (--fg)': [238, 241, 248],
-  'subtitle (--fg-3)': [166, 171, 181],
-  'source error (--amber)': [224, 160, 89],
-};
+/* The text runs measured. Their colour is read from the page (computed style) at shot time, so the
+   check follows whichever theme is on rather than a table that goes stale. */
 const SAMPLE = {
-  'name (--fg)': '.row.is-sel .name',
-  'subtitle (--fg-3)': '.row:not(.is-sel) .sub',
-  'source error (--amber)': '.src-error',
+  'name (--lg-ink)': '.row.is-sel .name',
+  'subtitle (--lg-ink-3)': '.row:not(.is-sel) .sub',
+  'source error (--lg-warn)': '.src-error',
+  'placeholder/query (#q)': '#q',
 };
 
 (async () => {
@@ -52,6 +61,13 @@ const SAMPLE = {
     deviceScaleFactor: DPR,
     colorScheme: 'dark',
   });
+  if (THEME) await ctx.addInitScript(t => {
+    /* an init script can run before <html> exists: set it the moment the parser makes it (before paint) */
+    const set = () => !!document.documentElement && !!(document.documentElement.dataset.theme = t);
+    if (!set()) new MutationObserver((_, mo) => { if (set()) mo.disconnect(); }).observe(document, { childList: true });
+    const fire = () => window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: t } }));
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fire, { once: true }); else fire();
+  }, THEME);
   /* A plain page to decode the PNGs in: about:blank has no CSP, so a canvas
      can take the screenshot back apart. */
   const lab = await ctx.newPage();
@@ -84,6 +100,13 @@ const SAMPLE = {
       };
       const out = { rects: {} };
       for (const k of Object.keys(sel)) out.rects[k] = rect(sel[k]);
+      out.colors = {};
+      for (const k of Object.keys(sel)) {
+        const el = document.querySelector(sel[k]);
+        if (!el) continue;
+        const pseudo = el.tagName === 'INPUT' && !el.value ? '::placeholder' : null;
+        out.colors[k] = getComputedStyle(el, pseudo).color;
+      }
       const panel = document.querySelector('.panel');
       out.border = cs(panel).borderTopWidth;
       out.fillLayers = cs(panel).backgroundImage.split(/,(?![^(]*\))/).length;
@@ -103,7 +126,7 @@ const SAMPLE = {
       return out;
     }, SAMPLE);
 
-    const contrast = await lab.evaluate(async ({ png, rects, text, dpr }) => {
+    const contrast = await lab.evaluate(async ({ png, rects, colors, dpr }) => {
       const img = new Image();
       await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = png; });
       const c = document.createElement('canvas');
@@ -118,23 +141,30 @@ const SAMPLE = {
         const d = c.getContext('2d').getImageData(
           Math.round(r.x * dpr), Math.round(r.y * dpr),
           Math.max(1, Math.round(r.w * dpr)), Math.max(1, Math.round(r.h * dpr))).data;
-        // darkest pixel inside the text run = the glass between the glyphs
-        let best = 2, rgb = null;
+        /* the glass between the glyphs = the pixel in the run furthest in luminance from the ink
+           (lightest under dark ink, darkest under light ink); an alpha ink is composited over it */
+        const m = String(colors[key] || '').match(/[\d.]+/g);
+        if (!m) { out[key] = null; continue; }
+        const a = m.length > 3 ? +m[3] : 1;
+        const inkOn = bg => [0, 1, 2].map(j => +m[j] * a + bg[j] * (1 - a));
+        const ink0 = lum(...inkOn([128, 128, 128]));
+        let far = -1, rgb = null;
         for (let i = 0; i < d.length; i += 4) {
-          const L = lum(d[i], d[i + 1], d[i + 2]);
-          if (L < best) { best = L; rgb = [d[i], d[i + 1], d[i + 2]]; }
+          const D = Math.abs(lum(d[i], d[i + 1], d[i + 2]) - ink0);
+          if (D > far) { far = D; rgb = [d[i], d[i + 1], d[i + 2]]; }
         }
-        const t = text[key];
-        const tl = lum(t[0], t[1], t[2]);
+        const best = lum(rgb[0], rgb[1], rgb[2]);
+        const tl = lum(...inkOn(rgb));
         out[key] = {
           ratio: Math.round(((Math.max(tl, best) + 0.05) / (Math.min(tl, best) + 0.05)) * 100) / 100,
           behind: 'rgb(' + rgb.join(',') + ')',
         };
       }
       return out;
-    }, { png: 'data:image/png;base64,' + buf.toString('base64'), rects: probe.rects, text: TEXT, dpr: DPR });
+    }, { png: 'data:image/png;base64,' + buf.toString('base64'), rects: probe.rects, colors: probe.colors, dpr: DPR });
 
     delete probe.rects;
+    delete probe.colors;
     shots.push({ file, probe, contrast, problems });
     await page.close();
   }

@@ -57,7 +57,7 @@ function check(name, ok, detail) {
 function gamesRunning() {
   try {
     const out = execFileSync('powershell', ['-NoProfile', '-Command',
-      '@(Get-Process javaw,Minecraft*,RobloxPlayerBeta,*Riot*,VALORANT* -ErrorAction SilentlyContinue).Count'], { encoding: 'utf8' });
+      '@(Get-Process VALORANT*,javaw,Minecraft*,RobloxPlayerBeta -ErrorAction SilentlyContinue).Count'], { encoding: 'utf8' });   // not *Riot*: the launcher idles in the tray (as screenshot/switcher)
     return Number(out.trim()) > 0;
   } catch (_) { return false; }
 }
@@ -98,10 +98,36 @@ async function boxesCheck(page, s) {
   return r;
 }
 
+
+/* MANTLE_THEME=dark|light: every context this browser opens gets <html data-theme> set before first
+   paint and the 'mantle-theme' event fired, the way the app's theme plumbing does it. Unset = light. */
+function themeEvery(browser) {
+  const t = process.env.MANTLE_THEME;
+  if (!t) return;
+  const nc = browser.newContext.bind(browser);
+  browser.newContext = async (o) => {
+    const c = await nc(o);
+    await c.addInitScript((theme) => {
+      let done = false;
+      const set = () => {
+        if (done || !document.documentElement) return;
+        done = true;
+        document.documentElement.dataset.theme = theme;
+        window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme } }));
+      };
+      set();
+      if (!done) new MutationObserver((_, mo) => { set(); if (done) mo.disconnect(); }).observe(document, { childList: true });
+    }, t);
+    return c;
+  };
+  browser.newPage = async (o) => (await browser.newContext(o)).newPage();
+}
+
 (async () => {
   if (gamesRunning()) { console.log('a game is running: no headless browser now'); process.exit(3); }
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  const browser = await chromium.launch({ timeout: 0, executablePath: fs.existsSync(CHROME) ? CHROME : undefined, headless: true });
+  themeEvery(browser);   // MANTLE_THEME=dark|light: <html data-theme> + the mantle-theme event, as dm-core's plumbing does
   const ms = [];
   try {
     for (const s of SHOTS) {

@@ -96,6 +96,7 @@ Flags (`electron . <flags>`):
 | `--bar-edge=top\|bottom` | which edge the bar sits on (default `bottom`) |
 | `--no-desktop` | skip the desktop layer entirely |
 | `--no-acrylic` | no blur-behind glass on the bar and launcher: plain transparent windows with whatever the pages paint in CSS |
+| `--theme=dark\|light\|system` | test mode only: this instance's appearance over the saved setting (`lib/theme.js`), which it never reads for the mode or writes; `theme.set` still switches it live until it quits. `--theme=dark` is how a lane checks a surface in dark |
 
 ### Glass
 
@@ -225,8 +226,10 @@ mantle.on(event, cb)    -> unsubscribe()
 | `shell.reconnect` | start the link to Windows again after it gave up restarting |
 | `diag.report` | `{text}`: the diagnostic report the tray copies |
 | `net.probe` | `{url}` → `{ok, reason}`, loopback only (the desktop uses it for Mission Control) |
+| `theme.get` | Mantle's own appearance: `{mode: 'system'\|'light'\|'dark', theme: 'light'\|'dark', windows, windowsWhy, pinned, note}`. `mode` is the setting (default `system` = Match Windows), `theme` what shows now, `windows` Windows' own app mode (null + `windowsWhy` when unknown), `pinned` set by `--theme` |
+| `theme.set` | `{mode}`: switches every Mantle window at once, no reload, and saves it in `<userData>/theme.json`; answers as `theme.get` plus `value`, or `{ok:false, reason}` for anything that is not a mode. Fires the `theme` event |
 
-Events: `windows`, `state`, `launcher:visible`, `tray`. `windows` and `state`
+Events: `windows`, `state`, `launcher:visible`, `tray`, `theme`. `windows`, `state` and `theme`
 also fire once immediately on subscribe, so no page renders an empty first frame.
 
 ## Layout
@@ -236,6 +239,7 @@ main.js              flags, windows, IPC, sidecar lifetime, tray, kill switch, r
 preload.js           window.mantle, and nothing else
 lib/args.js          flag parsing; refuses to boot on a flag that would be dangerous
 lib/state.js         the state object above
+lib/theme.js         Mantle's light / dark / Match Windows: the setting, Windows' app mode, the resolved theme
 lib/sidecar.js       spawn, JSON lines, timeouts, restarts, the build-once attempt
 lib/windows.js       the three windows, live shape and test shape
 lib/apps.js          lane D's index module, wrapped so a missing one is a visible state

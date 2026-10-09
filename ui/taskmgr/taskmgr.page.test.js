@@ -32,7 +32,7 @@ function gaming() {
 (async () => {
   if (gaming() > 0) { console.log('TASKMGR PAGE TEST: skipped (a game is running)'); process.exit(0); }
   const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
-  const browser = await chromium.launch({ executablePath: findChrome(), headless: true });
+  const browser = await chromium.launch({ timeout: 0, executablePath: findChrome(), headless: true });
   const errors = [];
   async function open(mock, w, h) {
     const page = await browser.newPage({ viewport: { width: w || 780, height: h || 640 } });

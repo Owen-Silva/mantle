@@ -223,6 +223,55 @@ async function run() {
       await pg2.close();
     }
 
+    /* ---------------------------------------------------------------- dark glass (lane dm-bar, 2026-10-08)
+       <html data-theme="dark"> re-values every --lg-* token (glass-light.css); these are the bar's
+       own rules that a token could not carry: the backdrop's blur takes the theme's --lg-blur (dark
+       dims the capture), a tray icon gets its plate by what it would vanish into (a WHITE glyph on
+       the light glass, a BLACK one on the dark), and game mode's checkboxes follow the theme. Each is
+       read in light, flipped LIVE to dark with the 'mantle-theme' event, read again, and flipped back. */
+    if (t.want('dark')) {
+      const pg = await open(PILL + '&tray=tones', W);
+      await pg.wait(400);   // each tray icon's tone is measured from its picture, once it has loaded
+      const read = () => pg.eval(() => {
+        const bg = (sel) => { const e = document.querySelector(sel); return e ? getComputedStyle(e).backgroundColor : 'missing'; };
+        const box = document.createElement('div'); box.className = 'gmopt'; box.innerHTML = '<input type="checkbox">';
+        document.body.appendChild(box);
+        const scheme = getComputedStyle(box.firstChild).colorScheme;
+        box.remove();
+        return { white: bg('#tray .ti.light .tico'), black: bg('#tray .ti.dark .tico'), plain: bg('#tray .ti:not(.light):not(.dark) .tico'),
+          blur: getComputedStyle(document.querySelector('.bdrop img')).filter, scheme, sep: bg('.sep'), div: bg('.dock .div'),
+          edge: getComputedStyle(document.querySelector('.bar')).getPropertyValue('--pane-edge').trim() };
+      });
+      const flip = (theme) => pg.eval((th) => {
+        if (th) document.documentElement.dataset.theme = th; else delete document.documentElement.dataset.theme;
+        window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: th || 'light' } }));
+      }, theme);
+      t.check('dark: the mock tray has a white glyph and a black one, each measured as such',
+        (await pg.count('#tray .ti.light')) >= 1 && (await pg.count('#tray .ti.dark')) >= 1);
+      const L = await read();
+      t.check('dark: (light) a white tray glyph sits on the ink plate', L.white === 'rgb(51, 58, 78)', L);
+      t.check('dark: (light) a black glyph and a coloured one get no plate', L.black === 'rgba(0, 0, 0, 0)' && L.plain === 'rgba(0, 0, 0, 0)', L);
+      t.check('dark: (light) the backdrop blur is the light set\'s, undimmed', /blur\(12px\) saturate\(1\.5\)$/.test(L.blur), L.blur);
+      t.check('dark: (light) game mode\'s checkboxes stay a light box', L.scheme === 'light', L.scheme);
+      await flip('dark');
+      await pg.wait(50);
+      const D = await read();
+      t.check('dark: (dark) a white tray glyph needs no plate on dark glass', D.white === 'rgba(0, 0, 0, 0)', D);
+      t.check('dark: (dark) a black tray glyph sits on the light ink plate', D.black === 'rgb(196, 199, 206)', D);
+      t.check('dark: (dark) a coloured glyph still gets none', D.plain === 'rgba(0, 0, 0, 0)', D);
+      t.check('dark: (dark) the backdrop blur is the theme\'s, which dims the capture', /brightness\(0?\.8\)/.test(D.blur), D.blur);
+      t.check('dark: (dark) game mode\'s checkboxes are a dark box', D.scheme === 'dark', D.scheme);
+      t.check('dark: (light) the separators are the dark hairline', L.sep === 'rgba(11, 14, 26, 0.1)' && L.div === L.sep, L);
+      t.check('dark: (dark) the separators are the faint WHITE hairline, not a black groove', D.sep === 'rgba(255, 255, 255, 0.1)' && D.div === D.sep, D);
+      t.check('dark: (dark) the bar\'s own outer edge stays the black line', /^rgba\(0,\s*0,\s*0,/.test(D.edge), D.edge);
+      await flip(null);
+      await pg.wait(50);
+      const B = await read();
+      t.check('dark: back to light, every one of them is as it was', JSON.stringify(B) === JSON.stringify(L), { before: L, after: B });
+      t.check('dark: no page errors', pg.errors.length === 0, pg.errors);
+      await pg.close();
+    }
+
     /* ---------------------------------------------------------------- tray */
     if (t.want('tray')) {
       const pg = await open(PILL + '&tray=1', W);

@@ -21,12 +21,60 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const CALL = 'mantle:call';
 const EVENT = 'mantle:event';
 const REPLAY = 'mantle:replay';
+const THEME_NOW = 'mantle:theme-now';
+
+/*
+ * MANTLE'S APPEARANCE (lane dm-core, 2026-10-08; lib/theme.js decides it). Every Mantle page gets
+ * <html data-theme="dark|light"> BEFORE ITS FIRST PAINT, and the attribute follows every change LIVE,
+ * without a reload; after a live change `mantle-theme` {detail:{theme}} fires on window, so a page that
+ * draws colours in JS (canvas, SVG built in JS) repaints from the CSS variables.
+ *
+ * Before first paint: this file runs before the page's HTML is parsed, so it asks main ONCE,
+ * synchronously (one tiny IPC, answered from memory), and stamps the attribute the moment <html>
+ * exists. A reload runs this file again and asks again, so a page reloaded after a change, a window
+ * made later and a window kept hidden all start right. A page that could not ask (main gone) starts
+ * light, Mantle's original look, and says so in its console.
+ */
+let themeNow = 'light';
+try {
+  const t = ipcRenderer.sendSync(THEME_NOW);
+  if (t === 'dark' || t === 'light') themeNow = t;
+  else console.error(`Mantle did not say which theme to show (it answered ${JSON.stringify(t)}), so this page starts light`);
+} catch (err) {
+  console.error('Mantle could not be asked which theme to show, so this page starts light:', err);
+}
+function stampTheme() {
+  const el = document.documentElement;
+  if (!el) return false;
+  if (el.getAttribute('data-theme') !== themeNow) el.setAttribute('data-theme', themeNow);
+  return true;
+}
+if (!stampTheme()) {
+  // MutationObserver callbacks run as microtasks inside the parser's task, so this lands before any
+  // frame is painted, the moment the parser inserts <html>.
+  const mo = new MutationObserver(() => { if (stampTheme()) mo.disconnect(); });
+  mo.observe(document, { childList: true });
+}
+function applyTheme(payload) {
+  const t = payload && (payload.theme === 'dark' || payload.theme === 'light') ? payload.theme : null;
+  if (!t) return;
+  const changed = t !== themeNow;
+  themeNow = t;
+  stampTheme();
+  if (!changed) return;
+  try {
+    window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: t } }));
+  } catch (err) {
+    console.error('mantle-theme could not be fired:', err);
+  }
+}
 
 /** event name -> Set of callbacks */
 const listeners = new Map();
 
 ipcRenderer.on(EVENT, (_e, msg) => {
   if (!msg || typeof msg.name !== 'string') return;
+  if (msg.name === 'theme') applyTheme(msg.payload);   // the page's own listeners run after it is painted
   deliver(msg.name, msg.payload);
 });
 

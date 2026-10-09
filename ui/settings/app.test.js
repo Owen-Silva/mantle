@@ -62,7 +62,7 @@ const settle = (p, ms) => p.waitForTimeout(ms || 250);
   if (g !== 0) { process.stdout.write((g > 0 ? 'a game is running' : 'could not check for a running game') + ': page test skipped\nSETTINGS APP TEST: 0 passed, 0 failed (skipped)\n'); return; }
   const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  const browser = await require('./test-browser.js').launch(chromium);
   const ctx = await browser.newContext({ viewport: { width: 1040, height: 700 }, deviceScaleFactor: 1, colorScheme: 'light' });
   try {
     /* ---- the sidebar ---- */

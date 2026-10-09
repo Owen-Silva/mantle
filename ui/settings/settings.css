@@ -4,8 +4,8 @@
  * window reads as the same object as the bottom bar and the top bar. The window is OPAQUE (unlike
  * the bar there is no desktop behind it), so the page stands on --lg-ground and the layers are the
  * bar's fills over it: the sidebar is --lg-fill, a card is --lg-fill-strong with the bar's two
- * hairlines (the white lip inside, the .10 ink edge outside). No new palette, no dark mode, no
- * glow except the focus ring. The controls are the bar's shapes: --lg-sunk chips, the accent block
+ * hairlines (the white lip inside, the .10 ink edge outside). No new palette (dark is the same
+ * tokens re-valued, plus the few rules at the end of this file), no glow except the focus ring. The controls are the bar's shapes: --lg-sunk chips, the accent block
  * only for an ON switch, --lg-warn words for anything that cannot act. Motion is Northwind's curve
  * (--lg-ease); this window is opaque and small, so a short transition costs nothing here.
  *
@@ -436,3 +436,33 @@ h1 .crumb-sep { color: var(--lg-ink-3); }
 html.glass { background: var(--lg-fill-strong); }
 html.glass body { background: linear-gradient(var(--lg-sunk), var(--lg-sunk)) var(--lg-fill-strong); }
 html.glass.inactive, html.glass.inactive body { background: var(--lg-ground); }
+
+/* ---------------------------------------------------------------- dark glass (lane dm-settings, 2026-10-08)
+   <html data-theme="dark"> re-values every --lg-* token (shared/glass-light.css), and nearly all of this
+   file follows on its own. These rules are the few places where the light set leaned on "white is the
+   lighter layer": there a card, a field or a chosen segment is --lg-fill-strong, a WHITE face that sits
+   above the window. Dark --lg-fill-strong is a dark grey, so the same rule would sink a card BELOW the
+   window it stands on. So in dark the layers that stand up are a white wash at low alpha over the window
+   (Windows 11's own dark cards are ~.05 white), and the window itself is the plain dark tint with no lift.
+   Everything here is scoped to [data-theme="dark"]: light mode does not move. No glow, no lit rims, no
+   text-shadow: the hairline and the step in grey carry the layer. */
+:root[data-theme="dark"] .card,
+:root[data-theme="dark"] .tileb,
+:root[data-theme="dark"] .banner > div { background-color: rgba(255,255,255,.045); }
+/* fields: a slightly lighter face than the card, so a box reads as a box on the card and on the window */
+:root[data-theme="dark"] .find input,
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] .inp,
+:root[data-theme="dark"] .kc { background: rgba(255,255,255,.06); }
+:root[data-theme="dark"] .find input:focus,
+:root[data-theme="dark"] .inp:focus { background: rgba(0,0,0,.18); }
+/* the native list a <select> drops down is drawn from the option's own colours: opaque, never see-through */
+:root[data-theme="dark"] select option { background-color: var(--lg-ground); color: var(--lg-ink); }
+/* the chosen segment is raised out of its recess: a lighter face, not a dark one */
+:root[data-theme="dark"] .seg button[aria-checked="true"] { background: rgba(255,255,255,.12); box-shadow: 0 0 0 1px var(--lg-edge-out); }
+/* selection: the accent at low alpha, the ink kept (Chromium's blue would be the only blue on the page) */
+:root[data-theme="dark"] ::selection { background: color-mix(in srgb, var(--lg-acc) 36%, transparent); color: var(--lg-ink); }
+/* the window's tint: the card fill twice, as in light, but without the lifting wash (in light it is an ink
+   wash that keeps a white window behind from going paper-white; the dark tint needs no help to stay dark,
+   and a white wash would only flatten the step up to the cards) */
+html.glass[data-theme="dark"]:not(.inactive) body { background: var(--lg-fill-strong); }

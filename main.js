@@ -5,7 +5,7 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 // A --test run keeps every window off Owen's screen (lib/test-quiet.js); live it returns before touching anything.
 require('./lib/test-quiet').install(process.argv, process.env);
-const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, screen, shell, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, screen, shell, powerMonitor, nativeTheme } = require('electron');
 
 const { parseArgs, ArgError } = require('./lib/args');
 const { ShellState } = require('./lib/state');
@@ -21,6 +21,7 @@ const spotifyLaunch = require('./lib/spotify-launch');
 const { probe } = require('./lib/net-probe');
 const { createCallLog, createSetLog } = require('./lib/call-log');
 const { placeholderUrl } = require('./lib/placeholder');
+const { createTheme, windowsModeFrom } = require('./lib/theme');
 const { createBar, createLauncher, createDesktop, hwndOf, BAR_H } = require('./lib/windows');
 const raiseWin = require('./lib/raise');   // every pop-up on top, every time it shows (r7-ontop)
 // The hover flyout's live window previews (DWM thumbnails through koffi). Requiring it is free:
@@ -888,6 +889,44 @@ function broadcast(name, payload) {
   }
 }
 // </mainrel:broadcast>
+
+/*
+ * MANTLE'S APPEARANCE: light, dark or Match Windows (lane dm-core, 2026-10-08; lib/theme.js).
+ * preload.js asks for it synchronously before each page's first paint (mantle:theme-now) and applies
+ * the `theme` event live. Windows' app mode comes from nativeTheme, which follows AppsUseLightTheme
+ * because nothing in Mantle sets nativeTheme.themeSource (one window's FRAME is set through the
+ * sidecar instead; see lib/features/settings.js). Main-drawn colours follow through themeHost:
+ * the solid window grounds and the DWM frames of the acrylic app windows.
+ */
+let themeCore = null;
+let themeFakeWindows = null;   // --test only (theme.testWindows): a made-up Windows app mode, never Owen's
+const themeFollowers = new Set();
+function getTheme() {
+  if (themeCore) return themeCore;
+  themeCore = createTheme({
+    file: path.join(app.getPath('userData'), 'theme.json'),
+    windowsMode: () => (flags.test && themeFakeWindows ? { mode: themeFakeWindows, why: null } : windowsModeFrom(nativeTheme)),
+    override: flags.theme,
+    log: (line) => process.stdout.write(`mantle: ${line}\n`),
+  });
+  themeCore.on((view) => {
+    broadcast('theme', view);
+    for (const fn of Array.from(themeFollowers)) {
+      try { fn(view.theme); } catch (err) { process.stderr.write(`mantle: a theme follower threw: ${err && err.message ? err.message : err}\n`); }
+    }
+  });
+  if (flags.theme) process.stdout.write(`mantle: --theme=${flags.theme}: this test run shows ${themeCore.theme()} and never saves a change\n`);
+  return themeCore;
+}
+/** What lib/ modules get: the theme now, and fn('dark'|'light') after every change. -> off() */
+const themeHost = {
+  get: () => getTheme().theme(),
+  onChange(fn) {
+    if (typeof fn !== 'function') throw new Error('themeHost.onChange needs a function');
+    themeFollowers.add(fn);
+    return () => themeFollowers.delete(fn);
+  },
+};
 
 let lastProblemLine = null;
 
@@ -2154,7 +2193,9 @@ function startFeatures() {
       host: { openLauncher: openLauncherFor, barRect: () => barRect(), display: featureDisplay, rest: (on, why) => restMantle(on, why),
         media: () => lastMedia, onMedia: (fn) => { mediaListeners.add(fn); return () => mediaListeners.delete(fn); },
         // lane settings: Mantle Settings shows and flips the tray's Alt+Tab and Win+N / Win+A switches
-        switcher: { get: () => switcher.settingsView(), set: (patch, who) => { switcher.setSettings(patch, who); return switcher.settingsView(); } } },
+        switcher: { get: () => switcher.settingsView(), set: (patch, who) => { switcher.setSettings(patch, who); return switcher.settingsView(); } },
+        // lane dm-core: Mantle's appearance for main-drawn colours (window grounds, DWM frames)
+        theme: themeHost },
     });
     COMMANDS['features.list'] = async () => features.list();
     if (flags.test) {
@@ -3935,6 +3976,12 @@ async function arrangeRestart() {
 const COMMANDS = {
   'state.get': async () => state.get(),
 
+  // Mantle's own light / dark (lib/theme.js). get -> {mode, theme, windows, windowsWhy, pinned, note};
+  // set {mode: 'system'|'light'|'dark'} switches every Mantle window at once and answers the same
+  // (+ value), or {ok:false, reason} for anything that is not a mode.
+  'theme.get': async () => getTheme().get(),
+  'theme.set': async (a) => getTheme().set(a && typeof a === 'object' ? a.mode : undefined),
+
   'windows.list': async () => {
     const list = await sidecar.call('windows');
     lastWindows = withoutMantle(list);
@@ -4743,6 +4790,22 @@ ipcMain.handle('mantle:call', async (e, name, args) => {
   }
 });
 
+// preload.js, before a page's first paint: which theme to stamp on <html>. Synchronous on purpose
+// (the attribute has to be there before the first frame) and answered from memory. A page that is
+// not Mantle's own gets 'light' and no other answer, like every other refused caller.
+ipcMain.on('mantle:theme-now', (e) => {
+  const who = callerVerdict(e, UI_DIR);
+  if (!who.ok) {
+    refuseCaller(who, 'a theme read');
+    e.returnValue = 'light';
+    return;
+  }
+  try { e.returnValue = getTheme().theme(); } catch (err) {
+    process.stderr.write(`mantle: a page could not be told the theme, so it starts light: ${err && err.message ? err.message : err}\n`);
+    e.returnValue = 'light';
+  }
+});
+
 // mantle.on('state'|'windows'|...) replays the current value on subscribe, so a
 // page never renders an empty first frame while it waits for a push.
 ipcMain.handle('mantle:replay', async (e, name) => {
@@ -4753,6 +4816,7 @@ ipcMain.handle('mantle:replay', async (e, name) => {
   }
   switch (name) {
     case 'state': return { has: true, payload: state.get() };
+    case 'theme': return { has: true, payload: getTheme().get() };
     case 'windows': return { has: true, payload: lastWindows };
     case 'launcher:visible': return { has: true, payload: !!(launcherWin && !launcherWin.isDestroyed() && launcherWin.isVisible()) };
     case 'tray': return lastTray ? { has: true, payload: lastTray } : { has: false };
@@ -7730,6 +7794,25 @@ async function logMemory(tag) {
 }
 
 app.whenReady().then(() => {
+  // Mantle's appearance first: every window below asks for it before its first paint. Match Windows
+  // follows Windows live: nativeTheme 'updated' fires when AppsUseLightTheme changes (and on other
+  // theme news, which windowsChanged() ignores unless the mode actually moved).
+  getTheme();
+  nativeTheme.on('updated', () => {
+    try { getTheme().windowsChanged(); } catch (err) { process.stderr.write(`mantle: Windows' light/dark change could not be followed: ${err && err.message ? err.message : err}\n`); }
+  });
+  if (flags.test) {
+    // TEST ONLY (lib/theme.e2e.test.js): "Windows changed to <mode>" without touching Owen's Windows.
+    // It sets a made-up app mode and fires nativeTheme's own 'updated', so the path a real change
+    // takes (listener -> windowsChanged -> broadcast -> preload) is the one exercised. null = real again.
+    COMMANDS['theme.testWindows'] = async (a) => {
+      const m = a && (a.mode === 'dark' || a.mode === 'light') ? a.mode : a && a.mode === null ? null : undefined;
+      if (m === undefined) return { ok: false, reason: 'theme.testWindows takes {mode: "dark" | "light" | null}' };
+      themeFakeWindows = m;
+      nativeTheme.emit('updated');
+      return getTheme().get();
+    };
+  }
   const bar = createBar({ root: ROOT, test: flags.test, barEdge: flags.barEdge, liveShape: flags.testLiveBar });
   barWin = bar.win;
   armBarShape();   // hover mode: the always-tall window's shape, proved before it is ever shown
@@ -7778,7 +7861,7 @@ app.whenReady().then(() => {
     state.set('desktop', { attached: false, mode: null, reason: '--no-desktop: the desktop layer was not created' });
   }
   // The wallpaper library, its pause rules and the Wallpapers window: all in lib/wallpaper.js.
-  wallpaper.start({ root: ROOT, test: flags.test, state, sidecar, commands: COMMANDS, desktopWin });
+  wallpaper.start({ root: ROOT, test: flags.test, state, sidecar, commands: COMMANDS, desktopWin, theme: themeHost });
   // The notification centre's list, watch and commands (notifs.*): all in lib/notifications.js.
   notifications.start({ test: flags.test, state, sidecar, commands: COMMANDS, broadcast });
   // Alt+Tab's overlay window (parked off screen, never shown in a test run) and switcher.*.

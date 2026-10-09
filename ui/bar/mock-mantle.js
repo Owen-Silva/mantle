@@ -41,6 +41,9 @@
  *                 sets window.__MOCK_TRAY__ before this file runs (ui/bar/shoot.js does, from a
  *                 real sidecar listing) gets that list instead, so real icons can be eyeballed
  *                 without committing anybody's tray to the repo.
+ *   ?tray=tones   ?tray=1 + an icon drawn BLACK (for Windows' light taskbar), shown and hidden: the
+ *                 one dark glass has to plate (bar.css .ti.dark)
+ *   ?strip=light|dark  the screen strip .bdrop blurs is bright or dark instead of loud
  */
 (function () {
   'use strict';
@@ -744,7 +747,7 @@
      glyph is the case bar.js puts on a plate; the two hidden ones are what the overflow lists. */
   var TRAY = null;
   if (Array.isArray(window.__MOCK_TRAY__)) TRAY = window.__MOCK_TRAY__;
-  else if (q.get('tray') === '1') {
+  else if (q.get('tray') === '1' || q.get('tray') === 'tones') {
     var glyph = function (fg, bg, shape) {
       var c = document.createElement('canvas'); c.width = 20; c.height = 20;
       var g = c.getContext('2d');
@@ -761,6 +764,12 @@
       { id: 'n:3', title: 'Tailscale', icon: glyph('#ffffff', null, 'box'), exe: 'tailscale-ipn.exe', promoted: false, clickable: false, reason: 'Tailscale ' + HID },
       { id: 'n:4', title: 'Windows Security', icon: glyph('#1f8f4e', '#e6f4ea', 'box'), exe: 'SecurityHealthSystray.exe', promoted: false, clickable: false, reason: 'Windows Security ' + HID }
     ];
+    /* ?tray=tones (dm-bar, 2026-10-08): + an icon drawn BLACK, the way an app draws it for Windows' LIGHT
+       taskbar. Bare on light glass; on dark glass it is the one bar.css has to put on a plate. */
+    if (q.get('tray') === 'tones') {
+      TRAY.splice(2, 0, { id: 'n:5', title: 'Sync (drawn for a light taskbar)', icon: glyph('#15171b', null, 'ring'), exe: 'Sync.exe', promoted: true, clickable: true, reason: null });
+      TRAY.push({ id: 'n:6', title: 'Backup (drawn for a light taskbar)', icon: glyph('#15171b', null, 'box'), exe: 'Backup.exe', promoted: false, clickable: false, reason: 'Backup ' + HID });
+    }
   }
 
   /* ?notifs=X — the notification centre (ui/bar/notifications.js), in main's 'notifications'
@@ -1577,13 +1586,22 @@
     c.width = w; c.height = h;
     var g = c.getContext('2d');
     var grad = g.createLinearGradient(0, 0, w, 0);
-    var stops = ['#2f6fe0', '#b23fd0', '#d64545', '#e0a059', '#1f8f4e', '#2f6fe0'];
+    /* ?strip=light|dark (dm-bar, 2026-10-08): a BRIGHT screen behind the bar (a white page, a light
+       wallpaper) or a DARK one, the two cases each theme's ink has to survive. Default: loud. */
+    var STRIPS = {
+      light: ['#f4f6f9', '#e3e8ef', '#ffffff', '#dfe6ee', '#f0f2f5', '#f4f6f9'],
+      dark:  ['#0e1013', '#1b1e23', '#121417', '#262a30', '#16181c', '#0e1013']
+    };
+    var stops = STRIPS[q.get('strip')] || ['#2f6fe0', '#b23fd0', '#d64545', '#e0a059', '#1f8f4e', '#2f6fe0'];
     for (var i = 0; i < stops.length; i++) grad.addColorStop(i / (stops.length - 1), stops[(i + shift) % stops.length]);
     g.fillStyle = grad; g.fillRect(0, 0, w, h);
-    /* two hard blocks and a dark band: edges are what a blur is judged on */
-    g.fillStyle = '#0b0d10'; g.fillRect(w * 0.34, 0, 26, h);
-    g.fillStyle = '#ffffff'; g.fillRect(w * 0.58, 0, 14, h);
-    g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0, h - 4, w, 4);
+    /* two hard blocks and a dark band: edges are what a blur is judged on (the loud strip only: a
+       bright or a dark one is the whole screen that colour, which is the case it stands for) */
+    if (!STRIPS[q.get('strip')]) {
+      g.fillStyle = '#0b0d10'; g.fillRect(w * 0.34, 0, 26, h);
+      g.fillStyle = '#ffffff'; g.fillRect(w * 0.58, 0, 14, h);
+      g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0, h - 4, w, 4);
+    }
     return c.toDataURL('image/png');
   }
 

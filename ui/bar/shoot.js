@@ -12,6 +12,7 @@
  * shape, or a probe dump whose [1].result is one) through window.__MOCK_TRAY__, so real icons can
  * be eyeballed without committing anybody's tray to the repo. BAR_EXTRA_CSS=<css> adds a style to
  * every shot, for an A/B of a treatment that is not in bar.css (BAR_SUFFIX=-b names the files).
+ * BAR_THEME=dark shoots the dark glass; BAR_DESK and BAR_STRIP change what is behind it (see THEME).
  */
 require('C:/Users/user/dev-tools/tools/lowcpu.js');
 
@@ -48,9 +49,9 @@ function findChrome() {
   return null;
 }
 
-const OUT = process.env.BAR_SHOTS ||
+let OUT = process.env.BAR_SHOTS ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/edd3247c-6214-4642-9069-bbf7e50b1555/scratchpad/lanes/bar';
-const PAGE = 'file:///C:/Users/user/mantle/ui/bar/index.html';
+let PAGE = process.env.BAR_PAGE || 'file:///C:/Users/user/mantle/ui/bar/index.html';   // BAR_PAGE: a snapshot copy, for a before/after
 
 /* Step sequences for the quick-settings sub-views (qs-more.js): open the panel from the Wi-Fi
    readout, take the tile's '>' and let the mock's scan finish; or take the volume row's '>'. */
@@ -142,10 +143,10 @@ const SHOTS = [
   { name: 'spq-played', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-list > :nth-child(5) .spq-row', { wait: 300 }, { probe: SPQ_FIT }] },   // a Next-up row: the queued ones before it are used up
   /* spothide lane: Spotify hidden, played from the card, on Owen's 1536x864 screen */
   { name: 'spq-hidden', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 400 }, { probe: SPQ_FIT }] },
-  { name: 'spq-library', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-tabs .spq-chip:nth-child(2)', { wait: 400 }, { probe: SPQ_FIT }] },
+  { name: 'spq-library', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-seg .spq-tab:nth-child(2)', { wait: 400 }, { probe: SPQ_FIT }] },
   { name: 'spq-searchall', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'macklemore' }, { wait: 700 }, { probe: SPQ_FIT }] },
-  { name: 'spq-opened', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-appmain .spq-link', { wait: 400 }, { probe: SPQ_FIT }] },
-  { name: 'spq-quitarmed', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-appmain .spq-link:nth-of-type(2)', { wait: 200 }, { probe: SPQ_FIT }] },
+  { name: 'spq-opened', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-more-btn', { wait: 200 }, '.spq-macts .spq-sbtn', { wait: 400 }, { probe: SPQ_FIT }] },
+  { name: 'spq-quitarmed', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-more-btn', { wait: 200 }, '.spq-macts .spq-sbtn:nth-of-type(2)', { wait: 200 }, { probe: SPQ_FIT }] },
   { name: 'spq-hidefail', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=hidefail', steps: ['#mchip', '.spq-head', { wait: 400 }, { probe: SPQ_FIT }] },
   { name: 'spq-notrunning-hd', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=notrunning', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },
   /* spotgame lane: closed for a game, kept open (music was playing), a close that failed; both toggles */
@@ -154,13 +155,23 @@ const SHOTS = [
   /* spotapp lane: the per-row tools (hover), a move up, a remove, an add, the armed Restart, and search unavailable */
   { name: 'spq-tools', keepHover: true, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { hover: '.spq-list > :nth-child(3)' }, { probe: SPQ_FIT }] },
   { name: 'spq-moved', keepHover: true, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { hover: '.spq-list > :nth-child(3)' }, '.spq-list > :nth-child(3) .spq-tool[aria-label="Move up"]', { wait: 300 }, { hover: '.spq-list > :nth-child(2)' }, { probe: SPQ_FIT }] },
-  { name: 'spq-removed', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { hover: '.spq-list > :nth-child(5)' }, '.spq-list > :nth-child(5) .spq-tool[aria-label="Remove from the queue"]', { wait: 300 }, { probe: SPQ_FIT }] },
+  { name: 'spq-removed', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { hover: '.spq-list > :nth-child(5)' }, '.spq-list > :nth-child(5) .spq-tool[aria-label="Remove from queue"]', { wait: 300 }, { probe: SPQ_FIT }] },
   { name: 'spq-add', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'levitating' }, { wait: 700 }, '.spq-row', { wait: 300 }, { probe: SPQ_FIT }] },
   { name: 'spq-restart-armed', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=noport', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-state .spq-btn', { wait: 200 }, { probe: SPQ_FIT }] },
   { name: 'spq-searchbroken', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=searchbroken', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'levitating' }, { wait: 700 }, { probe: SPQ_FIT }] },
   /* the tray: the white-icon plate on the strip, and the hidden icons in the overflow */
   { name: 'tray', w: 1280, h: 60, q: '?mode=pill&tray=1&media=playing' },
   { name: 'tray-more', w: 1280, h: 330, q: '?mode=pill&tray=1', click: '#more' },
+  // dm-bar (2026-10-08): + an icon drawn BLACK for Windows' light taskbar, the one dark glass would swallow
+  { name: 'tray-tones', w: 1280, h: 60, q: '?mode=pill&tray=tones&media=playing' },
+  { name: 'tray-tones-more', w: 1280, h: 330, q: '?mode=pill&tray=tones', click: '#more' },
+  // dm-bar: the lifted icon of a drag to reorder (bar.css .cell.lifted), held still for the camera
+  { name: 'drag-lift', w: 1280, h: 60, q: '?mode=pill', steps: [{ wait: 600 }, { js: "document.querySelectorAll('.dock .cell')[2].classList.add('lifted')" }, { wait: 100 }] },
+  // dm-bar: the popovers no other shot opens (the calendar, a window flyout, the dock's +N panel) and a hovered cell
+  { name: 'cal', w: 1280, h: 460, q: '?mode=pill', click: '#clock' },
+  { name: 'fly-edge', w: 1280, h: 330, q: '?mode=pill', click: '.cell[data-id="edge"]' },
+  { name: 'ovf-panel', w: 760, h: 330, q: '?mode=pill', click: '#dock-more' },
+  { name: 'cell-hover', w: 1280, h: 60, q: '?mode=pill', keepHover: true, steps: [{ wait: 400 }, { hover: '.cell[data-id="code"]' }, { wait: 250 }] },
   /* The notification centre (ui/bar/notifications.js): the bell's count, then the panel */
   { name: 'notifs-bell', w: 1280, h: 60, q: '?mode=pill&notifs=some' },
   { name: 'notifs-panel', w: 1280, h: 540, q: '?mode=pill&notifs=some', click: '#notifs' },
@@ -296,9 +307,52 @@ const SHOTS = [
   { name: 'jl-task-actions', w: 1280, h: 600, q: '?mode=pill', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }, { rclick: '.pop.jl .jl-list .jl-i:last-of-type' }, { wait: 200 }] },
   { name: 'jl-edge-top', w: 1280, h: 600, q: '?mode=pill&edge=top', steps: [{ rclick: '.cell[data-id="edge"]' }, { wait: 300 }] },
 ];
+/* DARK MODE (lane dm-bar, 2026-10-08). BAR_THEME=dark|light sets <html data-theme> before the first
+   paint, exactly where the theme plumbing sets it in Mantle, and fires 'mantle-theme' once the page
+   has its scripts, so anything that draws from the tokens repaints. Unset = no attribute = light,
+   so every existing shot is unchanged. BAR_DESK=light|dark|<css colour> overrides what sits behind
+   the transparent page for every shot (a bright desktop is the hard case for dark glass), and
+   BAR_STRIP=light|dark hands the mock a bright or a dark screen strip for .bdrop to blur instead of
+   its loud default (mock-mantle.js ?strip=). */
+let THEME = process.env.BAR_THEME || '';
+function themeAtFirstPaint(theme) {
+  const set = () => { if (document.documentElement) document.documentElement.dataset.theme = theme; };
+  set();
+  document.addEventListener('readystatechange', set);
+  window.addEventListener('DOMContentLoaded', () => {
+    set();
+    window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme } }));
+  });
+}
+const DESKS = { light: '#dfe4ec', dark: '#141619' };
+function deskOf(shotDesk) {
+  const d = process.env.BAR_DESK || shotDesk || 'dark';
+  return DESKS[d] || d;
+}
+function withStrip(q) {
+  const st = process.env.BAR_STRIP;
+  if (!st) return q;
+  return (q ? q + '&' : '?') + 'strip=' + encodeURIComponent(st);
+}
 const ONLY = process.argv.slice(2);
-const RUN = ONLY.length ? SHOTS.filter(s => ONLY.some(w => s.name.includes(w))) : SHOTS;
+let RUN = ONLY.length ? SHOTS.filter(s => ONLY.some(w => s.name.includes(w))) : SHOTS;
 let REAL_TRAY = null;
+/* BAR_PASSES=<file.json> (dm-bar, 2026-10-08): several runs under ONE browser launch, so ONE turn of
+   lowcpu's machine-wide lock. With six lanes queueing for it, each separate run (light-before,
+   light-after, dark, dark over a bright screen) waited 10+ min for its own turn. The file is an array
+   of {out, page, theme, strip, desk, suffix, only: [name parts], skipExisting}; a key left out is
+   that env var unset. Without BAR_PASSES: one pass, from the env vars, exactly as before. */
+const PASSES = process.env.BAR_PASSES ? JSON.parse(fs.readFileSync(process.env.BAR_PASSES, 'utf8')) : [null];
+function usePass(p) {
+  const env = (k, v) => { if (v === undefined || v === null || v === '') delete process.env[k]; else process.env[k] = String(v); };
+  OUT = p.out || OUT;
+  PAGE = p.page || 'file:///C:/Users/user/mantle/ui/bar/index.html';
+  THEME = p.theme || '';
+  env('BAR_STRIP', p.strip); env('BAR_DESK', p.desk); env('BAR_SUFFIX', p.suffix); env('BAR_SKIP_EXISTING', p.skipExisting ? '1' : '');
+  RUN = p.only && p.only.length ? SHOTS.filter(s => p.only.some(w => s.name.includes(w))) : SHOTS;
+  fs.mkdirSync(OUT, { recursive: true });
+  console.log('PASS ' + JSON.stringify(p) + ' : ' + RUN.length + ' shots');
+}
 if (process.env.BAR_TRAY_JSON) {
   const raw = JSON.parse(fs.readFileSync(process.env.BAR_TRAY_JSON, 'utf8'));
   REAL_TRAY = Array.isArray(raw) ? raw : (raw && raw[1] && raw[1].result) || null;
@@ -310,49 +364,92 @@ if (process.env.BAR_TRAY_JSON) {
   const exe = findChrome();
   if (!exe) { console.error('FAILED: no ms-playwright chromium found under AppData/Local/ms-playwright'); process.exit(1); }
 
-  const browser = await chromium.launch({ headless: true, executablePath: exe });
-  const ctx = await browser.newContext({ colorScheme: 'dark', deviceScaleFactor: 1.25, viewport: { width: 1920, height: 44 } });
+  /* timeout: lowcpu.js may hold the launch while another lane's browser has the machine-wide lock (up
+     to its own 8 min limit); playwright's default 3 min gave up first, with a message about neither. */
+  let browser = null;
+  const launch = async () => {
+  let b = null;
+  /* ...and when another lane holds the lock past those 8 min, lowcpu refuses (rightly: no second
+     browser). That is a queue, not a failure of this run, so wait for the next turn, six times. */
+  for (let i = 1; !b; i++) {
+    try { b = await chromium.launch({ headless: true, executablePath: exe, timeout: 9 * 60000 }); }
+    catch (e) {
+      const why = String(e && e.message || e).split('\n')[0];
+      if (i >= 6 || !/lowcpu|lock|Timeout/i.test(why)) throw e;
+      console.log('  launch waited its turn and did not get one (' + why.slice(0, 140) + '); try ' + (i + 1) + ' of 6');
+    }
+  }
+  return b;
+  };
+  browser = await launch();
+  let ctx = await browser.newContext({ colorScheme: 'dark', deviceScaleFactor: 1.25, viewport: { width: 1920, height: 44 } });
   const problems = [];
-  const ctxs = {};
+  let ctxs = {};
   const ctxAt = async (dsf) => ctxs[dsf] || (ctxs[dsf] = await browser.newContext({ colorScheme: 'dark', deviceScaleFactor: dsf, viewport: { width: 1920, height: 44 } }));
   try {
-    for (const s of RUN) {
-      // per-shot device scale (the jump list shots take 1x and 1.25x); one context per scale
-      const page = await (s.dsf && s.dsf !== 1.25 ? ctxAt(s.dsf) : Promise.resolve(ctx)).then((c) => c.newPage());
-      if (REAL_TRAY && /tray/.test(s.q)) await page.addInitScript((t) => { window.__MOCK_TRAY__ = t; }, REAL_TRAY);
-      await page.setViewportSize({ width: s.w, height: s.h });
-      page.on('pageerror', e => problems.push(s.name + ' pageerror: ' + e.message));
-      page.on('console', m => { if (m.type() === 'error') problems.push(s.name + ' console: ' + m.text()); });
-      await page.goto(PAGE + s.q, { waitUntil: 'load' });
-      /* The page is deliberately transparent (the Electron window is), so a screenshot over
-         nothing would composite onto white and misrepresent every contrast judgement. Paint a
-         plausible dark desktop behind it — on <html>, never on the bar. The ?bg=1 shot brings
-         its own (much louder) wallpaper from the mock, so leave that one alone. */
-      if (!s.q.includes('bg=1'))
-        await page.addStyleTag({ content: 'html{background:' + (s.desk === 'light' ? '#dfe4ec' : '#141619') + ' !important;}' });
-      if (process.env.BAR_EXTRA_CSS) await page.addStyleTag({ content: process.env.BAR_EXTRA_CSS });
-      await page.evaluate(() => document.fonts.ready);
-      await page.waitForTimeout(350);           // the mock bridge answers at 30ms; this is slack, not a race
-      for (const st of s.steps || (s.click ? [s.click] : [])) {
-        if (typeof st === 'string') { await page.click(st); await page.waitForTimeout(400); }
-        else if (st.wait) await page.waitForTimeout(st.wait);
-        else if (st.rclick) { await page.click(st.rclick, { button: 'right' }); await page.waitForTimeout(150); }
-        else if (st.fill) await page.fill(st.fill, st.text);
-        else if (st.hover) { await page.hover(st.hover); await page.waitForTimeout(200); }   // spq-tools: the row tools show on hover
-        else if (st.scroll) { await page.$eval(st.scroll, el => { el.scrollTop = el.scrollHeight; }); await page.waitForTimeout(100); }
-        else if (st.js) await page.evaluate(st.js);   // a mock-main push (window.__mockMain), mid-shot
-        else if (st.probe) console.log('  ' + s.name + ' probe: ' + JSON.stringify(await page.evaluate(st.probe)));   // a measurement, printed
-      }
-      if (!s.keepHover) await page.mouse.move(0, 0);   // no hover state left on whatever was clicked (keepHover: a shot OF a hover, spq-tools)
-      /* ...and let its fade finish: hovers fade out over 150 ms steps(2), so a shot taken at once
-         kept the full hover fill on whatever row the last click left the pointer over (seen on
-         qsx-wifi, 2026-09-23, where it read as a selected network). */
-      await page.waitForTimeout(200);
-      const file = path.join(OUT, s.name + (process.env.BAR_SUFFIX || '') + '.png');
-      await page.screenshot({ path: file });
-      console.log(file);
-      await page.close();
+  for (const pass of PASSES) {
+    if (pass) usePass(pass);
+    /* fresh: close the browser and take a new turn of the lock. lowcpu treats a lock older than 12
+       min as stale and lets another lane's browser start, so a long set of passes splits into turns. */
+    if (pass && pass.fresh) {
+      await browser.close();
+      browser = await launch();
+      ctx = await browser.newContext({ colorScheme: 'dark', deviceScaleFactor: 1.25, viewport: { width: 1920, height: 44 } });
+      ctxs = {};
     }
+    for (const s of RUN) {
+      /* One shot that cannot be taken (a selector the panel no longer has) is a PROBLEM for the
+         summary, not the end of the run: before 2026-10-08 a missing '.spq-tabs' chip threw out of
+         the loop and the 110 shots after it were never taken. */
+      let page = null;
+      // BAR_SKIP_EXISTING=1 finishes an interrupted run: a shot whose file is already there is skipped
+      if (process.env.BAR_SKIP_EXISTING && fs.existsSync(path.join(OUT, s.name + (process.env.BAR_SUFFIX || '') + '.png'))) continue;
+      try {
+        // per-shot device scale (the jump list shots take 1x and 1.25x); one context per scale
+        page = await (s.dsf && s.dsf !== 1.25 ? ctxAt(s.dsf) : Promise.resolve(ctx)).then((c) => c.newPage());
+        if (REAL_TRAY && /tray/.test(s.q)) await page.addInitScript((t) => { window.__MOCK_TRAY__ = t; }, REAL_TRAY);
+        page.setDefaultTimeout(8000);   // a shot that cannot find its button says so in 8 s, not 30
+        if (THEME) await page.addInitScript(themeAtFirstPaint, THEME);
+        await page.setViewportSize({ width: s.w, height: s.h });
+        page.on('pageerror', e => problems.push(s.name + ' pageerror: ' + e.message));
+        page.on('console', m => { if (m.type() === 'error') problems.push(s.name + ' console: ' + m.text()); });
+        await page.goto(PAGE + withStrip(s.q), { waitUntil: 'load' });
+        /* The page is deliberately transparent (the Electron window is), so a screenshot over
+           nothing would composite onto white and misrepresent every contrast judgement. Paint a
+           plausible dark desktop behind it — on <html>, never on the bar. The ?bg=1 shot brings
+           its own (much louder) wallpaper from the mock, so leave that one alone. */
+        if (!s.q.includes('bg=1'))
+          await page.addStyleTag({ content: 'html{background:' + deskOf(s.desk) + ' !important;}' });
+        if (process.env.BAR_EXTRA_CSS) await page.addStyleTag({ content: process.env.BAR_EXTRA_CSS });
+        await page.evaluate(() => document.fonts.ready);
+        await page.waitForTimeout(350);           // the mock bridge answers at 30ms; this is slack, not a race
+        for (const st of s.steps || (s.click ? [s.click] : [])) {
+          if (typeof st === 'string') { await page.click(st); await page.waitForTimeout(400); }
+          else if (st.wait) await page.waitForTimeout(st.wait);
+          else if (st.rclick) { await page.click(st.rclick, { button: 'right' }); await page.waitForTimeout(150); }
+          else if (st.fill) await page.fill(st.fill, st.text);
+          else if (st.hover) { await page.hover(st.hover); await page.waitForTimeout(200); }   // spq-tools: the row tools show on hover
+          else if (st.scroll) { await page.$eval(st.scroll, el => { el.scrollTop = el.scrollHeight; }); await page.waitForTimeout(100); }
+          else if (st.js) await page.evaluate(st.js);   // a mock-main push (window.__mockMain), mid-shot
+          else if (st.probe) console.log('  ' + s.name + ' probe: ' + JSON.stringify(await page.evaluate(st.probe)));   // a measurement, printed
+        }
+        if (!s.keepHover) await page.mouse.move(0, 0);   // no hover state left on whatever was clicked (keepHover: a shot OF a hover, spq-tools)
+        /* ...and let its fade finish: hovers fade out over 150 ms steps(2), so a shot taken at once
+           kept the full hover fill on whatever row the last click left the pointer over (seen on
+           qsx-wifi, 2026-09-23, where it read as a selected network). */
+        await page.waitForTimeout(200);
+        const file = path.join(OUT, s.name + (process.env.BAR_SUFFIX || '') + '.png');
+        await page.screenshot({ path: file });
+        console.log(file);
+        await page.close();
+      } catch (e) {
+        const why = String(e && e.message || e).split('\n')[0];
+        problems.push(s.name + ' NOT TAKEN: ' + why);
+        console.log('  ' + s.name + ' NOT TAKEN: ' + why);
+        if (page) await page.close().catch(() => {});
+      }
+    }
+  }
   } finally {
     await browser.close();
   }

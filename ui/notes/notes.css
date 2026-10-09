@@ -132,6 +132,10 @@ textarea {
 textarea.twin { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; overflow: hidden; flex: none; min-height: 0; }
 textarea::placeholder { color: var(--lg-ink-3); }
 textarea::selection { background: var(--lg-acc-soft); color: var(--lg-ink); }
+/* dark: the .18 accent wash that reads on a near-white pane all but vanishes on the dark one, so a
+   selection there carries twice the accent (still a wash, still the ink on top). */
+:root[data-theme="dark"] textarea::selection,
+:root[data-theme="dark"] .find input::selection { background: rgba(157,151,236,.36); }
 /* thin, and shown only while the pointer is over the text (Settings, 377e901); the transparent
    border keeps the thumb off the sheet's hairline and rounded corner */
 textarea::-webkit-scrollbar { width: 8px; }

@@ -233,10 +233,10 @@ async function run(p) {
 (async () => {
   const g = gaming();
   if (g !== 0) { console.log(g > 0 ? 'NOT RUN: a game is running' : 'NOT RUN: could not check for a running game'); console.log('switcher page tests: 0 passed, 1 failed'); process.exitCode = 1; return; }
-  if (!fs.existsSync(CHROME)) { console.log(`no chromium at ${CHROME}`); process.exitCode = 1; return; }
   fs.mkdirSync(OUT, { recursive: true });
   const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  const browser = await chromium.launch({ timeout: 0, executablePath: fs.existsSync(CHROME) ? CHROME : undefined, headless: true });
+  themeEvery(browser);   // MANTLE_THEME=dark|light: <html data-theme> + the mantle-theme event, as dm-core's plumbing does
   try {
     const ctx = await browser.newContext({ viewport: { width: 600, height: 300 }, deviceScaleFactor: 1 });
     await ctx.addInitScript(FAKE);
@@ -258,3 +258,27 @@ async function run(p) {
   console.log(`switcher page tests: ${passed} passed, ${failures.length} failed`);
   process.exitCode = failures.length ? 1 : 0;
 })();
+
+/* MANTLE_THEME=dark|light: every context this browser opens gets <html data-theme> set before first
+   paint and the 'mantle-theme' event fired, the way the app's theme plumbing does it. Unset = light. */
+function themeEvery(browser) {
+  const t = process.env.MANTLE_THEME;
+  if (!t) return;
+  const nc = browser.newContext.bind(browser);
+  browser.newContext = async (o) => {
+    const c = await nc(o);
+    await c.addInitScript((theme) => {
+      let done = false;
+      const set = () => {
+        if (done || !document.documentElement) return;
+        done = true;
+        document.documentElement.dataset.theme = theme;
+        window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme } }));
+      };
+      set();
+      if (!done) new MutationObserver((_, mo) => { set(); if (done) mo.disconnect(); }).observe(document, { childList: true });
+    }, t);
+    return c;
+  };
+  browser.newPage = async (o) => (await browser.newContext(o)).newPage();
+}

@@ -217,7 +217,9 @@ const shots = [];
     }
 
     /* ---------------- behaviour ---------------- */
-    const page = await open(ctx, '?mode=pill&tray=1&battery=battery', 'dark', 560);
+    // 700 tall: quick settings has grown past 560 (Top bar + Hot corners rows), and at 560 its top
+    // (the chevron the "inside the panel" check hovers) sat off the page at y -55
+    const page = await open(ctx, '?mode=pill&tray=1&battery=battery', 'dark', 700);
     const pill = await page.$eval('#bar', el => el.getBoundingClientRect().toJSON());
     const volTitle0 = await page.$eval('#volume', el => el.getAttribute('title'));
     ok(!!volTitle0, `before any hover #volume still has its title attribute ("${(volTitle0 || '').split('\n')[0]}")`);
@@ -240,9 +242,12 @@ const shots = [];
     ok(s.box.y >= pill.top - s.box.need - 1 && s.box.y + s.box.h <= pill.top - 5.9, `the tip is inside the room it asked for and clear of the pill (y ${s.box.y}..${s.box.y + s.box.h}, pill top ${pill.top}, room ${s.box.need})`);
     const multi = await page.evaluate(() => { const t = document.getElementById('mantle-tip'); return { lines: Math.round(t.getBoundingClientRect().height / 16), txt: t.textContent }; });
     ok(multi.txt.includes('\n') && multi.lines >= 2, 'the multi-line title keeps its line break');
-    const look = await page.evaluate(() => { const c = getComputedStyle(document.getElementById('mantle-tip')); return { pe: c.pointerEvents, ws: c.whiteSpace, bg: c.backgroundColor, img: c.backgroundImage, fam: c.fontFamily }; });
+    const look = await page.evaluate(() => { const c = getComputedStyle(document.getElementById('mantle-tip')); return { pe: c.pointerEvents, ws: c.whiteSpace, bg: c.backgroundColor, img: c.backgroundImage, fam: c.fontFamily, dark: document.documentElement.dataset.theme === 'dark' }; });
     ok(look.pe === 'none' && look.ws === 'pre-line', 'pointer-events none, pre-line');
-    ok(/^rgb\(244, 246, 250\)$/.test(look.bg) && /255, 255, 255, 0\.72/.test(look.img) && /Segoe UI/.test(look.fam), `the popover frost on an opaque ground, and the bar's face (${look.img.slice(0, 44)} over ${look.bg}; ${look.fam.split(',')[0]})`);
+    // light: the pinned values; dark (data-theme="dark"): the dark block's --lg-ground #1B1C1F under --lg-fill-strong rgba(32,33,36,.80)
+    const face = look.dark ? (/^rgb\(27, 28, 31\)$/.test(look.bg) && /32, 33, 36, 0\.8\b/.test(look.img))
+                           : (/^rgb\(244, 246, 250\)$/.test(look.bg) && /255, 255, 255, 0\.72/.test(look.img));
+    ok(face && /Segoe UI/.test(look.fam), `the popover frost on an opaque ground, and the bar's face (${look.img.slice(0, 44)} over ${look.bg}; ${look.fam.split(',')[0]})`);
 
     // live update in place: the volume keys while the tip is up
     await page.evaluate(() => window.__mockMain.volume(73));
@@ -290,8 +295,8 @@ const shots = [];
     s = await st(page);
     const popR = await page.$eval('#pop', el => el.getBoundingClientRect().toJSON());
     L = await log(page);
-    ok(s.shown && s.box.need === 0 && L.log.filter(e => e.who === 'tips').length === nIn, `inside the panel: tip up (${s.text.split('\n')[0]}), no room asked`);
-    ok(s.box.y >= popR.top - 0.5, `inside the panel: within what the panel's room shows (tip y ${s.box.y}, panel top ${popR.top})`);
+    ok(s.shown && s.box && s.box.need === 0 && L.log.filter(e => e.who === 'tips').length === nIn, `inside the panel: tip up (${s.text.split('\n')[0]}), no room asked`);
+    ok(!!s.box && s.box.y >= popR.top - 0.5, `inside the panel: within what the panel's room shows (tip y ${s.box && s.box.y}, panel top ${popR.top})`);
     // Esc: the panel's keyboard handling may close it; the tip goes regardless
     await page.keyboard.press('Escape');
     await page.waitForTimeout(150);

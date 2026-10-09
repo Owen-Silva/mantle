@@ -20,11 +20,17 @@
  *                 each category's own page test plays its data (sections/*.test.js)
  *        glass=acrylic   what main puts in the URL when it asked DWM for acrylic (lib/features/settings.js)
  *        glassok=1 | 0 | wait   DWM's read-back: acrylic + light frame / refused with a made-up reason / not yet
+ *        theme=dark | light   the look Mantle opens in, as the real preload paints it: <html data-theme> is
+ *                 set on load, and theme.set / a Windows change re-sets it and fires the window
+ *                 'mantle-theme' event the way the preload does. Windows' app mode is played as the same
+ *                 value, so Match Windows (the default) agrees. Absent: no data-theme (the light look) and
+ *                 Windows is played as dark. mock=failing makes theme.get / theme.set answer ok:false.
  *        desk=1   paints a MADE-UP desktop behind the clear page, blurred and tinted the way DWM's light
  *                 acrylic draws it, so a headless shot shows the glass look. It stands in for DWM only
  *                 here: the page itself never uses a CSS blur.
  * The page sets <html data-ready="1"> itself once the requested section's first paint settled.
- * window.__mockCalls lists every call; window.__mockEmit(event, payload) pushes an event.
+ * window.__mockCalls lists every call; window.__mockEmit(event, payload) pushes an event;
+ * window.__mockWindowsMode('dark'|'light'|null) plays Windows' app mode changing (emits 'theme').
  */
 (function () {
   'use strict';
@@ -256,6 +262,22 @@
   const boom = (why) => Promise.reject(new Error(why));
   const featureOf = (name) => features.find((f) => f.name === name);
 
+  /* ---- Mantle's own light/dark (main.js theme.get / theme.set, the 'theme' event, the preload's paint) ---- */
+  const LOOK = q.get('theme') === 'dark' || q.get('theme') === 'light' ? q.get('theme') : null;
+  const look = { mode: 'system', windows: LOOK || 'dark' };
+  const themeNow = () => {
+    const theme = look.mode === 'system' ? (look.windows || 'light') : look.mode;
+    return { ok: true, mode: look.mode, theme, windows: look.windows,
+      windowsWhy: look.windows ? null : 'made up: Windows\' app mode could not be read (the Personalize key is missing)', pinned: null, note: null, reason: null };
+  };
+  const paintLook = (theme) => {
+    document.documentElement.dataset.theme = theme;
+    window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme } }));
+  };
+  if (LOOK) document.documentElement.dataset.theme = LOOK;
+  const lookChanged = () => { const t = themeNow(); paintLook(t.theme); setTimeout(() => emit('theme', t), 5); return t; };
+  window.__mockWindowsMode = (w) => { look.windows = w === 'dark' || w === 'light' ? w : null; return lookChanged(); };
+
   function answer(name, a) {
     a = a || {};
     switch (name) {
@@ -331,6 +353,12 @@
         if (a.part === 'wifi' && !a.value) { p.connected = false; p.ssid = null; }
         return later(a.part === 'wifi' || a.part === 'bluetooth' ? 300 : 30, { ok: true, part: a.part, value: a.part === 'mute' ? p.muted : 'level' in p && (a.part === 'volume' || a.part === 'brightness') ? p.level : p.on, state: Object.assign({}, p), reason: null });
       }
+      case 'theme.get': return FAIL ? later(30, { ok: false, reason: 'made up: Mantle\'s settings file could not be read (it is locked by another program)' }) : later(20, themeNow());
+      case 'theme.set':
+        if (FAIL) return later(30, { ok: false, reason: 'made up: Mantle\'s settings file could not be written (it is locked by another program)' });
+        if (!['light', 'dark', 'system'].includes(a.mode)) return { ok: false, reason: 'Pick Light, Dark or Match Windows (Mantle was sent ' + JSON.stringify(a.mode === undefined ? null : a.mode) + ')' };
+        look.mode = a.mode;
+        return later(40, Object.assign({}, lookChanged(), { value: a.mode }));
       case 'volume.get': return Object.assign({}, qs.volume);
       case 'net.get': return JSON.parse(JSON.stringify(net));
       case 'battery.get': return Object.assign({}, battery);

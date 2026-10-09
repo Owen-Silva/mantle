@@ -92,10 +92,10 @@
 
   /* ---------------------------------------------------------------- glass (lane settingsfx2) */
   /* Main asks DWM for acrylic behind this window and says so in the URL (?glass=acrylic). The page turns
-     clear (settings.css html.glass) only once DWM's read-back says acrylic AND a light frame
-     (settings.glass, replayed on subscribe): measured in real Electron, the light frame can take seconds
-     to land while the sidecar is busy, and until then Windows' dark-mode acrylic would sit under dark
-     text. Refused = solid, and About says why. DWM draws the backdrop only on the ACTIVE window, so
+     clear (settings.css html.glass) only once DWM's read-back says acrylic AND the frame matching Mantle's
+     appearance, light or dark (settings.glass, replayed on subscribe): measured in real Electron, the frame
+     can take seconds to land while the sidecar is busy, and until then acrylic of the other appearance
+     would sit under the text. Refused = solid, and About says why. DWM draws the backdrop only on the ACTIVE window, so
      while the window is in the background the page stands on the opaque --lg-ground. */
   const docEl = document.documentElement;
   const glassAsked = /[?&]glass=acrylic(&|$)/.test(location.search);

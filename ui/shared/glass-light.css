@@ -135,3 +135,73 @@
   --lg-ground: #F4F6FA;
   --lg-blur:   blur(12px) saturate(150%);    /* what .bdrop applies to that photograph */
 }
+
+/* ---- DARK GLASS (Owen, 2026-10-08: "we need to make a dark mode for mantle. everything should
+   still be glass ui like") ------------------------------------------------------------------
+   The SAME material and the SAME token names, re-valued. Nothing about the stack changes: the
+   blurred .bdrop capture, then the tint with its two hairlines, then content. Only the numbers do,
+   so a surface that resolves every colour through --lg-* turns dark with no edit of its own.
+   <html data-theme="dark"> switches it (set before first paint by the theme plumbing; absent or
+   "light" = the light set above).
+
+   The direction is NOT the "AI slop" dark (feedback 2026-09-11): no blue-black ground, no neon
+   accent, no glow at rest, no lit rims. A neutral grey pane with almost no colour cast, plain
+   hairlines (a faint white lip inside, a black line outside), depth from real shadow, and the
+   accent taken down to a desaturated light indigo used for state only.
+
+   Why each number:
+   - fill .56 on #1E1F22: the light set's .45 white, mirrored. A dark tint needs a touch more to
+     keep light ink legible when the wallpaper behind is bright; --lg-blur also dims the capture
+     a fifth (brightness .80) for the same reason, so .56 stays a breath and not a slab.
+   - ink #F1F2F4 / #C4C7CE / #8E94A0: --lg-ink-3 clears 4.5:1 on --lg-fill-pop.
+   - accent #9D97EC is #4436E8's hue, lighter and less saturated; ink on it (--lg-acc-on, near
+     black) is ~7:1. White on it would not be, which is why --lg-acc-on flips too.
+   - states are WHITE at low alpha here (ink is light now): the light set's rule, mirrored. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --lg-fill:        rgba(30,31,34,.56);
+  --lg-fill-fb:     rgba(30,31,34,.76);
+  --lg-fill-strong: rgba(32,33,36,.80);
+  --lg-fill-pop:    rgba(32,33,36,.92);
+
+  --lg-edge-in:  rgba(255,255,255,.10);
+  --lg-edge-out: rgba(0,0,0,.42);
+
+  --lg-shadow:    0 1px 1px rgba(0,0,0,.20), 0 10px 28px -12px rgba(0,0,0,.45), 0 26px 56px -28px rgba(0,0,0,.55);
+  --lg-shadow-up: 0 -1px 1px rgba(0,0,0,.20), 0 -10px 28px -12px rgba(0,0,0,.45), 0 -26px 56px -28px rgba(0,0,0,.55);
+
+  --lg-lip-up:    inset 0 1px 0 rgba(255,255,255,.10);
+  --lg-lip-up-0:  inset 0 1px 0 rgba(255,255,255,0);
+  --lg-lip-dn:    inset 0 -1px 0 rgba(255,255,255,.10);
+  --lg-lip-dn-0:  inset 0 -1px 0 rgba(255,255,255,0);
+  --lg-drop-up:   0 -1px 1px rgba(0,0,0,.20), 0 -10px 28px -12px rgba(0,0,0,.45), 0 -26px 56px -28px rgba(0,0,0,.55);
+  --lg-drop-up-0: 0 -1px 1px rgba(0,0,0,0),   0 -10px 28px -12px rgba(0,0,0,0),   0 -26px 56px -28px rgba(0,0,0,0);
+  --lg-drop-dn:   0 1px 1px rgba(0,0,0,.20), 0 10px 28px -12px rgba(0,0,0,.45), 0 26px 56px -28px rgba(0,0,0,.55);
+  --lg-drop-dn-0: 0 1px 1px rgba(0,0,0,0),   0 10px 28px -12px rgba(0,0,0,0),   0 26px 56px -28px rgba(0,0,0,0);
+
+  --lg-fill-0: rgba(30,31,34,0);
+  --lg-edge-0: rgba(0,0,0,0);
+  --lg-ink-0:  rgba(196,199,206,0);
+
+  --lg-ink:   #F1F2F4;
+  --lg-ink-2: #C4C7CE;
+  --lg-ink-3: #8E94A0;
+
+  --lg-acc:      #9D97EC;
+  --lg-acc-on:   #15131F;
+  --lg-acc-soft: rgba(157,151,236,.18);
+
+  --lg-hover: rgba(255,255,255,.07);
+  --lg-press: rgba(255,255,255,.11);
+  --lg-tile:  rgba(255,255,255,.09);
+  --lg-sunk:  rgba(255,255,255,.05);
+
+  --lg-dot-ring: rgba(0,0,0,.55);
+
+  --lg-warn:      #E0A059;                 /* Mantle's own --amber: a dark-theme colour, home again */
+  --lg-warn-soft: rgba(224,160,89,.14);
+
+  --lg-ground: #1B1C1F;
+  --lg-blur:   blur(12px) saturate(130%) brightness(.80);
+}

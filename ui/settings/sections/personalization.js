@@ -9,7 +9,8 @@
  * window; his Lively library was imported once) above Windows' background, and it REPLACES Start and
  * the taskbar. So Background leads with Mantle's wallpaper and says when Windows' own shows through;
  * Start and Taskbar show Mantle's own options (settings.mantle) and open them inside Mantle Settings.
- * Colors are Windows' and your apps': Mantle's own surfaces keep the One Theme whatever is picked.
+ * Colors leads with Mantle's OWN look (Light / Dark / Match Windows, theme.get / theme.set; Match Windows
+ * follows Windows' app mode live). Every mode and colour below that is Windows' and your apps'.
  * Lively is only looked at (is it running), never closed or restarted.
  *
  * READ-ONLY with the reason on the row: themes (applying one), the sign-in background and lock screen
@@ -24,7 +25,8 @@
   const keyOf = (s) => { let x = 5381; for (const ch of String(s)) x = ((x * 33) ^ ch.codePointAt(0)) >>> 0; return 'k' + x.toString(36); };
   const fileUrl = (p) => 'file:///' + String(p).replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/').replace(/^([A-Za-z])%3A/, '$1:');
   const base = (p) => String(p || '').split(/[\\/]/).pop();
-  const ONE_THEME = 'Mantle\'s own bar, panels and windows keep Mantle\'s one theme whatever you pick here: these colours are for Windows and your apps';
+  const WIN_MODES = 'The modes and colours below are Windows\' own, for Windows and your apps. Mantle\'s look is the setting above (Match Windows follows your app mode)';
+  const MANTLE_MODES = [{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'Match Windows' }];
   const later = (kit, fn) => (r) => { if (r && r.ok && !r.dryRun) setTimeout(() => { if (!kit.disposed) fn(); }, 300); return r; };
   const SET = (kit, key, value, after) => C(kit, 'set', { key, value }).then(later(kit, after));
 
@@ -155,7 +157,9 @@
     const onStart = kit.toggle({ row: R('accent-start'), label: 'Show accent colour on Start and taskbar', info: 'Mantle replaces Start and the taskbar, so this colours only Windows\' own, hidden ones',
       onChange: (on) => SET(kit, 'accentOnStart', on, read) });
     const onTitle = kit.toggle({ row: R('accent-titlebars'), label: 'Show accent colour on title bars and window borders', onChange: (on) => SET(kit, 'accentOnTitleBars', on, read) });
-    el.append(kit.reason(ONE_THEME, { info: true }), kit.group('Mode'), kit.card(mode, win, apps, tr),
+    const look = mantleLook(kit, R('mantle-mode'));
+    el.append(kit.group('Mantle'), kit.card(look.row),
+      kit.reason(WIN_MODES, { info: true }), kit.group('Mode'), kit.card(mode, win, apps, tr),
       kit.group('Accent colour'), kit.card(auto, acc, grid, custom, onStart, onTitle));
     const S = { r: null, lock: null };
     function pickAccent(hex) {
@@ -209,7 +213,37 @@
       onStart.set({ value: !!L('accentOnStart'), disabled: !!lock, reason: lock });
       onTitle.set({ value: !!L('accentOnTitleBars'), disabled: !!lock, reason: lock });
     }
-    return read().then(() => ({ update: read, dispose() {} }));
+    const both = () => Promise.all([read(), look.read()]);
+    return both().then(() => ({ update: both, dispose() {} }));
+  }
+
+  /* Mantle's OWN light/dark (main's theme.get / theme.set, the 'theme' event): Light, Dark or Match
+     Windows. It changes every Mantle window at once, no restart. Windows' own modes are the rows below. */
+  function mantleLook(kit, rowId) {
+    const row = kit.choice({ row: rowId, label: 'Mantle appearance', help: 'Light or dark for Mantle\'s own bar, panels and windows', style: 'segmented',
+      options: MANTLE_MODES, onChange: pick });
+    const isMode = (m) => MANTLE_MODES.some((x) => x.value === m);
+    const said = (s) => (typeof s === 'string' && s.trim() ? s.trim().replace(/[.\s]+$/, '') : null);
+    function show(t, keepValue) {
+      if (!t || typeof t !== 'object' || t.ok === false || !isMode(t.mode)) {
+        const why = t && t.ok === false ? t.reason : 'Mantle answered without a mode';
+        return row.set({ disabled: true, info: null, reason: 'Mantle\'s appearance could not be read: ' + (said(why) || 'no reason came back') });
+      }
+      const follow = t.mode !== 'system' ? null : t.windows === 'light' || t.windows === 'dark'
+        ? 'Following Windows: ' + t.windows + ' right now'
+        : 'Following Windows, but its mode could not be read (' + (said(t.windowsWhy) || 'no reason came back') + '), so Mantle shows ' + (t.theme === 'dark' ? 'dark' : 'light');
+      const info = [follow, said(t.pinned), said(t.note)].filter(Boolean).join('. ') || null;
+      row.set(Object.assign({ disabled: false, reason: null, info }, keepValue ? {} : { value: t.mode }));
+    }
+    async function pick(v) {
+      const x = await kit.call('theme.set', { mode: v });
+      if (!x || x.ok === false) return x;
+      if (!isMode(x.mode)) return { ok: false, reason: 'Mantle answered without a mode' };
+      show(x, true);
+      return { ok: true, value: 'value' in x && isMode(x.value) ? x.value : x.mode };
+    }
+    kit.watch('theme', (t) => show(t));
+    return { row, read: () => kit.call('theme.get').then((t) => show(t)) };
   }
 
   // ============================================================== Themes, Lock screen, Text input, Lighting, Device usage
@@ -423,6 +457,7 @@
       ], render: renderBackground },
     { id: 'colors', title: 'Colors', icon: SVG.palette, help: 'Light and dark mode, accent colour, transparency',
       search: [
+        { row: 'personalization.colors.mantle-mode', label: 'Mantle appearance', keywords: 'dark mode light mode theme mantle appearance night match windows' },
         { row: 'personalization.colors.mode', label: 'Choose your mode', keywords: 'dark mode light mode theme night', uri: 'ms-settings:colors' },
         { row: 'personalization.colors.windows-mode', label: 'Choose your default Windows mode', keywords: 'dark light windows mode' },
         { row: 'personalization.colors.apps-mode', label: 'Choose your default app mode', keywords: 'dark light app mode' },

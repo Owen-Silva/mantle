@@ -1847,7 +1847,7 @@
       img.src = it.icon;
       ico.appendChild(img);
       toneOf(it.icon, function (tone, why) {
-        if (tone === 'light') b.classList.add('light');
+        if (tone === 'light' || tone === 'dark') b.classList.add(tone);   // bar.css plates whichever the theme would swallow
         if (why) b.title += '\n(its contrast could not be checked, so it is drawn as it came: ' + why + ')';
       });
     } else {
@@ -1875,8 +1875,13 @@
      Windhawk 0.41, Windows Security 0.53). A light one sits on a small dark plate (bar.css .ti.light). A plate rather than
      tinting the icon dark, because a tint repaints EVERY pixel one colour: it would erase the
      coloured badge Windows Update puts on its icon when a restart is due, which is the part that
-     carries the news. data: URLs never taint a canvas, so getImageData is allowed here. */
+     carries the news. data: URLs never taint a canvas, so getImageData is allowed here.
+     DARK GLASS (dm-bar, 2026-10-08) has the mirror problem: an icon drawn BLACK for Windows' light
+     taskbar measures ~0 and vanishes into it. Those come back 'dark', and bar.css plates them only
+     while the theme is dark (and takes the plate off the white ones there). The class is set for
+     both tones in both themes, so a live theme switch is CSS alone: nothing is measured again. */
   var LIGHT_LUMA = 0.75;                // 0..1; a white glyph measures ~1.0, every coloured icon here 0.34-0.54
+  var DARK_LUMA = 0.22;                 // a black glyph measures ~0.0; the darkest coloured one above, 0.34
   var tones = Object.create(null);      // icon data URL -> {v, why}, or an array of waiters
   /* BOUNDED (2026-09-29). The cache is keyed by the icon's whole data URL (a few KB each), and a
      tray icon that redraws itself (a sync spinner, a badge count, a meter) is a new key every
@@ -1918,6 +1923,7 @@
           sum += a * (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
         }
         if (cover >= 6 && sum / cover > LIGHT_LUMA) v = 'light';
+        else if (cover >= 6 && sum / cover < DARK_LUMA) v = 'dark';
       } catch (e) {
         why = msg(e);
       }

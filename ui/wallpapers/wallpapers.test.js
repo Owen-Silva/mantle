@@ -86,10 +86,10 @@ const FAKE = String.raw`(() => {
 const JARGON = /sidecar|hwnd|\bIPC\b|renderer|dryRun|undefined|\bnull\b|NaN|\[object|Chromium|ENOENT|0x8007/;
 
 async function run() {
-  if (!fs.existsSync(CHROME)) { failures.push('no chromium at ' + CHROME); return; }
   fs.mkdirSync(OUT, { recursive: true });
   const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--allow-file-access-from-files'] });
+  const browser = await chromium.launch({ timeout: 0, executablePath: fs.existsSync(CHROME) ? CHROME : undefined, headless: true, args: ['--allow-file-access-from-files'] });
+  themeEvery(browser);   // MANTLE_THEME=dark|light: <html data-theme> + the mantle-theme event, as dm-core's plumbing does
   try {
     const ctx = await browser.newContext({ viewport: { width: 1100, height: 720 }, deviceScaleFactor: 1 });
     await ctx.addInitScript(FAKE);
@@ -267,3 +267,27 @@ run().catch((err) => failures.push('crashed: ' + (err && err.message ? err.messa
   console.log(`WALLPAPERS PAGE TEST${BASE ? ' (against base)' : ''}: ${passed} passed, ${failures.length} failed`);
   process.exit(failures.length ? 1 : 0);
 });
+
+/* MANTLE_THEME=dark|light: every context this browser opens gets <html data-theme> set before first
+   paint and the 'mantle-theme' event fired, the way the app's theme plumbing does it. Unset = light. */
+function themeEvery(browser) {
+  const t = process.env.MANTLE_THEME;
+  if (!t) return;
+  const nc = browser.newContext.bind(browser);
+  browser.newContext = async (o) => {
+    const c = await nc(o);
+    await c.addInitScript((theme) => {
+      let done = false;
+      const set = () => {
+        if (done || !document.documentElement) return;
+        done = true;
+        document.documentElement.dataset.theme = theme;
+        window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme } }));
+      };
+      set();
+      if (!done) new MutationObserver((_, mo) => { set(); if (done) mo.disconnect(); }).observe(document, { childList: true });
+    }, t);
+    return c;
+  };
+  browser.newPage = async (o) => (await browser.newContext(o)).newPage();
+}

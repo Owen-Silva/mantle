@@ -229,7 +229,9 @@ body[data-edge="top"].edge .bar::after { border-width: 0 1px 1px; }
   height: calc(100% + 28px);
   display: block;
   object-fit: fill;              /* the strip is a 4x downscale of the bar's rect: stretch it back */
-  filter: blur(12px) saturate(150%);
+  /* the theme's own treatment of the photograph: light is blur(12px) saturate(150%), dark also
+     dims it a fifth so light ink holds over a bright wallpaper (glass-light.css --lg-blur) */
+  filter: var(--lg-blur);
   transform: translateZ(0);
 }
 
@@ -447,6 +449,14 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
   background: var(--lg-fill-strong);
   box-shadow: inset 0 0 0 1px var(--lg-edge-out);
 }
+/* On DARK glass the light set's recipe reads backwards: the popover surface is darker than the pane
+   and the outer hairline is black, so the lifted icon sank into a hole. Raised is LIGHTER here (as
+   in Windows 11's dark mode): the same surface with the theme's press wash on it, and the inner
+   hairline the dark popovers wear. Still no glow and no extra shadow (dm-bar, 2026-10-08). */
+:root[data-theme="dark"] .dock .cell.lifted {
+  background: linear-gradient(var(--lg-press), var(--lg-press)), var(--lg-fill-strong);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-in);
+}
 .dock .cell.lifted .ico { transform: scale(1.1); transition: none; }
 .dock .cell.lifted.settle { transition: transform 150ms var(--lg-ease); }
 .dock.no-anim .cell, .dock.no-anim .cell .ico { transition: none; }
@@ -481,8 +491,13 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
 .ti .tico img { width: 16px; height: 16px; display: block; }
 .ti .tico.letter { background: var(--lg-tile); color: var(--lg-ink); font-size: 11px; font-weight: 600; }
 /* A WHITE icon (drawn for Windows' dark taskbar) on a small dark plate, so it reads on the light
-   glass. bar.js toneOf() measures each icon once and says why a plate rather than a dark tint. */
+   glass. bar.js toneOf() measures each icon once and says why a plate rather than a dark tint.
+   DARK GLASS turns it round (dm-bar, 2026-10-08): a white icon is at home there and goes bare, and
+   it is a BLACK one (drawn for Windows' light taskbar) that would vanish, so that one gets the
+   plate, in the dark set's --lg-ink-2, which is light. */
 .ti.light .tico { background: var(--lg-ink-2); }
+:root[data-theme="dark"] .ti.light .tico { background: transparent; }
+:root[data-theme="dark"] .ti.dark .tico { background: var(--lg-ink-2); }
 /* Not clickable (hidden in Windows' flyout, or UIA unavailable): there, dimmed, reason on hover. */
 .ti.off .tico { opacity: .42; }
 
@@ -523,7 +538,8 @@ body.pill .chip .lbl { display: none; }
   border-radius: 50%;
   background: currentColor;
 }
-/* a warning on light glass is burnt orange, not the dark theme's amber: --amber is ~2:1 here */
+/* a warning on light glass is burnt orange, not the dark theme's amber: --amber is ~2:1 here
+   (--lg-warn is that orange in light and Mantle's own amber on dark glass, where it reads) */
 .chip.warn { color: var(--lg-warn); background: var(--lg-warn-soft); }
 button.chip { border: 0; font-family: inherit; cursor: default; transition: background-color 120ms steps(2); }
 button.chip:hover { background: var(--lg-press); }
@@ -578,6 +594,16 @@ button.chip:hover { background: var(--lg-press); }
 }
 body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
 .pop[hidden] { display: none; }
+/* DARK GLASS: the lines INSIDE a surface (a popover's dividers and control outlines, the dock's
+   pinned|running hairline, the right side's separators, a chip's ring) are --lg-edge-out, the dark
+   line that reads on the light pane. On the dark pane a black line is a groove at ~1.1:1 and all
+   but vanishes over a dark wallpaper; the dark set's inner line is the faint white one, the same
+   hairline the popover's own rim is. So inside these, and only in dark, the outer line IS the inner
+   one. The bar's own outer edge (.bar --pane-edge) keeps its black line (dm-bar, 2026-10-08). */
+:root[data-theme="dark"] .pop,
+:root[data-theme="dark"] .dock .div,
+:root[data-theme="dark"] .sep,
+:root[data-theme="dark"] .chip { --lg-edge-out: var(--lg-edge-in); }
 /* THE ENTRANCE (2026-09-24). It used to be the WINDOW growing up behind the popover for 200 ms, and
    those resizes are what made the pill jump when a button was pressed (main.js barTall). The window
    no longer changes size, so the same wipe is drawn here: uncovered from its bottom edge up, 200 ms

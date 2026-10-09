@@ -1,3 +1,4 @@
+require('C:/Users/user/dev-tools/tools/lowcpu.js');
 /* shoot.js — headless screenshots of the task manager page on its MOCK (made-up apps and numbers),
  * for eyeballing it without running Electron. Pattern: ui/bar/shoot.js.
  *
@@ -46,12 +47,37 @@ const SHOTS = [
   ['10-glass-dark-frame-fallback', 'apps&glass=dark', 780, 640],
 ];
 
+
+/* MANTLE_THEME=dark|light: every context this browser opens gets <html data-theme> set before first
+   paint and the 'mantle-theme' event fired, the way the app's theme plumbing does it. Unset = light. */
+function themeEvery(browser) {
+  const t = process.env.MANTLE_THEME;
+  if (!t) return;
+  const nc = browser.newContext.bind(browser);
+  browser.newContext = async (o) => {
+    const c = await nc(o);
+    await c.addInitScript((theme) => {
+      let done = false;
+      const set = () => {
+        if (done || !document.documentElement) return;
+        done = true;
+        document.documentElement.dataset.theme = theme;
+        window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme } }));
+      };
+      set();
+      if (!done) new MutationObserver((_, mo) => { set(); if (done) mo.disconnect(); }).observe(document, { childList: true });
+    }, t);
+    return c;
+  };
+  browser.newPage = async (o) => (await browser.newContext(o)).newPage();
+}
+
 (async () => {
   const want = process.argv.slice(2);
   const exe = findChrome();
-  if (!exe) { console.error('FAILED: no ms-playwright chromium on this machine'); process.exit(1); }
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ headless: true, executablePath: exe });
+  const browser = await chromium.launch({ timeout: 0, headless: true, executablePath: exe || undefined });
+  themeEvery(browser);   // MANTLE_THEME=dark|light: <html data-theme> + the mantle-theme event, as dm-core's plumbing does
   let made = 0;
   const errors = [];
   try {

@@ -22,7 +22,17 @@ const os = require('os');
 const { execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+/* the newest ms-playwright chromium on this machine (shoot.js findChrome): a pinned build number
+   (chromium-1234 until 2026-10-08) failed this test the day that build was removed */
+const CHROME = (() => {
+  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  for (const d of fs.readdirSync(base).filter((n) => n.startsWith('chromium-')).sort().reverse())
+    for (const sub of ['chrome-win64/chrome.exe', 'chrome-win/chrome.exe']) {
+      const p = path.join(base, d, sub);
+      if (fs.existsSync(p)) return p;
+    }
+  return path.join(base, 'chromium-NONE/chrome-win64/chrome.exe');   // the test's own check names it
+})();
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/7e5085b9-5bec-43fe-aecd-5fe5701b290a/scratchpad/lanes/media/shots';
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;

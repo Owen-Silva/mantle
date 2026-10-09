@@ -21,7 +21,8 @@ const vm = require('vm');
 const { execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..', '..');
-const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// playwright-core 1.63 finds its own installed chromium (the pinned chromium-1234 build was removed 2026-10-05)
+const PLAYWRIGHT = 'C:/Users/user/other-app/node_modules/playwright-core';
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/perso-shots';
@@ -90,6 +91,12 @@ async function nodeTests() {
   const uris = rows.filter((r) => r.uri).map((r) => r.uri);
   check('page: claims its ms-settings pages once each', new Set(uris).size === uris.length && ['ms-settings:personalization', 'ms-settings:personalization-background', 'ms-settings:colors', 'ms-settings:themes',
     'ms-settings:lockscreen', 'ms-settings:taskbar', 'ms-settings:personalization-start', 'ms-settings:fonts', 'ms-settings:personalization-textinput', 'ms-settings:personalization-lighting', 'ms-settings:deviceusage'].every((x) => uris.includes(x)), uris.join(' '));
+  const colorRows = DEF ? ((DEF.pages.find((p) => p.id === 'colors') || {}).search || []) : [];
+  const mm = colorRows.find((r) => r.row === 'personalization.colors.mantle-mode');
+  check('page: Colors lists Mantle appearance first, findable by dark mode / theme', colorRows[0] === mm && mm && /dark mode/.test(mm.keywords) && /theme/.test(mm.keywords) && /appearance/.test(mm.keywords), JSON.stringify(mm));
+  check("page: Mantle's look goes through theme.get / theme.set and follows the 'theme' event", /kit\.call\('theme\.get'\)/.test(src) && /kit\.call\('theme\.set', \{ mode: v \}\)/.test(src) && /kit\.watch\('theme'/.test(src));
+  check("page: the old One Theme claim is gone", !/keep Mantle's one theme|One Theme whatever/.test(src));
+  check('page: never sets data-theme itself (the preload does)', !/dataset\.theme|data-theme/.test(src));
   check('page: never opens Windows Settings (no kit.openWindows)', !/openWindows/.test(src));
   check('page: never styles through a style attribute (the CSP forbids it)', !/setAttribute\(\s*'style'|'style'\s*:/.test(src));
 }
@@ -157,7 +164,9 @@ function FAKE() {
         const copy = args && typeof args === 'object' ? JSON.parse(JSON.stringify(args)) : {};
         if (name === 'settings.sections') return Promise.resolve({ ok: true, reason: null, sections: [{ id: 'personalization', file: 'sections/personalization.js', down: null, main: null }] });
         const P = 'settings.personalization.';
-        const mine = name === P + 'colors' ? later(30, colors()) : name === P + 'background' ? later(40, background()) : name === P + 'more' ? later(30, more())
+        // perso=themebad: main refuses Mantle's own light/dark change (theme.get stays the mock's)
+        const mine = name === 'theme.set' && SCN === 'themebad' ? later(40, no('Mantle could not save the setting (its settings file is read-only)'))
+          : name === P + 'colors' ? later(30, colors()) : name === P + 'background' ? later(40, background()) : name === P + 'more' ? later(30, more())
           : name === P + 'lock' ? later(30, lock()) : name === P + 'fonts' ? later(50, fonts()) : name === 'wallpaper.list' ? later(20, wall()) : name === 'settings.mantle' ? later(20, mantle())
           : name === 'wallpaper.open' ? later(20, { ok: true })
           : [P + 'set', P + 'lockPicture', P + 'fontInstall', P + 'fontRemove'].includes(name) ? write(name, copy) : null;
@@ -207,7 +216,9 @@ const SHOTS = [
   }],
   ['perso-04-colors', PG('colors'), async (p) => {
     check('04: mode reads Dark', await p.$eval(sel('personalization.colors.mode') + ' [aria-checked="true"]', (b) => b.textContent) === 'Dark');
-    check('04: the One Theme note is on the page', /keep Mantle's one theme/.test(await p.textContent('#page')));
+    check("04: the note says the modes below are Windows' and Mantle's look is set above", /below are Windows' own, for Windows and your apps\. Mantle's look is the setting above/.test(await p.textContent('#page')) &&
+      !/keep Mantle's one theme/.test(await p.textContent('#page')));
+    check('04: Mantle appearance is the first row on the page', await p.$eval('#page [data-row^="personalization."]', (e) => e.dataset.row) === 'personalization.colors.mantle-mode');
     check('04: 48 swatches, the current one pressed', await p.locator('button[data-hex]').count() === 48 && await p.$eval('button[data-hex="#D13438"]', (b) => b.getAttribute('aria-pressed')) === 'true');
     check('04: the accent value is shown', /#D13438/.test(await rowText(p, 'personalization.colors.accent') || ''));
     check('04: accent on Start says Mantle replaces it', /Mantle replaces Start and the taskbar/.test(await rowText(p, 'personalization.colors.accent-start') || ''));
@@ -267,6 +278,63 @@ const SHOTS = [
     check('11: the rows say why they could not be read', /Windows' background could not be read: (Mantle's connection to Windows is restarting|Windows took too long to answer|something went wrong inside Mantle|this needs a newer version of Mantle|Windows did not allow it)/.test(await rowText(p, 'personalization.background.fit') || ''));
     check('11: nothing threw while drawing', !/could not be drawn/.test(await p.textContent('#page')));
   }],
+  ['perso-13-mantle-look', PG('colors'), async (p) => {
+    const MM = 'personalization.colors.mantle-mode';
+    const on = () => p.$eval(sel(MM) + ' [aria-checked="true"]', (b) => b.textContent).catch(() => null);
+    check('13: Mantle appearance draws Light / Dark / Match Windows', (await p.$$eval(sel(MM) + ' button[data-v]', (l) => l.map((b) => b.dataset.v + '=' + b.textContent).join(' '))) === 'light=Light dark=Dark system=Match Windows');
+    check('13: it reads Match Windows (the default)', await on() === 'Match Windows', await on());
+    const t0 = await rowText(p, MM) || '';
+    check("13: it says it is Mantle's own bar, panels and windows", /Mantle's own bar, panels and windows/.test(t0), t0);
+    check("13: it says which way Windows is set right now", /Following Windows: dark right now/.test(t0), t0);
+    check('13: the page never set data-theme (no ?theme= given)', await p.evaluate(() => document.documentElement.dataset.theme) === undefined);
+    await p.evaluate(() => { window.__lookEvents = []; window.addEventListener('mantle-theme', (e) => window.__lookEvents.push(e.detail.theme)); });
+    await p.click(sel(MM) + ' button[data-v="light"]');
+    await p.waitForTimeout(300);
+    const c = await calls(p, 'theme.set');
+    check('13: a click sends theme.set { mode: light }', c.length === 1 && c[0].args.mode === 'light' && Object.keys(c[0].args).length === 1, JSON.stringify(c));
+    const t1 = await rowText(p, MM) || '';
+    check('13: the read-back shows Light, the Following line is gone', await on() === 'Light' && !/Following Windows/.test(t1), t1);
+    check('13: the mock painted light and fired mantle-theme, like the preload', await p.evaluate(() => document.documentElement.dataset.theme) === 'light' && (await p.evaluate(() => window.__lookEvents)).join() === 'light');
+    await p.click(sel(MM) + ' button[data-v="dark"]');
+    await p.waitForTimeout(300);
+    const c2 = await calls(p, 'theme.set');
+    check('13: Dark sends theme.set { mode: dark } and reads back Dark', c2.length === 2 && c2[1].args.mode === 'dark' && await on() === 'Dark', JSON.stringify(c2));
+    await p.click(sel(MM) + ' button[data-v="system"]');
+    await p.waitForTimeout(300);
+    await p.evaluate(() => window.__mockWindowsMode('light'));
+    await p.waitForTimeout(150);
+    const t2 = await rowText(p, MM) || '';
+    check("13: Match Windows follows a Windows change live (the 'theme' event)", await on() === 'Match Windows' && /Following Windows: light right now/.test(t2), t2);
+    await p.evaluate(() => window.__mockEmit('theme', { ok: true, mode: 'dark', theme: 'dark', windows: 'light', windowsWhy: null, pinned: 'This test run was started with --theme=dark, so changes last until it quits and are not saved', note: null, reason: null }));
+    await p.waitForTimeout(100);
+    const t3 = await rowText(p, MM) || '';
+    check("13: a 'theme' event from elsewhere moves the row, and pinned is shown", await on() === 'Dark' && /started with --theme=dark/.test(t3), t3);
+    await p.evaluate(() => window.__mockEmit('theme', { ok: true, mode: 'system', theme: 'light', windows: null, windowsWhy: 'made up: the Personalize key is missing', pinned: null, note: null, reason: null }));
+    await p.waitForTimeout(100);
+    const t4 = await rowText(p, MM) || '';
+    check("13: Windows' mode unknown says why", /Following Windows, but its mode could not be read \(made up: the Personalize key is missing\), so Mantle shows light/.test(t4), t4);
+    const w = await calls(p, SETC);
+    check("13: Mantle's look never touches Windows' own mode", w.length === 0, JSON.stringify(w));
+  }],
+  ['perso-14-mantle-look-refused', PG('colors', '&perso=themebad'), async (p) => {
+    const MM = 'personalization.colors.mantle-mode';
+    await p.click(sel(MM) + ' button[data-v="dark"]');
+    await p.waitForTimeout(300);
+    const t = await rowText(p, MM) || '';
+    check('14: a refused change springs back to Match Windows with its reason', await p.$eval(sel(MM) + ' [aria-checked="true"]', (b) => b.textContent) === 'Match Windows' &&
+      /its settings file is read-only/.test(t), t);
+  }],
+  ['perso-15-mantle-look-unreadable', PG('colors', '&mock=failing'), async (p) => {
+    const MM = 'personalization.colors.mantle-mode';
+    const t = await rowText(p, MM) || '';
+    check('15: an unreadable theme.get disables the row WITH the reason', /Mantle's appearance could not be read: made up: Mantle's settings file could not be read/.test(t) &&
+      await p.$$eval(sel(MM) + ' button[data-v]', (l) => l.length === 3 && l.every((b) => b.disabled)), t);
+    check("15: Windows' own rows still work", !(await p.$eval(sw('personalization.colors.transparency'), (b) => b.disabled)));
+  }],
+  ['perso-16-colors-dark', PG('colors', '&theme=dark'), async (p) => {
+    check('16: ?theme=dark paints dark before the page draws', await p.evaluate(() => document.documentElement.dataset.theme) === 'dark');
+    check('16: Match Windows says dark', /Following Windows: dark right now/.test(await rowText(p, 'personalization.colors.mantle-mode') || ''));
+  }],
   ['perso-12-usage', PG('device-usage'), async (p) => {
     check('12: seven uses, read-only with the reason', await p.locator('[data-row^="personalization.usage.list."]').count() === 7 && /Read only here: Windows keeps device usage/.test(await p.textContent('#page')));
   }],
@@ -275,10 +343,11 @@ const SHOTS = [
 async function browserTests() {
   const g = gaming();
   if (g !== 0) { console.log(g > 0 ? 'PART 2 SKIPPED: a game is running' : 'PART 2 SKIPPED: could not check for a running game'); failures.push('part 2 (the page on the mock) was not run'); return; }
-  if (!fs.existsSync(CHROME)) { failures.push('no chromium at ' + CHROME); return; }
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require(PLAYWRIGHT);
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  // lowcpu.js queues the launch behind the machine-wide one-browser lock for up to 8 minutes; playwright's
+  // default 3-minute launch timeout gave up on a queued launch first (2026-10-08, other lanes shooting)
+  const browser = await chromium.launch({ headless: true, timeout: 9 * 60 * 1000 });
   const open = async (ctx, query) => {
     const page = await ctx.newPage();
     const problems = [];

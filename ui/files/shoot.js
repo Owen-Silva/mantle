@@ -12,6 +12,8 @@
  *   FILES_BD=dark,light                 each shot over a made-up DARK and/or LIGHT window behind a mock
  *                                       of DWM's acrylic (<name>-dark.png, <name>-light.png), with the
  *                                       grey each surface reads printed (lane lookfiles, 2026-09-29)
+ *   FILES_THEME=dark|light              force <html data-theme> before first paint and fire 'mantle-theme'
+ *                                       (the harness stand-in for --theme=; lane dm-files, 2026-10-08)
  */
 require('C:/Users/user/dev-tools/tools/lowcpu.js');
 
@@ -35,6 +37,14 @@ const OUT = process.env.FILES_SHOTS || 'C:/Users/user/AppData/Local/Temp/claude/
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const HOME = 'C:\\Users\\Robin';
 const LOCK = path.join(os.tmpdir(), 'mantle-electron-lock');
+const THEME = ['dark', 'light'].includes(process.env.FILES_THEME) ? process.env.FILES_THEME : null;
+function THEME_INIT(t) {
+  /* an init script can run before <html> exists: set it the moment the parser makes it (before paint) */
+  const set = () => !!document.documentElement && !!(document.documentElement.dataset.theme = t);
+  if (!set()) new MutationObserver((_, mo) => { if (set()) mo.disconnect(); }).observe(document, { childList: true });
+  const fire = () => window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: t } }));
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fire, { once: true }); else fire();
+}
 const BDS = process.env.FILES_BD ? process.env.FILES_BD.split(',').filter((x) => x === 'dark' || x === 'light') : [null];
 const W = 1280;                                                  // the everyday window: 1280 wide
 const H = 760;
@@ -171,14 +181,14 @@ const SHOTS = [
    page. The root's and body's own backgrounds paint under negative z-index layers, but in the real window
    they are ON the acrylic: so they are lifted onto layers above it, kept in step with html's class
    (.inactive). Everything shown is made up. */
-function ACRYLIC(bd) {
+function ACRYLIC(bd, theme) {
   const BG = bd === 'dark'
     ? 'repeating-linear-gradient(180deg, transparent 0 10px, rgba(204,204,204,.55) 10px 13px, transparent 13px 19px), repeating-linear-gradient(90deg, #0c0c0c 0 40px, #141414 40px 90px, #0c0c0c 90px 130px)'
     : 'linear-gradient(90deg, #ffffff 0 30%, #f3f3f3 30% 32%, #ffffff 32% 100%), #fff';
   const put = () => {
     const mk = (id, z, st) => { const d = document.createElement('div'); d.id = id; Object.assign(d.style, { position: 'fixed', inset: '0', zIndex: String(z), pointerEvents: 'none' }, st || {}); return d; };
     const d = mk('__bd', -4, { inset: '-80px', filter: 'blur(40px)', background: BG });
-    const t = mk('__tint', -3, { background: 'rgba(243,243,243,.50)' });
+    const t = mk('__tint', -3, { background: theme === 'dark' ? 'rgba(32,32,32,.50)' : 'rgba(243,243,243,.50)' }); // DWM's dark frame tint when the window asks for a dark frame
     const r = mk('__root', -2), rb = mk('__body', -1);
     document.body.prepend(d, t, r, rb);
     const html = document.documentElement, body = document.body;
@@ -290,7 +300,8 @@ async function perf(browser, errors) {
       for (const bd of BDS) {
       const name = bd ? `${name0}-${bd}` : name0;
       const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
-      if (bd) await page.addInitScript(`(${ACRYLIC.toString()})(${JSON.stringify(bd)});`);
+      if (THEME) await page.addInitScript(`(${THEME_INIT.toString()})(${JSON.stringify(THEME)});`);
+      if (bd) await page.addInitScript(`(${ACRYLIC.toString()})(${JSON.stringify(bd)}, ${JSON.stringify(THEME)});`);
       page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
       page.on('console', (m) => { if (m.type() === 'error') errors.push(`${name}: console: ${m.text()}`); });
       await page.goto(`${PAGE}?path=${encodeURIComponent(start)}`);

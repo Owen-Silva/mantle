@@ -370,10 +370,9 @@ const SHOTS = [
 async function browserTests() {
   const g = gaming();
   if (g !== 0) { console.log(g > 0 ? 'PART 2 SKIPPED: a game is running' : 'PART 2 SKIPPED: could not check for a running game'); failures.push('part 2 (the page on the mock) was not run'); return; }
-  if (!fs.existsSync(CHROME)) { failures.push('no chromium at ' + CHROME); return; }
   const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  const browser = await require('../test-browser.js').launch(chromium);
   try {
     const ctx = await browser.newContext({ viewport: { width: 1040, height: 760 }, deviceScaleFactor: 1.25, colorScheme: 'light' });
     await ctx.addInitScript(FAKE);

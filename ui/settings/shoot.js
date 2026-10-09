@@ -9,6 +9,7 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
  * shot also reports page errors, console errors and any text box whose content overflows it.
  *
  *   node ui/settings/shoot.js            (ONLY=01,07 shoots just those)
+ *   MANTLE_THEME=dark node ui/settings/shoot.js     (dark glass; test-browser.js sets <html data-theme>)
  * Owen gaming (a game process running) = no shots at all.
  */
 'use strict';
@@ -25,7 +26,7 @@ const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 
 function gaming() {
   try {
-    const n = execSync('powershell -NoProfile -Command "@(Get-Process javaw,Minecraft*,RobloxPlayerBeta,*Riot*,VALORANT* -ErrorAction SilentlyContinue).Count"', { encoding: 'utf8' });
+    const n = execSync('powershell -NoProfile -Command "@(Get-Process javaw,Minecraft*,RobloxPlayerBeta,VALORANT* -ErrorAction SilentlyContinue).Count"', { encoding: 'utf8' });
     return parseInt(n.trim(), 10) || 0;
   } catch (_) { return -1; }
 }
@@ -43,14 +44,20 @@ const SHOTS = [
   ['10-failing', '?section=home&mock=failing'],
   ['11-network', '?section=network'],
   ['12-nobridge', '?section=sound&mock=nobridge'],
+  // the glass material: main's acrylic, read back ok, over the mock's made-up desktop
+  ['13-glass', '?section=home&glass=acrylic&glassok=1&desk=1'],
+  ['14-glass-apps', '?section=apps&glass=acrylic&glassok=1&desk=1'],
+  // the eleven Windows categories as their real files (each read answers ok:false on the mock, so these
+  // are their overview + error states; their page tests shoot them with data)
+  ...['system', 'devices', 'internet', 'personalization', 'applist', 'accounts', 'time', 'gaming', 'accessibility', 'privacy', 'update']
+    .map((id, i) => [String(20 + i) + '-' + id, '?section=' + id + '&real=1']),
 ];
 
 (async () => {
   const g = gaming();
   if (g !== 0) { process.stdout.write(g > 0 ? 'a game is running: no shots taken\n' : 'could not check for a running game: no shots taken\n'); return; }
-  if (!fs.existsSync(CHROME)) throw new Error('no chromium at ' + CHROME);
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  const browser = await require('./test-browser.js').launch(chromium);
   const ctx = await browser.newContext({ viewport: { width: 1040, height: 700 }, deviceScaleFactor: 1.25, colorScheme: 'light' });
   let bad = 0;
   for (const [name, query, prep] of SHOTS) {

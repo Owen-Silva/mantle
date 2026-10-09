@@ -129,6 +129,10 @@ body.mode-picker .picker, body.mode-assist .assist, body.mode-notice .notice { d
 /* hover: the accent hairline; chosen: the grey wash over the zone and the accent ring (Settings' shape) */
 .zone:hover { box-shadow: inset 0 0 0 1px var(--lg-acc); }
 .zone.sel, .zone:active { background: linear-gradient(var(--lg-press), var(--lg-press)), var(--lg-fill-fb); box-shadow: inset 0 0 0 2px var(--lg-acc); }
+/* Dark: --lg-fill-fb is darker than the face, so the zones read as holes in the layout instead of
+   the raised cells they are in light. Raised in dark is lighter: the tile wash. */
+:root[data-theme="dark"] .zone { background: var(--lg-tile); }
+:root[data-theme="dark"] .zone.sel, :root[data-theme="dark"] .zone:active { background: linear-gradient(var(--lg-press), var(--lg-press)), var(--lg-tile); }
 
 /* ---- Snap Assist ----------------------------------------------------------------------------- */
 

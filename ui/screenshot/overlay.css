@@ -79,6 +79,9 @@ body.selecting #hint, body.selecting #bar { opacity: 0; transition: opacity 120m
 #bar button:active { background: var(--lg-press); }
 #bar button[aria-pressed="true"] { background: var(--lg-fill-strong); box-shadow: 0 0 0 1px var(--lg-edge-out); color: var(--lg-ink); font-weight: 600; }
 #bar button[aria-pressed="true"] svg { color: var(--lg-acc); }
+/* Dark: --lg-fill-strong over the ground is DARKER than the ground, so the chosen mode read as sunk and
+   a hovered one (white .07) looked more chosen than it. Raised in dark is lighter: the press wash. */
+:root[data-theme="dark"] #bar button[aria-pressed="true"] { background: var(--lg-press); }
 #bar button[aria-pressed="true"]:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 #bar button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 #bar #close { padding: 0; width: 32px; justify-content: center; }

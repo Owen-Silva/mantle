@@ -134,7 +134,10 @@ shortcuts about brightness mute refresh arrow chev warn lock moon mic game shiel
 
 Every control is the built-in rows' own markup, so every section looks identical in the ONE theme
 (`ui/shared/glass-light.css`, `--lg-*` only). Do not add CSS of your own for a control the kit has;
-ask the settings lane for a missing one.
+ask the settings lane for a missing one. The theme has a light and a dark set (`<html data-theme="dark">`
+re-values every `--lg-*` token), so a page never writes a colour literal: an inline style uses
+`var(--lg-...)`, an SVG uses `currentColor`, and anything drawn in JS reads the token at draw time and
+repaints on the `mantle-theme` window event. Shots and page tests take `MANTLE_THEME=dark`.
 
 **Every control shows its reason inline** (Owen's No Silent Failures rule). A control that cannot act
 gets `reason: 'why'` (a warning line under it) and usually `disabled: true`; `info: 'words'` is a

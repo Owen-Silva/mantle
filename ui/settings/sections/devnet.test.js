@@ -29,7 +29,7 @@ const check = (name, ok, detail) => { if (ok) passed++; else failures.push(detai
 
 function gaming() {
   try {
-    const n = execSync('powershell -NoProfile -Command "@(Get-Process javaw,Minecraft*,RobloxPlayerBeta,*Riot*,VALORANT* -ErrorAction SilentlyContinue).Count"', { encoding: 'utf8' });
+    const n = execSync('powershell -NoProfile -Command "@(Get-Process javaw,Minecraft*,RobloxPlayerBeta,VALORANT* -ErrorAction SilentlyContinue).Count"', { encoding: 'utf8' });
     return parseInt(n.trim(), 10) || 0;
   } catch (_) { return -1; }
 }
@@ -136,9 +136,8 @@ const SHOTS = [
 (async () => {
   const g = gaming();
   if (g !== 0) { process.stdout.write(g > 0 ? 'a game is running: nothing run\n' : 'could not check for a running game: nothing run\n'); return; }
-  if (!fs.existsSync(CHROME)) throw new Error('no chromium at ' + CHROME);
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  const browser = await require('../test-browser.js').launch(chromium);
   const ctx = await browser.newContext({ viewport: { width: 1040, height: 760 }, deviceScaleFactor: 1.25, colorScheme: 'light' });
   await ctx.addInitScript({ path: FAKE });
   await ctx.addInitScript(`window.__DEVNET_SECS = ${JSON.stringify(SECS)};`);
