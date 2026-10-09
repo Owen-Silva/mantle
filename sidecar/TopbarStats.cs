@@ -17,6 +17,9 @@
 //         and Shared Usage for memory. This machine (2026-09-24) has one Intel UHD (integrated),
 //         so dedicated memory is small and shared is the real figure; both are shown.
 //   NET   PDH \Network Interface(*)\Bytes Received/sec and Bytes Sent/sec, summed.
+//   PING  sidecar/TopbarPing.cs: one ICMP echo every 2 s (1 s timeout) to 1.1.1.1, 8.8.8.8 as the
+//         fallback, started from this thread's tick and answered on the thread pool (lane
+//         topbar-ping, 2026-10-09). It pauses with everything else here.
 //   TOP 5 (only while a stat's dropdown is open, 10 s after the last ask): one
 //         NtQuerySystemInformation(SystemProcessInformation) snapshot - every process's CPU time
 //         and private working set in a single call, no handle opened on any process.
@@ -80,7 +83,7 @@ namespace Mantle {
     static string StatsCmd(Dictionary<string, object> req, ref object result) {
       bool on = Json.GetBool(req, "on", true);
       string detail = Json.GetString(req, "detail");
-      if (!string.IsNullOrEmpty(detail)) {
+      if (!string.IsNullOrEmpty(detail) && detail != "ping") {   // the ping has no top processes
         _detailKind = detail;
         Interlocked.Exchange(ref _detailUntil, DateTime.UtcNow.AddSeconds(10).Ticks);
         _wake.Set();   // a sample with the top processes now, not up to a second from now
@@ -102,7 +105,7 @@ namespace Mantle {
       }
       if (on && existed && !_wasOn) _wake.Set();   // resume a paused loop; a new one samples at once by itself
       _wasOn = on;
-      result = Json.Obj("on", on, "periodMs", PeriodMs, "watch", _watch != null ? _watch.Why : "no watch window");
+      result = Json.Obj("on", on, "periodMs", PeriodMs, "pingEveryMs", TopbarPing.EveryMs, "watch", _watch != null ? _watch.Why : "no watch window");
       return null;
     }
 
@@ -167,10 +170,10 @@ namespace Mantle {
         q = Open();
         next = clock.ElapsedMilliseconds;   // opening the counters takes ~1 s the first time: the grid starts after it
         while (true) {
-          if (!_on) { _wake.WaitOne(); next = clock.ElapsedMilliseconds; continue; }
+          if (!_on) { TopbarPing.Reset(); _wake.WaitOne(); next = clock.ElapsedMilliseconds; continue; }
           string pause = _locked ? "the session is locked" : _displayOff ? "the screen is off" : null;
           if (pause != null) {
-            if (!wasPaused) Features.Event("topbarstats", Json.Obj("paused", true, "reason", pause));
+            if (!wasPaused) { TopbarPing.Reset(); Features.Event("topbarstats", Json.Obj("paused", true, "reason", pause)); }
             wasPaused = true;
             _wake.WaitOne(PeriodMs);
             next = clock.ElapsedMilliseconds;
@@ -187,6 +190,7 @@ namespace Mantle {
           StatsNative.GetThreadTimes(StatsNative.GetCurrentThread(), out x, out y, out k0, out u0);
           var sw = Stopwatch.StartNew();
           IDictionary sample = Sample(q);
+          sample["ping"] = TopbarPing.Step(clock.ElapsedMilliseconds);   // starts an echo every 2 s; the reply lands off this thread
           long k1, u1;
           StatsNative.GetThreadTimes(StatsNative.GetCurrentThread(), out x, out y, out k1, out u1);
           sample["ms"] = Math.Round(sw.Elapsed.TotalMilliseconds, 2);

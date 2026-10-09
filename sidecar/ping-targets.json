@@ -1,0 +1,23 @@
+{
+  "_about": [
+    "The top bar's PING readout (sidecar/TopbarPing.cs) reads this file at start. Data, not code: add a game or a region as a new set and point 'use' at it.",
+    "Each target: name (shown in the tooltip), host (a public endpoint IN or NEXT TO that data centre: never a game server, never the game's client), via (where the host is), port (TCP fallback when the host does not answer ICMP echo).",
+    "VALORANT NA (2026-10-09, lane topbar-ping): Riot runs Valorant's game servers on AWS Outposts racks plus AWS Global Accelerator, in its own chosen sites; game servers do not answer ping. The six NA locations are the ones community tools list (N. California, Oregon, Texas, Illinois, N. Virginia, Georgia). Hosts: the AWS region endpoint where an AWS region is in that place, else the Akamai/Linode speed-test host in that city (they answer ICMP for exactly this use). Measured from Owen's PC 2026-10-09: all six answer ICMP.",
+    "HARD RULE: plain network round trips to public endpoints only. Nothing here reads, touches or talks to Riot's client, its local API or Vanguard."
+  ],
+  "use": "valorant-na",
+  "sets": {
+    "valorant-na": {
+      "label": "Valorant",
+      "pickEveryMin": 10,
+      "targets": [
+        { "name": "US West (N. California)", "host": "dynamodb.us-west-1.amazonaws.com", "via": "AWS us-west-1", "port": 443 },
+        { "name": "US West (Oregon)", "host": "dynamodb.us-west-2.amazonaws.com", "via": "AWS us-west-2", "port": 443 },
+        { "name": "US Central (Texas)", "host": "speedtest.dallas.linode.com", "via": "Akamai/Linode Dallas", "port": 443 },
+        { "name": "US Central (Illinois)", "host": "speedtest.chicago.linode.com", "via": "Akamai/Linode Chicago", "port": 443 },
+        { "name": "US East (N. Virginia)", "host": "dynamodb.us-east-1.amazonaws.com", "via": "AWS us-east-1", "port": 443 },
+        { "name": "US East (Georgia)", "host": "speedtest.atlanta.linode.com", "via": "Akamai/Linode Atlanta", "port": 443 }
+      ]
+    }
+  }
+}

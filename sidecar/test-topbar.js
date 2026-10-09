@@ -231,6 +231,20 @@ function flat(items, out) {
       Math.abs(last.mem.total - os.totalmem()) / os.totalmem() < 0.01);
     t.check('stats: GPU is a number or carries its reason', typeof last.gpu.pct === 'number' || !!last.gpu.reason, JSON.stringify(last.gpu).slice(0, 200));
     t.check('stats: network rates are numbers', typeof last.net.down === 'number' && typeof last.net.up === 'number');
+    // PING (sidecar/TopbarPing.cs, lane topbar-ping): the closest Valorant NA stand-in, every 2 s
+    const pg = last.ping || {};
+    const firstPing = got.length ? (got[0][1].ping || {}) : {};
+    t.check('ping: the first sample says measuring, with a reason', firstPing.state === 'measuring' && firstPing.ms == null && !!firstPing.reason, JSON.stringify(firstPing).slice(0, 200));
+    t.check('ping: a round trip in ms to a named server (or a reason)', (pg.state === 'ok' && typeof pg.ms === 'number' && pg.ms >= 0 && pg.ms < 1100 && !!pg.server && /^(icmp|tcp)$/.test(pg.method))
+      || (pg.state !== 'ok' && pg.ms == null && !!pg.reason), JSON.stringify(pg).slice(0, 300));
+    t.check('ping: every target of the list was measured once at start', Array.isArray(pg.picked) && pg.picked.length >= 1 && pg.picked.every((p) => typeof p.ms === 'number' || !!p.why) && pg.picks === 1,
+      JSON.stringify(pg.picked));
+    if (pg.state === 'ok' && pg.picked) t.check('ping: the chosen server is the lowest of the pick', pg.picked.filter((p) => typeof p.ms === 'number').every((p) => p.ms >= pg.picked.find((q) => q.name === pg.server).ms));
+    const echoSpan = got.filter(([, e]) => e.ping && e.ping.echoes > 0);
+    const echoN = echoSpan.length > 1 ? echoSpan[echoSpan.length - 1][1].ping.echoes - echoSpan[0][1].ping.echoes : -1;
+    const echoS = echoSpan.length > 1 ? (echoSpan[echoSpan.length - 1][1].at - echoSpan[0][1].at) / 1000 : 0;
+    t.check('ping: one echo every ~2 s', echoN >= Math.floor(echoS / 2) - 1 && echoN <= Math.ceil(echoS / 2) + 1, `${echoN} echoes in ${echoS.toFixed(1)} s`);
+    console.log(`  ping: ${pg.state} ${pg.ms} ms to ${pg.label} ${pg.server} (${pg.via}, ${pg.method}); pick: ${(pg.picked || []).map((p) => `${p.name} ${p.ms != null ? p.ms : 'x'}`).join(', ')}`);
     const costs = got.map(([, e]) => e.costMs).sort((a, b) => a - b);
     const wall = got.map(([, e]) => e.ms).sort((a, b) => a - b);
     const med = (a) => a[Math.floor(a.length / 2)];
@@ -258,6 +272,37 @@ function flat(items, out) {
     const onRate = (c2 - c1) / ((tc2 - tc1) / 1000), offRate = (c4 - c3) / ((tc4 - tc3) / 1000);
     console.log(`  steady state, whole sidecar: stats ON ${onRate.toFixed(1)} ms CPU/s, OFF ${offRate.toFixed(1)} ms CPU/s -> the stats cost ~${(onRate - offRate).toFixed(1)} ms CPU per 1 s tick (${((onRate - offRate) / 10).toFixed(2)}% of one core)`);
     clearInterval(stamper);
+
+    // ---- ping: the failure and fallback paths, on throwaway sidecars with a TEST target list --------
+    // MANTLE_PING_TARGETS is honoured by a --passive sidecar only. Nothing on Owen's network is
+    // changed: 192.0.2.1 is TEST-NET-1 (RFC 5737, never routed), "nope.invalid" never resolves (RFC
+    // 6761), and the TCP case is an AWS API endpoint that answers TCP 443 but not ICMP.
+    const pingWith = async (name, targets, ms) => {
+      const file = path.join(os.tmpdir(), `mantle-ping-${name}-${process.pid}.json`);
+      fs.writeFileSync(file, JSON.stringify({ use: 'x', sets: { x: { label: 'Test', targets } } }));
+      process.env.MANTLE_PING_TARGETS = file;
+      let ps = null;
+      try {
+        ps = await T.startPassive({ exe: s.exe });
+        await ps.call('topbar.stats', { on: true }, 4000);
+        await T.sleep(ms);
+        return ps.collect('topbarstats').filter((e) => !e.paused).map((e) => e.ping || {});
+      } finally {
+        delete process.env.MANTLE_PING_TARGETS;
+        if (ps) { try { ps.proc.kill(); } catch (_) { /* gone */ } }
+        try { fs.unlinkSync(file); } catch (_) { /* gone */ }
+      }
+    };
+    const dead = await pingWith('dead', [{ name: 'Nowhere', host: '192.0.2.1', port: 443 }, { name: 'Nobody', host: 'nope.invalid', port: 443 }], 5000);
+    const dl0 = dead[dead.length - 1] || {};
+    t.check('ping: nothing answers -> no value, a reason in words', dl0.ms == null && /^(unreachable|offline|timeout)$/.test(dl0.state) && /none of the 2 Test servers answered|offline/.test(dl0.reason || ''),
+      JSON.stringify(dl0).slice(0, 300));
+    t.check('ping: each dead target says why', Array.isArray(dl0.picked) && dl0.picked.every((p) => p.ms == null && /no reply|could not/.test(p.why || '')), JSON.stringify(dl0.picked));
+    t.check('ping: the test list is named in the payload', /MANTLE_PING_TARGETS/.test(dl0.test || ''));
+    console.log('  ping, dead list: ' + dl0.reason + ' | ' + (dl0.picked || []).map((p) => p.why).join(' | '));
+    const tcp = await pingWith('tcp', [{ name: 'TCP only', host: 'ec2.us-west-1.amazonaws.com', port: 443 }, { name: 'Nowhere', host: '192.0.2.1', port: 443 }], 7000);
+    const tl = tcp[tcp.length - 1] || {};
+    t.check('ping: a host without ICMP is timed by a TCP connect', tl.state === 'ok' && tl.method === 'tcp' && typeof tl.ms === 'number' && tl.server === 'TCP only', JSON.stringify(tl).slice(0, 300));
 
     // ---- the fixture --------------------------------------------------------------------------
     buildFixture();

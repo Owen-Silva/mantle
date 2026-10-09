@@ -101,7 +101,7 @@ async function fitChecks(browser, check) {
         n++;
         const errs = [];
         if (!(Math.abs(m.rightInset - m.leftInset) <= 1 && m.rightEnd <= m.vis - m.leftInset + 0.5)) errs.push(`stats end ${m.rightInset.toFixed(1)} px from the screen edge, left inset ${m.leftInset.toFixed(1)}`);
-        if (!m.paused && (m.cellCount !== 4 || !m.cellsOn)) errs.push(`stat cells ${m.cellCount}, all on screen ${m.cellsOn}`);
+        if (!m.paused && (m.cellCount !== 5 || !m.cellsOn)) errs.push(`stat cells ${m.cellCount}, all on screen ${m.cellsOn}`);
         if (m.scroll[0] !== m.scroll[1] || m.scroll[2] !== m.scroll[3] || m.scroll[4] !== 0) errs.push('scrolls: ' + JSON.stringify(m.scroll));
         if (m.wrapped || m.barH > 28) errs.push(`wrapped ${m.wrapped}, bar content height ${m.barH}`);
         if (m.leftCut > 0.5) errs.push(`the last title on the left is cut by ${m.leftCut.toFixed(1)} px`);
@@ -433,7 +433,7 @@ async function otherPages(browser, check) {
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  const browser = await chromium.launch(fs.existsSync(CHROME) ? { executablePath: CHROME, headless: true } : { headless: true });   // the 1234 build is gone (2026-10-05): playwright's own then
   let fails = 0, checks = 0;
   const check = (name, ok, detail) => { checks++; if (!ok) { fails++; console.log('  FAIL ' + name + (detail ? ' (' + detail + ')' : '')); } };
   try {
@@ -451,9 +451,9 @@ async function otherPages(browser, check) {
       await page.waitForFunction(() => document.documentElement.dataset.ready === '1');
       const widths = [];
       for (const s of [
-        { cpu: { pct: 5 }, mem: { used: 0.1 * 2 ** 30, total: 15.7 * 2 ** 30 }, gpu: { pct: 0 }, net: { down: 0, up: 0 } },
-        { cpu: { pct: 100 }, mem: { used: 15.6 * 2 ** 30, total: 15.7 * 2 ** 30 }, gpu: { pct: 100 }, net: { down: 999 * 2 ** 20, up: 99 * 2 ** 20 } },
-        { cpu: { pct: 47.5 }, mem: { used: 9.9 * 2 ** 30, total: 15.7 * 2 ** 30 }, gpu: { pct: 9 }, net: { down: 512 * 1024, up: 2 * 2 ** 20 } },
+        { cpu: { pct: 5 }, mem: { used: 0.1 * 2 ** 30, total: 15.7 * 2 ** 30 }, gpu: { pct: 0 }, net: { down: 0, up: 0 }, ping: { state: 'ok', ms: 0 } },
+        { cpu: { pct: 100 }, mem: { used: 15.6 * 2 ** 30, total: 15.7 * 2 ** 30 }, gpu: { pct: 100 }, net: { down: 999 * 2 ** 20, up: 99 * 2 ** 20 }, ping: { state: 'ok', ms: 999 } },
+        { cpu: { pct: 47.5 }, mem: { used: 9.9 * 2 ** 30, total: 15.7 * 2 ** 30 }, gpu: { pct: 9 }, net: { down: 512 * 1024, up: 2 * 2 ** 20 }, ping: { state: 'timeout', ms: null, reason: 'no reply' } },
       ]) {
         widths.push(await page.evaluate((st) => { window.mantle.emit('topbar.stats', st);
           return [...document.querySelectorAll('.st')].map((b) => Math.round(b.getBoundingClientRect().width * 10) / 10); }, s));

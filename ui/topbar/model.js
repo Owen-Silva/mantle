@@ -173,7 +173,30 @@
       { key: 'gpu', label: 'GPU', value: pct(gpu.pct), why: gpu.pct == null ? (gpu.reason || 'no GPU reading yet') : null },
       { key: 'net', label: 'NET', value: net.down == null ? '--' : '↓' + rate(net.down) + ' ↑' + rate(net.up),
         why: net.down == null ? (net.reason || 'no network reading yet') : null },
+      pingCell(s.ping),
     ];
+  }
+  /* PING (lane topbar-ping, 2026-10-09): the round trip to the closest Valorant NA data centre's
+     stand-in (sidecar/TopbarPing.cs, list in sidecar/ping-targets.json). Whole milliseconds; a value
+     at or over PING_WARN_MS is drawn in --lg-warn (class "hi"). No reply, offline or still measuring:
+     "--" like the other stats, with the sidecar's reason as the tooltip. */
+  var PING_WARN_MS = 100;
+  function pingMs(ms) {
+    if (typeof ms !== 'number' || !isFinite(ms) || ms < 0) return '--';
+    var r = Math.round(ms);
+    return r < 1 ? '<1 ms' : r + ' ms';
+  }
+  function pingName(p) {
+    return ((p.label ? p.label + ' ' : '') + (p.server || '')).trim();
+  }
+  function pingCell(p) {
+    p = p || {};
+    if (p.state === 'ok' && typeof p.ms === 'number' && isFinite(p.ms) && p.ms >= 0) {
+      var v = pingMs(p.ms), hi = Math.round(p.ms) >= PING_WARN_MS;
+      return { key: 'ping', label: 'PING', value: v, why: null, warn: hi,
+        title: (pingName(p) || 'Ping') + ', ' + v + (hi ? ' (high)' : '') };
+    }
+    return { key: 'ping', label: 'PING', value: '--', warn: false, why: p.reason || (p.state ? 'no reply yet' : 'no ping reading yet') };
   }
 
   /* PEEK (lane tbpeek, 2026-09-27): hidden by hand, the bar can come out while the cursor rests on the
@@ -305,6 +328,6 @@
   }
 
   return { layoutItems: layoutItems, layoutMenus: layoutMenus, appName: appName, cleanItems: cleanItems, newWindowArgs: newWindowArgs, appMenu: appMenu,
-           titles: titles, fitTitles: fitTitles, MANTLE_MENU: MANTLE_MENU, pct: pct, gb: gb, rate: rate, statCells: statCells, base: base, peekMenu: peekMenu,
+           titles: titles, fitTitles: fitTitles, MANTLE_MENU: MANTLE_MENU, pct: pct, gb: gb, rate: rate, statCells: statCells, pingCell: pingCell, pingMs: pingMs, pingName: pingName, PING_WARN_MS: PING_WARN_MS, base: base, peekMenu: peekMenu,
            timerCell: timerCell, timerMenu: timerMenu, notesButton: notesButton, clockAt: clockAt, TIMER_PRESETS: TIMER_PRESETS };
 }));

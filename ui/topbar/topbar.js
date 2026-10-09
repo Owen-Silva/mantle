@@ -69,6 +69,8 @@
     const vis = visibleWidth();
     S.vis = vis;
     barEl.style.right = Math.max(0, (window.innerWidth || vis) - vis) + 'px';
+    const bd = document.getElementById('bdrop');   // the glass's picture ends where the strip does
+    if (bd) bd.style.right = barEl.style.right;
     return vis;
   }
 
@@ -102,8 +104,8 @@
     if (S.paused) html += `<span class="paused" title="${esc(S.paused)}">stats paused</span>`;
     else {
       html += M.statCells(S.stats).map((c) =>
-        `<button class="t st${c.why ? ' na' : ''}${S.open && S.open.stat === c.key ? ' open' : ''}" data-k="${c.key}"` +
-        ` title="${esc(c.why || '')}"><span class="k">${c.label}</span><span class="v">${esc(c.value)}</span></button>`).join('');
+        `<button class="t st${c.why ? ' na' : ''}${c.warn ? ' hi' : ''}${S.open && S.open.stat === c.key ? ' open' : ''}" data-k="${c.key}"` +
+        ` title="${esc(c.title || c.why || '')}"><span class="k">${c.label}</span><span class="v">${esc(c.value)}</span></button>`).join('');
     }
     html += toolsHtml();
     rightEl.innerHTML = html;
@@ -550,10 +552,18 @@
     } else if (o.stat === 'net') {
       html += `<h4>Network · ↓${M.rate(d.down)} ↑${M.rate(d.up)}</h4>`;
       (d.adapters || []).forEach((a) => { html += row(a.name, `↓${M.rate(a.down)} ↑${M.rate(a.up)}`); });
+    } else if (o.stat === 'ping') {
+      // PING (lane topbar-ping): the server it measures, then every server of the last pick (the closest wins)
+      const ok = d.state === 'ok';
+      html += `<h4>Ping · ${ok ? M.pingMs(d.ms) : '--'}${d.server ? ' · ' + esc(M.pingName(d)) : ''}</h4>`;
+      if (d.server) html += row('Measured to', `${d.host || ''}${d.via ? ' (' + d.via + ')' : ''}`) + row('Every', `${Math.round((d.everyMs || 2000) / 1000)} s, ${d.method === 'tcp' ? 'by connection time' : 'by ping'}`);
+      if (d.picked && d.picked.length) html += `<h4>Closest server, picked every ${Math.round((d.pickEveryMs || 600000) / 60000)} min</h4>` + d.picked.map((p) => row(p.name, p.ms != null ? M.pingMs(p.ms) : /look up/.test(p.why || '') ? 'name not found' : 'no reply')).join('');
     }
-    if (d.reason) html += `<div class="info${d.pct == null && d.used == null && d.down == null ? ' bad' : ''}">${esc(d.reason)}</div>`;
-    if (!d.top && o.stat !== 'net') html += '<div class="info">Top processes arrive with the next sample.</div>';
-    html += '<div class="sep"></div><div class="r" data-act="taskmgr"><span class="ck"></span><span class="lb">Open Task Manager</span><span class="kb">Ctrl+Shift+Esc</span><span class="ar"></span></div>';
+    const ping = o.stat === 'ping';
+    if (d.reason) html += `<div class="info${ping ? (d.state !== 'ok' && d.state !== 'measuring' ? ' bad' : '') : d.pct == null && d.used == null && d.down == null ? ' bad' : ''}">${esc(d.reason)}</div>`;
+    if (ping && d.test) html += `<div class="info">${esc(d.test)}</div>`;
+    if (!d.top && o.stat !== 'net' && !ping) html += '<div class="info">Top processes arrive with the next sample.</div>';
+    if (!ping) html += '<div class="sep"></div><div class="r" data-act="taskmgr"><span class="ck"></span><span class="lb">Open Task Manager</span><span class="kb">Ctrl+Shift+Esc</span><span class="ar"></span></div>';
     // The 1 s sample refreshes the SAME element: a new one each second replayed the fade-in and
     // lost the scroll position.
     let dd = menusEl.querySelector('.dd.stat');
@@ -750,6 +760,82 @@
   });
   mantle.on('notes.state', (st) => { S.notes = st && typeof st === 'object' ? st : null; renderStats(); });
   document.addEventListener('visibilitychange', retick);
+
+  /* ---- THE GLASS, dark only (lane see-topbar, 2026-10-09) ------------------------------------
+     Main (lib/features/_topbar-glass.js) sends 'topbar.backdrop' {png, under, ms}: a 1/4-scale
+     picture of the desktop's own top strip, the thing really under this window (lib/topbar-strip.js),
+     with `under` = Windows' wallpaper where the desktop page draws none; or {off, why, failure, keep}.
+     #bdrop shows it, #bar's backdrop-filter blurs it (topbar.css). The tint is solved from the picture:
+     the thinnest one (never under --lg-fill) at which ink-2, the quietest word on the strip, reads
+     >= 4.5:1 against the brightest pixel of the blurred picture (model.js glassTint). A FAILURE says
+     why, in the Mantle menu's first row and once on the strip; light / a peek / a full-screen window
+     under the bar are the design, not a fault, and only put the bar on its fallback tint. */
+  const GM = window.TopbarGlass;   // ui/topbar/glass.js: the pure parts
+  const bdropEl = document.getElementById('bdrop');
+  const GS = { png: null, under: null, seq: 0, settle: null, why: null, failure: false, tint: null, solve: null };
+  window.__topbarGlass = GS;   // read-only, for the shots / the --test harness
+  const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  function glassOff(why, failure, keep) {
+    const was = GS.failure ? GS.why : null;
+    GS.why = why || null; GS.failure = !!failure;
+    GM.glassMenu(M.MANTLE_MENU, GS.failure ? GS.why : null);
+    if (GS.failure && GS.why !== was) setNote('The top bar is not frosted: ' + GS.why);
+    if (keep && GS.png) return;   // hidden: the last picture waits for the next show
+    GS.png = null; GS.under = null; GS.settle = null; GS.seq++;
+    document.body.classList.remove('glass');
+    bdropEl.style.backgroundImage = '';
+    barEl.style.removeProperty('--tb-tint');
+  }
+  function setBackdrop(p) {
+    if (!p || p.off) { glassOff(p && p.why, p && p.failure, p && p.keep); return; }
+    const ok = (s) => typeof s === 'string' && s.slice(0, 5) === 'data:';
+    if (!ok(p.png) || (p.under != null && !ok(p.under))) {
+      glassOff('Mantle sent the top bar a picture of the desktop it cannot use', true, false);
+      return;
+    }
+    if (GS.failure) GM.glassMenu(M.MANTLE_MENU, null);
+    GS.why = null; GS.failure = false;
+    GS.png = p.png; GS.under = p.under || null;
+    bdropEl.style.backgroundImage = 'url("' + p.png + '")' + (p.under ? ', url("' + p.under + '")' : '');
+    document.body.classList.add('glass');
+    solveTint(++GS.seq);
+  }
+  // The tint for THIS picture. Until it is solved the bar shows --lg-fill-fb's weight (no flash of a
+  // too-thin tint over a bright picture): the first solve lands within a frame or two.
+  function loadImg(src) {
+    return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('the picture did not decode')); im.src = src; });
+  }
+  async function solveTint(seq) {
+    if (!GS.settle) barEl.style.setProperty('--tb-tint', cssVar('--lg-fill-fb') || 'rgba(30,31,34,.56)');
+    let im, un = null;
+    try { im = await loadImg(GS.png); if (GS.under) un = await loadImg(GS.under); } catch (e) {
+      if (seq === GS.seq) glassOff('the picture of the desktop under the bar did not decode', true, false);
+      return;
+    }
+    if (seq !== GS.seq) return;   // a newer picture is on its way
+    const w = im.naturalWidth, h = im.naturalHeight;
+    if (!w || !h) return;
+    const cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    if (un) g.drawImage(un, 0, 0, w, h);
+    g.drawImage(im, 0, 0, w, h);
+    const data = g.getImageData(0, 0, w, h).data;
+    const f = GM.parseFilter(cssVar('--lg-blur'));
+    const cssW = bdropEl.clientWidth || barEl.clientWidth || window.innerWidth || w;
+    const fill = GM.parseColor(cssVar('--lg-fill')) || { r: 30, g: 31, b: 34, a: 0.50 };
+    const ceil = GM.parseColor(cssVar('--lg-fill-pop')) || { a: 0.82 };
+    const ink = GM.parseColor(cssVar('--lg-ink-2')) || { r: 196, g: 199, b: 206 };
+    const px = GM.glassPixels(data, w, h, { sigma: f.blur * (w / cssW), saturate: f.saturate, brightness: f.brightness });
+    const r = GM.glassTint({ px, ink, tint: fill, need: 4.5, floor: fill.a, ceil: ceil.a, step: 0.02 });
+    GS.solve = r;
+    GS.settle = GM.glassSettle(GS.settle, r.alpha, 4);
+    GS.tint = GS.settle.cur;
+    barEl.style.setProperty('--tb-tint', 'rgba(' + fill.r + ',' + fill.g + ',' + fill.b + ',' + GS.tint + ')');
+  }
+  mantle.on('topbar.backdrop', setBackdrop);
+  // a theme change re-reads the tokens: the next picture is solved against the new ones
+  window.addEventListener('mantle-theme', () => { if (GS.png) solveTint(++GS.seq); });
 
   renderBar();
   call('topbar.hello').then((r) => {

@@ -70,7 +70,9 @@
         top: [{ name: 'chrome', bytes: 2.1 * 1073741824 }, { name: 'Code', bytes: 1.4 * 1073741824 }, { name: 'Mantle', bytes: 0.31 * 1073741824 }] },
       gpu: { pct: 7.8, name: 'Intel(R) UHD Graphics', engines: [{ type: '3D', pct: 7.8 }, { type: 'VideoDecode', pct: 2.2 }, { type: 'Copy', pct: 0 }],
         dedicated: 0.13 * 1073741824, shared: 1.2 * 1073741824, top: [{ name: 'dwm', pct: 4.1 }, { name: 'chrome', pct: 2.9 }] },
-      net: { down: 2.4 * 1048576, up: 88 * 1024, adapters: [{ name: 'Wi-Fi', down: 2.4 * 1048576, up: 88 * 1024 }] }, costMs: 1.8 },
+      net: { down: 2.4 * 1048576, up: 88 * 1024, adapters: [{ name: 'Wi-Fi', down: 2.4 * 1048576, up: 88 * 1024 }] },
+      ping: { state: 'ok', ms: 23, label: 'Valorant', server: 'US West (N. California)', host: 'dynamodb.us-west-1.amazonaws.com', via: 'AWS us-west-1', method: 'icmp', everyMs: 2000, pickEveryMs: 600000,
+        picked: [{ name: 'US West (N. California)', ms: 17 }, { name: 'US West (Oregon)', ms: 38 }, { name: 'US Central (Texas)', ms: 56 }] }, costMs: 1.8 },
   };
   STATS.nogpu = JSON.parse(JSON.stringify(STATS.ok));
   STATS.nogpu.gpu = { pct: null, reason: 'Windows has no GPU performance counters here (\\GPU Engine is missing), so the GPU cannot be measured' };

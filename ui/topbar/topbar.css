@@ -34,6 +34,31 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
   background-color: var(--lg-fill-fb);
   box-shadow: inset 0 -1px 0 var(--lg-edge-out), var(--lg-lip-up);
 }
+/* THE GLASS, DARK ONLY (lane see-topbar, 2026-10-09). Owen, on dark Mantle: "mantle needs to be more
+ * see through everything"; the strip was one flat --lg-fill-fb over nothing blurred, a near-black
+ * strip, and a thinner flat tint alone would show the wallpaper SHARP through it. In dark, main sends a
+ * small picture of the desktop's own top strip (what IS under the bar: the wallpaper as Mantle draws
+ * it, read from the desktop page, no screen capture: lib/topbar-strip.js). #bdrop shows it, #bar's
+ * backdrop-filter blurs it with the theme's --lg-blur (Chromium mirrors the edge pixels, so the screen's
+ * top edge gets no pale rim), and the tint sits over it: --tb-tint, which topbar.js solves per picture
+ * as the thinnest tint (never under --lg-fill) at which ink-2 reads >= 4.5:1 against the brightest
+ * pixel of the blurred picture. So a dark wallpaper gets a breath and a bright one what it needs.
+ * No picture (a peek, a full-screen window under the bar, a failure, before the first one): no
+ * #bdrop, and the dark fallback above. LIGHT never matches any of this: it is pixel for pixel as before. */
+#bdrop { display: none; }
+/* the dark fallback, NOTHING blurred under it (a peek, a full-screen window under the bar, a failure,
+   the moment before the first picture): the most see-through tint at which ink-2 still reads 4.5:1 over
+   the measured worst cases, a SHARP bright busy photo (.76 -> 4.74:1; .56 was 2.56:1) and a busy
+   terminal (.70 -> 4.55:1; .56 was 3.14:1). Light keeps --lg-fill-fb. */
+:root[data-theme="dark"] #bar { background-color: rgba(30,31,34,.76); }
+:root[data-theme="dark"] body.glass #bdrop {
+  display: block; position: absolute; left: 0; right: 0; top: 0; height: var(--tb-h);
+  background-repeat: no-repeat; background-size: 100% 100%; pointer-events: none;
+}
+:root[data-theme="dark"] body.glass #bar {
+  background-color: var(--tb-tint, var(--lg-fill-fb));
+  -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur);
+}
 /* FIT (2026-09-25, Owen: the stats were cut at "CPU 82%" at the screen's right edge). The stats
  * never shrink and always end one inset (8px, the same as the Mantle glyph's) from the right edge
  * of the SCREEN: topbar.js sets #bar's `right` when the window is wider than its display, which is
@@ -71,6 +96,8 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 .st[data-k="cpu"] .v, .st[data-k="gpu"] .v { min-width: 4.6ch; }   /* "100%" */
 .st[data-k="mem"] .v { min-width: 11.5ch; }
 .st[data-k="net"] .v { min-width: 20.5ch; }   /* "↓999 MB/s ↑99.0 MB/s" */
+.st[data-k="ping"] .v { min-width: 6.1ch; }   /* "999 ms" (lane topbar-ping) */
+.st.hi .v { color: var(--lg-warn); }          /* a high ping, >= 100 ms (model.js PING_WARN_MS) */
 .st.na .v { color: var(--lg-ink-2); }
 .paused { color: var(--lg-ink-2); font-size: 11.5px; padding: 0 8px; white-space: nowrap; }
 /* one line, capped, so a long reason can never push the stats: the full text is its tooltip */

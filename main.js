@@ -1953,7 +1953,9 @@ function makeBackdrop(opts) {
     if (r.ok) {
       fails = 0;
       frames++;
-      broadcast(opts.event, { png: r.png, w: r.w, h: r.h, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h }, ms: r.ms });
+      const shot = { png: r.png, w: r.w, h: r.h, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h }, ms: r.ms };
+      broadcast(opts.event, shot);
+      if (opts.onFrame) { try { opts.onFrame(shot); } catch (_) { /* a keeper of the last frame never stops the loop */ } }
       set(trimmed
         ? { ok: true, ms: r.ms, reason: `${opts.label} is blurring a live picture of what is behind it${trimmed}` }
         : { ok: true, ms: r.ms });
@@ -2068,6 +2070,17 @@ const desktopBackdrop = makeBackdrop({
   scale: DESKTOP_BACKDROP_SCALE,
   win: () => desktopWin,
   rect: () => windowPhysRect(desktopWin),
+  // kept for the top bar (lib/topbar-strip.js): where the desktop page draws no wallpaper, this
+  // picture of Windows' own wallpaper is what is under the bar
+  onFrame: (shot) => { desktopStill = shot; },
+});
+let desktopStill = null;
+// THE TOP BAR'S GLASS (lane see-topbar, 2026-10-09): the top bar's backdrop is the desktop layer's
+// own top strip, read from its page (no screen capture). ctx.host.desktopStrip; see lib/topbar-strip.js.
+const topbarStrip = require('./lib/topbar-strip').makeStripReader({
+  win: () => desktopWin,
+  still: () => desktopStill || (state.get().backdrop || {}).desktop || null,
+  nativeImage: require('electron').nativeImage,
 });
 
 /** A window's bounds in physical pixels, or null. */
@@ -2195,7 +2208,9 @@ function startFeatures() {
         // lane settings: Mantle Settings shows and flips the tray's Alt+Tab and Win+N / Win+A switches
         switcher: { get: () => switcher.settingsView(), set: (patch, who) => { switcher.setSettings(patch, who); return switcher.settingsView(); } },
         // lane dm-core: Mantle's appearance for main-drawn colours (window grounds, DWM frames)
-        theme: themeHost },
+        theme: themeHost,
+        // lane see-topbar: the desktop layer's top strip, for the top bar's frosted backdrop in dark
+        desktopStrip: (a) => topbarStrip.read(a) },
     });
     COMMANDS['features.list'] = async () => features.list();
     if (flags.test) {

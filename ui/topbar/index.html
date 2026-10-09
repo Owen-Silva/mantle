@@ -15,6 +15,9 @@
        live system stats on the right (Owen 2026-09-24: "i also want the top bar to show stats
        about my computer like ram cpu gpu etc."). The bottom bar already has Wi-Fi, volume,
        battery, the clock and the bell, so none of those are repeated here. -->
+  <!-- DARK ONLY: the desktop's strip under the bar (main sends it, lib/features/_topbar-glass.js);
+       #bar blurs it with its backdrop-filter and lays its tint over it. Never shown in light. -->
+  <div id="bdrop" aria-hidden="true"></div>
   <header id="bar" role="menubar" aria-label="Menu bar">
     <nav id="left"></nav>
     <div id="right"></div>
@@ -25,6 +28,8 @@
 <!-- the timer's time math (lib/features/_timer-core.js, shared with main): window.TimerCore -->
 <script src="../../lib/features/_timer-core.js"></script>
 <script src="model.js"></script>
+<!-- the glass in dark (lane see-topbar): window.TopbarGlass -->
+<script src="glass.js"></script>
 <script src="topbar.js"></script>
 </body>
 </html>
