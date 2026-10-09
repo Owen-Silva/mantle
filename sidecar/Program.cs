@@ -1377,11 +1377,15 @@ namespace Mantle {
           // not a protocol error - the caller is usually walking a pin list and
           // one dead id must not read as a broken command.
           string aumid = Json.GetString(req, "aumid");
+          // Cached while the app's package is unchanged (Apps.Lookup): the bar and the launcher
+          // re-ask on a timer, and a Store update is read again on the first ask after it.
+          // `cached` says which (tests, and a look into why a picture seems old).
           string appName, appPng;
-          string aerr2 = Apps.Info(aumid, out appName, out appPng);
+          bool appCached;
+          string aerr2 = Apps.Lookup(aumid, out appName, out appPng, out appCached);
           result = aerr2 == null
-            ? Json.Obj("ok", true, "aumid", aumid, "name", appName, "iconPng", appPng, "reason", null)
-            : Json.Obj("ok", false, "aumid", aumid, "name", null, "iconPng", null, "reason", aerr2);
+            ? Json.Obj("ok", true, "aumid", aumid, "name", appName, "iconPng", appPng, "reason", null, "cached", appCached)
+            : Json.Obj("ok", false, "aumid", aumid, "name", null, "iconPng", null, "reason", aerr2, "cached", appCached);
           return null;
         }
 

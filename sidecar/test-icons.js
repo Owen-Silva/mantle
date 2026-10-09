@@ -195,5 +195,75 @@ function save(name, url) {
   } finally {
     await s.stop();
   }
+
+  // ---- a Store app UPDATED while Mantle runs shows its new picture (storeicons, 2026-10-08) ----------
+  // Its cached picture remembers the app's package stamp (full names + manifest times) and `app`
+  // re-checks it at most every 5 s. A real update cannot be made on demand, so the test sidecar is
+  // started with MANTLE_TEST_PACKAGE_STAMP: a file whose text is added to every package stamp, and
+  // rewriting it is "this app was updated". `cached` in the reply says whether the shell was asked.
+  const storeIds = want.filter((w) => ids.includes(w));
+  if (!storeIds.length) {
+    t.check('package: a known Store app to ask about', false, 'none of Calculator / Notepad / Terminal is installed');
+  } else {
+    const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mantle-pkgstamp-'));
+    const stampFile = path.join(dir, 'stamp.txt');
+    fs.writeFileSync(stampFile, 'v1');
+    process.env.MANTLE_TEST_PACKAGE_STAMP = stampFile;
+    let p = null;
+    try {
+      p = await T.startPassive();
+      delete process.env.MANTLE_TEST_PACKAGE_STAMP;
+      const id = storeIds[0];
+      const ask = (aumid) => p.call('app', { aumid }, 8000);
+      const changedLogs = () => p.collect('log').filter((e) => /package changed/.test(e.msg || e.message || e.text || JSON.stringify(e)));
+      const a = await ask(id);
+      t.check('package: the first ask reads the app (cached:false) and has a picture', a.ok === true && a.cached === false && !!pngInfo(a.iconPng), `ok=${a.ok} cached=${a.cached}`);
+      const t0 = Date.now();
+      const b = await ask(id);
+      t.check('package: asked again, it comes from the cache (cached:true, same picture)', b.cached === true && b.iconPng === a.iconPng && b.name === a.name, `cached=${b.cached} ${Date.now() - t0} ms`);
+      await T.sleep(5300);
+      const t1 = Date.now();
+      const c = await ask(id);
+      const checkMs = Date.now() - t1;
+      t.check('package: same version after 5 s: the package is re-checked and the cache kept', c.cached === true && c.iconPng === a.iconPng && changedLogs().length === 0, `cached=${c.cached}, ${checkMs} ms with the check, ${changedLogs().length} change logs`);
+      t.check('package: the re-check is cheap (no shell read)', checkMs < 150, `${checkMs} ms`);
+      fs.writeFileSync(stampFile, 'v2');            // "the Store updated it"
+      const d = await ask(id);
+      t.check('package: within 5 s of the last check the cached picture is still served (one check per 5 s at most)', d.cached === true && d.iconPng === a.iconPng, `cached=${d.cached}`);
+      await T.sleep(5300);
+      const e = await ask(id);
+      t.check('package: after an update the app is read again (cached:false) and has a picture', e.ok === true && e.cached === false && !!pngInfo(e.iconPng), `ok=${e.ok} cached=${e.cached}`);
+      await T.sleep(100);
+      const logs = changedLogs();
+      t.check('package: the update is logged once, saying the picture was read again', logs.length === 1 && /same picture/.test(JSON.stringify(logs[0])), `${logs.length} logs`);
+      t.check('package: a same picture sends no appchanged event (main.js keeps its caches)', p.collect('appchanged').length === 0, `${p.collect('appchanged').length} events`);
+      const f = await ask(id);
+      t.check('package: the re-read picture is cached again', f.cached === true && f.iconPng === e.iconPng, `cached=${f.cached}`);
+
+      // failures: cached and logged once, tried again only when the package changes
+      const dead = 'No.Such.App_0000000000000!App';
+      const noIcon = () => p.collect('log').filter((x) => JSON.stringify(x).includes('No.Such.App_0000000000000')).length;
+      const g1 = await ask(dead);
+      const g2 = await ask(dead);
+      t.check('package: an app that is not installed is ok:false, the second time from the cache', g1.ok === false && g2.ok === false && g2.cached === true && !!g2.reason, `ok=${g1.ok}/${g2.ok} cached=${g2.cached}`);
+      await T.sleep(100);
+      t.check('package: its failure is logged once, not per ask', noIcon() === 1, `${noIcon()} log lines`);
+      fs.writeFileSync(stampFile, 'v3');
+      await T.sleep(5300);
+      const g3 = await ask(dead);
+      await T.sleep(100);
+      t.check('package: a missing app is tried again when its package changes, and the same reason is not logged again', g3.ok === false && g3.cached === false && noIcon() === 1, `cached=${g3.cached}, ${noIcon()} log lines`);
+
+      // an id that is not a package app id has no package to follow: `app` reads it every time, as before
+      const plain = 'Microsoft.Windows.Explorer';
+      const h1 = await ask(plain);
+      const h2 = await ask(plain);
+      t.check('package: a non-package app id is read every time (cached:false), as before', h1.cached === false && h2.cached === false, `cached=${h1.cached}/${h2.cached} ok=${h1.ok}`);
+    } finally {
+      delete process.env.MANTLE_TEST_PACKAGE_STAMP;
+      if (p) await p.stop();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
   process.exit(t.summary());
 })().catch((err) => { console.log('ICONS TEST: crashed: ' + err.message); process.exit(1); });

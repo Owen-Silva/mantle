@@ -26,9 +26,21 @@
 // refused in --passive.
 //
 // COST: the window list is rebuilt every 250 ms, so nothing in here may be paid
-// per rebuild. Icons are cached by AUMID for the life of the process (an app's
-// icon does not change while the machine is up) and WindowList caches this
-// whole lookup per hwnd.
+// per rebuild. Icons are cached by AUMID and WindowList caches this whole lookup
+// per hwnd.
+//
+// WHY a Store app's cached icon follows its PACKAGE (storeicons, 2026-10-08). The
+// old rule here was "an app's icon does not change while the machine is up", and
+// it is false the same way it was for exes (sidecar/Icons.cs, bc06549): the Store
+// updates an app in place while Mantle runs, and the bar's running-app icon and
+// the pinned list kept the OLD picture until Mantle restarted. A Store app has no
+// one file to stat, but it has something better: its package full name carries
+// the version (Microsoft.WindowsTerminal_1.21.2361.0_x64__8wekyb3d8bbwe), and an
+// update installs a new one. So each cached picture remembers the app's PACKAGE
+// STAMP (the family's installed full names + each one's AppxManifest.xml write
+// time, which also moves for a same-version re-register) and a lookup re-checks it
+// at most once per PackageCheckEveryMs: two kernel32 calls and a stat, no shell.
+// A changed package reads the picture again; the old one stays meanwhile.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -78,11 +90,172 @@ namespace Mantle {
     static readonly Guid IidPropertyStore = new Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99");
     static readonly Guid PkeyAppUserModelFmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");
 
-    /// Icons never change while the machine is up, and the window list asks for
-    /// them ten times a second. Failures are cached too (as null), or a UWP app
-    /// with no icon would cost a shell round trip on every rebuild forever.
-    static readonly Dictionary<string, string> _iconCache =
-      new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    /// The window list asks for icons ten times a second, so they are cached by AUMID. Failures
+    /// are cached too (as a null Url), or a UWP app with no icon would cost a shell round trip on
+    /// every rebuild forever; a failure is tried again when its package changes (an app that was
+    /// not installed yet). A PACKAGE app id (family!app) is re-checked against its package stamp
+    /// (see the header); any other id (a desktop app's own AUMID) has no package to follow and is
+    /// kept for the run, as before.
+    class AppEntry {
+      public string Url;        // the picture, or null (Why says why, when the read failed)
+      public string Name;       // the shell's display name, or null
+      public string Why;        // the read's failure, or null; never set while Url holds a kept old picture
+      public string Stamp;      // PackageStamp when it was read; null = not a package id, never re-checked
+      public int CheckedAt;     // Environment.TickCount of the last stamp check
+      public bool Stale;        // the package changed since: read again on the next lookup
+      public int RetryAt;       // != 0: a re-read failed and the old picture was kept; try again from then
+      public string LoggedWhy;  // the last failure logged for this id: each reason is logged once
+    }
+    static readonly Dictionary<string, AppEntry> _iconCache =
+      new Dictionary<string, AppEntry>(StringComparer.OrdinalIgnoreCase);
+
+    /// How often a cached Store app's package is checked again. The window list asks every 250 ms
+    /// while things move; this keeps it to one check per app per 5 s. Store updates are rare, and
+    /// the first look after one is at most this late.
+    const int PackageCheckEveryMs = 5000;
+    /// A re-read after a package change that FAILED (the update still being staged, say) keeps the
+    /// old picture and tries again this much later, not on every lookup.
+    const int RetryFailedReadMs = 60000;
+
+    static class PkgNative {
+      [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+      public static extern int GetPackagesByPackageFamily(string family, ref uint count, IntPtr[] fullNames, ref uint bufferLength, IntPtr buffer);
+      [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+      public static extern int GetPackagePathByFullName(string fullName, ref uint pathLength, StringBuilder path);
+    }
+
+    /// Tests only (sidecar/test-icons.js): a file whose text is added to every package stamp, so a
+    /// test can fake "this app was updated" by rewriting it. Unset in a real run.
+    static readonly string _testStampFile = Environment.GetEnvironmentVariable("MANTLE_TEST_PACKAGE_STAMP");
+
+    /// The package family of a package app id ("Family_publisherid!App" -> "Family_publisherid"),
+    /// or null for an id that is not one.
+    static string FamilyOf(string aumid) {
+      if (string.IsNullOrEmpty(aumid)) return null;
+      int bang = aumid.IndexOf('!');
+      return bang > 0 ? aumid.Substring(0, bang) : null;
+    }
+
+    /// What the installed package of an app id looks like right now: its family's full names (the
+    /// version is in them), each with its manifest's last-write ticks, sorted. "none" when nothing
+    /// of that family is installed for this user, "err:<code>" when Windows would not say; null for
+    /// an id that is not a package app id. Never throws.
+    static string PackageStamp(string aumid) {
+      string family = FamilyOf(aumid);
+      if (family == null) return null;
+      string stamp;
+      try {
+        uint count = 0, len = 0;
+        int rc = PkgNative.GetPackagesByPackageFamily(family, ref count, null, ref len, IntPtr.Zero);
+        if (rc != 0 && rc != Win32.ERROR_INSUFFICIENT_BUFFER) stamp = "err:" + rc;
+        else if (count == 0 || len == 0) stamp = "none";
+        else {
+          var names = new IntPtr[count];
+          IntPtr buf = Marshal.AllocHGlobal((int)len * 2);
+          try {
+            rc = PkgNative.GetPackagesByPackageFamily(family, ref count, names, ref len, buf);
+            if (rc != 0) stamp = "err:" + rc;
+            else {
+              var parts = new List<string>();
+              for (int i = 0; i < count && i < names.Length; i++) {
+                string full = Marshal.PtrToStringUni(names[i]);
+                if (!string.IsNullOrEmpty(full)) parts.Add(full + "@" + ManifestTicks(full));
+              }
+              parts.Sort(StringComparer.OrdinalIgnoreCase);
+              stamp = parts.Count == 0 ? "none" : string.Join("|", parts.ToArray());
+            }
+          } finally { Marshal.FreeHGlobal(buf); }
+        }
+      } catch (Exception ex) {
+        stamp = "err:" + ex.GetType().Name;
+      }
+      if (!string.IsNullOrEmpty(_testStampFile)) {
+        try { stamp += "#" + File.ReadAllText(_testStampFile).Trim(); } catch (Exception) { stamp += "#-"; }
+      }
+      return stamp;
+    }
+
+    /// The package's AppxManifest.xml last-write ticks, or "-". A same-version re-register (a
+    /// developer's own package) keeps the full name but rewrites the manifest.
+    static string ManifestTicks(string fullName) {
+      try {
+        uint len = 0;
+        PkgNative.GetPackagePathByFullName(fullName, ref len, null);
+        if (len == 0) return "-";
+        var sb = new StringBuilder((int)len + 1);
+        if (PkgNative.GetPackagePathByFullName(fullName, ref len, sb) != 0) return "-";
+        var fi = new FileInfo(Path.Combine(sb.ToString(), "AppxManifest.xml"));
+        return fi.Exists ? fi.LastWriteTimeUtc.Ticks.ToString() : "-";
+      } catch (Exception) {
+        return "-";
+      }
+    }
+
+    /// Caller holds _iconCache. True when e still describes the installed package (checked at most
+    /// once per PackageCheckEveryMs); false marks it Stale for good, so the next lookup reads again.
+    static bool Fresh(string aumid, AppEntry e) {
+      if (e.Stale) return false;
+      if (e.Stamp == null) return true;                  // not a package id: kept for the run
+      int now = Environment.TickCount;
+      if (e.RetryAt != 0) {
+        if (unchecked(now - e.RetryAt) < 0) return true;
+        e.Stale = true;
+        return false;
+      }
+      if (unchecked(now - e.CheckedAt) < PackageCheckEveryMs) return true;
+      e.CheckedAt = now;
+      if (PackageStamp(aumid) == e.Stamp) return true;
+      e.Stale = true;
+      return false;
+    }
+
+    // ---- read again in the background: TryIconCached's caller is the window list on the ui lane ----
+    static readonly List<string> _refreshQueue = new List<string>();
+    static readonly HashSet<string> _refreshQueued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    static System.Threading.Thread _refreshThread;
+    static int _refreshed;     // 1 = a picture changed: Windows.OnTick sends the list again (TakeRefreshed)
+
+    /// True once after a background re-read changed a Store app's picture (then false until the next).
+    public static bool TakeRefreshed() {
+      return System.Threading.Interlocked.Exchange(ref _refreshed, 0) == 1;
+    }
+
+    static void QueueRefresh(string aumid) {
+      lock (_refreshQueue) {
+        if (!_refreshQueued.Add(aumid)) return;
+        _refreshQueue.Add(aumid);
+        if (_refreshThread != null) return;
+        try {
+          var t = new System.Threading.Thread(RefreshLoop);
+          t.IsBackground = true;
+          t.Name = "mantle-appicon-refresh";
+          t.SetApartmentState(System.Threading.ApartmentState.STA);   // the shell item + image factory are COM
+          t.Start();
+          _refreshThread = t;
+        } catch (Exception ex) {
+          // the ids stay in _refreshQueued, so this is logged once per app, not on every tick
+          _refreshQueue.Clear();
+          Program.EmitLog("warn", "an updated Store app's icon could not be read again in the background, so the window list keeps the old one until Mantle restarts (" + ex.Message + ")");
+        }
+      }
+    }
+
+    static void RefreshLoop() {
+      while (true) {
+        string aumid;
+        lock (_refreshQueue) {
+          if (_refreshQueue.Count == 0) { _refreshThread = null; return; }
+          aumid = _refreshQueue[0];
+          _refreshQueue.RemoveAt(0);
+        }
+        string before = null;
+        lock (_iconCache) { AppEntry old; if (_iconCache.TryGetValue(aumid, out old)) before = old.Url; }
+        string after = null;
+        try { after = IconFor(aumid); } catch (Exception ex) { Program.EmitLog("warn", "an updated Store app's icon could not be read again: " + ex.Message); }
+        lock (_refreshQueue) _refreshQueued.Remove(aumid);
+        if (!string.Equals(before, after, StringComparison.Ordinal)) System.Threading.Interlocked.Exchange(ref _refreshed, 1);
+      }
+    }
 
     // --------------------------------------------------------- window identity
 
@@ -211,10 +384,92 @@ namespace Mantle {
 
     /// Name + icon for an AUMID. Returns null on success, or the reason with
     /// the HRESULT - an unknown AUMID is an ordinary answer here, not a crash.
+    /// Always asks the shell (Media, Notifications and SysNotify call this for a one-off name), and
+    /// what it read lands in the icon cache. `app` and the window list go through Lookup / IconFor.
     public static string Info(string aumid, out string name, out string png) {
+      return Info(aumid, out name, out png, false);
+    }
+
+    static string Info(string aumid, out string name, out string png, bool logFailure) {
       name = null;
       png = null;
       if (string.IsNullOrEmpty(aumid)) return "app needs an aumid";
+      // Stamped BEFORE reading (as Icons.cs does): a package swapped mid-read then looks changed
+      // next time and is read again, rather than its half-updated picture being kept.
+      string stamp = PackageStamp(aumid);
+      string why = Read(aumid, out name, out png);
+      Remember(aumid, stamp, name, png, why, logFailure);
+      return why;
+    }
+
+    /// What a read means for the cache: the new answer, or, when a re-read after a package change
+    /// failed and there was a picture, that old picture kept (retried in RetryFailedReadMs). Logs
+    /// a failure once per id and reason, and a package change once per change.
+    static void Remember(string aumid, string stamp, string name, string png, string why, bool logFailure) {
+      AppEntry prev, e;
+      bool keptOld = false, changed = false;
+      lock (_iconCache) {
+        _iconCache.TryGetValue(aumid, out prev);
+        e = new AppEntry { Url = png, Name = name, Why = why, Stamp = stamp, CheckedAt = Environment.TickCount };
+        if (why != null && prev != null && prev.Url != null) {
+          // the OLD package's stamp: when the retry succeeds it still counts as the change it is
+          e.Url = prev.Url; e.Name = prev.Name; e.Why = null; e.Stamp = prev.Stamp;
+          e.RetryAt = unchecked(Environment.TickCount + RetryFailedReadMs);
+          if (e.RetryAt == 0) e.RetryAt = 1;
+          keptOld = true;
+        }
+        if (prev != null) e.LoggedWhy = prev.LoggedWhy;
+        changed = why == null && prev != null && prev.Stamp != null && prev.Stamp != stamp;
+        if (why == null) e.LoggedWhy = null;
+        else if (logFailure && e.LoggedWhy != why) e.LoggedWhy = why;
+        else logFailure = false;
+        _iconCache[aumid] = e;
+      }
+      if (why != null && logFailure) {
+        Program.EmitLog("warn", keptOld
+          ? "an updated Store app's new icon could not be read yet, so it keeps its old one and is tried again in a minute: " + aumid + " (" + why + ")"
+          : "no app icon for " + aumid + " (" + why + ")");
+      }
+      if (changed) {
+        bool differs = !string.Equals(prev.Url, png, StringComparison.Ordinal) || !string.Equals(prev.Name, name, StringComparison.Ordinal);
+        Program.EmitLog("info", "a Store app's package changed (an update), so its icon was read again: " + aumid +
+          (differs ? " (new picture)" : " (same picture)"));
+        // main.js drops its pinned-list cache and the bar's cached picture for this app on this, so
+        // a pinned app shows its new icon now rather than at the next 5-minute pin read.
+        if (differs) Program.Emit(Json.Obj("ev", "appchanged", "aumid", aumid));
+      }
+    }
+
+    /// The `app` command's answer: from the cache while the app's package is unchanged (checked at
+    /// most once per PackageCheckEveryMs), else read again. `cached` says which. An id that is not
+    /// a package app id is always read, as before. -> null, or the reason it could not be read.
+    public static string Lookup(string aumid, out string name, out string png, out bool cached) {
+      name = null; png = null; cached = false;
+      if (string.IsNullOrEmpty(aumid)) return "app needs an aumid";
+      bool package = FamilyOf(aumid) != null;
+      if (package) {
+        lock (_iconCache) {
+          AppEntry e;
+          if (_iconCache.TryGetValue(aumid, out e) && e.Stamp != null && Fresh(aumid, e)) {
+            name = e.Name; png = e.Url; cached = true;
+            return e.Why ?? (e.Url == null && e.Name == null ? "the app id '" + aumid + "' could not be read" : null);
+          }
+        }
+      }
+      string why = Info(aumid, out name, out png, true);
+      if (why != null && package) {
+        // a failed re-read may have kept the old picture: answer that, not a blank
+        lock (_iconCache) {
+          AppEntry e;
+          if (_iconCache.TryGetValue(aumid, out e) && e.Why == null && e.Url != null) { name = e.Name; png = e.Url; return null; }
+        }
+      }
+      return why;
+    }
+
+    static string Read(string aumid, out string name, out string png) {
+      name = null;
+      png = null;
       object raw = null;
       try {
         Guid iid = IidShellItem;
@@ -225,9 +480,8 @@ namespace Mantle {
         if (item == null) return "the shell returned something that is not a shell item for '" + aumid + "'";
         name = DisplayName(item, Win32.SIGDN_NORMALDISPLAY);
         png = ImagePng(raw, IconPx);
-        // Locked: `app` fills this on the slow lane while the window list reads
-        // it on the ui lane (Lanes.cs). The shell calls stay outside the lock.
-        lock (_iconCache) _iconCache[aumid] = png;
+        // The cache is filled by Remember, locked: `app` fills it on the slow lane while the window
+        // list reads it on the ui lane (Lanes.cs). The shell calls stay outside the lock.
         return null;
       } catch (COMException ce) {
         return "the shell refused the app id '" + aumid + "' (HRESULT 0x" + ce.ErrorCode.ToString("X8") + ")";
@@ -238,28 +492,39 @@ namespace Mantle {
       }
     }
 
-    /// The cached icon path, for the window list. Never throws, never blocks
-    /// twice on the same app.
     /// The icon IconFor already has for an app id, without reading the package. -> true when known
-    /// (png may then be null: that app has no icon). See Icons.TryCached.
+    /// (png may then be null: that app has no icon). See Icons.TryCached. The window list on the ui
+    /// lane uses this: an app whose package CHANGED (a Store update) still answers its old picture
+    /// here (no blank while the new one is read) and is read again on a background thread;
+    /// TakeRefreshed then tells the window list to send itself again. Never throws.
     public static bool TryIconCached(string aumid, out string png) {
       png = null;
       if (string.IsNullOrEmpty(aumid)) return true;
-      lock (_iconCache) return _iconCache.TryGetValue(aumid, out png);
+      bool stale;
+      lock (_iconCache) {
+        AppEntry e;
+        if (!_iconCache.TryGetValue(aumid, out e)) return false;
+        png = e.Url;
+        stale = !Fresh(aumid, e);
+      }
+      if (stale) QueueRefresh(aumid);
+      return true;
     }
 
+    /// An app id's picture: cached, and read again when its package changed (see the header).
+    /// Null when it has none; a failure is logged once per id and reason.
     public static string IconFor(string aumid) {
       if (string.IsNullOrEmpty(aumid)) return null;
-      string hit;
-      lock (_iconCache) { if (_iconCache.TryGetValue(aumid, out hit)) return hit; }
-      string name, png;
-      string why = Info(aumid, out name, out png);
-      if (why != null) {
-        lock (_iconCache) _iconCache[aumid] = null;
-        Program.EmitLog("warn", "no app icon for " + aumid + " (" + why + ")");
-        return null;
+      lock (_iconCache) {
+        AppEntry e;
+        if (_iconCache.TryGetValue(aumid, out e) && Fresh(aumid, e)) return e.Url;
       }
-      return png;   // Info filled the cache
+      string name, png;
+      Info(aumid, out name, out png, true);
+      lock (_iconCache) {
+        AppEntry e;
+        return _iconCache.TryGetValue(aumid, out e) ? e.Url : png;   // a kept old picture beats a blank
+      }
     }
 
     static string DisplayName(IShellItem item, uint sigdn) {

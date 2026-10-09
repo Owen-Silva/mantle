@@ -4862,6 +4862,22 @@ sidecar.on('ready', () => {
   });
 });
 
+/*
+ * A STORE APP WAS UPDATED (storeicons, 2026-10-08). The sidecar re-checks a cached Store app's
+ * package (sidecar/Apps.cs) and, when an update brought a new picture or name, says so here. Two
+ * caches on this side would keep the old one: the pinned list (pinsCache, re-read every 5 minutes,
+ * whose Store pins carry the sidecar's picture) and the bar's iconFor cache (re-asked every 60 s).
+ * Drop both for that app and push the bar again, so the new icon shows now. The launcher's
+ * G.icons re-asks the sidecar at its ten-minute rebuild with the old picture showing meanwhile,
+ * and the sidecar answers the new one from then on (lib/launcher-index.js).
+ */
+sidecar.on('appchanged', (msg) => {
+  const aumid = msg && typeof msg.aumid === 'string' ? msg.aumid : '';
+  if (aumid) iconCache.delete((APPS_FOLDER + aumid).toLowerCase());
+  pinsCache = null;
+  schedulePinnedPush('a Store app was updated, so its new icon is shown');
+});
+
 sidecar.on('windows', (msg) => {
   lastWindows = withoutMantle(msg.list);
   broadcast('windows', lastWindows);
