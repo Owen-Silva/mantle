@@ -18,8 +18,10 @@ const { app, screen } = require('electron');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (s) => process.stdout.write(`wallprobe: ${s}\n`);
 
-async function capture(win, dir, name) {
-  const img = await win.webContents.capturePage();
+async function capture(win, dir, name, opts) {
+  // a window Mantle never shows (Settings in --test) paints only when asked: the first capture returns the LAST frame
+  if (opts && opts.fresh) { await win.webContents.capturePage(undefined, { stayHidden: true }); await sleep(400); }
+  const img = opts ? await win.webContents.capturePage(undefined, { stayHidden: true }) : await win.webContents.capturePage();
   fs.writeFileSync(path.join(dir, `${name}.png`), img.toPNG());
   const sz = img.getSize();
   log(`wrote ${name}.png ${sz.width}x${sz.height}`);
@@ -170,6 +172,172 @@ async function cpuOnly(P, C, d, dir) {
   P.setOverride(null);
 }
 
+/*
+ * MANTLE_WALL_PROBE_PRESETS=1|2 (lane mantle-bg-presets, 2026-10-09): the built-in wallpapers in a
+ * real --test Mantle, driven through the Wallpapers window's own buttons (clicks in its page, so the
+ * bridge, wallpaper.set and the desktop page all run for real). 1 = pick two built-in photos and
+ * prove each through the listing, library.json and the desktop page's own <img>, then a third in Settings > Personalization > Background; 2 = after a
+ * restart of the same profile, the Settings pick is still up, then back to one of Owen's own (both pages follow).
+ * Writes presets-<phase>.json (every check with its value) and captures beside it.
+ */
+const WALL_SRC = `(() => { const i = document.querySelector('#wall img'); const v = document.querySelector('#wall video'); const f = document.querySelector('#wall iframe');
+  const m = i || v || f; return { tag: m ? m.tagName : null, src: m ? (m.currentSrc || m.src || '') : '', loaded: i ? (i.complete && i.naturalWidth > 0) : (v ? v.readyState >= 2 : !!f),
+  w: i ? i.naturalWidth : (v ? v.videoWidth : 0), hasWall: document.body.classList.contains('has-wall') }; })()`;
+
+async function presetsProbe(P, C, d, dir, phase) {
+  const LAST = 'builtin:forest';   // phase 1's last pick (made in Settings); phase 2 expects it after the restart
+  const out = { phase, checks: [], errors: [] };
+  const ok = (name, pass, value) => { out.checks.push({ name, pass: !!pass, value }); log(`${pass ? 'PASS' : 'FAIL'} ${name} -- ${JSON.stringify(value)}`); };
+  const libJson = () => { try { return JSON.parse(fs.readFileSync(path.join(P.S.lib.dir, 'library.json'), 'utf8')).selected; } catch (e) { return `unreadable: ${e.message}`; } };
+  const watchErrors = (win, label) => win.webContents.on('console-message', (e) => {
+    const level = e && e.level !== undefined ? e.level : null;
+    if (level === 'error' || level === 3) out.errors.push(`${label}: ${String(e.message || '').slice(0, 200)}`);
+  });
+  watchErrors(d, 'desktop');
+  const desk = async (want) => waitFor(async () => { const s = await js(d, WALL_SRC); return s && s.src && s.src.endsWith(want) && s.loaded ? s : null; }, 20000, 300);
+
+  out.userData = app.getPath('userData');
+  out.presetsLog = P.S.presets ? { ok: P.S.presets.ok, n: P.S.presets.items.length, dir: P.S.presets.dir } : null;
+  ok('catalog: 23 built-in photos read from the app folder', P.S.presets && P.S.presets.ok && P.S.presets.items.length === 23, out.presetsLog);
+  const own = (P.S.lib.data.items.find((i) => P.S.lib.health(i).ok) || {}).id || null;
+  out.own = own;
+
+  await C['wallpaper.open']({});
+  const lw = await waitFor(() => { const w = P.libraryWin(); return w && !w.isDestroyed() && !w.webContents.isLoading() ? w : null; }, 15000);
+  if (!lw) { ok('the Wallpapers window opened', false, null); fs.writeFileSync(path.join(dir, `presets-${phase}.json`), JSON.stringify(out, null, 2)); return; }
+  watchErrors(lw, 'wallpapers');
+  await waitFor(async () => (await js(lw, `document.querySelectorAll('#grid .card[data-id]').length`)) > 0, 15000);
+  await sleep(800);
+  const click = (sel, ev) => js(lw, `(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return false; ${ev === 'dblclick' ? "e.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))" : 'e.click()'}; return true; })()`);
+  const view = () => js(lw, `({ builtin: document.getElementById('view-builtin').getAttribute('aria-selected') === 'true', cards: Array.from(document.querySelectorAll('#grid .card[data-id]')).map((c) => c.dataset.id),
+    ticks: Array.from(document.querySelectorAll('#grid .card .tick')).map((t) => t.closest('.card').dataset.id), credit: document.getElementById('credit').textContent.trim(),
+    head: document.getElementById('head-sub').textContent, theme: document.documentElement.dataset.theme || 'light',
+    thumbs: Array.from(document.querySelectorAll('#grid .card .thumb img')).slice(0, 6).map((i) => i.complete && i.naturalWidth > 0) })`);
+
+  // Settings > Personalization > Background, opened the way the launcher does ('mantle-open'), in this
+  // same --test instance (its window is quiet like every test window). `want` = the id that must be
+  // ticked (null = none); `pickId` (optional) = a built-in tile clicked in Settings, proven on the desktop.
+  const setView = (sw) => js(sw, `(() => { const tiles = Array.from(document.querySelectorAll('[data-builtin-id]'));
+    const shown = tiles.filter((t) => t.style.display !== 'none');
+    return { n: tiles.length, ids: tiles.map((t) => t.dataset.builtinId), checked: tiles.filter((t) => t.getAttribute('aria-checked') === 'true').map((t) => t.dataset.builtinId),
+      chips: Array.from(document.querySelectorAll('[data-cat]')).map((c) => c.dataset.cat).join('|'), shuffle: !!document.querySelector('[data-shuffle]'),
+      thumbs: shown.slice(0, 8).map((t) => { const i = t.querySelector('img'); return !!(i && i.complete && i.naturalWidth > 0); }), gone: tiles.filter((t) => t.dataset.thumbGone).length,
+      credit: ((document.querySelector('[data-credit-line]') || {}).textContent || '').trim(), theme: document.documentElement.dataset.theme || 'light' }; })()`);
+  const titleOf = (id) => ((P.S.presets.items.find((x) => x.id === id)) || {}).title;
+  async function settingsStep(want, pickId) {
+    const reply = {};
+    app.emit('mantle-open', 'settings', { section: 'personalization', page: 'background', row: 'personalization.background.builtin', via: 'the wallpaper probe', reply });
+    ok(`settings: opened at Personalization > Background (${want || 'his own'} up)`, reply.ok === true, reply);
+    const { BrowserWindow } = require('electron');
+    const sw = await waitFor(() => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && /ui[\\/]settings[\\/]index\.html/.test(w.webContents.getURL()) && !w.webContents.isLoading()), 15000);
+    if (!sw) { ok('settings: the window exists', false, null); return; }
+    watchErrors(sw, 'settings');
+    // Settings in --test is made but never shown, so Chromium stops painting it and captures come back stale;
+    // shown through lib/test-quiet (alpha 0, click-through, never focused) it paints like the Wallpapers window.
+    const wasShown = sw.isVisible();
+    if (!wasShown) sw.showInactive();
+    let sv = await waitFor(async () => { const x = await setView(sw); return x && x.n >= 23 && x.thumbs.length && x.thumbs.every(Boolean) ? x : null; }, 20000, 300) || await setView(sw);
+    ok('settings: Background shows the 23 built-in photos with real thumbs', sv.n === 23 && sv.ids.every((x) => /^builtin:/.test(x)) && sv.thumbs.every(Boolean) && !sv.gone, { n: sv.n, thumbs: sv.thumbs, gone: sv.gone });
+    ok('settings: Helm\'s categories and Shuffle', sv.chips === 'All|Mountains|Forest|Water|Coast|Desert|Sky & Night|Snow|City|Abstract|Minimal' && sv.shuffle, sv.chips);
+    ok(`settings: ${want ? 'the pick is ticked and credited' : 'no built-in tile is ticked, the neutral credit line shows'}`,
+      want ? sv.checked.join() === want && sv.credit.startsWith(titleOf(want) + ' · Photo by ') : sv.checked.length === 0 && /Photos from Unsplash, free under the Unsplash License/.test(sv.credit), { checked: sv.checked, credit: sv.credit });
+    await js(sw, `(() => { const g = document.querySelector('[data-builtin-id]'); if (g) g.closest('.card, section, div').scrollIntoView({ block: 'start' }); return true; })()`);
+    await sleep(500);
+    await capture(sw, dir, `${phase === '1' ? 'p1' : 'p2'}-settings-${(want || 'own').replace('builtin:', '')}-${sv.theme}`, { fresh: true });
+    if (pickId) {
+      await js(sw, `(() => { const b = document.querySelector('[data-builtin-id="${pickId}"]'); if (b) b.click(); return !!b; })()`);
+      const sd = await desk(`/assets/backgrounds/${pickId.replace('builtin:', '')}.jpg`);
+      sv = await waitFor(async () => { const x = await setView(sw); return x.checked.join() === pickId ? x : null; }, 8000, 200) || await setView(sw);
+      ok(`settings pick (${pickId}, a tile click in Settings): selected, saved, drawn on the desktop, ticked + credited in Settings`,
+        P.S.lib.data.selected === pickId && libJson() === pickId && !!sd && sv.checked.join() === pickId && sv.credit.startsWith(titleOf(pickId) + ' · Photo by '), { selected: P.S.lib.data.selected, desk: sd, checked: sv.checked, credit: sv.credit });
+      await capture(sw, dir, `p1-settings-${pickId.replace('builtin:', '')}-${sv.theme}`, { fresh: true });
+      await capture(d, dir, `p1-desktop-${pickId.replace('builtin:', '')}`);
+    }
+    if (!wasShown && !sw.isDestroyed()) sw.hide();
+  }
+
+  const viewWhen = async (pred) => { const t0 = Date.now(); const got = await waitFor(async () => { const x = await view(); return pred(x) ? x : null; }, 6000, 100); const x = got || await view(); x.ms = Date.now() - t0; return x; };
+
+  if (phase === '1') {
+    let v = await view();
+    ok('window: opens on Your library (one of his own is up) with only his cards', !v.builtin && v.cards.length === P.S.lib.data.items.length && !v.cards.some((x) => /^builtin:/.test(x)), { cards: v.cards.length, lib: P.S.lib.data.items.length });
+    await capture(lw, dir, `p1-window-yours-${v.theme}`);
+    await click('#view-builtin');
+    await sleep(1500);
+    v = await view();
+    const chips = await js(lw, `Array.from(document.querySelectorAll('#cats .cat')).map((c) => c.textContent).join('|')`);
+    ok('window: Built-in shows the 23 photos with real thumbs', v.builtin && v.cards.length === 23 && v.cards.every((x) => /^builtin:/.test(x)) && v.thumbs.length === 6 && v.thumbs.every(Boolean), { n: v.cards.length, thumbs: v.thumbs });
+    ok('window: Helm\'s categories, All first', chips === 'All|Mountains|Forest|Water|Coast|Desert|Sky & Night|Snow|City|Abstract|Minimal', chips);
+    ok('window: the credit line names Unsplash and its license', /Photos from Unsplash, free under the Unsplash License/.test(v.credit), v.credit);
+    await capture(lw, dir, `p1-window-builtin-${v.theme}`);
+
+    // pick 1: the card, then its "Set as wallpaper" button
+    await click('.card[data-id="builtin:stone"]');
+    await sleep(300);
+    await click('#d-set');
+    const s1 = await desk('/assets/backgrounds/stone.jpg');
+    v = await viewWhen((x) => x.ticks.join() === 'builtin:stone');
+    ok('pick 1 (Stone summit, by its Set button): wallpaper.list says it is selected', P.listing().presets.items.filter((x) => x.selected).map((x) => x.id).join() === 'builtin:stone' && P.S.lib.data.selected === 'builtin:stone', P.S.lib.data.selected);
+    ok('pick 1: saved in library.json', libJson() === 'builtin:stone', libJson());
+    ok('pick 1: the desktop page draws that photo (its own <img>, loaded)', !!s1, s1 || await js(d, WALL_SRC));
+    await waitFor(() => { const r = P.S.runtime.get('builtin:stone'); return r && r.state === 'playing'; }, 8000);
+    ok('pick 1: the desktop reports it on screen', (P.S.runtime.get('builtin:stone') || {}).state === 'playing', P.S.runtime.get('builtin:stone'));
+    ok('pick 1: the window ticks it and credits it under the grid', v.ticks.join() === 'builtin:stone' && v.credit === 'Stone summit · Photo by Fabrizio Conti on Unsplash', { ticks: v.ticks, credit: v.credit, msAfterDesktop: v.ms });
+    const det = await js(lw, `(document.querySelector('#detail .d-credit') || {}).textContent`);
+    ok('pick 1: its details credit the photographer', det === 'Photo by Fabrizio Conti on Unsplash', det);
+    await capture(lw, dir, `p1-window-stone-${v.theme}`);
+    await capture(d, dir, 'p1-desktop-stone');
+
+    // pick 2: the Sky & Night chip, then a double-click on the card
+    await click('#cats .cat[data-cat="Sky & Night"]');
+    await sleep(300);
+    await click('.card[data-id="builtin:night-fjord"]', 'dblclick');
+    const s2 = await desk('/assets/backgrounds/night-fjord.jpg');
+    v = await viewWhen((x) => x.ticks.join() === 'builtin:night-fjord');
+    ok('pick 2 (Fjord at night, by a double-click): selected and saved', P.S.lib.data.selected === 'builtin:night-fjord' && libJson() === 'builtin:night-fjord', libJson());
+    ok('pick 2: the desktop page now draws that photo', !!s2, s2 || await js(d, WALL_SRC));
+    ok('pick 2: the window moved the tick', v.ticks.join() === 'builtin:night-fjord' && /^Fjord at night · Photo by .+ on Unsplash$/.test(v.credit), { ticks: v.ticks, credit: v.credit, msAfterDesktop: v.ms });
+    await capture(lw, dir, `p1-window-fjord-${v.theme}`);
+    await capture(d, dir, 'p1-desktop-fjord');
+    // pick 3: in Settings > Personalization > Background; the Wallpapers window follows it
+    await settingsStep('builtin:night-fjord', LAST);
+    await click('#cats .cat[data-cat="All"]');   // the window is still on Sky & Night from pick 2, which hides Forest
+    v = await viewWhen((x) => x.ticks.join() === LAST);
+    ok('pick 3: the open Wallpapers window moved its tick to the Settings pick', v.ticks.join() === LAST, { ticks: v.ticks, credit: v.credit });
+    await cpu('a built-in photo on the desktop (still image), Wallpapers + Settings open, test window', 20000);
+  } else {
+    const s = await desk(`/assets/backgrounds/${LAST.replace('builtin:', '')}.jpg`);
+    ok('after a restart: the built-in pick is still selected', P.S.lib.data.selected === LAST && libJson() === LAST, P.S.lib.data.selected);
+    ok('after a restart: the desktop draws it again', !!s, s || await js(d, WALL_SRC));
+    let v = await viewWhen((x) => x.builtin && x.ticks.join() === LAST);
+    ok('after a restart: the window opens on Built-in with it ticked', v.builtin && v.ticks.join() === LAST, { builtin: v.builtin, ticks: v.ticks });
+    await capture(lw, dir, `p2-window-forest-${v.theme}`);
+    await capture(d, dir, 'p2-desktop-forest');
+    await cpu('a built-in photo on the desktop after a restart, Wallpapers open, test window', 20000);
+    // back to one of his own
+    await click('#view-yours');
+    await sleep(600);
+    await click(`.card[data-id="${own}"]`, 'dblclick');
+    const back = await waitFor(async () => { const w = await js(d, WALL_SRC); return P.S.lib.data.selected === own && w && w.src && !/assets\/backgrounds/.test(w.src) && w.loaded ? w : null; }, 30000, 500);
+    v = await viewWhen((x) => x.ticks.join() === own);
+    ok('back to his own: it is selected, saved, and the desktop draws it', !!back && libJson() === own && P.listing().current && !P.listing().current.preset, { own, selected: P.S.lib.data.selected, desk: back });
+    ok('back to his own: no built-in card is ticked, his card is', v.ticks.join() === own && !v.builtin, v.ticks);
+    await capture(lw, dir, `p2-window-own-${v.theme}`);
+    await click('#view-builtin');
+    await sleep(600);
+    v = await view();
+    ok('back to his own: Built-in shows no tick and the neutral credit line', v.builtin && v.ticks.length === 0 && /Photos from Unsplash/.test(v.credit), { ticks: v.ticks, credit: v.credit });
+    await capture(lw, dir, `p2-window-builtin-own-${v.theme}`);
+    await settingsStep(null, null);
+    await cpu(`his own wallpaper (${(P.S.lib.data.items.find((i) => i.id === own) || {}).kind || '?'}) on the desktop, Wallpapers + Settings open, test window`, 20000);
+  }
+  ok('no console errors in the Wallpapers window, Settings or the desktop page', out.errors.length === 0, out.errors);
+  out.passed = out.checks.filter((c) => c.pass).length;
+  out.failed = out.checks.length - out.passed;
+  log(`PRESETS PROBE phase ${phase}: ${out.passed} passed, ${out.failed} failed`);
+  fs.writeFileSync(path.join(dir, `presets-${phase}.json`), JSON.stringify(out, null, 2));
+}
+
 exports.run = async function run(api, dirArg) {
   const dir = path.resolve(dirArg);
   fs.mkdirSync(dir, { recursive: true });
@@ -190,6 +358,7 @@ exports.run = async function run(api, dirArg) {
     log(`import ${imported ? 'finished' : 'DID NOT FINISH'} after ${((Date.now() - t0) / 1000).toFixed(1)} s: ${P.S.lib.data.lively ? P.S.lib.data.lively.report.reason : 'no report'}`);
     for (const l of (P.S.lib.data.lively && P.S.lib.data.lively.report.lines) || []) log(`  import ${l.livelyId}: ${l.ok ? 'ok' : 'FAILED'} - ${l.reason}`);
     log(`selected: ${P.S.lib.data.selected}`);
+    if (process.env.MANTLE_WALL_PROBE_PRESETS) { await presetsProbe(P, C, d, dir, process.env.MANTLE_WALL_PROBE_PRESETS); log('done'); return; }
     if (process.env.MANTLE_WALL_PROBE_WEB) { await webTiming(P, C, d, dir); log('done'); return; }
     if (process.env.MANTLE_WALL_PROBE_CPU) { await cpuOnly(P, C, d, dir); log('done'); return; }
 
