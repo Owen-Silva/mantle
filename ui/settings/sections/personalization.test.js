@@ -27,6 +27,11 @@ const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/perso-shots';
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
+// the built-in wallpapers as lib/wallpaper.js lists them: the real catalog and real thumbs, in catalog order
+const BG = path.join(ROOT, 'assets', 'backgrounds');
+const PRESETS = JSON.parse(fs.readFileSync(path.join(BG, 'catalog.json'), 'utf8')).map((c) => ({ id: 'builtin:' + c.file.replace(/\.[a-z]+$/i, ''), title: c.title,
+  type: 'picture', typeLabel: 'Picture', preset: true, category: c.category, credit: c.credit, creditUrl: c.url, origin: 'Built in', runtime: null,
+  thumbUrl: 'file:///' + path.join(BG, 'thumbs', c.file).replace(/\\/g, '/') }));
 
 let passed = 0;
 const failures = [];
@@ -140,8 +145,43 @@ function FAKE() {
       faces: n === 'Made Up Display' ? [{ face: 'Made Up Display (TrueType)', name: n, file: 'C:\\Made\\Up\\Fonts\\display.ttf', scope: 'user', type: 'TTF' }]
         : [{ face: n + ' (TrueType)', name: n, file: 'C:\\Windows\\Fonts\\x.ttf', scope: 'system', type: 'TTF' }, { face: n + ' Bold (TrueType)', name: n + ' Bold', file: 'C:\\Windows\\Fonts\\xb.ttf', scope: 'system', type: 'TTF' }]
           .concat(n === 'Segoe UI' ? [{ face: 'Segoe UI Light (TrueType)', name: 'Segoe UI Light', file: 'C:\\Windows\\Fonts\\xl.ttf', scope: 'system', type: 'TTF' }] : []) })) });
-  const wall = () => ({ items: [{ id: 'w1', title: 'Made-up Rain', type: 'video', typeLabel: 'Video', selected: true, health: { ok: true } }, { id: 'w2', title: 'Made-up Stars', type: 'web', typeLabel: 'Web', selected: false, health: { ok: true } }],
-    playback: { paused: SCN === 'paused', reason: SCN === 'paused' ? 'a full-screen app is in front (your Lively rule)' : '' }, livelyInstalled: true, test: TEST });
+  /* the built-in wallpapers: window.__PRESETS is the REAL catalog (assets/backgrounds/catalog.json, its real
+   * thumbs), shaped as lib/wallpaper.js lists it. perso=builtin: one is the pick; tilebad: one photo is
+   * missing, one thumb is the full photo, a damaged catalog line; catbad: the catalog is unreadable;
+   * setbad: Stone summit is picked and set / shuffle / creditOpen are refused; legacy: a Mantle that sends no presets or current. */
+  const LIB = [{ id: 'w1', title: 'Made-up Rain', type: 'video', typeLabel: 'Video', health: { ok: true } }, { id: 'w2', title: 'Made-up Stars', type: 'web', typeLabel: 'Web', health: { ok: true } }];
+  const CATS = ['Mountains', 'Forest', 'Water', 'Coast', 'Desert', 'Sky & Night', 'Snow', 'City', 'Abstract', 'Minimal'];
+  let PICK = SCN === 'builtin' || SCN === 'setbad' ? 'builtin:stone' : 'w1';
+  const presetOf = (x) => Object.assign({}, x, { selected: PICK === x.id,
+    health: SCN === 'tilebad' && x.id === 'builtin:snow-ridge' ? { ok: false, reason: 'made up: its photo file is missing from Mantle\'s backgrounds folder' } : { ok: true, reason: null },
+    thumbNote: SCN === 'tilebad' && x.id === 'builtin:forest' ? 'Its small preview is missing, so the full photo is shown instead.' : '' });
+  const wall = () => {
+    const items = LIB.map((x) => Object.assign({}, x, { selected: PICK === x.id }));
+    const out = { items, playback: { paused: SCN === 'paused', reason: SCN === 'paused' ? 'a full-screen app is in front (your Lively rule)' : '' }, livelyInstalled: true, test: TEST };
+    if (SCN === 'legacy') return out;
+    const pre = (window.__PRESETS || []).map(presetOf);
+    out.presets = SCN === 'catbad' ? { ok: false, reason: 'made up: the list of built-in wallpapers (catalog.json) is missing from this copy of Mantle', note: null, categories: [], items: [] }
+      : { ok: true, reason: null, note: SCN === 'tilebad' ? 'made up: 1 line of the built-in list was damaged, so it is left out' : null, categories: CATS, items: pre };
+    const cur = items.concat(pre).find((x) => x.selected);
+    out.current = cur ? { id: cur.id, title: cur.title, type: cur.type, typeLabel: cur.typeLabel, preset: !!cur.preset, category: cur.category || null, credit: cur.credit || null,
+      creditUrl: cur.creditUrl || null, thumbUrl: cur.thumbUrl || null, health: cur.health } : null;
+    return out;
+  };
+  const wset = (a) => {
+    if (SCN === 'setbad') return no('made up: Mantle\'s wallpaper library could not be saved (library.json is read-only)');
+    if (!(window.__PRESETS || []).some((x) => x.id === a.id) && !LIB.some((x) => x.id === a.id)) return no('there is no wallpaper with that id');
+    PICK = a.id;
+    return { ok: true };
+  };
+  const wshuffle = (a) => {
+    if (SCN === 'setbad') return no('made up: no built-in photo could be used');
+    const pool = (window.__PRESETS || []).filter((x) => (a.category === 'All' || x.category === a.category) && x.id !== PICK);
+    if (!pool.length) return no('there is no other photo in ' + a.category);
+    PICK = pool[0].id;
+    return { ok: true, id: pool[0].id, title: pool[0].title };
+  };
+  const wcredit = (a) => (SCN === 'setbad' ? no('made up: the photo\'s page could not be opened (no browser answered)')
+    : { ok: true, dryRun: true, url: ((window.__PRESETS || []).find((x) => x.id === a.id) || {}).creditUrl, reason: 'Test run, nothing opened: Mantle would open the photo\'s Unsplash page' });
   const mantle = () => ({ ok: true, switcher: {}, shortcuts: [], features: [
     { name: 'topbar', label: 'Top menu bar', enabled: true, running: true, options: [{ key: 'a' }, { key: 'b' }] },
     { name: 'jumplist', label: 'Jump lists (right-click an app on the bar)', enabled: true, running: true, options: [] },
@@ -169,6 +209,7 @@ function FAKE() {
           : name === P + 'colors' ? later(30, colors()) : name === P + 'background' ? later(40, background()) : name === P + 'more' ? later(30, more())
           : name === P + 'lock' ? later(30, lock()) : name === P + 'fonts' ? later(50, fonts()) : name === 'wallpaper.list' ? later(20, wall()) : name === 'settings.mantle' ? later(20, mantle())
           : name === 'wallpaper.open' ? later(20, { ok: true })
+          : name === 'wallpaper.set' ? later(30, wset(copy)) : name === 'wallpaper.shuffle' ? later(30, wshuffle(copy)) : name === 'wallpaper.creditOpen' ? later(20, wcredit(copy))
           : [P + 'set', P + 'lockPicture', P + 'fontInstall', P + 'fontRemove'].includes(name) ? write(name, copy) : null;
         if (!mine) return m.call(name, args);
         (window.__mockCalls = window.__mockCalls || []).push({ name, args: copy });
@@ -338,7 +379,141 @@ const SHOTS = [
   ['perso-12-usage', PG('device-usage'), async (p) => {
     check('12: seven uses, read-only with the reason', await p.locator('[data-row^="personalization.usage.list."]').count() === 7 && /Read only here: Windows keeps device usage/.test(await p.textContent('#page')));
   }],
-];
+  ['perso-22-gallery-legacy', PG('background', '&perso=legacy'), async (p) => {
+    const row = await rowText(p, MW) || '';
+    check("22: with no presets/current sent, his own pick is found from items", /Made-up Rain \(Video\)/.test(row) && /2 in its library/.test(row), row);
+    check('22: the gallery says why it is empty', /The built-in wallpapers could not be read: this Mantle sends no built-in list/.test(await p.textContent('#page')) && await p.locator('[data-builtin-id]').count() === 0);
+  }],
+].concat(...['', '&theme=dark'].map((t) => galleryShots(t)));
+
+/* ---- the built-in wallpapers (lane mantle-bg-settings): every scene runs light and dark */
+const MW = 'personalization.background.mantle';
+const BI = 'personalization.background.builtin';
+const CATS = ['Mountains', 'Forest', 'Water', 'Coast', 'Desert', 'Sky & Night', 'Snow', 'City', 'Abstract', 'Minimal'];
+const P = (id) => PRESETS.find((x) => x.id === id);
+const tiles = (p) => p.$$eval('[data-builtin-id]', (l) => l.map((t) => ({ id: t.dataset.builtinId, on: t.getAttribute('aria-checked') === 'true', shown: t.offsetParent !== null,
+  check: getComputedStyle(t.querySelector('[data-check]')).display !== 'none', dis: t.getAttribute('aria-disabled') === 'true', tip: t.title, label: t.getAttribute('aria-label'),
+  dim: t.querySelector('img').style.opacity, tab: t.tabIndex })));
+const picked = async (p) => (await tiles(p)).filter((t) => t.on).map((t) => t.id).join(',');
+const credLine = (p) => p.textContent('[data-credit-line]');
+const active = (p) => p.evaluate(() => (document.activeElement && document.activeElement.dataset.builtinId) || null);
+const lastSet = async (p) => { const c = await calls(p, 'wallpaper.set'); return c.length ? c[c.length - 1].args.id : null; };
+const describes = (row, it) => row.includes(it.title + ' (Built-in photo)') && row.includes('Photo by ' + it.credit + ' on Unsplash') && /2 in its library/.test(row) && !/25 in its library/.test(row);
+const toGallery = (p) => p.$eval(sel(BI), (e) => e.scrollIntoView({ block: 'start' }));
+
+function galleryShots(t) {
+  const T = t ? 'dark' : 'light', N = t ? '-dark' : '';
+  const dark = async (p, n) => { if (t) check(`${n} ${T}: painted dark`, await p.evaluate(() => document.documentElement.dataset.theme) === 'dark'); };
+  return [
+    ['perso-17-gallery' + N, PG('background', t), async (p) => {
+      await dark(p, '17');
+      const ts = await tiles(p);
+      check(`17 ${T}: 23 tiles in the catalog's order`, ts.length === 23 && ts.map((x) => x.id).join() === PRESETS.map((x) => x.id).join(), ts.map((x) => x.id).join());
+      check(`17 ${T}: tiles are radios in one radiogroup, each named (aria-label + tooltip with its photographer)`, await p.$$eval('[role="radiogroup"] > button[role="radio"][data-builtin-id]', (l) => l.length) === 23 &&
+        ts.every((x) => x.label === P(x.id).title && x.tip.startsWith(P(x.id).title + ' · Photo by ' + P(x.id).credit)));
+      const chips = await p.$$eval('[data-cat]', (l) => l.map((b) => b.dataset.cat + '=' + b.getAttribute('aria-pressed')));
+      check(`17 ${T}: chips are All then the categories in order, All pressed`, chips.join('|') === ['All=true'].concat(CATS.map((c) => c + '=false')).join('|'), chips.join('|'));
+      check(`17 ${T}: his own pick: no tile checked, the neutral credit line`, !ts.some((x) => x.on || x.check) &&
+        (await credLine(p)) === 'Photos from Unsplash, free under the Unsplash License. Pick one to use it; its photographer is credited here.', await credLine(p));
+      const row = await rowText(p, MW) || '';
+      check(`17 ${T}: his own pick still reads (Video), the library counts only his own`, /Made-up Rain \(Video\)/.test(row) && /2 in its library/.test(row), row);
+      check(`17 ${T}: Open Wallpapers is still there`, await p.locator(sel('personalization.background.wallpapers') + ' button').count() === 1);
+      check(`17 ${T}: one tab stop in the grid`, ts.filter((x) => x.tab === 0).length === 1 && ts[0].tab === 0);
+      await p.click('[data-cat="Snow"]');
+      const snow = (await tiles(p)).filter((x) => x.shown).map((x) => x.id);
+      check(`17 ${T}: the Snow chip shows its 2 photos`, snow.join() === 'builtin:snow-peak,builtin:snow-ridge', snow.join());
+      check(`17 ${T}: Snow is pressed, All is not`, await p.$eval('[data-cat="Snow"]', (b) => b.getAttribute('aria-pressed')) === 'true' && await p.$eval('[data-cat="All"]', (b) => b.getAttribute('aria-pressed')) === 'false');
+      check(`17 ${T}: Shuffle says what it does`, await p.$eval('[data-shuffle]', (b) => b.title) === 'Use a random built-in photo');
+      await p.click('[data-shuffle]');
+      await p.waitForTimeout(300);
+      const sh = await calls(p, 'wallpaper.shuffle');
+      check(`17 ${T}: Shuffle sends the active chip's category`, sh.length === 1 && sh[0].args.category === 'Snow', JSON.stringify(sh));
+      check(`17 ${T}: after Shuffle the Snow photo is checked and the row names it`, await picked(p) === 'builtin:snow-peak' && describes(await rowText(p, MW) || '', P('builtin:snow-peak')), await rowText(p, MW));
+      await p.click('[data-cat="All"]');
+      check(`17 ${T}: All shows the 23 again`, (await tiles(p)).filter((x) => x.shown).length === 23);
+      await p.click('[data-builtin-id="builtin:lake"]');
+      await p.waitForTimeout(300);
+      const s1 = await calls(p, 'wallpaper.set');
+      check(`17 ${T}: a click sends wallpaper.set with its id`, s1.length === 1 && s1[0].args.id === 'builtin:lake' && Object.keys(s1[0].args).length === 1, JSON.stringify(s1));
+      const a1 = await tiles(p);
+      check(`17 ${T}: the check mark moved to it after the re-read`, a1.filter((x) => x.on).map((x) => x.id).join() === 'builtin:lake' && a1.filter((x) => x.check).map((x) => x.id).join() === 'builtin:lake');
+      check(`17 ${T}: the pick wears the accent border`, await p.$eval('[data-builtin-id="builtin:lake"]', (b) => /var\(--lg-acc\)/.test(b.style.boxShadow)) &&
+        await p.$eval('[data-builtin-id="builtin:stone"]', (b) => !/--lg-acc\)/.test(b.style.boxShadow)));
+      const L = P('builtin:lake');
+      check(`17 ${T}: the row describes the built-in pick with its credit`, describes(await rowText(p, MW) || '', L), await rowText(p, MW));
+      check(`17 ${T}: the credit line is its title and photographer`, (await credLine(p)) === L.title + ' · Photo by ' + L.credit + ' on Unsplash', await credLine(p));
+      await p.focus('[data-builtin-id="builtin:forest"]');
+      await p.keyboard.press('Enter');
+      await p.waitForTimeout(300);
+      check(`17 ${T}: Enter on a focused tile picks it, focus stays`, await lastSet(p) === 'builtin:forest' && await picked(p) === 'builtin:forest' && await active(p) === 'builtin:forest');
+      await p.focus('[data-builtin-id="builtin:stone"]');
+      await p.keyboard.press(' ');
+      await p.waitForTimeout(300);
+      check(`17 ${T}: Space on a focused tile picks it`, await lastSet(p) === 'builtin:stone' && await picked(p) === 'builtin:stone' && await active(p) === 'builtin:stone');
+      check(`17 ${T}: the pick is the grid's tab stop`, (await tiles(p)).filter((x) => x.tab === 0).map((x) => x.id).join() === 'builtin:stone');
+      await p.keyboard.press('ArrowRight');
+      check(`17 ${T}: ArrowRight moves to the next photo, with a focus ring`, await active(p) === 'builtin:cloud-peaks' &&
+        await p.evaluate(() => getComputedStyle(document.activeElement).outlineStyle) === 'solid');
+      await p.keyboard.press('ArrowLeft');
+      await p.click('[data-credit]');
+      await p.waitForTimeout(200);
+      const cr = await calls(p, 'wallpaper.creditOpen');
+      check(`17 ${T}: the credit link sends wallpaper.creditOpen with the pick`, cr.length === 1 && cr[0].args.id === 'builtin:stone', JSON.stringify(cr));
+      check(`17 ${T}: its test-run answer is shown`, /Test run, nothing opened: Mantle would open the photo's Unsplash page/.test(await p.textContent('#page')));
+      check(`17 ${T}: no other wallpaper command was sent`, (await calls(p, 'wallpaper.set')).length === 3);
+      await toGallery(p);
+    }],
+    ['perso-18-gallery-picked' + N, PG('background', '&perso=builtin' + t), async (p) => {
+      await dark(p, '18');
+      const S = P('builtin:stone');
+      const row = await rowText(p, MW) || '';
+      check(`18 ${T}: the row reads "Stone summit (Built-in photo)" with "Photo by Fabrizio Conti on Unsplash"`, describes(row, S) && /Stone summit \(Built-in photo\)/.test(row) && /Photo by Fabrizio Conti on Unsplash/.test(row), row);
+      check(`18 ${T}: Stone summit is checked`, await picked(p) === 'builtin:stone' && (await tiles(p)).find((x) => x.id === 'builtin:stone').check);
+      check(`18 ${T}: the credit line names it`, (await credLine(p)) === 'Stone summit · Photo by Fabrizio Conti on Unsplash');
+      check(`18 ${T}: the credit is a link to its Unsplash page`, await p.$eval('[data-credit]', (a) => a.tagName === 'A' && a.textContent === 'Fabrizio Conti' && /^https:\/\/unsplash\.com\//.test(a.getAttribute('href'))));
+      check(`18 ${T}: every thumbnail loaded`, await p.$$eval('[data-builtin-id] img', (l) => l.every((i) => i.complete && i.naturalWidth > 0)));
+      await p.$eval(sel(MW), (e) => e.scrollIntoView({ block: 'start' }));   // this shot shows the row naming the pick
+    }],
+    ['perso-19-gallery-bad' + N, PG('background', '&perso=tilebad' + t), async (p) => {
+      await dark(p, '19');
+      const pg = () => p.textContent('#page');
+      check(`19 ${T}: the catalog's note is shown`, /Made up: 1 line of the built-in list was damaged, so it is left out/.test(await pg()), (await pg()).slice(-600));   // the kit capitalises a note
+      const bad = (await tiles(p)).find((x) => x.id === 'builtin:snow-ridge');
+      check(`19 ${T}: a photo that cannot be used is dimmed, aria-disabled, and its tooltip says why`, bad.dis && bad.dim === '0.4' && /cannot be used, made up: its photo file is missing/.test(bad.tip) && /cannot be used/.test(bad.label), JSON.stringify(bad));
+      check(`19 ${T}: it carries the warning mark`, await p.$eval('[data-builtin-id="builtin:snow-ridge"] [data-warn]', (w) => getComputedStyle(w).display !== 'none'));
+      check(`19 ${T}: a thumb note is on that tile's tooltip`, /Its small preview is missing, so the full photo is shown instead\./.test((await tiles(p)).find((x) => x.id === 'builtin:forest').tip));
+      await p.click('[data-builtin-id="builtin:snow-ridge"]', { force: true });   // aria-disabled: playwright would wait for it to enable
+      await p.waitForTimeout(200);
+      check(`19 ${T}: clicking it sends nothing and shows the reason`, (await calls(p, 'wallpaper.set')).length === 0 && /cannot be used: made up: its photo file is missing/.test(await pg()));
+      await p.focus('[data-builtin-id="builtin:lake"]');
+      check(`19 ${T}: focusing a good photo clears that reason`, !/cannot be used: made up/.test(await pg()));
+      await p.focus('[data-builtin-id="builtin:snow-ridge"]');
+      check(`19 ${T}: focusing it (keyboard) shows the reason again`, /cannot be used: made up: its photo file is missing/.test(await pg()));
+      await toGallery(p);
+    }],
+    ['perso-20-gallery-catalog' + N, PG('background', '&perso=catbad' + t), async (p) => {
+      await dark(p, '20');
+      check(`20 ${T}: an unreadable catalog shows its reason instead of a grid`, /The built-in wallpapers could not be read: made up: the list of built-in wallpapers \(catalog\.json\) is missing/.test(await p.textContent('#page')) &&
+        await p.locator('[data-builtin-id]').count() === 0 && !(await p.isVisible('[data-shuffle]')));
+      check(`20 ${T}: his own wallpaper row and Open Wallpapers are untouched`, /Made-up Rain \(Video\)/.test(await rowText(p, MW) || '') && await p.locator(sel('personalization.background.wallpapers') + ' button').count() === 1);
+      await toGallery(p);
+    }],
+    ['perso-21-gallery-refused' + N, PG('background', '&perso=setbad' + t), async (p) => {
+      await dark(p, '21');
+      await p.click('[data-builtin-id="builtin:lake"]');
+      await p.waitForTimeout(250);
+      check(`21 ${T}: a refused pick shows its reason, the check stays`, (await calls(p, 'wallpaper.set')).length === 1 &&
+        new RegExp('"' + P('builtin:lake').title + '" could not be used: made up: Mantle\'s wallpaper library could not be saved').test(await p.textContent('#page')) && await picked(p) === 'builtin:stone');
+      await p.click('[data-shuffle]');
+      await p.waitForTimeout(250);
+      check(`21 ${T}: a refused Shuffle shows its reason`, /Shuffle did not pick a photo: made up: no built-in photo could be used/.test(await p.textContent('#page')));
+      await p.click('[data-credit]');
+      await p.waitForTimeout(200);
+      check(`21 ${T}: a refused credit link shows its reason`, /The photo's Unsplash page could not be opened: made up: the photo's page could not be opened/.test(await p.textContent('#page')));
+      await toGallery(p);
+    }],
+  ];
+}
 
 async function browserTests() {
   const g = gaming();
@@ -360,6 +535,7 @@ async function browserTests() {
   };
   try {
     const ctx = await browser.newContext({ viewport: { width: 1040, height: 760 }, deviceScaleFactor: 1.25, colorScheme: 'light' });
+    await ctx.addInitScript((d) => { window.__PRESETS = d; }, PRESETS);
     await ctx.addInitScript(FAKE);
     if (!ONLY && DEF) {
       const missing = [], errs = [];

@@ -7,7 +7,8 @@
  *
  * THE TRUTH ABOUT WHAT OWEN SEES: Mantle draws its OWN wallpaper (lib/wallpaper.js, the Wallpapers
  * window; his Lively library was imported once) above Windows' background, and it REPLACES Start and
- * the taskbar. So Background leads with Mantle's wallpaper and says when Windows' own shows through;
+ * the taskbar. So Background leads with Mantle's wallpaper (his own library, or one of the 23 built-in
+ * photos Helm and Quartz have, picked right here) and says when Windows' own shows through;
  * Start and Taskbar show Mantle's own options (settings.mantle) and open them inside Mantle Settings.
  * Colors leads with Mantle's OWN look (Light / Dark / Match Windows, theme.get / theme.set; Match Windows
  * follows Windows' app mode live). Every mode and colour below that is Windows' and your apps'.
@@ -54,6 +55,185 @@
   // ============================================================== Background
   const FITS = [['fill', 'Fill'], ['fit', 'Fit'], ['stretch', 'Stretch'], ['tile', 'Tile'], ['center', 'Centre'], ['span', 'Span']];
   const INTERVALS = [[60000, '1 minute'], [600000, '10 minutes'], [1800000, '30 minutes'], [3600000, '1 hour'], [21600000, '6 hours'], [86400000, '1 day']];
+
+  /* ---- the built-in wallpapers (lane mantle-bg-settings, 2026-10-09)
+   * Owen asked for the same 23 built-in photos as Helm and Quartz. lib/wallpaper.js lists them beside his
+   * own library (wallpaper.list `presets`, the pick of either kind in `current`); a pick is
+   * wallpaper.set { id: 'builtin:<name>' }, saved like one of his own. This is Helm's gallery in the kit's
+   * voice: category chips (All first), Shuffle, the thumbnails with the accent check on the pick, and the
+   * photographer's credit under them. His own library stays first: Open Wallpapers sits above, untouched.
+   * Every refusal is said in the card (a photo that cannot be used, a refused pick, an unread catalog). */
+  const CHECK = '<path d="M3.6 8.3l2.9 2.9 5.9-6.4"/>';
+  const SHUFFLE = '<path d="M1.5 4.5h2.4c1.3 0 2.4.7 3 1.8l2.2 3.4c.6 1.1 1.7 1.8 3 1.8h2.4M1.5 11.5h2.4c1.3 0 2.4-.7 3-1.8M9.1 6.3c.6-1.1 1.7-1.8 3-1.8h2.4M12.8 2.8l1.7 1.7-1.7 1.7M12.8 9.8l1.7 1.7-1.7 1.7"/>';
+  const NEUTRAL = 'Photos from Unsplash, free under the Unsplash License. Pick one to use it; its photographer is credited here.';
+  const creditOf = (it) => (it && it.credit ? 'Photo by ' + it.credit + ' on Unsplash' : null);
+  const currentOf = (w) => (w && 'current' in w ? w.current || null
+    : ((w && w.items) || []).find((x) => x.selected) || ((w && w.presets && w.presets.items) || []).find((x) => x.selected) || null);
+  function gallery(kit, reread) {
+    const S = { cat: 'All', cats: '', ids: '', byId: new Map(), cur: null, msg: { list: null, note: null, tile: null, act: null }, busy: false };
+    const css = (n, s) => { Object.assign(n.style, s); return n; };
+    const chips = css(kit.h('div', { role: 'group', 'aria-label': 'Built-in wallpaper categories' }), { display: 'flex', flexWrap: 'wrap', gap: '4px', flex: '1 1 auto', minWidth: '0', paddingTop: '1px' });
+    const shuffle = kit.h('button', { type: 'button', class: 'btn', title: 'Use a random built-in photo', 'data-shuffle': '' }, kit.icon(SHUFFLE, 14), 'Shuffle');
+    const bar = css(kit.h('div', {}, chips, shuffle), { display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 16px 0' });
+    const grid = css(kit.h('div', { role: 'radiogroup', 'aria-label': 'Built-in wallpapers' }),
+      { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: '10px', padding: '12px 16px 14px' });
+    const say = kit.h('div', {});        // a card note (the kit's .why, inset and ruled): note, a bad photo, a refusal
+    const cred = css(kit.h('div', { 'data-credit-line': '' }), { padding: '10px 16px 12px', borderTop: '1px solid var(--lg-sunk)', fontSize: '12px', lineHeight: '1.45', color: 'var(--lg-ink-3)' });
+    const card = kit.card(bar, grid, say, cred);
+
+    function show() {
+      const m = S.msg;
+      say.replaceChildren(...[m.list && kit.reason(m.list), m.note && kit.reason(m.note, { info: true }), m.tile && kit.reason(m.tile),
+        m.act && kit.reason(m.act.text, { info: !!m.act.info })].filter(Boolean));
+    }
+    const answer = (r, what) => (r && r.ok === false ? { text: what + ': ' + (r.reason || 'no reason came back') } : r && r.dryRun ? { text: r.reason || 'Test run, nothing changed', info: true } : null);
+
+    function chip(cat) {
+      const b = kit.h('button', { type: 'button', class: 'btn quiet', 'data-cat': cat, 'aria-pressed': 'false' }, cat);
+      css(b, { height: '26px', padding: '0 11px', borderRadius: '13px' });
+      b.addEventListener('click', () => { S.cat = cat; filter(); });
+      return b;
+    }
+    function filter() {
+      for (const b of chips.children) {
+        const on = b.dataset.cat === S.cat;
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        css(b, { background: on ? 'var(--lg-press)' : '', color: on ? 'var(--lg-ink)' : '' });   // the pressed wash, full ink: the accent marks only the pick (as the Wallpapers window)
+      }
+      for (const t of grid.children) t.style.display = S.cat === 'All' || (S.byId.get(t.dataset.builtinId) || {}).category === S.cat ? '' : 'none';
+      rove();
+    }
+    // one tab stop for the grid (the pick, else the first photo shown); the arrows move between photos
+    function rove() {
+      const vis = [...grid.children].filter((t) => t.style.display !== 'none');
+      const stop = vis.find((t) => t.getAttribute('aria-checked') === 'true') || vis[0];
+      for (const t of grid.children) t.tabIndex = t === stop ? 0 : -1;
+    }
+    grid.addEventListener('keydown', (e) => {
+      const vis = [...grid.children].filter((t) => t.style.display !== 'none');
+      const i = vis.indexOf(document.activeElement);
+      if (i < 0 || !/^(Arrow(Left|Right|Up|Down)|Home|End)$/.test(e.key)) return;
+      const cols = Math.max(1, vis.filter((t) => t.offsetTop === vis[0].offsetTop).length);
+      const j = { ArrowLeft: i - 1, ArrowRight: i + 1, ArrowUp: i - cols, ArrowDown: i + cols, Home: 0, End: vis.length - 1 }[e.key];
+      if (j < 0 || j >= vis.length) return;
+      e.preventDefault();
+      vis.forEach((t) => { t.tabIndex = -1; });
+      vis[j].tabIndex = 0;
+      vis[j].focus();
+    });
+
+    function tile(it) {
+      const img = css(kit.h('img', { alt: '', draggable: 'false', decoding: 'async' }), { display: 'block', width: '100%', height: '100%', objectFit: 'cover' });
+      // a preview that will not load: the photo's name in its place, and the tooltip says so
+      const name = css(kit.h('span', {}, it.title), { position: 'absolute', inset: '0', display: 'none', alignItems: 'center', justifyContent: 'center', padding: '6px',
+        textAlign: 'center', fontSize: '11.5px', lineHeight: '1.3', color: 'var(--lg-ink-2)' });
+      const mark = css(kit.h('span', { 'aria-hidden': 'true', 'data-check': '' }, kit.icon(CHECK, 12)), { position: 'absolute', top: '6px', right: '6px', width: '20px', height: '20px',
+        borderRadius: '50%', display: 'none', alignItems: 'center', justifyContent: 'center', background: 'var(--lg-acc)', color: 'var(--lg-acc-on)' });
+      mark.firstChild.setAttribute('stroke-width', '2.2');
+      const warn = css(kit.h('span', { 'aria-hidden': 'true', 'data-warn': '' }, kit.icon('warn', 12)), { position: 'absolute', left: '6px', bottom: '6px', width: '20px', height: '20px',
+        borderRadius: '50%', display: 'none', alignItems: 'center', justifyContent: 'center', background: 'var(--lg-fill-pop)', color: 'var(--lg-warn)' });
+      const b = css(kit.h('button', { type: 'button', role: 'radio', 'data-builtin-id': it.id }, img, name, mark, warn), { position: 'relative', display: 'block', width: '100%',
+        aspectRatio: '16 / 10', padding: '0', border: '0', borderRadius: '8px', overflow: 'hidden', background: 'var(--lg-sunk)', cursor: 'pointer',
+        transition: 'box-shadow 120ms var(--lg-ease)' });
+      img.addEventListener('error', () => { img.style.visibility = 'hidden'; name.style.display = 'flex'; b.dataset.thumbGone = '1'; paint(b); });
+      b.addEventListener('click', () => pick(b.dataset.builtinId));
+      b.addEventListener('focus', () => {
+        const x = S.byId.get(b.dataset.builtinId);
+        const why = x && x.health && x.health.ok === false ? '"' + x.title + '" cannot be used: ' + (x.health.reason || 'no reason came back') : null;
+        if (why !== S.msg.tile) { S.msg.tile = why; show(); }
+      });
+      return b;
+    }
+    function paint(b) {
+      const it = S.byId.get(b.dataset.builtinId);
+      if (!it) return;
+      const on = !!(S.cur && S.cur.id === it.id), bad = !!(it.health && it.health.ok === false);
+      const [img, , mark, warn] = b.children;
+      if (img.dataset.src !== (it.thumbUrl || '')) { img.dataset.src = it.thumbUrl || ''; if (it.thumbUrl) img.src = it.thumbUrl; else img.dispatchEvent(new Event('error')); }
+      const tip = bad ? it.title + ': cannot be used, ' + (it.health.reason || 'no reason came back')
+        : [it.title + (it.credit ? ' · Photo by ' + it.credit : ''), it.thumbNote || null, b.dataset.thumbGone ? 'Its preview could not be loaded.' : null].filter(Boolean).join('. ');
+      b.title = tip;
+      b.setAttribute('aria-label', bad ? it.title + ', cannot be used: ' + (it.health.reason || 'no reason came back') : it.title);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+      if (bad) b.setAttribute('aria-disabled', 'true'); else b.removeAttribute('aria-disabled');
+      mark.style.display = on ? 'flex' : 'none';
+      warn.style.display = bad ? 'flex' : 'none';
+      css(img, { opacity: bad ? '.4' : '1' });
+      css(b, { boxShadow: on ? '0 0 0 2px var(--lg-acc)' : '0 0 0 1px var(--lg-edge-out)', cursor: bad ? 'not-allowed' : on ? 'default' : 'pointer' });
+    }
+    function credit() {
+      const c = S.cur && S.cur.preset ? S.cur : null;
+      if (!c) return cred.replaceChildren(NEUTRAL);
+      const t = css(kit.h('span', {}, c.title), { color: 'var(--lg-ink-2)', fontWeight: '600' });
+      if (!c.credit) return cred.replaceChildren(t, ' · Built-in photo');
+      const a = css(kit.h('a', { href: c.creditUrl || '#', title: c.creditUrl || null, 'data-credit': '' }, c.credit), { color: 'var(--lg-acc)', textDecoration: 'underline', textUnderlineOffset: '2px', cursor: 'pointer' });
+      a.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const r = await kit.call('wallpaper.creditOpen', { id: c.id });
+        if (kit.disposed) return;
+        S.msg.act = answer(r, 'The photo\'s Unsplash page could not be opened');
+        show();
+      });
+      cred.replaceChildren(t, ' · Photo by ', a, ' on Unsplash');
+    }
+
+    async function pick(id) {
+      const it = S.byId.get(id);
+      if (!it || S.busy || (S.cur && S.cur.id === id)) return;
+      if (it.health && it.health.ok === false) { S.msg.tile = '"' + it.title + '" cannot be used: ' + (it.health.reason || 'no reason came back'); return show(); }
+      S.busy = true;
+      grid.setAttribute('aria-busy', 'true');
+      const r = await kit.call('wallpaper.set', { id });
+      S.busy = false;
+      grid.removeAttribute('aria-busy');
+      if (kit.disposed) return;
+      S.msg.act = answer(r, '"' + it.title + '" could not be used');
+      show();
+      reread();
+    }
+    shuffle.addEventListener('click', async () => {
+      if (S.busy) return;
+      S.busy = true;
+      shuffle.disabled = true;
+      shuffle.classList.add('pending');
+      const r = await kit.call('wallpaper.shuffle', { category: S.cat });
+      S.busy = false;
+      shuffle.disabled = false;
+      shuffle.classList.remove('pending');
+      if (kit.disposed) return;
+      S.msg.act = answer(r, 'Shuffle did not pick a photo');
+      show();
+      reread();
+    });
+
+    function draw(w) {
+      const p = w && w.ok !== false ? w.presets : null;
+      const why = !w || w.ok === false ? (w && w.reason) || 'no reason came back' : !p ? 'this Mantle sends no built-in list' : p.ok === false ? p.reason || 'no reason came back' : null;
+      S.msg.list = why ? 'The built-in wallpapers could not be read: ' + why : null;
+      S.msg.note = !why && p.note ? p.note : null;
+      [[bar, 'flex'], [grid, 'grid'], [cred, '']].forEach(([n, d]) => { n.style.display = why ? 'none' : d; });
+      if (why) { S.byId = new Map(); grid.replaceChildren(); S.ids = ''; return show(); }
+      const items = p.items || [];
+      S.byId = new Map(items.map((x) => [x.id, x]));
+      S.cur = currentOf(w);
+      const cats = ['All'].concat((p.categories || []).filter((c) => items.some((x) => x.category === c)));
+      if (cats.join('|') !== S.cats) {
+        S.cats = cats.join('|');
+        if (!cats.includes(S.cat)) S.cat = 'All';
+        chips.replaceChildren(...cats.map(chip));
+      }
+      // the tiles are kept while the same photos come back, so a re-read moves the check, not the focus
+      if (items.map((x) => x.id).join('|') !== S.ids) { S.ids = items.map((x) => x.id).join('|'); grid.replaceChildren(...items.map(tile)); }
+      for (const b of grid.children) paint(b);
+      shuffle.disabled = !items.some((x) => !(x.health && x.health.ok === false));
+      shuffle.title = shuffle.disabled ? 'No built-in photo can be used right now' : 'Use a random built-in photo';
+      if (!items.length) S.msg.list = 'The built-in wallpapers list came back empty' + (p.reason ? ': ' + p.reason : '');
+      filter();
+      credit();
+      show();
+    }
+    return { card, draw };
+  }
   function renderBackground(el, kit) {
     const R = (x) => 'personalization.background.' + x;
     const mwp = kit.status({ row: R('mantle'), label: 'Mantle\'s wallpaper', icon: SVG.picture, value: 'Reading…',
@@ -76,7 +256,9 @@
     const every = kit.choice({ row: R('interval'), label: 'Change picture every', style: 'dropdown', options: INTERVALS.map(([value, label]) => ({ value, label })), onChange: (v) => SET(kit, 'interval', v, read) });
     const shuffle = kit.toggle({ row: R('shuffle'), label: 'Shuffle the picture order', onChange: (on) => SET(kit, 'shuffle', on, read) });
     const note = kit.h('div', {});
+    const gal = gallery(kit, () => readMantle());
     el.append(kit.group('What you see'), kit.card(mwp, open, lively),
+      kit.group('Built-in wallpapers', { row: R('builtin') }), gal.card,
       kit.group('Windows\' background'), note, kit.card(kind, pic, img, fit),
       kit.group('Recent pictures', { row: R('recent') }), kit.card(recent, path),
       kit.group('Solid colour and slideshow'), kit.card(color, show, every, shuffle));
@@ -93,12 +275,17 @@
     }
     async function readMantle() {
       const w = await kit.call('wallpaper.list');
+      if (kit.disposed) return null;
+      gal.draw(w);
       if (!w || w.ok === false) return mwp.set({ value: '—', tone: 'warn', reason: 'Mantle\'s wallpaper could not be read: ' + ((w && w.reason) || 'no reason came back') });
-      const sel = (w.items || []).find((x) => x.selected);
+      // the pick of either kind: `current` (a built-in photo or his own); his own library is `items` alone
+      const own = (w.items || []).filter((x) => !x.preset);
+      const sel = currentOf(w);
       const pb = w.playback || {};
-      mwp.set({ value: sel ? sel.title + ' (' + (sel.typeLabel || sel.type) + ')' : 'None chosen', tone: sel && !(sel.health && sel.health.ok === false) ? 'ok' : 'warn',
-        help: sel ? 'Mantle plays it above Windows\' background; ' + (w.items || []).length + ' in its library' : 'No Mantle wallpaper is chosen, so the desktop shows Windows\' background below',
-        reason: sel && sel.health && sel.health.ok === false ? 'It cannot play: ' + sel.health.reason : null,
+      mwp.set({ value: sel ? sel.title + ' (' + (sel.preset ? 'Built-in photo' : sel.typeLabel || sel.type) + ')' : 'None chosen', tone: sel && !(sel.health && sel.health.ok === false) ? 'ok' : 'warn',
+        help: sel ? (sel.preset ? (creditOf(sel) || 'A built-in photo') : 'Mantle plays it above Windows\' background') + '; ' + own.length + ' in its library'
+          : 'No Mantle wallpaper is chosen, so the desktop shows Windows\' background below',
+        reason: sel && sel.health && sel.health.ok === false ? 'It cannot ' + (sel.preset ? 'show' : 'play') + ': ' + (sel.health.reason || 'no reason came back') : null,
         info: pb.paused ? 'Paused now: ' + (pb.reason || 'no reason came back') : sel ? 'Windows\' background below shows only while Mantle is not running' : null });
       return null;
     }
@@ -445,6 +632,7 @@
       search: [
         { row: 'personalization.background.mantle', label: 'Mantle\'s wallpaper', keywords: 'wallpaper desktop video live lively background', uri: 'ms-settings:personalization' },
         { row: 'personalization.background.wallpapers', label: 'Wallpapers', keywords: 'wallpaper library video add change lively' },
+        { row: 'personalization.background.builtin', label: 'Built-in wallpapers', keywords: 'built in builtin photo photos picture gallery unsplash shuffle random preset wallpaper mountains forest water coast desert sky night snow city abstract minimal' },
         { row: 'personalization.background.lively', label: 'Lively', keywords: 'lively wallpaper running' },
         { row: 'personalization.background.kind', label: 'Personalize your background', keywords: 'background picture solid colour color slideshow wallpaper', uri: 'ms-settings:personalization-background' },
         { row: 'personalization.background.fit', label: 'Choose a fit for your desktop image', keywords: 'fill fit stretch tile center centre span' },
