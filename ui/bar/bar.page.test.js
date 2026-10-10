@@ -292,7 +292,8 @@ async function run() {
         const s = await g.eval(() => {
           const pr = document.createElement('i'); document.body.appendChild(pr);
           const col = (val) => { pr.style.setProperty('background-color', val); const c = getComputedStyle(pr).backgroundColor; pr.style.removeProperty('background-color'); return c; };
-          const tok = { bar: col('var(--lg-fill-bar)'), fill: col('var(--lg-fill)') };
+          const tok = { bar: col('var(--lg-fill-bar)'), fill: col('var(--lg-fill)'),
+            need: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--lg-guard-bar')) || 4.5 };
           pr.remove();
           return { tint: document.querySelector('.bar').style.getPropertyValue('--bar-tint'), tok,
             fill: getComputedStyle(document.querySelector('.bar'), '::after').backgroundColor,
@@ -315,8 +316,9 @@ async function run() {
         /\bbd\b/.test(dk.p.cls) && !/bdwait/.test(dk.p.cls) && dk.p.vis === 'visible' && (dk.p.img.match(/gradient/g) || []).length === 1 &&
         dk.p.img.indexOf(dk.s.tok.fill) >= 0 && /url\(/.test(dk.p.img) && !dk.p.tint && dk.p.g && dk.p.g.engaged === false && dk.p.anim === 'none', { p: dk.p, fill: dk.s.tok.fill });
       const lt = await glass('light', '#ffffff');
-      t.check('glass: (bright strip) the guard thickens the island\'s TINT (the bar colour, never the picture) until ink-2 holds 4.5:1',
-        lt.s.tint && lt.s.solve && lt.s.solve.alpha > alphaOf(lt.s.tok.bar) && lt.s.solve.ratio >= 4.5 && !/brightness/.test(lt.s.filter), lt.s);
+      // a bar's need is its theme's --lg-guard-bar (dark: 4.2, Helm's strip contrast, 2026-10-10)
+      t.check('glass: (bright strip) the guard thickens the island\'s TINT (the bar colour, never the picture) until ink-2 holds --lg-guard-bar (' + lt.s.tok.need + ':1)',
+        lt.s.tint && lt.s.solve && lt.s.solve.alpha > alphaOf(lt.s.tok.bar) && lt.s.solve.ratio >= lt.s.tok.need && lt.s.tok.need === 4.2 && !/brightness/.test(lt.s.filter), lt.s);
       t.check('glass: (white desk) the pop-up stays ONE --lg-fill layer, and ink-2 already holds 4.5:1 on it',
         lt.p.g && lt.p.g.engaged === false && lt.p.g.ratio >= 4.5 && !lt.p.tint && (lt.p.img.match(/gradient/g) || []).length === 1 && lt.p.img.indexOf(lt.s.tok.fill) >= 0, lt.p);
 

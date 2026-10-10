@@ -117,6 +117,30 @@ t('guard: over white the BAR tint thickens (same colour) to the thinnest alpha t
   assert.ok(thinner.ratio < 4.5, 'one step thinner would not hold: ' + thinner.ratio);
   assert.ok(/^rgba\(12,13,14,0\.\d+\)$/.test(r.tint), r.tint);
 });
+/* --lg-guard-bar (dark, 2026-10-10): the BARS accept Helm's own strip contrast (4.2) before thickening,
+   so over Owen's snow-peak sky the top bar is Helm's .50 exactly; panels and light keep 4.7. */
+const DARK_HELM = fakeCS({ '--lg-fill': 'rgba(19,20,21,.83)', '--lg-fill-bar': 'rgba(9,10,11,.50)', '--lg-fill-pop': 'rgba(19,20,21,.88)',
+  '--lg-ink-2': '#a9aaa7', '--lg-blur': 'blur(5px)', '--lg-guard-bar': '4.2' });
+t('--lg-guard-bar: a bar takes its need from the token; a panel, and a theme without it, keep GUARD.need', () => {
+  assert.strictEqual(G.guardTokens(DARK_HELM, { bar: true }).need, 4.2);
+  assert.strictEqual(G.guardTokens(DARK_HELM).need, G.GUARD.need);
+  assert.strictEqual(BAR.need, G.GUARD.need);
+  assert.strictEqual(G.guardTokens(fakeCS({ '--lg-guard-bar': 'nonsense', '--lg-fill-bar': 'rgba(9,10,11,.50)' }), { bar: true }).need, G.GUARD.need);
+});
+t('--lg-guard-bar: over the snow-peak sky (4.3:1 at .50) the bar stays at Helm\'s .50; at 4.7 it thickened to .56', () => {
+  const sky = flat(40, 10, [82, 130, 138]);   // the brightest blurred sky under the top bar: 4.3:1 at .50
+  const helm = G.guard(sky, { tokens: G.guardTokens(DARK_HELM, { bar: true }), picPerCss: 0.25 });
+  assert.strictEqual(helm.engaged, false); assert.strictEqual(helm.alpha, 0.5); assert.ok(helm.ratio >= 4.2 && helm.ratio < 4.7, helm.ratio);
+  const old = G.guard(sky, { tokens: Object.assign({}, G.guardTokens(DARK_HELM, { bar: true }), { need: 4.7 }), picPerCss: 0.25 });
+  assert.strictEqual(old.alpha, 0.56);
+});
+t('--lg-guard-bar: over white a bar still thickens, to the thinnest alpha holding ink-2 at 4.2:1', () => {
+  const T = G.guardTokens(DARK_HELM, { bar: true });
+  const r = G.guard(flat(40, 10, [255, 255, 255]), { tokens: T, picPerCss: 0.25 });
+  assert.strictEqual(r.engaged, true); assert.ok(r.ratio >= 4.2, r.ratio);
+  const thinner = G.guard(flat(40, 10, [255, 255, 255]), { tokens: Object.assign({}, T, { ceil: r.alpha - 0.02 }), picPerCss: 0.25 });
+  assert.ok(thinner.ratio < 4.2, 'one step thinner would not hold: ' + thinner.ratio);
+});
 t('guard: a panel at --lg-fill (.83) already holds ink-2 over white, so it never thickens', () => {
   const r = G.guard(flat(40, 10, [255, 255, 255]), { tokens: PANEL, picPerCss: 0.3 });
   assert.strictEqual(r.engaged, false); assert.strictEqual(r.alpha, 0.83); assert.ok(r.ratio >= 4.5, r.ratio);

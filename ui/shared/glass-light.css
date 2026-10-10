@@ -161,6 +161,14 @@
 
   --lg-fill:        rgba(19,20,21,.83);   /* Helm content panel: wash (9,10,11,.50) + panel (22,23,24,.66) */
   --lg-fill-bar:    rgba(9,10,11,.50);    /* Helm rail / top strip: NO fill of their own (helm ui/shell/shell.css .rail/.strip), so only the .50 wash. Both bars. */
+  /* The BARS' readability floor: the contrast --lg-ink-2 must keep over the brightest blurred pixel
+     before a bar's tint thickens past --lg-fill-bar (glass-adapt.js guardTokens; other surfaces keep
+     the guard's 4.7). Owen, 2026-10-10: "mantle is still slightly off". At 4.7 the top bar sat at .56
+     over his snow-peak, 6 levels darker than Helm's strip right under it (L 52 vs 58, the same photo
+     rows), a visible step at the seam. Helm's own strip at .50 gives its secondary ink 4.3:1 there, so
+     the bars accept what Helm shows (4.2, a small margin under it) and still thicken over a bright
+     photo (top bar over cloud-peaks or sand-ripples: .76, was .80). */
+  --lg-guard-bar:   4.2;
   --lg-fill-strong: var(--lg-fill);
   --lg-fill-fb:     rgba(19,20,21,.86);   /* only when the picture failed */
   --lg-fill-pop:    rgba(19,20,21,.88);   /* the guard's CEILING and the no-picture face: .05 over --lg-fill so faint text over a bright window can thicken just enough (Helm's ink-2 measured 4.3-4.4:1 at exactly .83 over a white page) */

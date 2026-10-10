@@ -566,6 +566,9 @@ async function glassChecks(browser, check) {
       row.alpha = m ? Math.round(([0, 1, 2].reduce((s, c) => s + (B[c] - m.median[c]) / (B[c] - T[c]), 0) / 3) * 1000) / 1000 : null;
       row.flatPixel = m ? m.median : null;
       row.box = box;
+      // the contrast the drawn ink-2 must keep: a BAR's is its theme's --lg-guard-bar (dark: 4.2, Helm's
+      // strip contrast, 2026-10-10), every other surface keeps AA's 4.5
+      row.need = which === 'bar' ? (parseFloat(await p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--lg-guard-bar'))) || 4.5) : 4.5;
       row.picture = which === 'bar' ? /\bglass\b/.test(await p.evaluate(() => document.body.className)) : !!(box && /\bglass\b/.test(box.cls));
       row.layers = which === 'bar' ? (box && box.grads === 0 ? 1 : 1 + (box ? box.grads : 0)) : (box ? box.grads : null);
       await p.close();
@@ -596,10 +599,10 @@ async function glassChecks(browser, check) {
     check(`glass ${n}: wears a picture (dark, a scene behind it)`, row.picture === true, JSON.stringify(row.box));
     check(`glass ${n}: exactly ONE tint layer`, row.layers === 1, JSON.stringify(row.box));
     check(`glass ${n}: the measured composite alpha of the tint over a flat backdrop is ${row.token}'s ${row.tokenAlpha} (+-.02)`, row.alpha != null && Math.abs(row.alpha - row.tokenAlpha) <= 0.02, `alpha ${row.alpha} pixel ${row.flatPixel}`);
-    // Over Owen's wallpaper the tint stays the token's or at most .04 thicker: the guard's 4.7 margin (the
-    // drawn strip read 4.41 at exactly .50) may lift the strip to ~.52 there, and nothing more.
+    // Over Owen's wallpaper the tint stays the token's or at most .04 thicker (a bar's need is now
+    // --lg-guard-bar, 4.2 in dark, so over his snow-peak the strip is Helm's .50 exactly).
     check(`glass ${n}: over Owen's wallpaper (a) the tint is the token's, or at most .04 thicker for readability`, row.a && row.a.guard && (row.a.guard.engaged === false || row.a.guard.alpha <= row.tokenAlpha + 0.04), JSON.stringify(row.a && row.a.guard));
-    for (const sk of ['a', 'b', 'c']) check(`glass ${n}: ink-2 reads >= 4.5:1 over the brightest ground pixel, scene ${sk}`, row[sk] && row[sk].worst >= 4.5, JSON.stringify(row[sk]));
+    for (const sk of ['a', 'b', 'c']) check(`glass ${n}: ink-2 reads >= ${row.need}:1 over the brightest ground pixel, scene ${sk}`, row[sk] && row[sk].worst >= row.need, JSON.stringify(row[sk]));
     for (const sk of ['a', 'b', 'c']) check(`glass ${n}: no page error, scene ${sk}`, !(row[sk] && row[sk].errs), JSON.stringify(row[sk] && row[sk].errs));
   }
   console.log('GLASS TABLE (surface | picture | layers | alpha over ' + FLAT + ' | guard on a | ink-2 worst/typical a, b, c):');

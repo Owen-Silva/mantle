@@ -273,7 +273,10 @@
   function guardTokens(cs, o) {
     var v = function (n) { return cs && cs.getPropertyValue ? cs.getPropertyValue(n).trim() : ''; };
     var bar = o && o.bar ? parseColor(v('--lg-fill-bar')) : null;
+    /* a bar's own need when the theme sets one (dark: --lg-guard-bar, Helm's strip contrast); else GUARD's */
+    var barNeed = bar ? parseFloat(v('--lg-guard-bar')) : NaN;
     return {
+      need: barNeed > 1 ? barNeed : GUARD.need,
       fill: bar || parseColor(v('--lg-fill')) || { r: 19, g: 20, b: 21, a: 0.83 },
       ceil: (parseColor(v('--lg-fill-pop')) || { a: 0.82 }).a,
       ink: parseColor(v('--lg-ink-2')) || { r: 196, g: 199, b: 206, a: 1 },
@@ -312,7 +315,7 @@
       for (var y = y0; y < y1; y++) for (var x = x0; x < x1; x++) { var i = (y * w + x) * 3; cut.push(px[i], px[i + 1], px[i + 2]); }
       px = cut;
     }
-    var r = glassTint({ px: px, ink: T.ink, tint: T.fill, need: GUARD.need, floor: T.fill.a, ceil: Math.max(T.fill.a, T.ceil), step: GUARD.step });
+    var r = glassTint({ px: px, ink: T.ink, tint: T.fill, need: T.need || GUARD.need, floor: T.fill.a, ceil: Math.max(T.fill.a, T.ceil), step: GUARD.step });
     r.engaged = r.alpha > T.fill.a + 1e-9;
     r.tint = tintCss(T.fill, r.alpha);
     return r;

@@ -841,7 +841,7 @@
     const ink = (GT && GT.ink) || GM.parseColor(cssVar('--lg-ink-2')) || { r: 196, g: 199, b: 206 };
     const px = GM.glassPixels(data, w, h, { sigma: f.blur * (w / cssW), saturate: f.saturate, brightness: f.brightness });
     const GA = window.MantleGlassAdapt;   // the shared guard's need (4.7: the drawn strip peaked at 4.41 when the model said 4.58)
-    const r = GM.glassTint({ px, ink, tint: fill, need: (GA && GA.GUARD && GA.GUARD.need) || 4.7, floor: fill.a, ceil: ceil.a, step: 0.02 });
+    const r = GM.glassTint({ px, ink, tint: fill, need: (GT && GT.need) || (GA && GA.GUARD && GA.GUARD.need) || 4.7, floor: fill.a, ceil: ceil.a, step: 0.02 });
     GS.solve = r;
     GS.settle = GM.glassSettle(GS.settle, r.alpha, 4);
     GS.tint = GS.settle.cur;
