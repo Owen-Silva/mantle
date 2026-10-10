@@ -45,7 +45,7 @@
 
   <main class="cluster">
 
-    <section class="pane time" aria-label="Clock">
+    <section class="pane time" data-cover="clock" aria-label="Clock">
       <div class="bdrop" aria-hidden="true"></div>
       <!-- 12-hour with seconds, Windows style: "4:15:32 PM". The parts are
            separate elements so a tick rewrites only the digits that changed. -->
@@ -55,7 +55,7 @@
       <div class="date" id="date">&nbsp;</div>
     </section>
 
-    <section class="pane tile" id="stats-tile" aria-label="System">
+    <section class="pane tile" id="stats-tile" data-cover="stats" aria-label="System">
       <div class="bdrop" aria-hidden="true"></div>
       <h2 class="tile-head">System</h2>
       <dl class="rows">
@@ -66,14 +66,14 @@
       <p class="note" id="stats-note" hidden></p>
     </section>
 
-    <section class="pane tile" id="mc-tile" aria-label="Mission Control">
+    <section class="pane tile" id="mc-tile" data-cover="mc" aria-label="Mission Control">
       <div class="bdrop" aria-hidden="true"></div>
       <h2 class="tile-head">Mission Control <span class="head-note" id="mc-head-note"></span></h2>
       <div class="mc-frame" id="mc-frame" hidden></div>
       <p class="note" id="mc-note">Checking 127.0.0.1:7373&hellip;</p>
     </section>
 
-    <section class="pane strip" id="strip" hidden aria-label="Needs attention">
+    <section class="pane strip" id="strip" data-cover="strip" hidden aria-label="Needs attention">
       <div class="bdrop" aria-hidden="true"></div>
       <h2 class="tile-head">Needs attention <span class="head-note" id="strip-mode"></span></h2>
       <ul class="strip-list" id="strip-list"></ul>

@@ -835,12 +835,54 @@
     img.src = url;
   }
 
+  // ---------------------------------------------------------------------
+  // STEP ASIDE UNDER WINDOWS (lane widgethide, 2026-10-10). Each widget fades out while an app
+  // window sits over it and comes back when that window is minimised, moved away, or on Win+D.
+  // lib/features/widgethide.js decides (via sidecar/WidgetCover.cs); this page only says where
+  // its panes are and wears the answer:
+  //   widgethide.rects {panes:[{key, x, y, w, h}], why}   CSS px in this window, on load and on
+  //                                                       every resize (only when they moved)
+  //   'widgethide.cover' {on, covered:{key:bool}, by, reason}
+  // .covered is opacity + visibility only, so nothing moves (no layout shift) and a hidden pane
+  // takes no clicks. Unknown answers arrive as nothing covered: every widget shows (fail open),
+  // and why is the feature's own row in this page's strip.
+  // ---------------------------------------------------------------------
+  const coverPanes = () => Array.from(document.querySelectorAll('.pane[data-cover]'));
+  let coverSent = '';
+  let coverTimer = 0;
+  function reportCover(why) {
+    if (typeof window.mantle.call !== 'function') return;
+    clearTimeout(coverTimer);
+    coverTimer = setTimeout(() => {
+      const panes = coverPanes().map((el) => {
+        const r = el.getBoundingClientRect();
+        return { key: el.dataset.cover, x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+      });
+      const sig = JSON.stringify(panes);
+      if (sig === coverSent) return;
+      coverSent = sig;
+      window.mantle.call('widgethide.rects', { panes, why: why || 'the widgets moved' }).catch((err) => {
+        coverSent = '';   // try again on the next change
+        console.warn('[desktop] the widgets could not say where they are, so they stay up under windows: ' + (err && err.message ? err.message : err));
+      });
+    }, 120);
+  }
+  function applyCover(p) {
+    const covered = (p && p.on && p.covered) || {};
+    coverPanes().forEach((el) => el.classList.toggle('covered', covered[el.dataset.cover] === true));
+    window.__desktopCover = p || null;
+  }
+
   window.addEventListener('mantle-theme', queueAdapt);
   window.addEventListener('resize', queueAdapt);
+  window.addEventListener('resize', () => reportCover('the desktop was resized'));
   if (typeof ResizeObserver === 'function') {
     const ro = new ResizeObserver(queueAdapt);
     document.querySelectorAll('.cluster, .pane').forEach((el) => ro.observe(el));
+    const rc = new ResizeObserver(() => reportCover('a widget changed size'));
+    document.querySelectorAll('.cluster, .pane[data-cover]').forEach((el) => rc.observe(el));
   }
+  reportCover('the desktop page loaded');
 
   // Fires immediately with the current state, then on every change.
   if (typeof window.mantle.on === 'function') {
@@ -868,6 +910,7 @@
       }
     });
     window.mantle.on('desktop.backdrop', setBackdrop);
+    window.mantle.on('widgethide.cover', applyCover);
   } else {
     failBackdrop('window.mantle.on is not available, so this page never receives the wallpaper ' +
       'picture or any of Mantle\'s state — the panes are on the fallback tint and the list ' +

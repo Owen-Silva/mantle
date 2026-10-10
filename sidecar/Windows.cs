@@ -107,6 +107,9 @@ namespace Mantle {
       if (landed) _iconsLanded = false;
       if (Icons.TakeRefreshed()) landed = true;
       if (Apps.TakeRefreshed()) landed = true;
+      // The desktop widgets' covered check (WidgetCover.cs) rides the same hooks: a window event since
+      // the last tick (a move is LOCATIONCHANGE, in the object range above), or the 2 s safety poll.
+      if (_dirty || poll) WidgetCover.Tick();
       if (!_dirty && !poll && _firstEmitted && !landed) return;
       _dirty = false;
       try {

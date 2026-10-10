@@ -55,8 +55,10 @@
   panes visibly frost the moving video. With no wallpaper, or one that failed, has-wall is off and the
   panes are back on the still picture of whatever Windows is showing — the fallback above.
 
-  NO ANIMATION AT ALL, unchanged and non-negotiable: no transitions, no keyframes, no gradients
-  that move. This window is on screen every waking hour; at rest it must cost nothing. The tint
+  NO ANIMATION AT REST, unchanged and non-negotiable: no keyframes, no gradients
+  that move, and one transition only (a widget stepping aside under a window, which runs on a
+  cover change and never at rest). This window is on screen every waking hour; at rest it must
+  cost nothing. The tint
   tokens are static — there is no reveal here to interpolate.
 
   NO text-shadow. The ink sits on light glass now and carries itself; a shadow under dark text on
@@ -208,6 +210,24 @@ body.has-wall .pane::after { background-color: var(--lg-fill); }
 
 /* the content, above both layers */
 .pane > :not(.bdrop) { position: relative; z-index: 2; }
+
+/* --- step aside under windows (lane widgethide, 2026-10-10) ---------------
+   A widget with an app window over it fades out and comes back when the window leaves
+   (desktop.js applyCover, lib/features/widgethide.js). Opacity and visibility only: the pane
+   keeps its box, so nothing else moves, and once hidden it takes no clicks. The one transition
+   on this page: it runs only on a cover change, so at rest it still costs nothing. Out on the
+   bar's exit timing, in on its entrance; opacity on the pane itself keeps its own backdrop-filter
+   working through the fade (a pane is its own backdrop sampler, not a child of one). */
+.pane[data-cover] {
+  transition: opacity var(--lg-dur) var(--lg-ease), visibility 0s linear 0s;
+}
+.pane[data-cover].covered {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--lg-dur-out) var(--lg-ease), visibility 0s linear var(--lg-dur-out);
+}
+@media (prefers-reduced-motion: reduce) { .pane[data-cover], .pane[data-cover].covered { transition: none; } }
 
 /* --- the time ------------------------------------------------------------ */
 
