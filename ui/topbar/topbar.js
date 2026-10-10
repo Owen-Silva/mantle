@@ -843,11 +843,25 @@
     const GA = window.MantleGlassAdapt;   // the shared guard's need (4.7: the drawn strip peaked at 4.41 when the model said 4.58)
     const r = GM.glassTint({ px, ink, tint: fill, need: (GT && GT.need) || (GA && GA.GUARD && GA.GUARD.need) || 4.7, floor: fill.a, ceil: ceil.a, step: 0.02 });
     GS.solve = r;
-    GS.settle = GM.glassSettle(GS.settle, r.alpha, 4);
-    GS.tint = GS.settle.cur;
+    // dark + look sync on: the SHARED top-band alpha (lane guard-mantle) replaces this bar's own guard
+    const b = GM.barAlpha(isDark() ? GS.lookGuard : null, r.alpha, GS.settle);
+    GS.settle = b.settle; GS.source = b.source;
+    GS.tint = b.alpha;
     barEl.style.setProperty('--tb-tint', 'rgba(' + fill.r + ',' + fill.g + ',' + fill.b + ',' + GS.tint + ')');
   }
   mantle.on('topbar.backdrop', setBackdrop);
+  /* THE SHARED TOP-BAND DARKENING (lane guard-mantle, 2026-10-10; main: lib/features/_topbar-glass.js
+     makeLookGuard): {use, alpha} or {use:false, why, failure}. A failure says why in the Mantle menu's
+     first rows and once on the strip; the bar keeps its own guard meanwhile. */
+  GS.lookGuard = null; GS.source = 'own';
+  mantle.on('topbar.guard', (g) => {
+    const was = GS.lookGuard && GS.lookGuard.failure ? GS.lookGuard.why : null;
+    GS.lookGuard = GM.lookGuardOf(g);
+    const why = GS.lookGuard.failure ? GS.lookGuard.why : null;
+    GM.guardMenu(M.MANTLE_MENU, why);
+    if (why && why !== was) setNote('Top bar darkening: ' + why);
+    if (GS.png) solveTint(++GS.seq);
+  });
   // a theme change re-reads the tokens: the next picture is solved against the new ones
   // An OPEN menu is laid out again in the new theme's metrics (dark is Helm's: 30 px rows, padding 4/5x10,
   // so the same menu is taller), which re-asks main for the window's height and waits (.wait) until it

@@ -1046,6 +1046,20 @@ function startLookDesktop() {
       test: !!flags.test,
       onChange: (st) => look.setDesktop(st),
       log: (line) => process.stdout.write(`mantle: look: ${line}\n`),
+      // the shared top-band darkening (lib/look-guard.js; CONTRACT.md desktop.guard): worked out on a worker
+      // thread from each still, for the shared dark glass and the primary monitor (DIP)
+      guard: require('./lib/look-guard').makeGuardComputer({ nativeImage }),
+      glass: () => look.guardGlass(),
+      monitor: () => { const b = screen.getPrimaryDisplay().bounds; return [b.width, b.height]; },
+    });
+    // a new dark dim or blur (from any app) republishes the record with a new guard; nothing else here does
+    const glassKey = () => { const g = look.guardGlass(); return `${g.dim}|${g.blurPx}`; };
+    let lastGlass = glassKey();
+    look.onChange(() => {
+      const k = glassKey();
+      if (k === lastGlass) return;
+      lastGlass = k;
+      lookDesktop.check('the dark glass changed');
     });
     let lastWall = null;
     const look1 = () => {
@@ -2622,7 +2636,22 @@ function startFeatures() {
         },
         // lane helm-wall: the wallpaper picture for the app windows (Files, Task Manager, Settings, Task
         // view): full() the whole primary display's still, rect(phys) a cut, onChange(fn) -> off()
-        wall: wallHost },
+        wall: wallHost,
+        // lane guard-mantle: the SHARED top-band darkening for the top bar (lib/look-guard.js use):
+        // get() -> {use, alpha, ...} | {use:false, why, failure}; onChange(fn) after a look or theme change -> off()
+        lookGuard: {
+          get: () => {
+            try { return getLook().topGuard(getTheme().get().theme); } catch (err) {
+              return { use: false, why: `the shared darkening could not be read (${err && err.message ? err.message : err}), so the top bar works out its own`, failure: true };
+            }
+          },
+          onChange: (fn) => {
+            let a = () => {};
+            try { a = getLook().onChange(() => fn('look')); } catch (_) { /* get() says why */ }
+            const b = themeHost.onChange(() => fn('theme'));
+            return () => { a(); b(); };
+          },
+        } },
     });
     COMMANDS['features.list'] = async () => features.list();
     if (flags.test) {
@@ -8376,6 +8405,8 @@ app.whenReady().then(() => {
     // The desktop layer's picture is the wallpaper, which a resolution or scale
     // change reflows. It is a still, so this is the only thing that redates it.
     reshootDesktopBackdrop(why).catch(() => {});
+    // the shared top-band darkening is worked out for the primary monitor's size (lib/look-desktop.js)
+    if (lookDesktop) lookDesktop.check(why);
   }, { quietMs: 400, setTimeout, clearTimeout });
   screen.on('display-metrics-changed', () => displayBurst('display metrics changed'));
   screen.on('display-added', () => displayBurst('a display was connected'));

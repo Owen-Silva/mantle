@@ -284,20 +284,21 @@
      event, always the whole VIEW). Validates like main: blurPx 0..64, dim 0.2..0.9, panel -0.3..0.15, hue
      null or an integer 0..360. mock=failing: every look.* answers ok:false.
      window.__mockLook(patch) plays a change made in Helm or Quartz: it merges patch (theme, sync, glass,
-     accent, desktop, windows; objects merge one level) into the VIEW and emits 'look'.
+     accent, desktop, windows, guard; objects merge one level) into the VIEW and emits 'look'.
      window.__mockLookRefuse(reason | null): the next look.* writes answer ok:false with that reason. */
   const shared = {
     sync: { on: true, state: 'ok', text: null, reason: null, rev: 40, by: 'Quartz', at: '2026-10-10T09:00:00Z' },
     glass: { blurPx: 5, dim: 0.5, panel: 0 }, accent: { hue: null },
     desktop: { ok: true, text: 'Shared with Helm and Quartz: "Snow peak" (rev 41)', reason: null, rev: 41, id: 'builtin:snow-peak', title: 'Snow peak', type: 'picture' },
     windows: { ok: true, text: 'Windows\' wallpaper matches', reason: null },
+    guard: { ok: true, working: false, text: 'Top band darkened to 54% for Helm, Quartz and Mantle', reason: null, alpha: 0.54, contrast: 4.32 },
     theme: null, refuse: null,
   };
   const syncText = (s) => (s.text != null ? s.text : !s.on ? 'Off: Mantle keeps its own look' : 'On · in sync (last change from ' + (s.by || 'Mantle') + ', just now)');
   const lookView = () => ({ ok: true, theme: shared.theme || themeNow().theme,
     sync: Object.assign({}, shared.sync, { state: shared.sync.on ? shared.sync.state : 'off', text: syncText(shared.sync) }),
     glass: Object.assign({}, shared.glass), ranges: { blurPx: [0, 64], dim: [0.2, 0.9], panel: [-0.3, 0.15] }, accent: Object.assign({}, shared.accent),
-    desktop: Object.assign({}, shared.desktop), windows: Object.assign({}, shared.windows) });
+    desktop: Object.assign({}, shared.desktop), windows: Object.assign({}, shared.windows), guard: Object.assign({}, shared.guard) });
   const emitShared = () => emit('look', lookView());
   const mine = () => { shared.sync = Object.assign({}, shared.sync, { rev: (shared.sync.rev || 0) + 1, by: 'Mantle', at: new Date().toISOString(), text: null }); };
   window.__mockLook = (patch) => {

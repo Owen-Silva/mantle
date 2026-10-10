@@ -500,6 +500,19 @@ const SHOTS = [
     const dk = await rowText(p, LDK) || '';
     check('24: desktop and Windows failures each show their reason', /Not shared/.test(dk) && /made up: the wallpaper still could not be made/i.test(dk) &&
       /Windows' wallpaper was not changed/.test(dk) && /Windows' wallpaper: made up: SystemParametersInfo said no/.test(dk), dk);
+    // the shared top-band darkening (lane guard-mantle): its value under the status line when shared,
+    // the reason on the status line (warn pip) when it could not be worked out
+    await p.evaluate(() => window.__mockLook({ sync: { state: 'ok', reason: null, text: 'On · in sync (last change from Quartz, rev 50)' },
+      guard: { ok: true, text: 'Top band darkened to 54% for Helm, Quartz and Mantle', reason: null, alpha: 0.54 } }));
+    await p.waitForTimeout(150);
+    const gOk = await rowText(p, LST) || '';
+    check('24: the shared darkening shows its value under the sync status', /Top band darkened to 54% for Helm, Quartz and Mantle/.test(gOk) && await p.$eval(sel(LST) + ' .pip', (e) => e.classList.contains('ok')), gOk);
+    await p.evaluate(() => window.__mockLook({ guard: { ok: false, text: 'Top-band darkening not shared: each app works out its own', reason: 'made up: the still\'s top band could not be read as pixels', alpha: null } }));
+    await p.waitForTimeout(150);
+    const gBad = await rowText(p, LST) || '';
+    check('24: a darkening failure warns on the sync status line with its reason', /On · in sync/.test(gBad) && /Top-band darkening not shared: made up: the still's top band could not be read as pixels/.test(gBad)
+      && !/darkened to 54%/.test(gBad) && await p.$eval(sel(LST) + ' .pip', (e) => e.classList.contains('warn')), gBad);
+    await p.evaluate(() => window.__mockLook({ guard: { ok: true, text: 'Top band darkened to 54% for Helm, Quartz and Mantle', reason: null, alpha: 0.54 } }));
     // a newer Helm or Quartz: glass and accent are read-only with the reason; sync stays usable
     await p.evaluate(() => window.__mockLook({ sync: { state: 'newer', reason: 'made up: Quartz 3.0 wrote look.json in a newer format', text: 'On · read only' } }));
     await p.waitForTimeout(150);
