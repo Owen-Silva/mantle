@@ -31,6 +31,8 @@
  * The page sets <html data-ready="1"> itself once the requested section's first paint settled.
  * window.__mockCalls lists every call; window.__mockEmit(event, payload) pushes an event;
  * window.__mockWindowsMode('dark'|'light'|null) plays Windows' app mode changing (emits 'theme').
+ * window.__mockLook(patch) plays a look change made in Helm or Quartz (emits 'look');
+ * window.__mockLookRefuse(reason|null) makes the next look.* writes answer ok:false.
  */
 (function () {
   'use strict';
@@ -275,8 +277,65 @@
     window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme } }));
   };
   if (LOOK) document.documentElement.dataset.theme = LOOK;
-  const lookChanged = () => { const t = themeNow(); paintLook(t.theme); setTimeout(() => emit('theme', t), 5); return t; };
+  const lookChanged = () => { const t = themeNow(); paintLook(t.theme); setTimeout(() => { emit('theme', t); emitShared(); }, 5); return t; };
   window.__mockWindowsMode = (w) => { look.windows = w === 'dark' || w === 'light' ? w : null; return lookChanged(); };
+
+  /* ---- look sync with Helm and Quartz (main's look.get / look.sync / look.glass / look.accent, the 'look'
+     event, always the whole VIEW). Validates like main: blurPx 0..64, dim 0.2..0.9, panel -0.3..0.15, hue
+     null or an integer 0..360. mock=failing: every look.* answers ok:false.
+     window.__mockLook(patch) plays a change made in Helm or Quartz: it merges patch (theme, sync, glass,
+     accent, desktop, windows; objects merge one level) into the VIEW and emits 'look'.
+     window.__mockLookRefuse(reason | null): the next look.* writes answer ok:false with that reason. */
+  const shared = {
+    sync: { on: true, state: 'ok', text: null, reason: null, rev: 40, by: 'Quartz', at: '2026-10-10T09:00:00Z' },
+    glass: { blurPx: 5, dim: 0.5, panel: 0 }, accent: { hue: null },
+    desktop: { ok: true, text: 'Shared with Helm and Quartz: "Snow peak" (rev 41)', reason: null, rev: 41, id: 'builtin:snow-peak', title: 'Snow peak', type: 'picture' },
+    windows: { ok: true, text: 'Windows\' wallpaper matches', reason: null },
+    theme: null, refuse: null,
+  };
+  const syncText = (s) => (s.text != null ? s.text : !s.on ? 'Off: Mantle keeps its own look' : 'On · in sync (last change from ' + (s.by || 'Mantle') + ', just now)');
+  const lookView = () => ({ ok: true, theme: shared.theme || themeNow().theme,
+    sync: Object.assign({}, shared.sync, { state: shared.sync.on ? shared.sync.state : 'off', text: syncText(shared.sync) }),
+    glass: Object.assign({}, shared.glass), ranges: { blurPx: [0, 64], dim: [0.2, 0.9], panel: [-0.3, 0.15] }, accent: Object.assign({}, shared.accent),
+    desktop: Object.assign({}, shared.desktop), windows: Object.assign({}, shared.windows) });
+  const emitShared = () => emit('look', lookView());
+  const mine = () => { shared.sync = Object.assign({}, shared.sync, { rev: (shared.sync.rev || 0) + 1, by: 'Mantle', at: new Date().toISOString(), text: null }); };
+  window.__mockLook = (patch) => {
+    for (const k of Object.keys(patch || {})) {
+      shared[k] = patch[k] && typeof patch[k] === 'object' && shared[k] && typeof shared[k] === 'object' ? Object.assign({}, shared[k], patch[k]) : patch[k];
+    }
+    emitShared();
+    return lookView();
+  };
+  window.__mockLookRefuse = (reason) => { shared.refuse = reason || null; };
+  const sent = (x) => JSON.stringify(x === undefined ? null : x);
+  function lookCmd(name, a) {
+    if (FAIL) return { ok: false, reason: 'made up: the shared look file could not be read (look.json is locked by another program)' };
+    if (name === 'look.get') return lookView();
+    if (shared.refuse) return { ok: false, reason: shared.refuse };
+    if (name === 'look.sync') {
+      if (typeof a.on !== 'boolean') return { ok: false, reason: 'Pick on or off (Mantle was sent ' + sent(a.on) + ')' };
+      shared.sync = Object.assign({}, shared.sync, { on: a.on, state: 'ok', reason: null, text: null });
+      if (a.on) mine();
+    } else {
+      if (shared.sync.on && shared.sync.state === 'newer') return { ok: false, reason: shared.sync.reason || 'a newer Helm or Quartz wrote the shared look' };
+      if (name === 'look.glass') {
+        const R = { blurPx: [0, 64, 'Blur must be 0 to 64 px'], dim: [0.2, 0.9, 'Bar tint must be 20% to 90%'], panel: [-0.3, 0.15, 'Panel opacity must be 53% to 98%'] };
+        const keys = Object.keys(a).filter((k) => k in R);
+        if (!keys.length) return { ok: false, reason: 'Nothing to change (Mantle was sent ' + sent(a) + ')' };
+        for (const k of keys) if (typeof a[k] !== 'number' || !isFinite(a[k]) || a[k] < R[k][0] || a[k] > R[k][1]) return { ok: false, reason: R[k][2] + ' (Mantle was sent ' + sent(a[k]) + ')' };
+        const g = Object.assign({}, shared.glass);
+        keys.forEach((k) => { g[k] = a[k]; });
+        shared.glass = g;
+      } else if (name === 'look.accent') {
+        if (!(a.hue === null || (Number.isInteger(a.hue) && a.hue >= 0 && a.hue <= 360))) return { ok: false, reason: 'A hue must be a whole number from 0 to 360, or none (Mantle was sent ' + sent(a.hue) + ')' };
+        shared.accent = { hue: a.hue };
+      } else return { ok: false, reason: 'the mock does not play ' + name };
+      if (shared.sync.on) mine();
+    }
+    setTimeout(emitShared, 5);
+    return lookView();
+  }
 
   function answer(name, a) {
     a = a || {};
@@ -359,6 +418,7 @@
         if (!['light', 'dark', 'system'].includes(a.mode)) return { ok: false, reason: 'Pick Light, Dark or Match Windows (Mantle was sent ' + JSON.stringify(a.mode === undefined ? null : a.mode) + ')' };
         look.mode = a.mode;
         return later(40, Object.assign({}, lookChanged(), { value: a.mode }));
+      case 'look.get': case 'look.sync': case 'look.glass': case 'look.accent': return later(30, lookCmd(name, a));
       case 'volume.get': return Object.assign({}, qs.volume);
       case 'net.get': return JSON.parse(JSON.stringify(net));
       case 'battery.get': return Object.assign({}, battery);

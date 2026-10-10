@@ -36,10 +36,26 @@ const THEME_NOW = 'mantle:theme-now';
  * light, Mantle's original look, and says so in its console.
  */
 let themeNow = 'light';
+/*
+ * LOOK SYNC (lane looksync-mantle, 2026-10-10; lib/look-host.js): the shared accent hue and dark glass
+ * from Helm and Quartz arrive as --lg-* overrides, { '--lg-blur': 'blur(9px)', ... }, stamped INLINE on
+ * <html> next to data-theme (before first paint, and live with the 'theme' event). Empty at the default
+ * look, so a page then shows the stylesheet's own values exactly. Only the names stamped here are ever
+ * removed again; a page's own inline properties are left alone.
+ */
+let lookNow = {};
+let lookStamped = new Set();
+const isLook = (v) => !!v && typeof v === 'object' && !Array.isArray(v) &&
+  Object.keys(v).every((k) => /^--lg-[a-z0-9-]+$/.test(k) && typeof v[k] === 'string' && v[k].length < 200);
 try {
-  const t = ipcRenderer.sendSync(THEME_NOW);
-  if (t === 'dark' || t === 'light') themeNow = t;
+  const t = ipcRenderer.sendSync(THEME_NOW, 'look');
+  const theme = t && typeof t === 'object' ? t.theme : t;
+  if (theme === 'dark' || theme === 'light') themeNow = theme;
   else console.error(`Mantle did not say which theme to show (it answered ${JSON.stringify(t)}), so this page starts light`);
+  if (t && typeof t === 'object' && t.look !== undefined) {
+    if (isLook(t.look)) lookNow = t.look;
+    else console.error('Mantle sent look overrides this page cannot use, so it shows the default look:', t.look);
+  }
 } catch (err) {
   console.error('Mantle could not be asked which theme to show, so this page starts light:', err);
 }
@@ -47,6 +63,10 @@ function stampTheme() {
   const el = document.documentElement;
   if (!el) return false;
   if (el.getAttribute('data-theme') !== themeNow) el.setAttribute('data-theme', themeNow);
+  const next = new Set(Object.keys(lookNow));
+  for (const k of lookStamped) if (!next.has(k)) el.style.removeProperty(k);
+  for (const k of next) if (el.style.getPropertyValue(k) !== lookNow[k]) el.style.setProperty(k, lookNow[k]);
+  lookStamped = next;
   return true;
 }
 if (!stampTheme()) {
@@ -58,9 +78,16 @@ if (!stampTheme()) {
 function applyTheme(payload) {
   const t = payload && (payload.theme === 'dark' || payload.theme === 'light') ? payload.theme : null;
   if (!t) return;
-  const changed = t !== themeNow;
+  let changed = t !== themeNow;
   themeNow = t;
+  // a payload without 'look' (an older sender) leaves the overrides as they are
+  if (payload.look !== undefined) {
+    const look = isLook(payload.look) ? payload.look : {};
+    if (!isLook(payload.look)) console.error('Mantle sent look overrides this page cannot use, so it shows the default look:', payload.look);
+    if (JSON.stringify(look) !== JSON.stringify(lookNow)) { lookNow = look; changed = true; }
+  }
   stampTheme();
+  // 'mantle-theme' also after a look-only change: every surface re-reads its tokens and re-bakes its glass
   if (!changed) return;
   try {
     window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: t } }));

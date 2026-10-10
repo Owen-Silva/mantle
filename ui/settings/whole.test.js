@@ -169,7 +169,7 @@ if (outside.length) process.stdout.write('    still Windows: ' + outside.join(' 
 
 /* ---- words on screen: sentence case, no jargon ---- */
 const JARGON = /\b(sidecar|dry ?run|hwnd|ipc|renderer|aumid|undefined|null|nan|hresult|hk(cu|lm|ey_[a-z_]+)\\|0x[0-9a-f]+|e_[a-z]+|enoent|eacces|\[object)/i;
-const PROPER = new Set(['Windows', 'Mantle', 'Bluetooth', 'Wi-Fi', 'Microsoft', 'Store', 'Xbox', 'OneDrive', 'Edge', 'HDR', 'VPN',
+const PROPER = new Set(['Windows', 'Mantle', 'Helm', 'Quartz', 'Bluetooth', 'Wi-Fi', 'Microsoft', 'Store', 'Xbox', 'OneDrive', 'Edge', 'HDR', 'VPN',
   'DNS', 'IP', 'IPv4', 'IPv6', 'USB', 'PC', 'PIN', 'Hello', 'Game', 'Bar', 'Narrator', 'Magnifier', 'Defender', 'Update', 'Alt', 'Tab',
   'Win', 'Ctrl', 'Shift', 'Esc', 'Insider', 'Program', 'Mode', 'DirectX', 'Spotify', 'Task', 'View', 'Snap', 'Copilot', 'Teams',
   'Outlook', 'Dolby', 'Atmos', 'DTS', 'Sonic', 'MAC', 'ID', 'GPU', 'CPU', 'RAM', 'SSD', 'HDD', 'Ethernet', 'Explorer', 'File', 'Start',

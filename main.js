@@ -500,6 +500,38 @@ if (flags.quit) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// --open=wallpapers: ask the RUNNING Mantle to open one of its windows (lane looksync-open,
+// 2026-10-10: Quartz and Helm's "Open Mantle Wallpapers" button runs exactly this).
+//
+// Same shape as --quit: a message through the single-instance lock, never an instance. Checked
+// BEFORE the --live gate (it carries no --live) and before anything that makes a window, spawns the
+// sidecar, builds the tray or touches the shell. If the lock is FREE, nobody is listening: this
+// process must not become a shell just because a button was pressed, so it lets go and exits 3.
+// (Unlike --quit, the instance asked stays up, so the lock's answer is a reliable witness.)
+// The allow-list lives in lib/args.js openRequest; the running instance applies it and logs.
+// ---------------------------------------------------------------------------
+if (flags.open !== null) {
+  const openReq = require('./lib/args').openRequest(process.argv.slice(1));
+  if (app.requestSingleInstanceLock()) {
+    process.stderr.write(require('./lib/args').openNotRunningLine(openReq) + '\n');
+    app.releaseSingleInstanceLock();
+    app.exit(3);
+    // app.exit() before 'ready' ends the process on the spot (measured 2026-10-10: not one more
+    // line of this script runs). process.exit is the second guard: everything below boots a Mantle.
+    process.exit(3);
+  } else if (openReq && openReq.ok) {
+    process.stdout.write(`mantle: asked the running Mantle (${app.getPath('userData')}) to open its ${openReq.label}.\n`);
+    app.exit(0);
+    process.exit(0);
+  } else {
+    // Delivered, so the running instance logs the refusal too; this side says it as well.
+    process.stderr.write(`${openReq ? openReq.line : 'mantle: --open needs a value'}\n`);
+    app.exit(4);
+    process.exit(4);
+  }
+}
+
 /**
  * Every OTHER electron.exe running THIS repo (and, in test mode, this profile).
  * Same matching rule as tools/kill-test.ps1 and tools/restore-windows.ps1: the
@@ -910,7 +942,9 @@ function getTheme() {
     log: (line) => process.stdout.write(`mantle: ${line}\n`),
   });
   themeCore.on((view) => {
-    broadcast('theme', view);
+    // look sync: the payload carries the --lg-* overrides for the new theme (preload.js stamps them)
+    broadcast('theme', themePayload(view));
+    if (lookHost) lookHost.themeChanged(view);
     for (const fn of Array.from(themeFollowers)) {
       try { fn(view.theme); } catch (err) { process.stderr.write(`mantle: a theme follower threw: ${err && err.message ? err.message : err}\n`); }
     }
@@ -927,6 +961,114 @@ const themeHost = {
     return () => themeFollowers.delete(fn);
   },
 };
+
+/*
+ * LOOK SYNC with Helm and Quartz (lane looksync-mantle, 2026-10-10; lib/look-host.js, lib/look-desktop.js,
+ * vendored lib/look-sync.js; spec ~/look-sync/CONTRACT.md). Theme, accent hue and dark glass are shared
+ * through %APPDATA%\look-sync\look.json (LOOK_SYNC_DIR in tests); Mantle also publishes the desktop
+ * wallpaper there (a still first, then the record) and makes Windows' own wallpaper the same picture.
+ * The look reaches every page as --lg-* overrides (lookHost.vars) on the 'theme' event and before first
+ * paint (mantle:theme-now with 'look'); none at the seed values, so the default look is the stylesheet's.
+ */
+let lookHost = null;
+let lookDesktop = null;
+function getLook() {
+  if (lookHost) return lookHost;
+  const core = getTheme();
+  lookHost = require('./lib/look-host').makeLookHost({
+    LS: require('./lib/look-sync'),
+    accent: require('./lib/accent'),
+    file: path.join(app.getPath('userData'), 'look-sync.json'),
+    // A --test run NEVER shares Owen's real %APPDATA%\look-sync (2026-10-10: a test instance without
+    // LOOK_SYNC_DIR published its own wallpaper into the real file and live Quartz followed it): it uses
+    // LOOK_SYNC_DIR when a test sets one, else a look-sync folder inside its own temp profile.
+    dir: process.env.LOOK_SYNC_DIR || (flags.test ? path.join(app.getPath('userData'), 'look-sync') : undefined),
+    // --theme=<mode> pins a test run: a shared theme never overrides the pin
+    theme: { mode: () => core.mode(), resolved: () => core.theme(),
+      set: (m) => (flags.theme ? { ok: false, reason: `this test run is pinned by --theme=${flags.theme}` } : core.set(m)) },
+    log: (line) => process.stdout.write(`mantle: ${line}\n`),
+  });
+  lookHost.onChange((e) => {
+    if (e.varsChanged) broadcast('theme', themePayload(getTheme().get()));
+    broadcast('look', e.view);
+  });
+  return lookHost;
+}
+/**
+ * The desktop wallpaper's publisher (lib/look-desktop.js): after lib/wallpaper.js has started. Runs with
+ * look sync ON or OFF (the record is a fact about the screen); looks again on every wallpaper change
+ * (State's `wallpaper` piece), never on a timer. A test run never touches Windows' wallpaper.
+ */
+function startLookDesktop() {
+  if (lookDesktop) return;
+  try {
+    const look = getLook();
+    const { nativeImage } = require('electron');
+    lookDesktop = require('./lib/look-desktop').makeDesktopPublisher({
+      sync: look.sync,
+      LS: require('./lib/look-sync'),
+      current: () => wallpaper.current(),
+      screen: () => { const p = toPhys(screen.getPrimaryDisplay().bounds); return { w: p.w, h: p.h }; },
+      nativeImage,
+      gifFrame: require('./lib/gif-frame').firstFrame,
+      frame: () => wallStill.frame(),
+      capture: async () => {
+        if (!desktopWin || desktopWin.isDestroyed()) throw new Error('the desktop layer is not there');
+        return desktopWin.webContents.capturePage();
+      },
+      windows: {
+        get: async () => {
+          const r = await sidecar.call('perso.background', {}, 8000);
+          return { ok: true, picture: r && r.picture, fit: r && r.fit };
+        },
+        set: async (file) => {
+          const r = await sidecar.call('perso.set', { key: 'picture', value: file, dryRun: false }, 15000);
+          if (!r || r.ok === false) return { ok: false, reason: (r && (r.reason || r.error)) || 'Windows did not say' };
+          const bg = r.background || {};
+          if (bg.fit && bg.fit !== 'fill') {
+            const f = await sidecar.call('perso.set', { key: 'fit', value: 'fill', dryRun: false }, 15000).catch((e) => ({ ok: false, reason: e.message }));
+            if (!f || f.ok === false) return { ok: true, note: `its fit stays "${bg.fit}": ${(f && (f.reason || f.error)) || 'Windows did not say'}` };
+          }
+          return { ok: true };
+        },
+      },
+      afterWindows: (why) => {
+        // Explorer redraws its wallpaper: make sure the desktop layer is still in front of it (the same
+        // check DESKTOP_RECHECK_MS runs), once, a moment after
+        const t = setTimeout(() => {
+          if (!desktopWin || desktopWin.isDestroyed() || !desktopRecheckTimer) return;
+          sidecar.call('desktop', { hwnd: hwndOf(desktopWin), recheck: true }, 4000).then((r) => {
+            if (r && r.moved) process.stdout.write(`mantle: desktop layer put back in front of the wallpaper after ${why}: ${r.covering || 'a window'} had been placed over it\n`);
+          }, (err) => process.stdout.write(`mantle: the desktop layer could not be re-checked after ${why}: ${err.message}\n`));
+        }, 1500);
+        if (t.unref) t.unref();
+      },
+      test: !!flags.test,
+      onChange: (st) => look.setDesktop(st),
+      log: (line) => process.stdout.write(`mantle: look: ${line}\n`),
+    });
+    let lastWall = null;
+    const look1 = () => {
+      const w = JSON.stringify(state.get().wallpaper || null);
+      if (w === lastWall) return;
+      lastWall = w;
+      lookDesktop.check('the wallpaper changed');
+    };
+    state.on('change', look1);
+    look1();
+  } catch (err) {
+    process.stderr.write(`mantle: the desktop wallpaper publisher could not start: ${err && err.stack ? err.stack : err}\n`);
+    if (lookHost) lookHost.setDesktop({ desktop: { ok: false, text: 'Not shared: the publisher did not start', reason: err && err.message ? err.message : String(err), rev: null, id: null, title: null, type: null },
+      windows: { ok: false, text: 'Windows\' wallpaper was not changed', reason: 'the publisher did not start' } });
+  }
+}
+
+/** The 'theme' event's payload: the theme view plus that theme's look overrides. */
+function themePayload(view) {
+  let look = {};
+  try { look = lookHost ? lookHost.vars(view.theme) : {}; } catch (err) { process.stderr.write(`mantle: the look overrides could not be worked out: ${err && err.message ? err.message : err}\n`); }
+  return Object.assign({}, view, { look });
+}
 
 let lastProblemLine = null;
 
@@ -4266,6 +4408,11 @@ const COMMANDS = {
   // (+ value), or {ok:false, reason} for anything that is not a mode.
   'theme.get': async () => getTheme().get(),
   'theme.set': async (a) => getTheme().set(a && typeof a === 'object' ? a.mode : undefined),
+  // look sync (lib/look-host.js): Settings > Personalization > Colors, "Match Helm and Quartz"
+  'look.get': async () => getLook().view(),
+  'look.sync': async (a) => getLook().setSync(a && typeof a === 'object' ? a.on : undefined),
+  'look.glass': async (a) => getLook().setGlass(a && typeof a === 'object' ? a : null),
+  'look.accent': async (a) => (a && typeof a === 'object' && 'hue' in a ? getLook().setAccent(a.hue) : { ok: false, reason: 'the accent change came without a hue (null for Mantle\'s own)' }),
 
   'windows.list': async () => {
     const list = await sidecar.call('windows');
@@ -5084,11 +5231,22 @@ ipcMain.handle('mantle:call', async (e, name, args) => {
 // preload.js, before a page's first paint: which theme to stamp on <html>. Synchronous on purpose
 // (the attribute has to be there before the first frame) and answered from memory. A page that is
 // not Mantle's own gets 'light' and no other answer, like every other refused caller.
-ipcMain.on('mantle:theme-now', (e) => {
+ipcMain.on('mantle:theme-now', (e, want) => {
   const who = callerVerdict(e, UI_DIR);
   if (!who.ok) {
     refuseCaller(who, 'a theme read');
     e.returnValue = 'light';
+    return;
+  }
+  // 'look' (preload.js): the theme AND its look-sync overrides, so both are on <html> before first paint
+  if (want === 'look') {
+    try {
+      const theme = getTheme().theme();
+      e.returnValue = { theme, look: getLook().vars(theme) };
+    } catch (err) {
+      process.stderr.write(`mantle: a page could not be told the theme and look, so it starts light: ${err && err.message ? err.message : err}\n`);
+      e.returnValue = { theme: 'light', look: {} };
+    }
     return;
   }
   try { e.returnValue = getTheme().theme(); } catch (err) {
@@ -5108,6 +5266,7 @@ ipcMain.handle('mantle:replay', async (e, name) => {
   switch (name) {
     case 'state': return { has: true, payload: state.get() };
     case 'theme': return { has: true, payload: getTheme().get() };
+    case 'look': return { has: true, payload: getLook().view() };
     case 'windows': return { has: true, payload: lastWindows };
     case 'launcher:visible': return { has: true, payload: !!(launcherWin && !launcherWin.isDestroyed() && launcherWin.isVisible()) };
     case 'tray': return lastTray ? { has: true, payload: lastTray } : { has: false };
@@ -6819,6 +6978,24 @@ app.on('second-instance', (_event, argv) => {
     }
     return;
   }
+  // `--open=wallpapers` (lane looksync-open, 2026-10-10): Quartz and Helm's "Open Mantle Wallpapers"
+  // button. ALLOW-LIST only (lib/args.js openRequest): anything else is one refusal line and nothing
+  // else; no path or URL from argv is ever opened. Live: the window opens and comes to the front
+  // (openLibrary shows + focuses; the second start lets us take the foreground). --test: created and
+  // loaded only, never shown or focused here (openLibrary's showInactive is made invisible by
+  // the test-run quieting). Live failures also reach the tray, so a dead button is never silent.
+  const openReq = Array.isArray(argv) && !argv.includes('--quit') ? require('./lib/args').openRequest(argv) : null;
+  if (openReq) {
+    if (!openReq.ok) { process.stdout.write(openReq.line + '\n'); return; }
+    try {
+      if (openReq.target === 'wallpapers') wallpaper.openLibrary();
+      process.stdout.write(openReq.line + '\n');
+    } catch (err) {
+      process.stdout.write(`mantle: a second start asked for ${openReq.label} (--open=${openReq.target}), but it did not open: ${err.message}\n`);
+      if (!flags.test) trayNotice(`${openReq.label} did not open`, err.message);
+    }
+    return;
+  }
   const asked = Array.isArray(argv) && argv.some((a) => a === '--quit');
   if (!asked) {
     process.stdout.write('mantle: another Mantle tried to start; this one is already running, so that one exited.\n');
@@ -8089,6 +8266,8 @@ app.whenReady().then(() => {
   // follows Windows live: nativeTheme 'updated' fires when AppsUseLightTheme changes (and on other
   // theme news, which windowsChanged() ignores unless the mode actually moved).
   getTheme();
+  // look sync next (lib/look-host.js): it reads the shared look.json and may set the theme (fromSync)
+  try { getLook().start(); } catch (err) { process.stderr.write(`mantle: look sync could not start: ${err && err.stack ? err.stack : err}\n`); }
   nativeTheme.on('updated', () => {
     try { getTheme().windowsChanged(); } catch (err) { process.stderr.write(`mantle: Windows' light/dark change could not be followed: ${err && err.message ? err.message : err}\n`); }
   });
@@ -8153,6 +8332,7 @@ app.whenReady().then(() => {
   }
   // The wallpaper library, its pause rules and the Wallpapers window: all in lib/wallpaper.js.
   wallpaper.start({ root: ROOT, test: flags.test, state, sidecar, commands: COMMANDS, desktopWin, theme: themeHost });
+  startLookDesktop();
   // The notification centre's list, watch and commands (notifs.*): all in lib/notifications.js.
   notifications.start({ test: flags.test, state, sidecar, commands: COMMANDS, broadcast });
   // Alt+Tab's overlay window (parked off screen, never shown in a test run) and switcher.*.
@@ -8207,7 +8387,10 @@ app.whenReady().then(() => {
     sleptAt = 0;
     const t = setTimeout(() => displayBurst('the PC woke from sleep'), 1500);
     if (t.unref) t.unref();
+    // fs.watch can miss events across sleep (CONTRACT section 2): read the shared look once
+    if (lookHost) lookHost.refresh('the PC woke from sleep');
   });
+  powerMonitor.on('unlock-screen', () => { if (lookHost) lookHost.refresh('the screen was unlocked'); });
 
   if (flags.dock) {
     // --dock: the old permanent bar. Shown once, and it stays.

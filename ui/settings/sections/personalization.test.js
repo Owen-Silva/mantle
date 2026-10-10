@@ -100,6 +100,11 @@ async function nodeTests() {
   const mm = colorRows.find((r) => r.row === 'personalization.colors.mantle-mode');
   check('page: Colors lists Mantle appearance first, findable by dark mode / theme', colorRows[0] === mm && mm && /dark mode/.test(mm.keywords) && /theme/.test(mm.keywords) && /appearance/.test(mm.keywords), JSON.stringify(mm));
   check("page: Mantle's look goes through theme.get / theme.set and follows the 'theme' event", /kit\.call\('theme\.get'\)/.test(src) && /kit\.call\('theme\.set', \{ mode: v \}\)/.test(src) && /kit\.watch\('theme'/.test(src));
+  check("page: look sync goes through look.get / look.sync / look.glass / look.accent and follows the 'look' event",
+    ["kit.call('look.get')", "send('look.sync'", "send('look.glass'", "send('look.accent'", "kit.watch('look'"].every((s) => src.includes(s)));
+  const lookRows = ['look-sync', 'look-status', 'look-desktop', 'glass-blur', 'glass-dim', 'glass-panel', 'glass-reset', 'accent-mode', 'accent-hue'].map((x) => 'personalization.colors.' + x);
+  check('page: every look sync row is searchable, right after Mantle appearance', colorRows.slice(1, 10).map((r) => r.row).join() === lookRows.join() &&
+    /helm/.test(colorRows[1].keywords) && /quartz/.test(colorRows[1].keywords) && /see-through/.test(colorRows[6].keywords) && /hue/.test(colorRows[9].keywords), colorRows.map((r) => r.row).join(' '));
   check("page: the old One Theme claim is gone", !/keep Mantle's one theme|One Theme whatever/.test(src));
   check('page: never sets data-theme itself (the preload does)', !/dataset\.theme|data-theme/.test(src));
   check('page: never opens Windows Settings (no kit.openWindows)', !/openWindows/.test(src));
@@ -225,6 +230,15 @@ const calls = (p, name) => p.evaluate((n) => (window.__mockCalls || []).filter((
 const sw = (row) => sel(row) + ' button[role="switch"]';
 const PG = (page, more) => `?section=personalization&page=${page}${more || ''}`;
 const SETC = 'settings.personalization.set';
+// look sync with Helm and Quartz (Colors, right under Mantle appearance)
+const LR = (x) => 'personalization.colors.' + x;
+const [LS, LST, LDK, GB, GD, GP, GR, AM, AH] = ['look-sync', 'look-status', 'look-desktop', 'glass-blur', 'glass-dim', 'glass-panel', 'glass-reset', 'accent-mode', 'accent-hue'].map(LR);
+/* a slider released at v: the range input's own input + change events, so the page's real handler runs */
+const slide = (p, row, v) => p.$eval(sel(row) + ' input[type="range"]', (i, x) => {
+  i.value = String(x); i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true }));
+}, v);
+const rng = (p, row) => p.$eval(sel(row), (e) => ({ v: e.querySelector('input').value, out: e.querySelector('.rng-v').textContent, dis: e.querySelector('input').disabled, text: e.textContent }));
+const seg = (p, row) => p.$eval(sel(row) + ' [aria-checked="true"]', (b) => b.textContent).catch(() => null);
 
 const SHOTS = [
   ['perso-01-overview', '?section=personalization', async (p) => {
@@ -375,6 +389,168 @@ const SHOTS = [
   ['perso-16-colors-dark', PG('colors', '&theme=dark'), async (p) => {
     check('16: ?theme=dark paints dark before the page draws', await p.evaluate(() => document.documentElement.dataset.theme) === 'dark');
     check('16: Match Windows says dark', /Following Windows: dark right now/.test(await rowText(p, 'personalization.colors.mantle-mode') || ''));
+  }],
+  ['perso-23-look-sync', PG('colors'), async (p) => {
+    const groups = await p.$$eval('#page .group-t', (l) => l.map((g) => g.textContent));
+    check('23: "Match Helm and Quartz" is the group right after Mantle appearance', groups[0] === 'Mantle' && groups[1] === 'Match Helm and Quartz', groups.join(' | '));
+    const order = await p.$$eval('#page [data-row^="personalization.colors."]', (l) => l.map((e) => e.dataset.row.replace('personalization.colors.', '')));
+    check('23: its rows follow Mantle appearance in order', order.slice(0, 10).join(' ') === 'mantle-mode look-sync look-status look-desktop glass-blur glass-dim glass-panel glass-reset accent-mode accent-hue', order.join(' '));
+    check('23: it reads the shared look once (look.get)', (await calls(p, 'look.get')).length === 1);
+    check('23: sync reads On', await p.$eval(sw(LS), (b) => b.getAttribute('aria-checked')) === 'true' && /Theme, accent and glass follow when you change them in any of the three/.test(await rowText(p, LS) || ''));
+    const st0 = await rowText(p, LST) || '';
+    check("23: status reads main's text, with the ok pip", /On · in sync \(last change from Quartz, just now\)/.test(st0) && await p.$eval(sel(LST) + ' .pip', (e) => e.classList.contains('ok')), st0);
+    const d0 = await rowText(p, LDK) || '';
+    check("23: the desktop row names the shared wallpaper and says Windows' matches", /Shared with Helm and Quartz: "Snow peak" \(rev 41\)/.test(d0) && /Windows' wallpaper matches/.test(d0), d0);
+    const g0 = [await rng(p, GB), await rng(p, GD), await rng(p, GP)];
+    check('23: the sliders show 5 px, 50%, 83%', g0.map((x) => x.out).join(' ') === '5 px 50% 83%' && g0.every((x) => !x.dis), JSON.stringify(g0));
+    check('23: dark: no light note on the sliders', !/light keeps its own frost/.test(await p.textContent('#page')));
+    check('23: Reset glass is off at the defaults, and says so', await p.$eval(sel(GR) + ' button', (b) => b.disabled && b.textContent === 'Reset glass') && /The glass is at its defaults/.test(await rowText(p, GR) || ''));
+    check("23: accent reads Mantle's own, the hue slider is off and says how to turn it on", await seg(p, AM) === "Mantle's own" && (await rng(p, AH)).dis && /Pick Custom hue to choose one/.test(await rowText(p, AH) || ''));
+    check('23: the accent swatch is drawn from --lg-acc', await p.$eval(sel(AM) + ' [data-accent-swatch]', (e) => /var\(--lg-acc\)/.test(e.style.background)));
+    // sync off, then on
+    await p.click(sw(LS));
+    await p.waitForTimeout(250);
+    const s1 = await calls(p, 'look.sync');
+    check('23: Off sends look.sync { on: false }', s1.length === 1 && s1[0].args.on === false && Object.keys(s1[0].args).length === 1, JSON.stringify(s1));
+    check('23: status now reads Off, no pip', /Off: Mantle keeps its own look/.test(await rowText(p, LST) || '') && !(await p.$(sel(LST) + ' .pip')) && await p.$eval(sw(LS), (b) => b.getAttribute('aria-checked')) === 'false', await rowText(p, LST));
+    await p.click(sw(LS));
+    await p.waitForTimeout(250);
+    const s2 = await calls(p, 'look.sync');
+    check('23: On sends look.sync { on: true } and the status shows the new change', s2.length === 2 && s2[1].args.on === true && /last change from Mantle/.test(await rowText(p, LST) || ''), JSON.stringify(s2) + ' ' + await rowText(p, LST));
+    // each slider writes once on release, and redraws from the answer
+    await slide(p, GB, 20);
+    await p.waitForTimeout(250);
+    let gl = await calls(p, 'look.glass');
+    check('23: Blur release sends look.glass { blurPx: 20 } once', gl.length === 1 && JSON.stringify(gl[0].args) === '{"blurPx":20}' && (await rng(p, GB)).out === '20 px', JSON.stringify(gl));
+    check('23: Reset glass turns on once the glass moved', await p.$eval(sel(GR) + ' button', (b) => !b.disabled) && !/at its defaults/.test(await rowText(p, GR) || ''));
+    await p.focus(sel(GB) + ' input');
+    await p.keyboard.press('ArrowRight');
+    await p.waitForTimeout(250);
+    gl = await calls(p, 'look.glass');
+    check('23: the keyboard moves Blur by one and writes it', gl.length === 2 && gl[1].args.blurPx === 21 && (await rng(p, GB)).out === '21 px', JSON.stringify(gl));
+    await slide(p, GD, 35);
+    await p.waitForTimeout(250);
+    gl = await calls(p, 'look.glass');
+    check('23: Bar tint 35% sends { dim: 0.35 }', gl.length === 3 && JSON.stringify(gl[2].args) === '{"dim":0.35}' && (await rng(p, GD)).out === '35%', JSON.stringify(gl));
+    await slide(p, GP, 70);
+    await p.waitForTimeout(250);
+    gl = await calls(p, 'look.glass');
+    check('23: Panel opacity 70% sends { panel: -0.13 } and shows 70%', gl.length === 4 && JSON.stringify(gl[3].args) === '{"panel":-0.13}' && (await rng(p, GP)).out === '70%', JSON.stringify(gl));
+    check('23: Panel opacity says lower is more see-through', /Lower is more see-through/.test(await rowText(p, GP) || ''));
+    // a refused write springs back with the reason
+    await p.evaluate(() => window.__mockLookRefuse('made up: look.json is read-only'));
+    await slide(p, GB, 40);
+    await p.waitForTimeout(250);
+    const rb = await rng(p, GB);
+    check('23: a refused Blur springs back to 21 px with the reason', (await calls(p, 'look.glass')).length === 5 && rb.out === '21 px' && rb.v === '21' && /made up: look\.json is read-only/i.test(rb.text), JSON.stringify(rb));
+    await p.evaluate(() => window.__mockLookRefuse(null));
+    // reset sends the seed
+    await p.click(sel(GR) + ' button');
+    await p.waitForTimeout(250);
+    gl = await calls(p, 'look.glass');
+    const g1 = [await rng(p, GB), await rng(p, GD), await rng(p, GP)].map((x) => x.out).join(' ');
+    check('23: Reset glass sends { blurPx: 5, dim: 0.5, panel: 0 } and every slider is back', gl.length === 6 && JSON.stringify(gl[5].args) === '{"blurPx":5,"dim":0.5,"panel":0}' && g1 === '5 px 50% 83%' &&
+      await p.$eval(sel(GR) + ' button', (b) => b.disabled), JSON.stringify(gl[5]) + ' ' + g1);
+    // accent: own -> custom -> a hue -> own -> custom keeps the last hue
+    await p.click(sel(AM) + ' button[data-v="custom"]');
+    await p.waitForTimeout(250);
+    let ac = await calls(p, 'look.accent');
+    check('23: Custom hue sends { hue: 212 } and turns the hue slider on at 212°', ac.length === 1 && ac[0].args.hue === 212 && await seg(p, AM) === 'Custom hue' && !(await rng(p, AH)).dis && (await rng(p, AH)).out === '212°', JSON.stringify(ac));
+    await slide(p, AH, 30);
+    await p.waitForTimeout(250);
+    ac = await calls(p, 'look.accent');
+    check('23: the hue slider sends { hue: 30 }', ac.length === 2 && ac[1].args.hue === 30 && (await rng(p, AH)).out === '30°', JSON.stringify(ac));
+    await p.click(sel(AM) + ' button[data-v="own"]');
+    await p.waitForTimeout(250);
+    ac = await calls(p, 'look.accent');
+    check("23: Mantle's own sends { hue: null } and the hue slider goes off", ac.length === 3 && ac[2].args.hue === null && 'hue' in ac[2].args && (await rng(p, AH)).dis, JSON.stringify(ac));
+    await p.click(sel(AM) + ' button[data-v="custom"]');
+    await p.waitForTimeout(250);
+    ac = await calls(p, 'look.accent');
+    check('23: Custom hue again brings back the last hue (30)', ac.length === 4 && ac[3].args.hue === 30, JSON.stringify(ac));
+    // a change made in Helm or Quartz redraws every row within a second
+    const t0 = Date.now();
+    await p.evaluate(() => window.__mockLook({ glass: { blurPx: 12, dim: 0.7, panel: 0.1 }, accent: { hue: 300 }, sync: { by: 'Helm', text: null },
+      desktop: { text: 'Shared with Helm and Quartz: "Lake" (rev 44)', rev: 44 } }));
+    const redrawn = await p.waitForFunction((s) => {
+      const q = (r) => `[data-row="${r}"]`;
+      const t = (r) => (document.querySelector(q(r)) || {}).textContent || '';
+      const out = (r) => { const e = document.querySelector(q(r) + ' .rng-v'); return e ? e.textContent : ''; };
+      return out(s.GB) === '12 px' && out(s.GD) === '70%' && out(s.GP) === '93%' && out(s.AH) === '300°' && /last change from Helm/.test(t(s.LST)) && /"Lake" \(rev 44\)/.test(t(s.LDK));
+    }, { GB, GD, GP, AH, LST, LDK }, { timeout: 1000, polling: 50 }).then(() => true, () => false);
+    check("23: a 'look' event from Helm redraws every row within 1 s", redrawn && Date.now() - t0 < 1500 && await seg(p, AM) === 'Custom hue',
+      JSON.stringify([await rng(p, GB), await rng(p, GD), await rng(p, GP), await rng(p, AH), await rowText(p, LST), await rowText(p, LDK)].map((x) => x && (x.out || x))));
+    check('23: the look rows never touch Windows or the theme', (await calls(p, SETC)).length === 0 && (await calls(p, 'theme.set')).length === 0);
+  }],
+  ['perso-24-look-trouble', PG('colors'), async (p) => {
+    // sync could not write: the status warns with the reason
+    await p.evaluate(() => window.__mockLook({ sync: { state: 'error', reason: "made up: Can't write %APPDATA%\\look-sync: EPERM", text: 'On · not shared yet' } }));
+    await p.waitForTimeout(150);
+    const st = await rowText(p, LST) || '';
+    check('24: a sync error shows its text, the warn pip and the reason in plain words (no raw EPERM)', /On · not shared yet/.test(st) && /made up: Can't write %APPDATA%\\look-sync/i.test(st) && !/EPERM/.test(st) && await p.$eval(sel(LST) + ' .pip', (e) => e.classList.contains('warn')), st);
+    check('24: the reason is not shown twice when the text already has it', await (async () => {
+      await p.evaluate(() => window.__mockLook({ sync: { state: 'missing', reason: 'made up: look.json is not there yet', text: 'On · not shared yet: made up: look.json is not there yet' } }));
+      await p.waitForTimeout(150);
+      return ((await rowText(p, LST) || '').match(/look\.json is not there yet/g) || []).length === 1;
+    })(), await rowText(p, LST));
+    // the wallpaper could not be shared, Windows' could not be set
+    await p.evaluate(() => window.__mockLook({ desktop: { ok: false, text: 'Not shared', reason: 'made up: the wallpaper still could not be made' },
+      windows: { ok: false, text: "Windows' wallpaper was not changed", reason: 'made up: SystemParametersInfo said no' } }));
+    await p.waitForTimeout(150);
+    const dk = await rowText(p, LDK) || '';
+    check('24: desktop and Windows failures each show their reason', /Not shared/.test(dk) && /made up: the wallpaper still could not be made/i.test(dk) &&
+      /Windows' wallpaper was not changed/.test(dk) && /Windows' wallpaper: made up: SystemParametersInfo said no/.test(dk), dk);
+    // a newer Helm or Quartz: glass and accent are read-only with the reason; sync stays usable
+    await p.evaluate(() => window.__mockLook({ sync: { state: 'newer', reason: 'made up: Quartz 3.0 wrote look.json in a newer format', text: 'On · read only' } }));
+    await p.waitForTimeout(150);
+    const ro = await p.evaluate((rows) => rows.map((r) => {
+      const e = document.querySelector(`[data-row="${r}"]`);
+      const c = [...e.querySelectorAll('input, button')];
+      return { r, dis: c.length > 0 && c.every((x) => x.disabled), why: /Read only here: made up: Quartz 3\.0 wrote look\.json in a newer format/.test(e.textContent) };
+    }), [GB, GD, GP, AM, AH]);
+    check("24: state 'newer' disables the sliders and the accent rows WITH the reason", ro.every((x) => x.dis && x.why), JSON.stringify(ro));
+    check("24: ...and sync itself can still be switched", !(await p.$eval(sw(LS), (b) => b.disabled)));
+    await p.evaluate(() => window.__mockLook({ sync: { state: 'ok', reason: null, text: null } }));
+    await p.waitForTimeout(150);
+    check('24: back in sync, the rows open again', !(await rng(p, GB)).dis && !(await p.$eval(sel(AM) + ' button[data-v="custom"]', (b) => b.disabled)));
+  }],
+  ['perso-25-look-unreadable', PG('colors', '&mock=failing'), async (p) => {
+    const rows = [LS, LST, LDK, GB, GD, GP, GR, AM, AH];
+    const st = await p.evaluate((rs) => rs.map((r) => {
+      const e = document.querySelector(`[data-row="${r}"]`);
+      const c = [...e.querySelectorAll('input, button')];
+      return { r, dis: c.every((x) => x.disabled), why: /Mantle's shared look could not be read: made up: the shared look file could not be read \(look\.json is locked by another program\)/.test(e.textContent) };
+    }), rows);
+    check('25: an unreadable look.get disables every row WITH the reason', st.every((x) => x.dis && x.why), JSON.stringify(st));
+    await p.evaluate(() => window.__mockEmit('look', { ok: true, theme: 'dark', sync: { on: true, state: 'ok', text: 'On · in sync', reason: null }, glass: { blurPx: 9, dim: 0.4, panel: 0 },
+      ranges: {}, accent: { hue: null }, desktop: { ok: true, text: 'Shared', reason: null }, windows: { ok: true, text: "Windows' wallpaper matches", reason: null } }));
+    await p.waitForTimeout(150);
+    check("25: a good 'look' event later brings the rows back", !(await rng(p, GB)).dis && (await rng(p, GB)).out === '9 px' && !/could not be read/.test(await rowText(p, GB) || ''));
+  }],
+  ['perso-26-look-light', PG('colors', '&theme=light'), async (p) => {
+    await p.setViewportSize({ width: 1280, height: 900 });
+    check('26: painted light', await p.evaluate(() => document.documentElement.dataset.theme) === 'light');
+    const li = await p.evaluate((rows) => rows.map((r) => /These shape the dark look; light keeps its own frost/.test(document.querySelector(`[data-row="${r}"]`).textContent)), [GB, GD, GP]);
+    check('26: light: each glass slider says it shapes the dark look', li.every(Boolean), JSON.stringify(li));
+    check('26: light: the sliders stay usable', !(await rng(p, GB)).dis && !(await rng(p, GD)).dis && !(await rng(p, GP)).dis);
+    await slide(p, GD, 60);
+    await p.waitForTimeout(250);
+    const gl = await calls(p, 'look.glass');
+    check('26: light: a slider still writes', gl.length === 1 && gl[0].args.dim === 0.6, JSON.stringify(gl));
+    await p.evaluate(() => window.__mockWindowsMode('dark'));
+    await p.waitForTimeout(200);
+    check('26: Match Windows going dark drops the light note (the look event carries the theme)', !/light keeps its own frost/.test(await p.textContent('#page')));
+    await p.evaluate(() => window.__mockWindowsMode('light'));
+    await p.waitForTimeout(200);
+    await p.$eval(sel('personalization.colors.mantle-mode'), (e) => e.scrollIntoView({ block: 'start' }));
+  }],
+  ['perso-27-look-dark', PG('colors', '&theme=dark'), async (p) => {
+    await p.setViewportSize({ width: 1280, height: 900 });
+    check('27: painted dark', await p.evaluate(() => document.documentElement.dataset.theme) === 'dark');
+    check('27: dark: no light note', !/light keeps its own frost/.test(await p.textContent('#page')));
+    await p.click(sel(AM) + ' button[data-v="custom"]');
+    await p.waitForTimeout(250);
+    await p.$eval(sel('personalization.colors.mantle-mode'), (e) => e.scrollIntoView({ block: 'start' }));
   }],
   ['perso-12-usage', PG('device-usage'), async (p) => {
     check('12: seven uses, read-only with the reason', await p.locator('[data-row^="personalization.usage.list."]').count() === 7 && /Read only here: Windows keeps device usage/.test(await p.textContent('#page')));

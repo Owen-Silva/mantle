@@ -345,7 +345,8 @@
       onChange: (on) => SET(kit, 'accentOnStart', on, read) });
     const onTitle = kit.toggle({ row: R('accent-titlebars'), label: 'Show accent colour on title bars and window borders', onChange: (on) => SET(kit, 'accentOnTitleBars', on, read) });
     const look = mantleLook(kit, R('mantle-mode'));
-    el.append(kit.group('Mantle'), kit.card(look.row),
+    const share = lookSync(kit, R);
+    el.append(kit.group('Mantle'), kit.card(look.row), kit.group('Match Helm and Quartz'), ...share.cards,
       kit.reason(WIN_MODES, { info: true }), kit.group('Mode'), kit.card(mode, win, apps, tr),
       kit.group('Accent colour'), kit.card(auto, acc, grid, custom, onStart, onTitle));
     const S = { r: null, lock: null };
@@ -400,7 +401,7 @@
       onStart.set({ value: !!L('accentOnStart'), disabled: !!lock, reason: lock });
       onTitle.set({ value: !!L('accentOnTitleBars'), disabled: !!lock, reason: lock });
     }
-    const both = () => Promise.all([read(), look.read()]);
+    const both = () => Promise.all([read(), look.read(), share.read()]);
     return both().then(() => ({ update: both, dispose() {} }));
   }
 
@@ -431,6 +432,96 @@
     }
     kit.watch('theme', (t) => show(t));
     return { row, read: () => kit.call('theme.get').then((t) => show(t)) };
+  }
+
+  /* Look sync with Helm and Quartz (main's look.get / look.sync / look.glass / look.accent, the 'look'
+     event): theme, accent hue and the dark glass are shared through %APPDATA%\look-sync\look.json, and
+     Mantle shares its desktop wallpaper there too. Every answer and every 'look' event is the whole VIEW,
+     so one show() draws every row; a change made in Helm or Quartz arrives as a 'look' event. Sliders
+     write once, on release. */
+  const GLASS_SEED = { blurPx: 5, dim: 0.5, panel: 0 };
+  const PANEL_BASE = 0.83;   // panel is an offset on the dark panel's .83 opacity
+  const DEFAULT_HUE = 212;
+  const said = (s) => (typeof s === 'string' && s.trim() ? s.trim().replace(/[.\s]+$/, '') : null);
+  function lookSync(kit, R) {
+    const S = { v: null, hue: DEFAULT_HUE };
+    const num = (x) => typeof x === 'number' && isFinite(x);
+    const isView = (v) => !!(v && typeof v === 'object' && v.ok !== false && v.sync && typeof v.sync === 'object' && v.glass && typeof v.glass === 'object'
+      && num(v.glass.blurPx) && num(v.glass.dim) && num(v.glass.panel) && v.accent && typeof v.accent === 'object');
+    const pct = (d) => Math.round(d * 100);
+    const panelPct = (p) => Math.round((PANEL_BASE + p) * 100);
+    const hueOf = (v) => (Number.isInteger(v.accent.hue) ? v.accent.hue : null);
+    /* every write: the answer is the VIEW; ok:false (or no VIEW) springs the row back with the reason */
+    async function send(cmd, args, value) {
+      const x = await kit.call(cmd, args);
+      if (!x || x.ok === false) return { ok: false, reason: said(x && x.reason) || 'Mantle did not say why' };
+      if (!isView(x)) return { ok: false, reason: 'Mantle answered without the shared look' };
+      show(x);
+      return { ok: true, value: value(x) };
+    }
+    const sync = kit.toggle({ row: R('look-sync'), label: 'Sync look with Helm and Quartz', help: 'Theme, accent and glass follow when you change them in any of the three',
+      onChange: (on) => send('look.sync', { on }, (v) => !!v.sync.on) });
+    const status = kit.status({ row: R('look-status'), label: 'Sync status', value: 'Reading…' });
+    const desk = kit.status({ row: R('look-desktop'), label: 'Desktop wallpaper', value: 'Reading…' });
+    const blur = kit.slider({ row: R('glass-blur'), label: 'Blur', help: 'How much the glass softens what is behind it', min: 0, max: 64, step: 1, unit: ' px',
+      onChange: (v) => send('look.glass', { blurPx: v }, (x) => x.glass.blurPx) });
+    const dim = kit.slider({ row: R('glass-dim'), label: 'Bar tint', help: 'How dark the bar\'s glass is', min: 20, max: 90, step: 1, unit: '%',
+      onChange: (v) => send('look.glass', { dim: v / 100 }, (x) => pct(x.glass.dim)) });
+    const panel = kit.slider({ row: R('glass-panel'), label: 'Panel opacity', help: 'Lower is more see-through', min: 53, max: 97, step: 1, unit: '%',
+      onChange: (v) => send('look.glass', { panel: +(v / 100 - PANEL_BASE).toFixed(2) }, (x) => panelPct(x.glass.panel)) });
+    const reset = kit.button({ row: R('glass-reset'), label: 'Default glass', help: 'Blur 5 px, bar tint 50%, panel opacity 83%', text: 'Reset glass',
+      onClick: () => send('look.glass', Object.assign({}, GLASS_SEED), () => undefined).then((x) => (x.ok ? { ok: true } : x)) });
+    const accent = kit.choice({ row: R('accent-mode'), label: 'Accent', help: 'Mantle\'s own accent, or one hue for all three apps', style: 'segmented',
+      options: [{ value: 'own', label: 'Mantle\'s own' }, { value: 'custom', label: 'Custom hue' }],
+      onChange: (m) => send('look.accent', { hue: m === 'own' ? null : S.hue }, (x) => (hueOf(x) == null ? 'own' : 'custom')) });
+    const hue = kit.slider({ row: R('accent-hue'), label: 'Accent hue', help: 'Around the colour wheel: 0° red, 120° green, 240° blue', min: 0, max: 360, step: 1, unit: '°',
+      onChange: (v) => send('look.accent', { hue: v }, (x) => (hueOf(x) == null ? v : hueOf(x))) });
+    /* a small swatch of the accent Mantle paints with now (--lg-acc follows the hue in every window) */
+    const chip = kit.h('span', { 'data-accent-swatch': '', title: 'Mantle\'s accent now', 'aria-hidden': 'true' });
+    Object.assign(chip.style, { width: '16px', height: '16px', borderRadius: '50%', background: 'var(--lg-acc)', boxShadow: '0 0 0 1px var(--lg-edge-strong)', flex: '0 0 auto' });
+    const cc = accent.el.querySelector('.row-c');
+    if (cc) cc.prepend(chip);
+    const rows = [sync, status, desk, blur, dim, panel, reset, accent, hue];
+    function down(why) {
+      const r = 'Mantle\'s shared look could not be read: ' + (said(why) || 'no reason came back');
+      S.v = null;
+      [status, desk].forEach((x) => x.set({ value: '—', tone: null, reason: r, info: null, help: null }));
+      [sync, blur, dim, panel, reset, accent, hue].forEach((x) => x.set({ disabled: true, reason: r, info: null }));
+    }
+    function show(v) {
+      if (!isView(v)) return down(v && v.ok === false ? v.reason : 'Mantle answered without the shared look');
+      S.v = v;
+      const sy = v.sync, st = sy.state;
+      const warn = st !== 'ok' && st !== 'off';
+      const syWhy = warn ? said(sy.reason) || 'no reason came back' : null;
+      const syText = said(sy.text) || (sy.on ? 'On' : 'Off');
+      sync.set({ value: !!sy.on, disabled: false, reason: null });
+      status.set({ value: syText, tone: st === 'ok' ? 'ok' : warn ? 'warn' : null, help: null, info: null,
+        reason: syWhy && syText.indexOf(syWhy) < 0 ? syWhy : null });
+      const d = v.desktop || {}, w = v.windows || {};
+      const dWhy = d.ok === false ? said(d.reason) || 'Mantle did not say why' : null;
+      const wWhy = w.ok === false ? said(w.reason) || 'Windows did not say why' : null;
+      desk.set({ value: said(d.text) || 'Not shared', tone: d.ok === false ? 'warn' : null, help: said(w.text),
+        reason: [dWhy, wWhy && 'Windows\' wallpaper: ' + wWhy].filter(Boolean).join('. ') || null, info: null });
+      const ro = st === 'newer' ? 'Read only here: ' + (syWhy || 'a newer Helm or Quartz wrote the shared look') : null;
+      const light = v.theme === 'light' ? 'These shape the dark look; light keeps its own frost' : null;
+      const g = v.glass;
+      blur.set({ value: Math.round(g.blurPx), disabled: !!ro, reason: ro, info: light });
+      dim.set({ value: pct(g.dim), disabled: !!ro, reason: ro, info: light });
+      panel.set({ value: panelPct(g.panel), disabled: !!ro, reason: ro, info: light });
+      const atSeed = Math.abs(g.blurPx - GLASS_SEED.blurPx) < 0.5 && Math.abs(g.dim - GLASS_SEED.dim) < 0.005 && Math.abs(g.panel - GLASS_SEED.panel) < 0.005;
+      reset.set({ disabled: !!ro || atSeed, reason: ro, info: !ro && atSeed ? 'The glass is at its defaults' : null });
+      const h = hueOf(v);
+      if (h != null) S.hue = h;
+      accent.set({ value: h == null ? 'own' : 'custom', disabled: !!ro, reason: ro, info: v.theme === 'light' ? 'Applies to the dark look; light keeps its own colours' : null });
+      hue.set({ value: S.hue, disabled: !!ro || h == null, reason: ro, info: !ro && h == null ? 'Pick Custom hue to choose one' : null });
+    }
+    kit.watch('look', (v) => show(v));
+    return {
+      rows,
+      cards: [kit.card(sync, status, desk), kit.card(blur, dim, panel, reset, accent, hue)],
+      read: () => kit.call('look.get').then((v) => show(v)),
+    };
   }
 
   // ============================================================== Themes, Lock screen, Text input, Lighting, Device usage
@@ -646,6 +737,15 @@
     { id: 'colors', title: 'Colors', icon: SVG.palette, help: 'Light and dark mode, accent colour, transparency',
       search: [
         { row: 'personalization.colors.mantle-mode', label: 'Mantle appearance', keywords: 'dark mode light mode theme mantle appearance night match windows' },
+        { row: 'personalization.colors.look-sync', label: 'Sync look with Helm and Quartz', keywords: 'look sync share match helm quartz theme accent glass apps together' },
+        { row: 'personalization.colors.look-status', label: 'Look sync status', keywords: 'look sync status helm quartz shared in sync' },
+        { row: 'personalization.colors.look-desktop', label: 'Shared desktop wallpaper', keywords: 'desktop wallpaper background shared helm quartz windows wallpaper match sync' },
+        { row: 'personalization.colors.glass-blur', label: 'Glass blur', keywords: 'glass blur frost acrylic transparency see-through dark look' },
+        { row: 'personalization.colors.glass-dim', label: 'Bar tint', keywords: 'glass tint dim bar darkness transparency see-through dark look' },
+        { row: 'personalization.colors.glass-panel', label: 'Panel opacity', keywords: 'glass panel opacity transparency see-through translucent dark look' },
+        { row: 'personalization.colors.glass-reset', label: 'Reset glass', keywords: 'glass reset default blur tint transparency' },
+        { row: 'personalization.colors.accent-mode', label: 'Mantle accent', keywords: 'accent hue colour color custom mantle helm quartz look sync' },
+        { row: 'personalization.colors.accent-hue', label: 'Accent hue', keywords: 'accent hue colour color wheel custom helm quartz' },
         { row: 'personalization.colors.mode', label: 'Choose your mode', keywords: 'dark mode light mode theme night', uri: 'ms-settings:colors' },
         { row: 'personalization.colors.windows-mode', label: 'Choose your default Windows mode', keywords: 'dark light windows mode' },
         { row: 'personalization.colors.apps-mode', label: 'Choose your default app mode', keywords: 'dark light app mode' },
