@@ -15,7 +15,7 @@
 (function () {
   'use strict';
   const WARN = { avg: 100, routerAvg: 20, jitter: 10, loss: 0 };
-  const DEFAULT_CAPS = { rounds: 20, periodMs: 750, downMs: 7000, downBytes: 35e6, upMs: 6000, upBytes: 20e6, answerMs: 5000 };
+  const DEFAULT_CAPS = { rounds: 20, periodMs: 750, downMs: 7000, downBytes: 150e6, upMs: 6000, upBytes: 20e6, answerMs: 5000 };
 
   let api = null;     // { call, on, rerender }
   let st = null;      // the sidecar's last pingtest state (phase "idle" before any run)
@@ -95,9 +95,12 @@
   function histAct(verb, arg) {
     const tests = (H.list && H.list.tests) || [];
     if (verb !== 'pt-del') H.armed = null;
-    if (verb === 'pt-tab') { H.tab = arg === 'history' ? 'history' : 'test'; H.open = null; H.edit = null; H.msg = null; if (H.tab === 'history') hist({ action: 'list' }); }
+    if (verb === 'pt-tab') { H.tab = arg === 'history' ? 'history' : 'test'; H.open = null; H.edit = null; H.msg = null; H.pick = null; H.cmp = null; if (H.tab === 'history') hist({ action: 'list' }); }
+    else if (verb === 'pt-cmp') { H.pick = arg; H.open = null; H.cmp = null; H.edit = null; H.msg = null; }
+    else if (verb === 'pt-cmpto') { if (H.pick && arg !== H.pick) H.cmp = [H.pick, arg]; H.pick = null; H.open = null; }
+    else if (verb === 'pt-uncmp') { H.pick = null; H.cmp = null; }
     else if (verb === 'pt-open') { H.open = arg; H.edit = null; H.msg = null; }
-    else if (verb === 'pt-back') { H.open = null; H.edit = null; H.msg = null; }
+    else if (verb === 'pt-back') { H.open = null; H.edit = null; H.msg = null; H.pick = null; H.cmp = null; }
     else if (verb === 'pt-filter') { const ws = wifiLabels(tests); H.filter = arg === 'all' ? null : ws[+arg] || null; }
     else if (verb === 'pt-save' || verb === 'pt-rename') {
       const e = tests.find((x) => x.id === arg);
@@ -242,6 +245,23 @@
     if (short) return w.kind === 'wifi' ? 'Wi-Fi (name hidden)' : 'no network';
     return w.why || (w.kind === 'wifi' ? 'On Wi-Fi: Windows did not give its name' : 'No network was found');
   }
+  /* The link a test ran on (ptfix2: Owen's before/after mesh test). short = for a history row.
+   * Wi-Fi: "5 GHz · ch 157 · 70% · 1201/576 Mbps" (+ RSSI, PHY, the access point when not short);
+   * Ethernet: "cable · 1000 Mbps". A link Windows would not give: its reason. '' = no link recorded. */
+  const LINK_NAMES = { bssid: 'access point', signal: 'signal', rssi: 'RSSI', band: 'band', channel: 'channel', phy: 'Wi-Fi standard', rxMbps: 'receive rate', txMbps: 'send rate' };
+  function linkWords(l, short) {
+    if (!l) return '';
+    if (l.why) return short ? '' : l.why;
+    if (l.kind === 'ethernet') return `cable · ${l.linkMbps} Mbps`;
+    const rate = l.rxMbps != null || l.txMbps != null ? `${l.rxMbps != null ? l.rxMbps : '?'}/${l.txMbps != null ? l.txMbps : '?'} Mbps` : null;
+    if (short) return [l.band, l.signal != null ? l.signal + '%' : null].filter(Boolean).join(' ');
+    const parts = [l.band, l.channel != null ? 'ch ' + l.channel : null, l.signal != null ? l.signal + '%' : null, rate,
+      l.rssi != null ? l.rssi + ' dBm' : null, l.phy, l.bssid ? 'access point ' + l.bssid : null].filter(Boolean);
+    let t = parts.join(' · ');
+    const miss = l.missing ? Object.keys(l.missing) : [];
+    if (miss.length) t += `. Not given: ${miss.map((k) => (LINK_NAMES[k] || k) + ' (' + l.missing[k] + ')').join(', ')}`;
+    return t;
+  }
   function wifiLabels(tests) { const seen = []; tests.forEach((t) => { const k = netWords(t.wifi, true); if (!seen.includes(k)) seen.push(k); }); return seen; }
   const stamp = (t) => { try { return new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (_) { return ''; } };
   const goRow = (act, label, kb, cls) => `<div class="r pt-go${cls ? ' ' + cls : ''}" data-act="${esc(act)}"><span class="ck"></span><span class="lb">${esc(label)}</span><span class="kb">${esc(kb || '')}</span><span class="ar"></span></div>`;
@@ -251,7 +271,10 @@
     const ran = !running && s.phase !== 'idle' && s.phase !== 'starting';
     let h = '';
     if (s.wifi || ran) h += `<div class="info pt-net${s.wifi && !s.wifi.name ? ' pt-hid' : ''}">${esc(netWords(s.wifi, false))}</div>`;
+    const lw = s.wifi ? linkWords(s.wifi.link, false) : '';
+    if (lw) h += `<div class="info pt-link${s.wifi.link.why ? ' pt-hid' : ''}" title="${esc(s.wifi.link.rssiFrom ? 'RSSI from ' + s.wifi.link.rssiFrom : '')}">${esc(lw)}</div>`;
     if (s.wifiChanged) h += `<div class="info bad">${esc(s.wifiChanged.charAt(0).toUpperCase() + s.wifiChanged.slice(1))}</div>`;
+    if (s.linkChanged) h += `<div class="info bad">${esc(s.linkChanged.charAt(0).toUpperCase() + s.linkChanged.slice(1))}</div>`;
     if (s.why) h += `<div class="info bad">${esc(s.why)}</div>`;
     h += table(s);
     if (s.routerWhy) h += `<div class="info bad">${esc(s.routerWhy)}</div>`;
@@ -319,6 +342,71 @@
     return h;
   }
 
+  /* ---- compare two tests (ptfix2: "before mesh" vs "after mesh") -------------------------------
+   * The older is A (before), the newer B (after). Each line says better / worse / about the same in
+   * words; worse is amber (--lg-warn). There is no "good" colour token, so better stays plain ink. */
+  const fmt = (v) => (v == null ? '--' : num(v));
+  const mbpsN = (v) => (v == null ? '--' : v >= 100 ? String(Math.round(v)) : (Math.round(v * 10) / 10).toFixed(1));
+  /** -1 better, 1 worse, 0 about the same, null unknown. lower: lower is better. */
+  function judge(a, b, lower, same) {
+    if (a == null || b == null) return null;
+    const d = b - a;
+    if (Math.abs(d) <= same) return 0;
+    return (d < 0) === lower ? -1 : 1;
+  }
+  const cls = (j) => (j === 1 ? ' pt-worse' : j === -1 ? ' pt-better' : '');
+  function cmpLine(label, a, b, unit, lower, same, extra) {
+    const j = judge(a, b, lower, same);
+    const d = a != null && b != null ? Math.abs(Math.round((b - a) * 10) / 10) : null;
+    const word = j == null ? 'not measured in both' : j === 0 ? 'about the same'
+      : `${unit === 'Mbps' ? mbpsN(d) : num(d)}${unit === '%' ? ' points' : ' ' + unit} ${j === -1 ? 'better' : 'worse'}`;
+    const v = (x) => (x == null ? '--' : unit === 'Mbps' ? mbpsN(x) : num(x));
+    return `<div class="info pt-cl${cls(j)}">${esc(label)}: ${v(a)} → ${v(b)} ${esc(unit)}, ${word}${extra ? ' ' + esc(extra) : ''}.</div>`;
+  }
+  function compareHtml(x, y) {
+    const [a, b] = (Number(x.at) || 0) <= (Number(y.at) || 0) ? [x, y] : [y, x];
+    const nm = (t) => (t.saved ? '“' + t.name + '”' : stamp(t.at));
+    let h = `<h4>Compare</h4><div class="info">A (before): ${esc(nm(a))}${a.saved ? ' · ' + esc(stamp(a.at)) : ''}<br>B (after): ${esc(nm(b))}${b.saved ? ' · ' + esc(stamp(b.at)) : ''}</div>`;
+    // the network and the link
+    const wa = netWords(a.wifi, true), wb = netWords(b.wifi, true);
+    h += `<div class="info pt-cl">Wi-Fi: ${esc(wa)}${wa === wb ? ' both times' : ' → ' + esc(wb)}.</div>`;
+    const la = (a.wifi && a.wifi.link) || null, lb = (b.wifi && b.wifi.link) || null;
+    const lw = (l) => (l ? linkWords(l, false).replace(/\. Not given: .*$/, '') : 'not recorded');
+    h += `<div class="info pt-cl">Link: ${esc(lw(la))} → ${esc(lw(lb))}.</div>`;
+    if (la && lb && !la.why && !lb.why && la.kind === 'wifi' && lb.kind === 'wifi') {
+      h += cmpLine('Signal', la.signal, lb.signal, '%', false, 4);
+      h += cmpLine('Receive rate', la.rxMbps, lb.rxMbps, 'Mbps', false, Math.max(1, 0.05 * (la.rxMbps || 0)));
+      h += cmpLine('Send rate', la.txMbps, lb.txMbps, 'Mbps', false, Math.max(1, 0.05 * (la.txMbps || 0)));
+    }
+    // speed, with the server each used
+    const srv = (p, q) => { const s1 = (p && p.server) || null, s2 = (q && q.server) || null; return s1 && s2 ? (s1 === s2 ? `(${s1} both times)` : `(${s1} → ${s2}: different servers, so compare with care)`) : ''; };
+    h += cmpLine('Download', a.down && a.down.mbps, b.down && b.down.mbps, 'Mbps', false, Math.max(0.5, 0.05 * ((a.down && a.down.mbps) || 0)), srv(a.down, b.down));
+    h += cmpLine('Upload', a.up && a.up.mbps, b.up && b.up.mbps, 'Mbps', false, Math.max(0.5, 0.05 * ((a.up && a.up.mbps) || 0)), srv(a.up, b.up));
+    // the router and every server, by name: avg, jitter, loss, A -> B, with the change
+    const key = (r) => (r.kind === 'router' ? '\u0000router' : r.name);
+    const names = [];
+    [a, b].forEach((t) => (t.rows || []).forEach((r) => { if (!names.includes(key(r))) names.push(key(r)); }));
+    if (names.length) {
+      h += '<div class="pt-c" role="table"><span class="pt-h">Place</span><span class="pt-h">Avg ms</span><span class="pt-h">Change</span><span class="pt-h">Jitter ms</span><span class="pt-h">Loss %</span>';
+      names.forEach((k) => {
+        const ra = (a.rows || []).find((r) => key(r) === k) || {}, rb = (b.rows || []).find((r) => key(r) === k) || {};
+        const avA = ra.got ? ra.avg : null, avB = rb.got ? rb.avg : null;
+        const jAvg = judge(avA, avB, true, Math.max(1, 0.05 * (avA || 0)));
+        const jJit = judge(ra.got ? ra.jitter : null, rb.got ? rb.jitter : null, true, 0.5);
+        const jLoss = judge(ra.loss, rb.loss, true, 0);
+        const d = avA != null && avB != null ? Math.abs(Math.round((avB - avA) * 10) / 10) : null;
+        const change = jAvg == null ? 'n/a' : jAvg === 0 ? 'same' : `${num(d)} ms ${jAvg === -1 ? 'faster' : 'slower'}`;
+        h += `<span class="pt-n">${esc(k === '\u0000router' ? 'Your router' : k)}</span>` +
+          `<span class="pt-x${cls(jAvg)}">${fmt(avA)} → ${fmt(avB)}</span><span class="pt-x${cls(jAvg)}">${change}</span>` +
+          `<span class="pt-x${cls(jJit)}">${fmt(ra.got ? ra.jitter : null)} → ${fmt(rb.got ? rb.jitter : null)}</span>` +
+          `<span class="pt-x${cls(jLoss)}">${ra.loss != null ? ra.loss : '--'} → ${rb.loss != null ? rb.loss : '--'}</span>`;
+      });
+      h += '</div>';
+    }
+    h += '<div class="info pt-key">Amber: worse in B than in A. Small moves (under about 5%, 1 ms, or 0.5 ms of jitter) count as about the same.</div>';
+    return h;
+  }
+
   function historyHtml() {
     const v = H.list || { tests: [], problem: null, max: 50 };
     const tests = v.tests || [];
@@ -331,9 +419,17 @@
       h += `<h4>${e.saved ? esc(e.name) + ' · ' : ''}${esc(stamp(e.at))}</h4>`;
       h += result(Object.assign({ phase: 'done' }, e), false);
       h += entryActions(e, true);
+      if (tests.length > 1) h += goRow(`pt-cmp:${e.id}`, 'Compare with…', 'pick another test');
       h += goRow('pt-back', 'Back to history', '', 'pt-quiet');
       return h;
     }
+    if (H.cmp) {
+      const a = tests.find((x) => x.id === H.cmp[0]), b = tests.find((x) => x.id === H.cmp[1]);
+      if (a && b) return h + compareHtml(a, b) + goRow('pt-uncmp', 'Back to history', '', 'pt-quiet');
+      H.cmp = null;
+    }
+    const picking = H.pick ? tests.find((x) => x.id === H.pick) : null;
+    if (H.pick && !picking) H.pick = null;
     if (!tests.length) return h + `<div class="info">No tests yet. Every finished test is kept here: the last ${v.max || 50}, and every one you save, for good.</div>`;
     const ws = wifiLabels(tests);
     if (H.filter && !ws.includes(H.filter)) H.filter = null;
@@ -342,19 +438,23 @@
         ws.map((w, i) => `<span class="r pt-chip${H.filter === w ? ' on' : ''}" data-act="pt-filter:${i}" title="${esc(w)}">${esc(w)}</span>`).join('') + '</div>';
     }
     const shown = H.filter ? tests.filter((t) => netWords(t.wifi, true) === H.filter) : tests;
+    if (picking) h += `<div class="info">Pick the test to compare with ${esc(picking.saved ? '“' + picking.name + '”' : stamp(picking.at))}.</div>`;
     const sp = (x) => (x && x.mbps != null ? (x.mbps >= 100 ? String(Math.round(x.mbps)) : (Math.round(x.mbps * 10) / 10).toFixed(1)) : '--');
     h += '<div class="pt-hl">';
     shown.forEach((t) => {
       const b = t.best;
-      h += `<div class="r pt-hrow" data-act="pt-open:${esc(t.id)}" title="${esc(stamp(t.at))}">` +
+      if (picking && t.id === picking.id) return;
+      const lk = t.wifi ? linkWords(t.wifi.link, true) : '';
+      h += `<div class="r pt-hrow" data-act="${picking ? 'pt-cmpto' : 'pt-open'}:${esc(t.id)}" title="${esc(stamp(t.at))}">` +
         `<span class="pt-hn">${t.saved ? `<b>${esc(t.name)}</b> <i class="pt-saved">saved</i>` : esc(stamp(t.at))}</span>` +
-        `<span class="pt-hw${t.wifi && t.wifi.name ? '' : ' pt-hid'}">${esc(netWords(t.wifi, true))}</span>` +
+        `<span class="pt-hw${t.wifi && t.wifi.name ? '' : ' pt-hid'}" title="${esc(t.wifi ? linkWords(t.wifi.link, false) : '')}">${esc(netWords(t.wifi, true))}${lk ? ' · ' + esc(lk) : ''}</span>` +
         `<span class="pt-hb${b && anyBad(b) ? ' hi' : ''}">${b ? esc(ms(b.avg)) : '--'}</span>` +
         `<span class="pt-hs">↓${sp(t.down)} ↑${sp(t.up)}</span></div>`;
     });
     h += '</div>';
+    if (picking) return h + goRow('pt-uncmp', 'Cancel', '', 'pt-quiet');
     const unsaved = tests.filter((t) => !t.saved).length;
-    h += `<div class="info">Click a test to see it in full, save it under a name, or delete it. Kept: the last ${v.max || 50} unsaved (${unsaved} now) and every saved one.</div>`;
+    h += `<div class="info">Click a test to see it in full, save it under a name, compare it with another, or delete it. Kept: the last ${v.max || 50} unsaved (${unsaved} now) and every saved one.</div>`;
     return h;
   }
 

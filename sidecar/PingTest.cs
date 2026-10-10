@@ -14,7 +14,8 @@
 //            replies), loss %.
 //   2. DOWN  HTTPS GET speed.cloudflare.com/__down?bytes=N (Cloudflare's own public speed test, no key)
 //            on DownStreams (3) connections, each RAMPING its request size like Cloudflare's own page
-//            (1 MB, then 4 MB, then 10 MB each), until DownMs (7 s) or DownBytes (35 MB), first wins.
+//            (1 MB, 4 MB, 10 MB, then 25 MB each), until DownMs (7 s) or DownBytes (150 MB), first wins
+//            (150 MB: at ~170 Mbps the old 35 MB cap ended the reading after ~2 s; now it is time-bound).
 //            So a refusal (HTTP 429, its per-address limit) costs about 3 MB, not a 60 MB run.
 //            FALLBACK (ptfix, 2026-10-09: Owen's live run got "HTTP 429 Too Many Requests" from
 //            Cloudflare): when Cloudflare fails for any reason, the same caps and ramp against an
@@ -71,7 +72,7 @@ namespace Mantle {
     const string FallbackTpl = "https://speedtest.{dc}.linode.com/100MB-{dc}.bin";
     const long FallbackSize = 100000000;
     const int DownStreams = 3, UpStreams = 3, BusyDefaultS = 300;
-    static readonly long[] DownRamp = { 1000000, 4000000, 10000000 };   // per connection: its 1st, 2nd, 3rd+ request
+    static readonly long[] DownRamp = { 1000000, 4000000, 10000000, 25000000 };   // per connection: its 1st, 2nd, 3rd, 4th+ request
     static readonly long[] UpRamp = { 1000000, 4000000, 5000000 };
     // Akamai/Linode speed-test regions: id, name, then words that place a ping row near it
     static readonly string[][] Dcs = {
@@ -91,9 +92,10 @@ namespace Mantle {
 
     sealed class Caps {
       public int Rounds = 20, PeriodMs = 750, DownMs = 7000, UpMs = 6000;
-      public long DownBytes = 35000000, UpBytes = 20000000;
+      public long DownBytes = 150000000, UpBytes = 20000000;
       public string Router;   // test only: an address, or "none"
       public string[] Wifi;   // test only: the Wi-Fi name at the start and at the end ("A,B")
+      public IDictionary[] Link;   // test only: the link at the start and at the end (a fake WLAN read)
     }
     sealed class Net { public NetworkInterface Ni; public IPAddress Gw; public string Why; }
     sealed class Row {
@@ -113,7 +115,8 @@ namespace Mantle {
     }
     sealed class Run {
       public int Id;
-      public string Phase = "starting", Why, Label = "Ping", Test, Url, Host, ListWhy, RouterWhy, WifiChanged;
+      public string Phase = "starting", Why, Label = "Ping", Test, Url, Host, ListWhy, RouterWhy, WifiChanged, LinkChanged;
+      public IDictionary LinkEnd;   // the link read again at the end (a mesh roam shows here)
       public string Fallback = FallbackTpl;   // the fallback file URL ({dc} = region); null = none (a test endpoint without one)
       public double ProgMax;
       public IDictionary Wifi;   // the network at the start: kind, name, why (WifiOf)
@@ -184,6 +187,13 @@ namespace Mantle {
       if (t.TryGetValue("downBytes", out o) && o is double) c.DownBytes = Math.Max(1000, Math.Min(c.DownBytes, (long)(double)o));
       if (t.TryGetValue("upBytes", out o) && o is double) c.UpBytes = Math.Max(1000, Math.Min(c.UpBytes, (long)(double)o));
       c.Router = Json.GetString(t, "router");
+      object lo;
+      if (t.TryGetValue("link", out lo) && lo is List<object>) {
+        var l = (List<object>)lo;
+        var a = l.Count > 0 ? l[0] as IDictionary : null;
+        var b = l.Count > 1 ? l[1] as IDictionary : a;
+        if (a != null) c.Link = new[] { a, b ?? a };
+      }
       string w = Json.GetString(t, "wifi");
       if (!string.IsNullOrEmpty(w)) { string[] p = w.Split(','); c.Wifi = new[] { p[0], p.Length > 1 ? p[1] : p[0] }; }
     }
@@ -253,6 +263,14 @@ namespace Mantle {
         IDictionary end = WifiOf(await Task.Run(delegate { return FindNet(); }).ConfigureAwait(false), r.Caps, true);
         string a = NetWords(wifi), b = NetWords(end);
         if (a != b) lock (_g) r.WifiChanged = "the network changed during the test: " + a + " at the start, " + b + " at the end";
+        // the link again: a mesh roam (another access point, or another band) mid-run is said on the test
+        IDictionary l0 = wifi["link"] as IDictionary, l1 = end["link"] as IDictionary;
+        lock (_g) {
+          r.LinkEnd = l1;
+          if (a == b && l0 != null && l1 != null && l0["why"] == null && l1["why"] == null &&
+              (!Same(l0, l1, "bssid") || !Same(l0, l1, "band")))
+            r.LinkChanged = "the Wi-Fi moved to another access point during the test (a mesh roam): " + LinkWords(l0) + " at the start, " + LinkWords(l1) + " at the end";
+        }
         Finish(r, "done", null);
       } catch (OperationCanceledException) {
         Cancel(r);
@@ -328,17 +346,38 @@ namespace Mantle {
     /// { kind: "wifi" | "ethernet" | "other" | "none", name, why, iface }. A Wi-Fi whose name Windows
     /// withholds has name null and why in words, never a blank.
     static IDictionary WifiOf(Net n, Caps c, bool atEnd) {
-      if (c.Wifi != null) return Json.Obj("kind", "wifi", "name", c.Wifi[atEnd ? 1 : 0], "why", null, "iface", "test");
+      if (c.Wifi != null || c.Link != null) {
+        IDictionary tl = c.Link != null ? c.Link[atEnd ? 1 : 0] : Json.Obj("kind", "wifi", "why", "Wi-Fi link unknown: a test network has no link");
+        return Json.Obj("kind", "wifi", "name", c.Wifi != null ? c.Wifi[atEnd ? 1 : 0] : "Test", "why", null, "iface", "test", "link", tl);
+      }
       if (n.Ni == null) return Json.Obj("kind", "none", "name", null, "why", "no network: " + (n.Why ?? "Windows reports no connection"), "iface", null);
       NetworkInterfaceType t = n.Ni.NetworkInterfaceType;
       if (t == NetworkInterfaceType.Wireless80211) {
         string why;
         string ssid = Ssid(n.Ni.Id, out why);
-        return Json.Obj("kind", "wifi", "name", ssid, "why", ssid == null ? why : null, "iface", n.Ni.Name);
+        return Json.Obj("kind", "wifi", "name", ssid, "why", ssid == null ? why : null, "iface", n.Ni.Name, "link", NetWifi.Link(n.Ni.Id, LocationWhy));
       }
       if (t == NetworkInterfaceType.Ethernet || t == NetworkInterfaceType.GigabitEthernet || t == NetworkInterfaceType.FastEthernetT || t == NetworkInterfaceType.FastEthernetFx)
-        return Json.Obj("kind", "ethernet", "name", "Ethernet", "why", null, "iface", n.Ni.Name);
-      return Json.Obj("kind", "other", "name", n.Ni.Name, "why", null, "iface", n.Ni.Name);
+        return Json.Obj("kind", "ethernet", "name", "Ethernet", "why", null, "iface", n.Ni.Name, "link", WireLink(n.Ni));
+      return Json.Obj("kind", "other", "name", n.Ni.Name, "why", null, "iface", n.Ni.Name, "link", Json.Obj("kind", "other", "why", "link speed unknown: this is neither Wi-Fi nor Ethernet"));
+    }
+
+    /// A cable's link: its speed (Mbps), or why not.
+    static IDictionary WireLink(NetworkInterface ni) {
+      long bps = -1;
+      try { bps = ni.Speed; } catch (Exception) { }
+      if (bps <= 0) return Json.Obj("kind", "ethernet", "why", "Ethernet link speed unknown: Windows did not report it");
+      return Json.Obj("kind", "ethernet", "linkMbps", bps / 1000000, "why", null);
+    }
+
+    static bool Same(IDictionary a, IDictionary b, string k) { return object.Equals(a[k], b[k]); }
+
+    /// "5 GHz channel 157, access point AA:BB:CC:DD:EE:FF" (what is known of it).
+    static string LinkWords(IDictionary l) {
+      var parts = new List<string>();
+      if (l["band"] != null) parts.Add(l["band"] + (l["channel"] != null ? " channel " + l["channel"] : ""));
+      parts.Add(l["bssid"] != null ? "access point " + l["bssid"] : "an unknown access point");
+      return string.Join(", ", parts.ToArray());
     }
 
     static string NetWords(IDictionary w) {
@@ -835,7 +874,7 @@ namespace Mantle {
                         "elapsedMs", (r.EndedAt == 0 ? now : r.EndedAt) - r.StartedAt,
                         "progress", Math.Round(prog, 3), "pingDone", r.PingDone, "pingTotal", r.PingTotal,
                         "label", r.Label, "listWhy", r.ListWhy, "routerWhy", r.RouterWhy, "rows", rows,
-                        "wifi", r.Wifi, "wifiChanged", r.WifiChanged,
+                        "wifi", r.Wifi, "wifiChanged", r.WifiChanged, "linkEnd", r.LinkEnd, "linkChanged", r.LinkChanged,
                         "down", SpeedObj(r.Down), "up", SpeedObj(r.Up), "host", r.Host,
                         "caps", CapsObj(r.Caps), "test", r.Test);
       }

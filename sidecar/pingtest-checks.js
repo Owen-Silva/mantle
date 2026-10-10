@@ -140,6 +140,15 @@ async function pingTestChecks(t, T, exe) {
       const w = last.wifi || {};
       t.check('pingtest: the network is recorded: a name, or why Windows hides it (never a blank)', /^(wifi|ethernet|other|none)$/.test(w.kind) && (!!w.name || !!w.why) && !(w.name && w.why), JSON.stringify(Object.assign({}, w, { name: w.name ? '(' + w.name.length + ' chars)' : null })));
       t.check('pingtest: the same network start to end -> no change note', last.wifiChanged == null, last.wifiChanged);
+      // ptfix2: the link, REAL read on this PC (Wi-Fi: signal, RSSI, band, channel, PHY, rates, BSSID; Ethernet: speed)
+      const lk = w.link || {};
+      const FIELDS = ['bssid', 'signal', 'rssi', 'band', 'channel', 'phy', 'rxMbps', 'txMbps'];
+      const linkOk = (l) => !!l && (l.why ? /^(Wi-Fi link unknown|Ethernet link speed unknown|link speed unknown): ./.test(l.why)
+        : l.kind === 'wifi' ? FIELDS.every((f) => l[f] != null || (l.missing && typeof l.missing[f] === 'string' && l.missing[f].length > 0))
+        : l.kind === 'ethernet' ? l.linkMbps > 0 : false);
+      t.check('pingtest: the link is recorded at the start, every field a value or a reason (a REAL read on this PC)', w.kind === 'none' || linkOk(lk), JSON.stringify(Object.assign({}, lk, { bssid: lk.bssid ? '(read)' : lk.bssid })));
+      t.check('pingtest: ... and read again at the end, with no roam note on a steady link', w.kind === 'none' || (linkOk(last.linkEnd) && last.linkChanged == null), JSON.stringify([last.linkChanged]));
+      console.log(`  pingtest link (real): ${lk.why || [lk.band, lk.channel && 'ch ' + lk.channel, lk.signal != null && lk.signal + '%', lk.rssi != null && lk.rssi + ' dBm (' + lk.rssiFrom + ')', lk.phy, lk.rxMbps != null && lk.rxMbps + '/' + lk.txMbps + ' Mbps', lk.linkMbps && lk.linkMbps + ' Mbps cable', lk.bssid && 'BSSID read'].filter(Boolean).join(' · ')}${lk.missing ? ' · missing: ' + JSON.stringify(lk.missing) : ''}`);
       console.log(`  pingtest network: ${w.kind}, ${w.name ? 'name read (' + w.name.length + ' chars)' : 'no name: ' + w.why}`);
       const rate = evs.length / secs;
       t.check('pingtest: events at most ~4 a second (plus phase changes)', rate <= 6, `${evs.length} events in ${secs.toFixed(1)} s`);
@@ -264,6 +273,25 @@ async function pingTestChecks(t, T, exe) {
     await withSidecar('g', TEXAS, srvG.url, drive);
   } finally { srvG.close(); }
 
+  // ---- H. the link from a fake WLAN read: kept on the test; a mesh roam (BSSID / band change) is said --
+  const L0 = { kind: 'wifi', bssid: 'AA:BB:CC:00:00:01', signal: 70, rssi: -58, rssiFrom: 'now', band: '5 GHz', channel: 157, mhz: 5785, phy: 'Wi-Fi 6 (802.11ax)', rxMbps: 1201, txMbps: 576, why: null, missing: null };
+  const L1 = Object.assign({}, L0, { bssid: 'AA:BB:CC:00:00:02', band: '2.4 GHz', channel: 6, mhz: 2437, signal: 48 });
+  const srvH = await speedServer('ok');
+  try {
+    await withSidecar('h', LOCAL.slice(0, 1), srvH.url, async (ps) => {
+      await ps.call('topbar.pingtest', { action: 'start', test: Object.assign({}, FAST, { rounds: 1, wifi: 'Mesh,Mesh', link: [L0, L1] }) }, 4000);
+      const { last } = await waitEnd(ps, 20000);
+      t.check('pingtest link: the start link is kept on the test, as read', last.wifi && last.wifi.link && last.wifi.link.rxMbps === 1201 && last.wifi.link.band === '5 GHz' && last.wifi.link.bssid === L0.bssid,
+        JSON.stringify(last.wifi));
+      t.check('pingtest link: a mesh roam mid-run is said, in words, with both ends', last.linkEnd && last.linkEnd.bssid === L1.bssid &&
+        last.linkChanged === 'the Wi-Fi moved to another access point during the test (a mesh roam): 5 GHz channel 157, access point AA:BB:CC:00:00:01 at the start, 2.4 GHz channel 6, access point AA:BB:CC:00:00:02 at the end',
+        last.linkChanged);
+      await ps.call('topbar.pingtest', { action: 'start', test: Object.assign({}, FAST, { rounds: 1, wifi: 'Mesh,Mesh', link: [L0, Object.assign({}, L0, { signal: 61 })] }) }, 4000);
+      const r2 = await waitEnd(ps, 20000, (l) => l && l.run === 2 && l.running === false);
+      t.check('pingtest link: the same access point and band (only the signal moved) -> no roam note', r2.last && r2.last.linkChanged == null && r2.last.linkEnd.signal === 61, JSON.stringify(r2.last && r2.last.linkChanged));
+    });
+  } finally { srvH.close(); }
+
   // ---- D. ONE real run: real targets, the real router, speed.cloudflare.com, the real caps ----------
   if (process.env.MANTLE_PINGTEST_REAL === '0') { console.log('  pingtest REAL: skipped (MANTLE_PINGTEST_REAL=0)'); return; }
   await withSidecar('real', null, null, async (ps) => {
@@ -286,7 +314,7 @@ async function pingTestChecks(t, T, exe) {
     t.check('pingtest REAL: done in under 45 s', !timedOut && last.phase === 'done' && secs < 45, `${last && last.phase} ${secs.toFixed(1)} s`);
     t.check('pingtest REAL: the router answered (or says why)', rows.some((r) => r.kind === 'router' && r.got > 0) || !!last.routerWhy, last.routerWhy);
     t.check('pingtest REAL: the Valorant locations answered, one marked best', rows.filter((r) => r.kind === 'server' && r.got > 0).length >= 1 && rows.filter((r) => r.best).length === 1);
-    t.check('pingtest REAL: download in Mbps, inside the caps (35 MB / 7 s), by a named server', last.down.state === 'ok' && last.down.mbps > 0 && last.down.bytes <= 35e6 && last.down.ms <= 7300 && !!last.down.server,
+    t.check('pingtest REAL: download in Mbps, inside the caps (150 MB / 7 s), by a named server', last.down.state === 'ok' && last.down.mbps > 0 && last.down.bytes <= 150e6 && last.down.ms <= 7300 && !!last.down.server,
       JSON.stringify(last.down));
     t.check('pingtest REAL: upload in Mbps inside the caps (20 MB / 6 s), or a reason in words', (last.up.state === 'ok' && last.up.mbps > 0 && last.up.bytes <= 20e6 && last.up.ms <= 6300) || !!last.up.why,
       JSON.stringify(last.up));
@@ -294,6 +322,7 @@ async function pingTestChecks(t, T, exe) {
     console.log(`  pingtest REAL: ${phases(evs)} in ${secs.toFixed(1)} s, ${evs.length} events`);
     const rw = last.wifi || {};
     t.check('pingtest REAL: the network is recorded (a name, or why it is hidden)', !!rw.kind && (!!rw.name || !!rw.why), JSON.stringify(Object.assign({}, rw, { name: rw.name ? '(read)' : null })));
+    { const l = rw.link || {}; console.log(`    link: ${l.why || [l.band, l.channel && 'ch ' + l.channel, l.signal != null && l.signal + '%', l.rssi != null && l.rssi + ' dBm', l.phy, l.rxMbps != null && l.rxMbps + '/' + l.txMbps + ' Mbps', l.linkMbps && l.linkMbps + ' Mbps cable'].filter(Boolean).join(' · ')}${last.linkChanged ? '; ' + last.linkChanged : ''}`); }
     console.log(`    network: ${rw.kind} on ${rw.iface}: ${rw.name ? 'name read (' + rw.name.length + ' chars)' : rw.why}${last.wifiChanged ? '; ' + last.wifiChanged : ''}`);
     for (const r of rows) console.log(`    ${r.kind === 'router' ? 'router ' + r.host + ' (' + r.iface + ')' : r.name}: avg ${r.avg} ms, best ${r.min}, worst ${r.max}, jitter ${r.jitter}, loss ${r.loss}% (${r.got}/${r.sent}, ${r.method})${r.best ? ' BEST' : ''}${r.why ? ' why: ' + r.why : ''}`);
     console.log(`    download by ${last.down.server} (${last.down.host})${last.down.note ? ', because ' + last.down.note : ''}${last.down.pick ? '; region: ' + last.down.pick : ''}; tried: ${JSON.stringify(last.down.tried)}; upload by ${last.up.server}${last.up.why ? ': ' + last.up.why : ''}`);

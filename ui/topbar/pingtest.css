@@ -2,7 +2,7 @@
  * --lg-* tokens only, so light and dark both follow the theme and later token changes. The rows and
  * the button are topbar.css's own .r / .row2 / .info / h4; this file adds the results grid, the
  * progress line and a hover on the two buttons (a stat dropdown has no keyboard row). */
-.pt-t {
+.pt-t, .pt-c {
   display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; column-gap: 12px; row-gap: 1px;
   padding: 2px 8px 4px; font-variant-numeric: tabular-nums; align-items: baseline;
 }
@@ -44,7 +44,7 @@
 .pt .r.pt-chip.on { background: var(--lg-acc-soft); color: var(--lg-acc); font-weight: 600; }
 /* history rows: name (or time) | Wi-Fi | best ping | down / up */
 .pt-hl { padding: 0 0 2px; }
-.pt .r.pt-hrow { grid-template-columns: minmax(0, 1fr) minmax(0, 110px) 48px auto; column-gap: 10px; padding: 0 8px; font-variant-numeric: tabular-nums; cursor: default; }
+.pt .r.pt-hrow { grid-template-columns: minmax(0, 1fr) minmax(0, 170px) 48px auto; column-gap: 10px; padding: 0 8px; font-variant-numeric: tabular-nums; cursor: default; }
 .pt .r.pt-hrow:hover { background: var(--lg-hover); }
 .pt-hn { overflow: hidden; text-overflow: ellipsis; }
 .pt-hn b { font-weight: 600; }
@@ -62,3 +62,11 @@
 .pt-name::placeholder { color: var(--lg-ink-3); }
 .pt .r.pt-go.pt-quiet .lb { color: var(--lg-ink-2); font-weight: 400; }
 .pt .r.pt-go.armed .lb { color: var(--lg-warn); }
+
+/* compare two tests (ptfix2): Place | Avg A -> B | Change | Jitter A -> B | Loss A -> B. Worse is amber;
+ * there is no good-colour token, so better stays plain ink. */
+.pt-c { grid-template-columns: minmax(0, 1fr) auto auto auto auto; column-gap: 10px; }
+.pt-c .pt-x { white-space: nowrap; }
+.pt-c .pt-worse, .pt-cl.pt-worse { color: var(--lg-warn); }
+.pt-c .pt-better { color: var(--lg-ink); }
+.pt-link { color: var(--lg-ink-2); }

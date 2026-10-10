@@ -454,6 +454,79 @@ namespace Mantle {
       } finally { Native.WlanFreeMemory(list); }
     }
 
+    // ---- the link, for the ping test (PingTest.cs, lane ptfix 2026-10-09: Owen's before/after mesh test)
+    const uint OP_RSSI = 0x10000102;   // wlan_intf_opcode_rssi: a LONG, the driver's current RSSI in dBm
+
+    /// One Wi-Fi adapter's link right now: signal %, RSSI dBm, band, channel, MHz, PHY, receive/transmit
+    /// Mbps and the BSSID (which access point / mesh node). Read-only. Every field Windows does not give
+    /// is named in "missing" with why; when nothing can be read, "why" says so. Never a silent blank.
+    internal static IDictionary Link(string adapterId, Func<string> hiddenWhy) {
+      Guid g;
+      try { g = new Guid(adapterId); } catch (Exception) { return LinkWhy("Windows gave no id for the Wi-Fi adapter"); }
+      string why;
+      IntPtr h = Open(out why);
+      if (h == IntPtr.Zero) return LinkWhy(why);
+      try {
+        uint size; IntPtr d;
+        uint rc = Native.WlanQueryInterface(h, ref g, OP_CURRENT_CONNECTION, IntPtr.Zero, out size, out d, IntPtr.Zero);
+        if (d != IntPtr.Zero) Native.WlanFreeMemory(d);
+        if (rc == 5) return LinkWhy("hidden by Windows: " + hiddenWhy());
+        if (rc != 0) return LinkWhy("Windows would not say (error " + rc + ")");
+        Conn c = Current(h, g);
+        if (c == null || c.State != 1) return LinkWhy("Wi-Fi is not connected");
+        IDictionary missing = Json.Obj();
+        int channel = 0;
+        if (Native.WlanQueryInterface(h, ref g, OP_CHANNEL, IntPtr.Zero, out size, out d, IntPtr.Zero) == 0 && d != IntPtr.Zero) {
+          channel = Marshal.ReadInt32(d);
+          Native.WlanFreeMemory(d);
+        }
+        uint khz; int scanRssi;
+        Bss(h, g, c.Bssid, out khz, out scanRssi);
+        int rssi = 0;
+        string rssiFrom = null;
+        if (Native.WlanQueryInterface(h, ref g, OP_RSSI, IntPtr.Zero, out size, out d, IntPtr.Zero) == 0 && d != IntPtr.Zero) {
+          if (size >= 4) rssi = Marshal.ReadInt32(d);
+          Native.WlanFreeMemory(d);
+          if (rssi < 0 && rssi > -128) rssiFrom = "now"; else rssi = 0;
+        }
+        if (rssiFrom == null && scanRssi < 0 && scanRssi > -128) { rssi = scanRssi; rssiFrom = "Windows' last scan"; }
+        bool noBssid = c.Bssid == null || c.Bssid == "00:00:00:00:00:00";
+        string band = Band(khz, channel), phy = Protocol(c.Phy);
+        if (noBssid) missing["bssid"] = "Windows did not give the access point's address";
+        if (rssiFrom == null) missing["rssi"] = "the Wi-Fi driver did not report it";
+        if (band == null) missing["band"] = "Windows did not report the frequency or channel";
+        if (channel <= 0) missing["channel"] = "the Wi-Fi driver did not report it";
+        if (phy == null) missing["phy"] = "an unknown radio type (" + c.Phy + ")";
+        if (c.Rx == 0) missing["rxMbps"] = "the Wi-Fi driver did not report it";
+        if (c.Tx == 0) missing["txMbps"] = "the Wi-Fi driver did not report it";
+        return Json.Obj("kind", "wifi", "bssid", noBssid ? null : c.Bssid, "signal", (int)c.Quality,
+                        "rssi", rssiFrom != null ? (object)rssi : null, "rssiFrom", rssiFrom,
+                        "band", band, "channel", channel > 0 ? (object)channel : null, "mhz", khz > 0 ? (object)(int)(khz / 1000) : null,
+                        "phy", phy, "rxMbps", c.Rx > 0 ? (object)(int)(c.Rx / 1000) : null, "txMbps", c.Tx > 0 ? (object)(int)(c.Tx / 1000) : null,
+                        "why", null, "missing", missing.Count > 0 ? missing : null);
+      } catch (Exception ex) {
+        return LinkWhy("the Wi-Fi link could not be read: " + ex.Message.TrimEnd('.'));
+      } finally { Native.WlanCloseHandle(h, IntPtr.Zero); }
+    }
+
+    static IDictionary LinkWhy(string why) { return Json.Obj("kind", "wifi", "why", "Wi-Fi link unknown: " + why); }
+
+    /// The connected BSS's centre frequency (kHz) and its RSSI (dBm) from Windows' cached BSS list; 0 when unknown.
+    static void Bss(IntPtr h, Guid g, string bssid, out uint khz, out int rssi) {
+      khz = 0; rssi = 0;
+      IntPtr list;
+      if (Native.WlanGetNetworkBssList(h, ref g, IntPtr.Zero, 3, false, IntPtr.Zero, out list) != 0 || list == IntPtr.Zero) return;
+      try {
+        int n = Marshal.ReadInt32(list, 4);
+        for (int i = 0; i < n; i++) {
+          IntPtr e = new IntPtr(list.ToInt64() + 8 + (long)i * 360);
+          var mac = new byte[6];
+          Marshal.Copy(new IntPtr(e.ToInt64() + 40), mac, 0, 6);
+          if (BitConverter.ToString(mac).Replace('-', ':') == bssid) { khz = (uint)Marshal.ReadInt32(e, 92); rssi = Marshal.ReadInt32(e, 56); return; }
+        }
+      } finally { Native.WlanFreeMemory(list); }
+    }
+
     static string Band(uint khz, int channel) {
       if (khz >= 5925000 && khz <= 7125000) return "6 GHz";
       if (khz >= 4900000 && khz < 5925000) return "5 GHz";

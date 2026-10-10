@@ -111,8 +111,8 @@ async function pingTestChecks(browser, check, PAGE, OUT) {
     // ---- idle
     let m = await grow();
     check(tag('idle: a Run ping test row with the time and data it will use'), m.go.length === 1 && m.go[0].act === 'pt-start' && m.go[0].lb === 'Run ping test' &&
-      m.go[0].kb === 'about 30 s · up to 55 MB', JSON.stringify(m.go));
-    check(tag('idle: the caption says what it does and the data it uses'), /Pings every Valorant location and your router 20 times/.test(m.text) && /up to 55 MB of data/.test(m.text) && /speed\.cloudflare\.com/.test(m.text), m.text);
+      m.go[0].kb === 'about 30 s · up to 170 MB', JSON.stringify(m.go));
+    check(tag('idle: the caption says what it does and the data it uses'), /Pings every Valorant location and your router 20 times/.test(m.text) && /up to 170 MB of data/.test(m.text) && /speed\.cloudflare\.com/.test(m.text), m.text);
     check(tag('idle: no results, no speed rows, no reasons before the first run'), !/(^|\n)SPEED(\n|$)|failed|Mbps|Your router/.test(m.text) && m.bad.length === 0, m.text);
     check(tag('idle: the state was read once at load (the last run)'), m.calls.length === 1 && m.calls[0] === 'state', JSON.stringify(m.calls));
     check(tag('idle: the dropdown is shown whole, nothing scrolls'), !m.hidden && !m.scrolls && m.rect.bottom <= m.ih, JSON.stringify([m.rect, m.ih]));
@@ -223,6 +223,10 @@ async function pingTestChecks(browser, check, PAGE, OUT) {
  * each test should also say what wifi i was on"): a fake main in the page keeps the list, so the
  * clicks, the name box and its keys go the whole way round. */
 const WIFI = (name, why) => (name ? { kind: name === 'Ethernet' ? 'ethernet' : 'wifi', name, why: null, iface: name === 'Ethernet' ? 'Ethernet' : 'Wi-Fi' } : { kind: 'wifi', name: null, why, iface: 'Wi-Fi' });
+// ptfix2: the link each test ran on (signal, band, channel, rates, access point), as the sidecar records it
+const LINK = (band, channel, signal, rx, tx, o) => Object.assign({ kind: 'wifi', bssid: 'AA:BB:CC:00:00:0' + (channel % 9), signal, rssi: Math.round(signal / 2 - 100), rssiFrom: 'now',
+  band, channel, mhz: null, phy: 'Wi-Fi 6 (802.11ax)', rxMbps: rx, txMbps: tx, why: null, missing: null }, o || {});
+const WIFIL = (name, link) => Object.assign(WIFI(name), { link });
 const HIDDEN = 'Wi-Fi name hidden by Windows: Location access is off for desktop apps (Settings > Privacy & security > Location > Let desktop apps access your location)';
 function entry(i, o) {
   const s = base({ run: i, startedAt: AT - i * 3600e3, endedAt: AT - i * 3600e3 + 30e3 });
@@ -232,11 +236,15 @@ function entry(i, o) {
     routerWhy: null, listWhy: null, down: { mbps: 62, bytes: 60e6, why: null, state: 'ok' }, up: { mbps: 30.8, bytes: 25e6, why: null, state: 'ok' }, rows: s.rows }, o || {});
 }
 const HISTORY = () => [
-  entry(1, { name: 'upstairs', saved: true, down: { mbps: 41.5, bytes: 60e6, state: 'ok' }, up: { mbps: 12.2, bytes: 25e6, state: 'ok' } }),
-  entry(2),
-  entry(3, { wifi: WIFI(null, HIDDEN) }),
-  entry(4, { name: 'after router reset', saved: true, best: { name: 'US West (N. California)', avg: 118, jitter: 14, loss: 0 } }),
-  entry(5, { wifi: WIFI('Ethernet') }),
+  entry(1, { name: 'upstairs', saved: true, wifi: WIFIL('HomeNet', LINK('5 GHz', 157, 70, 1201, 576)),
+    down: { mbps: 41.5, bytes: 60e6, state: 'ok', server: 'Linode Fremont' }, up: { mbps: 12.2, bytes: 25e6, state: 'ok', server: 'Cloudflare' } }),
+  entry(2, { wifi: WIFIL('HomeNet', LINK('2.4 GHz', 6, 44, 144, 72)) }),
+  entry(3, { wifi: Object.assign(WIFI(null, HIDDEN), { link: { kind: 'wifi', why: 'Wi-Fi link unknown: hidden by Windows: Location access is off for desktop apps' } }) }),
+  entry(4, { name: 'after router reset', saved: true, wifi: WIFIL('HomeNet', LINK('5 GHz', 36, 52, 866, 866, { missing: { rssi: 'the Wi-Fi driver did not report it' }, rssi: null })),
+    best: { name: 'US West (N. California)', avg: 118, jitter: 14, loss: 0 },
+    rows: [ROUTER(28, 3, 156, 26, 0)].concat(SERVERS().map((r) => (r.name === 'US West (N. California)' ? Object.assign(r, { avg: 118, jitter: 14 }) : r))),
+    down: { mbps: 62, bytes: 60e6, state: 'ok', server: 'Cloudflare' }, up: { mbps: 30.8, bytes: 25e6, state: 'ok', server: 'Cloudflare' } }),
+  entry(5, { wifi: Object.assign(WIFI('Ethernet'), { link: { kind: 'ethernet', linkMbps: 1000, why: null } }) }),
 ];
 
 async function historyChecks(page, check, tag, shot, grow, up, dark) {
@@ -270,8 +278,8 @@ async function historyChecks(page, check, tag, shot, grow, up, dark) {
   await page.waitForTimeout(40);
   let m = await grow(), h = await q();
   check(tag('history: the History tab lists every kept test, newest first, the saved ones marked'), h.tabs.join(',') === 'Test,*History · 5' && h.rows.length === 5 && h.saved === 2 &&
-    /^upstairs saved HomeNet 16 ms ↓41\.5 ↑12\.2$/.test(h.rows[0]), JSON.stringify(h.rows));
-  check(tag('history: a hidden Wi-Fi name is said, never a blank; Ethernet is named'), /Wi-Fi \(name hidden\)/.test(h.rows[2]) && /Ethernet/.test(h.rows[4]), JSON.stringify(h.rows));
+    /^upstairs saved HomeNet · 5 GHz 70% 16 ms ↓41\.5 ↑12\.2$/.test(h.rows[0]) && /HomeNet · 2\.4 GHz 44%/.test(h.rows[1]), JSON.stringify(h.rows));
+  check(tag('history: a hidden Wi-Fi name is said, never a blank; Ethernet is named'), /Wi-Fi \(name hidden\) 16 ms/.test(h.rows[2]) && /Ethernet · cable · 1000 Mbps/.test(h.rows[4]), JSON.stringify(h.rows));
   check(tag('history: a bad best ping is amber in the list'), await page.evaluate(() => document.querySelectorAll('.pt .pt-hb.hi').length === 1));
   check(tag('history: the dropdown shows whole, no inline style'), !m.hidden && m.rect.bottom <= m.ih && h.inline === 0, JSON.stringify([m.rect, m.ih]));
   await shot('history', m);
@@ -283,7 +291,7 @@ async function historyChecks(page, check, tag, shot, grow, up, dark) {
   const ids = HISTORY().map((e) => e.id);
   await up(`.pt .pt-hrow[data-act="pt-open:${ids[2]}"]`); await page.waitForTimeout(20); m = await grow(); h = await q();
   check(tag('history: a row opens the whole result, with why the Wi-Fi name is missing'), h.text.includes(HIDDEN) && /Your router/.test(h.text) && /62\.0 Mbps/.test(h.text) &&
-    h.go.join(',') === 'Save…,Delete,Back to history', JSON.stringify(h.go));
+    h.go.join(',') === 'Save…,Delete,Compare with…,Back to history' && h.text.includes('Wi-Fi link unknown: hidden by Windows'), JSON.stringify(h.go));
   // Save…: the name box, focused; typed words (with spaces) survive the 1 s re-render; Enter saves
   await up(`.pt .r[data-act="pt-save:${ids[2]}"]`); await page.waitForTimeout(30); h = await q();
   check(tag('save: the name box opens with the focus'), h.box && h.focused, JSON.stringify(h));
@@ -296,7 +304,7 @@ async function historyChecks(page, check, tag, shot, grow, up, dark) {
   await page.keyboard.press('Enter'); await page.waitForTimeout(40); h = await q();
   const last = h.hist[h.hist.length - 1];
   check(tag('save: Enter saves under the typed name and shows it'), last.action === 'save' && last.id === ids[2] && last.name === 'after the reset' && !h.box && /^after the reset · /.test(h.head) &&
-    h.go.join(',') === 'Rename…,Delete,Back to history', JSON.stringify([last, h.head, h.go]));
+    h.go.join(',') === 'Rename…,Delete,Compare with…,Back to history', JSON.stringify([last, h.head, h.go]));
   // Rename…, then Escape leaves the box and the dropdown stays
   await up(`.pt .r[data-act="pt-rename:${ids[2]}"]`); await page.waitForTimeout(30); h = await q();
   check(tag('rename: the box opens with the current name'), h.box && h.value === 'after the reset' && h.focused, JSON.stringify([h.value]));
@@ -309,6 +317,37 @@ async function historyChecks(page, check, tag, shot, grow, up, dark) {
   if (!dark) await shot('history-delete', m);
   await up(`.pt .r[data-act="pt-del:${ids[2]}"]`); await page.waitForTimeout(40); h = await q();
   check(tag('delete: the second press deletes and goes back to the list'), h.hist[h.hist.length - 1].action === 'delete' && h.hist[h.hist.length - 1].id === ids[2] && h.rows.length === 4, JSON.stringify(h.rows.length));
+  // ---- compare two tests (ptfix2: before / after the mesh): open one, Compare with…, pick the other
+  await up(`.pt .pt-hrow[data-act="pt-open:${ids[3]}"]`); await page.waitForTimeout(20); h = await q();
+  check(tag('compare: the full view of a saved test shows its link, with what Windows did not give'), h.text.includes('5 GHz · ch 36 · 52% · 866/866 Mbps · Wi-Fi 6 (802.11ax) · access point AA:BB:CC:00:00:00. Not given: RSSI (the Wi-Fi driver did not report it)'), h.text);
+  await up(`.pt .r[data-act="pt-cmp:${ids[3]}"]`); await page.waitForTimeout(20); h = await q(); m = await grow();
+  check(tag('compare: Compare with… lists the other tests to pick from, and a Cancel'), h.text.includes('Pick the test to compare with “after router reset”.') && h.rows.length === 3 &&
+    h.go.join(',') === 'Cancel', JSON.stringify([h.rows, h.go]));
+  if (!dark) await shot('history-pick', m);
+  await up(`.pt .pt-hrow[data-act="pt-cmpto:${ids[0]}"]`); await page.waitForTimeout(20); h = await q(); m = await grow();
+  const cmp = await page.evaluate(() => {
+    const warn = getComputedStyle(document.documentElement).getPropertyValue('--lg-warn').trim();
+    const probe = document.createElement('span'); probe.style.color = warn; document.body.appendChild(probe); const w = getComputedStyle(probe).color; probe.remove();
+    const cells = [...document.querySelectorAll('.pt .pt-c > span')].map((e) => e.textContent);
+    return { cells, warn: w, worse: [...document.querySelectorAll('.pt .pt-worse')].map((e) => [e.textContent, getComputedStyle(e).color]) };
+  });
+  const lines = (h.text.match(/^(Wi-Fi|Link|Signal|Receive rate|Send rate|Download|Upload): .*$/gm) || []);
+  check(tag('compare: the older is A (before), the newer B (after), each by name'), /A \(before\): “after router reset”/.test(h.text) && /B \(after\): “upstairs”/.test(h.text) && /^Compare/.test(h.head), h.text.slice(0, 300));
+  check(tag('compare: Wi-Fi, link, signal and rates, in words, better / worse'), lines.includes('Wi-Fi: HomeNet both times.') &&
+    lines.some((l) => /^Link: 5 GHz · ch 36 · 52% · 866\/866 Mbps · .* → 5 GHz · ch 157 · 70% · 1201\/576 Mbps · /.test(l)) &&
+    lines.includes('Signal: 52 → 70 %, 18 points better.') && lines.includes('Receive rate: 866 → 1201 Mbps, 335 Mbps better.') && lines.includes('Send rate: 866 → 576 Mbps, 290 Mbps worse.'), JSON.stringify(lines));
+  check(tag('compare: download and upload with the server each used, the change in words'),
+    lines.includes('Download: 62.0 → 41.5 Mbps, 20.5 Mbps worse (Cloudflare → Linode Fremont: different servers, so compare with care).') &&
+    lines.includes('Upload: 30.8 → 12.2 Mbps, 18.6 Mbps worse (Cloudflare both times).'), JSON.stringify(lines));
+  const row = (n) => { const i = cmp.cells.indexOf(n); return i < 0 ? null : cmp.cells.slice(i, i + 5).join(' | '); };
+  check(tag('compare: the router and every server: avg, the change, jitter, loss, A → B'), row('Your router') === 'Your router | 28 → 2.4 | 26 ms faster | 26 → 0.6 | 0 → 0' &&
+    row('US West (N. California)') === 'US West (N. California) | 118 → 16 | 102 ms faster | 14 → 1.2 | 0 → 0' && row('US West (Oregon)') === 'US West (Oregon) | 36 → 36 | same | 1.9 → 1.9 | 0 → 0' &&
+    cmp.cells.length === 5 * 8, JSON.stringify(cmp.cells));
+  check(tag('compare: worse is amber (--lg-warn), and only worse'), cmp.worse.length === 3 && cmp.worse.every(([, c]) => c === cmp.warn), JSON.stringify(cmp.worse));
+  check(tag('compare: no inline style; the dropdown shows whole'), h.inline === 0 && !m.hidden && m.rect.bottom <= m.ih && !m.scrolls && h.go.join(',') === 'Back to history', JSON.stringify([m.rect, m.ih, h.go]));
+  await shot('compare', m);
+  await up('.pt .r[data-act="pt-uncmp"]'); await page.waitForTimeout(20); h = await q();
+  check(tag('compare: Back to history goes back to the list'), h.rows.length === 4 && !/Compare/.test(h.head), JSON.stringify(h.rows));
   // a damaged file: its reason, in words
   await page.evaluate(() => window.mantle.emit('topbar.pingtests', { tests: window.__hist.tests, problem: 'history could not be read: the file is damaged near character 12; starting fresh, old file kept as ping-tests.bad.json', max: 50 }));
   await page.waitForTimeout(20); h = await q(); m = await grow();
@@ -316,12 +355,13 @@ async function historyChecks(page, check, tag, shot, grow, up, dark) {
   if (dark) await shot('history-problem', m);
   // the Test tab: the current run's network, a network change, and Save… for it
   await up('.pt .pt-tab[data-act="pt-tab:test"]');
-  const cur = Object.assign({}, STATES.done, { run: 7, startedAt: AT - 60e3, wifi: WIFI('HomeNet'), wifiChanged: 'the network changed during the test: Wi-Fi "HomeNet" at the start, Wi-Fi "Phone" at the end' });
+  const cur = Object.assign({}, STATES.done, { run: 7, startedAt: AT - 60e3, wifi: WIFIL('HomeNet', LINK('5 GHz', 157, 70, 1201, 576)), linkChanged: 'the Wi-Fi moved to another access point during the test (a mesh roam): 5 GHz channel 157, access point AA:BB:CC:00:00:04 at the start, 2.4 GHz channel 6, access point AA:BB:CC:00:00:06 at the end', wifiChanged: 'the network changed during the test: Wi-Fi "HomeNet" at the start, Wi-Fi "Phone" at the end' });
   await page.evaluate((x) => { const e = Object.assign({}, window.__hist.tests[0], { id: `${x.startedAt}-${x.run}`, name: null, saved: false }); window.__hist.tests.unshift(e);
     window.mantle.emit('topbar.pingtests', JSON.parse(JSON.stringify(window.__hist))); window.mantle.emit('topbar.pingtest', x); }, cur);
   await page.waitForTimeout(30); h = await q(); m = await grow();
   check(tag('test tab: the network it ran on, a change said in amber, and Save… for this run'), /On Wi-Fi “HomeNet”/.test(h.text) && h.bad.some((b) => /^The network changed during the test: Wi-Fi "HomeNet" at the start, Wi-Fi "Phone" at the end$/.test(b)) &&
     h.go.join(',') === 'Save…,Run again', JSON.stringify([h.go, h.bad]));
+  check(tag('test tab: the link under the network (5 GHz · ch 157 · 70% · 1201/576 Mbps), and a mesh roam said in amber'), h.text.includes('5 GHz · ch 157 · 70% · 1201/576 Mbps · -65 dBm · Wi-Fi 6 (802.11ax) · access point AA:BB:CC:00:00:04') && h.bad.some((x) => /^The Wi-Fi moved to another access point during the test \(a mesh roam\): 5 GHz channel 157/.test(x)), JSON.stringify([h.text.slice(0, 200), h.bad]));
   await shot('test-wifi', m);
 }
 
