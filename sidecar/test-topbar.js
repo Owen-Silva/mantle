@@ -303,6 +303,8 @@ function flat(items, out) {
     const tcp = await pingWith('tcp', [{ name: 'TCP only', host: 'ec2.us-west-1.amazonaws.com', port: 443 }, { name: 'Nowhere', host: '192.0.2.1', port: 443 }], 7000);
     const tl = tcp[tcp.length - 1] || {};
     t.check('ping: a host without ICMP is timed by a TCP connect', tl.state === 'ok' && tl.method === 'tcp' && typeof tl.ms === 'number' && tl.server === 'TCP only', JSON.stringify(tl).slice(0, 300));
+    // the PING dropdown's ping test (sidecar/PingTest.cs, lane pingtest): local runs, failures, cancel, one real run
+    await require('./pingtest-checks').pingTestChecks(t, T, s.exe);
 
     // ---- the fixture --------------------------------------------------------------------------
     buildFixture();

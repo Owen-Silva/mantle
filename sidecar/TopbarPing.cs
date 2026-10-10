@@ -199,12 +199,12 @@ namespace Mantle {
 
     // ------------------------------------------------------------------ one round trip
 
-    sealed class Rt { public double Ms = -1; public string Method, Why; }
+    internal sealed class Rt { public double Ms = -1; public string Method, Why; }   // internal: PingTest.cs times its samples with it
 
     /// One round trip: ICMP echo, or a TCP connect to port when the host does not answer ICMP.
     /// method: what worked before (null = not known yet). A host that answers ICMP never falls
     /// back to TCP: a miss is a miss.
-    static async Task<Rt> OnceAsync(string who, IPAddress ip, int port, string method, Ping p) {
+    internal static async Task<Rt> OnceAsync(string who, IPAddress ip, int port, string method, Ping p) {
       var res = new Rt();
       if (method != "tcp") {
         try {
@@ -264,11 +264,24 @@ namespace Mantle {
     }
 
 
+    /// For PingTest.cs (lane pingtest, 2026-10-09): a copy of the loaded list (the same file, the same
+    /// MANTLE_PING_TARGETS rule) with each target's last known address and method. err: why there is none.
+    internal sealed class TargetCopy { public string Name, Host, Via, Method; public int Port; public IPAddress Ip; }
+    internal static List<TargetCopy> CopyTargets(out string label, out string err) {
+      var list = new List<TargetCopy>();
+      lock (_g) {
+        Load();
+        label = _label; err = _loadErr;
+        foreach (Target t in _targets) list.Add(new TargetCopy { Name = t.Name, Host = t.Host, Via = t.Via, Method = t.Method, Port = t.Port, Ip = t.Ip });
+      }
+      return list;
+    }
+
     // ------------------------------------------------------------------ helpers
 
     static string Who(Target t) { return _label + " " + t.Name; }
-    static bool Online() { try { return NetworkInterface.GetIsNetworkAvailable(); } catch (Exception) { return true; } }
-    static Exception Inner(Exception e) {
+    internal static bool Online() { try { return NetworkInterface.GetIsNetworkAvailable(); } catch (Exception) { return true; } }
+    internal static Exception Inner(Exception e) {
       while (e != null && (e is AggregateException || e is PingException) && e.InnerException != null) e = e.InnerException;
       return e ?? new Exception("no reason given");
     }

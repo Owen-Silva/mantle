@@ -562,6 +562,7 @@
     const ping = o.stat === 'ping';
     if (d.reason) html += `<div class="info${ping ? (d.state !== 'ok' && d.state !== 'measuring' ? ' bad' : '') : d.pct == null && d.used == null && d.down == null ? ' bad' : ''}">${esc(d.reason)}</div>`;
     if (ping && d.test) html += `<div class="info">${esc(d.test)}</div>`;
+    if (ping && window.PingTest) html += window.PingTest.html();   // the ping test (lane pingtest): pingtest.js
     if (!d.top && o.stat !== 'net' && !ping) html += '<div class="info">Top processes arrive with the next sample.</div>';
     if (!ping) html += '<div class="sep"></div><div class="r" data-act="taskmgr"><span class="ck"></span><span class="lb">Open Task Manager</span><span class="kb">Ctrl+Shift+Esc</span><span class="ar"></span></div>';
     // The 1 s sample refreshes the SAME element: a new one each second replayed the fade-in and
@@ -577,6 +578,7 @@
     const scroll = dd.scrollTop;
     dd.style.maxHeight = '';
     dd.innerHTML = html;
+    if (ping && window.PingTest) window.PingTest.after(dd);   // the ping test's name box keeps its text and focus
     if (d.cores) dd.querySelectorAll('.core i').forEach((el, k) => { el.style.height = Math.max(0, Math.min(100, d.cores[k] || 0)) + '%'; });
     const b = rightEl.querySelector(`[data-k="${o.stat}"]`);
     const x = b ? b.getBoundingClientRect().right - dd.getBoundingClientRect().width : 8;
@@ -623,6 +625,7 @@
     const r = e.target.closest('.r');
     if (!r) return;
     if (r.dataset.act === 'taskmgr') { closeAll(false); openTaskMgr(); return; }
+    if (window.PingTest && window.PingTest.act(r.dataset.act)) return;   // Run ping test / Cancel: the menu stays open
     activate(+r.dataset.l, +r.dataset.r);
   });
   document.addEventListener('mousedown', (e) => {
@@ -642,6 +645,7 @@
   document.addEventListener('keydown', (e) => {
     const o = S.open;
     if (!o) return;
+    if (window.PingTest && window.PingTest.key(e)) return;   // typing into the ping test's name box (pingtest.js)
     if (S.edit && e.target && e.target.classList && e.target.classList.contains('lbi')) {
       if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
       else if (e.key === 'Escape') { e.preventDefault(); S.edit = null; renderMenus(); }
@@ -847,5 +851,7 @@
     if (r) setPeek(!!r.peek);
   });
   function setPeek(on) { M.peekMenu(M.MANTLE_MENU, on); }
+  // the ping test (lane pingtest, pingtest.js): its events redraw the PING dropdown while it is open
+  if (window.PingTest) window.PingTest.init({ call, on: (ev, fn) => mantle.on(ev, fn), rerender: () => { if (S.open && S.open.stat === 'ping') renderMenus(); } });
   window.__topbar = S;   // for shoot.js and the --test harness: read-only inspection
 }());

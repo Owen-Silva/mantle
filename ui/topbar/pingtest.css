@@ -1,0 +1,64 @@
+/* pingtest.css — the ping test inside the PING dropdown (lane pingtest, 2026-10-09; ui/topbar/pingtest.js).
+ * --lg-* tokens only, so light and dark both follow the theme and later token changes. The rows and
+ * the button are topbar.css's own .r / .row2 / .info / h4; this file adds the results grid, the
+ * progress line and a hover on the two buttons (a stat dropdown has no keyboard row). */
+.pt-t {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; column-gap: 12px; row-gap: 1px;
+  padding: 2px 8px 4px; font-variant-numeric: tabular-nums; align-items: baseline;
+}
+.pt-h { color: var(--lg-ink-3); font-size: 11px; text-align: right; padding-bottom: 2px; }
+.pt-h:first-child { text-align: left; }
+.pt-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-n.rt { color: var(--lg-ink); font-weight: 600; }
+.pt-x { text-align: right; color: var(--lg-ink-2); white-space: nowrap; }
+.pt-x.hi, .row2 .x.pt-hi { color: var(--lg-warn); }
+.pt-span { grid-column: span 4; }
+.pt-wait { color: var(--lg-ink-3); }
+.pt-best {
+  margin-left: 4px; padding: 0 5px; border-radius: var(--lg-r-pill); font-size: 10.5px; font-weight: 600;
+  background: var(--lg-acc-soft); color: var(--lg-acc);
+}
+.pt-prog {
+  -webkit-appearance: none; appearance: none; display: block; width: calc(100% - 16px); height: 4px; margin: 2px 8px 4px;
+  border: 0; border-radius: var(--lg-r-pill); overflow: hidden; background: var(--lg-sunk);
+}
+.pt-prog::-webkit-progress-bar { background: var(--lg-sunk); border-radius: var(--lg-r-pill); }
+.pt-prog::-webkit-progress-value { background: var(--lg-acc); border-radius: var(--lg-r-pill); transition: width var(--lg-dur) var(--lg-ease); }
+.pt-step { color: var(--lg-ink-2); }
+.pt-verdict { color: var(--lg-ink-2); }
+.pt .r.pt-go { cursor: default; }
+.pt .r.pt-go .lb { color: var(--lg-acc); font-weight: 600; }
+.pt .r.pt-go:hover { background: var(--lg-hover); }
+
+/* Test / History: two small tabs, a segmented pill (Helm's chip look, tokens only) */
+.pt-tabs { display: flex; gap: 2px; margin: 2px 8px 6px; padding: 2px; border-radius: var(--lg-r-pill); background: var(--lg-sunk); width: max-content; }
+.pt .r.pt-tab, .pt .r.pt-chip {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 10px; border-radius: var(--lg-r-pill);
+  font-size: 11.5px; color: var(--lg-ink-2); cursor: default; white-space: nowrap;
+}
+.pt .r.pt-tab:hover, .pt .r.pt-chip:hover { color: var(--lg-ink); }
+.pt .r.pt-tab.on { background: var(--lg-fill-strong); color: var(--lg-ink); font-weight: 600; box-shadow: var(--lg-lip-dn); }
+/* the Wi-Fi filter */
+.pt-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 8px 6px; }
+.pt .r.pt-chip { background: var(--lg-tile); max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.pt .r.pt-chip.on { background: var(--lg-acc-soft); color: var(--lg-acc); font-weight: 600; }
+/* history rows: name (or time) | Wi-Fi | best ping | down / up */
+.pt-hl { padding: 0 0 2px; }
+.pt .r.pt-hrow { grid-template-columns: minmax(0, 1fr) minmax(0, 110px) 48px auto; column-gap: 10px; padding: 0 8px; font-variant-numeric: tabular-nums; cursor: default; }
+.pt .r.pt-hrow:hover { background: var(--lg-hover); }
+.pt-hn { overflow: hidden; text-overflow: ellipsis; }
+.pt-hn b { font-weight: 600; }
+.pt-saved { margin-left: 2px; padding: 0 5px; border-radius: var(--lg-r-pill); font-size: 10.5px; font-style: normal; font-weight: 600; background: var(--lg-acc-soft); color: var(--lg-acc); }
+.pt-hw { overflow: hidden; text-overflow: ellipsis; color: var(--lg-ink-2); }
+.pt-hb { text-align: right; color: var(--lg-ink-2); }
+.pt-hb.hi { color: var(--lg-warn); }
+.pt-hs { text-align: right; color: var(--lg-ink-3); font-size: 11.5px; }
+.pt-hid { color: var(--lg-ink-3); font-style: italic; }
+.pt-net { color: var(--lg-ink-2); }
+/* the name box: the same box as a menu's name box (topbar.css .r.edit .lbi) */
+.pt-edit { padding: 2px 8px 4px; }
+.pt-name { width: 100%; height: 22px; padding: 0 6px; border: 1px solid var(--lg-acc); border-radius: var(--lg-r-ctl); box-sizing: border-box;
+  background: var(--lg-fill-strong); color: var(--lg-ink); font: inherit; outline: none; }
+.pt-name::placeholder { color: var(--lg-ink-3); }
+.pt .r.pt-go.pt-quiet .lb { color: var(--lg-ink-2); font-weight: 400; }
+.pt .r.pt-go.armed .lb { color: var(--lg-warn); }
