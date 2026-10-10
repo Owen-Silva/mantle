@@ -41,6 +41,11 @@ const STATES = {
   'fail-norouter': base({ routerWhy: 'no router found: Windows reports no default gateway', rows: SERVERS() }),
   'fail-speed': base({ down: SP('failed', null, 0, { why: 'download: speed.cloudflare.com did not answer in 5 s' }),
     up: SP('skipped', null, 0, { why: 'upload skipped: the download could not reach speed.cloudflare.com' }) }),
+  // ptfix: Cloudflare said 429, a Linode region measured the download; and the case where every server failed
+  'fallback': base({ down: SP('ok', 71, 35e6, { server: 'Linode Fremont', host: 'speedtest.fremont.linode.com', note: 'Cloudflare was busy: too many requests, it asked to wait 2 min',
+    pick: 'closest to Valorant US West (N. California), the best ping that maps to a Linode region' }), up: SP('ok', 36.3, 20e6, { server: 'Cloudflare', host: 'speed.cloudflare.com' }) }),
+  'fail-all': base({ down: SP('failed', null, 0, { why: 'download: every server failed. Cloudflare: speed.cloudflare.com refused it (HTTP 429 Too Many Requests); Linode Fremont: could not connect to speedtest.fremont.linode.com' }),
+    up: SP('ok', 36.3, 20e6, { server: 'Cloudflare', host: 'speed.cloudflare.com' }) }),
   'fail-offline': base({ phase: 'failed', why: 'offline: Windows reports no network connection', rows: [], down: SP('waiting', null, 0), up: SP('waiting', null, 0) }),
   'fail-server': base({ rows: [ROUTER(2.4, 1.6, 4.1, 0.6, 0)].concat(SERVERS().slice(0, 5)).concat([R('US East (Georgia)', 'speedtest.atlanta.linode.com', null, null, null, null, 100,
     { got: 0, sent: 3, gaveUp: true, why: 'no reply from Valorant US East (Georgia) in 1 s' })]) }),
@@ -106,8 +111,8 @@ async function pingTestChecks(browser, check, PAGE, OUT) {
     // ---- idle
     let m = await grow();
     check(tag('idle: a Run ping test row with the time and data it will use'), m.go.length === 1 && m.go[0].act === 'pt-start' && m.go[0].lb === 'Run ping test' &&
-      m.go[0].kb === 'about 30 s · up to 85 MB', JSON.stringify(m.go));
-    check(tag('idle: the caption says what it does and the data it uses'), /Pings every Valorant location and your router 20 times/.test(m.text) && /up to 85 MB of data/.test(m.text) && /speed\.cloudflare\.com/.test(m.text), m.text);
+      m.go[0].kb === 'about 30 s · up to 55 MB', JSON.stringify(m.go));
+    check(tag('idle: the caption says what it does and the data it uses'), /Pings every Valorant location and your router 20 times/.test(m.text) && /up to 55 MB of data/.test(m.text) && /speed\.cloudflare\.com/.test(m.text), m.text);
     check(tag('idle: no results, no speed rows, no reasons before the first run'), !/(^|\n)SPEED(\n|$)|failed|Mbps|Your router/.test(m.text) && m.bad.length === 0, m.text);
     check(tag('idle: the state was read once at load (the last run)'), m.calls.length === 1 && m.calls[0] === 'state', JSON.stringify(m.calls));
     check(tag('idle: the dropdown is shown whole, nothing scrolls'), !m.hidden && !m.scrolls && m.rect.bottom <= m.ih, JSON.stringify([m.rect, m.ih]));
@@ -181,6 +186,17 @@ async function pingTestChecks(browser, check, PAGE, OUT) {
       check(tag(`${name}: the dropdown shows whole`), !m.hidden && m.rect.bottom <= m.ih, JSON.stringify([m.rect, m.ih]));
       await shot(name, m);
     }
+    await emit(STATES['fail-speed']); m = await page.evaluate(measure);
+    // ---- ptfix: the fallback is named, with why; every failed server is listed
+    await emit(STATES.fallback); m = await grow();
+    check(tag('fallback: the download names the server that measured it and why Cloudflare was not used'),
+      m.text.includes('Download: 71.0 Mbps (Linode Fremont; Cloudflare was busy: too many requests, it asked to wait 2 min)') && m.text.includes('Upload: 36.3 Mbps (Cloudflare)') && m.bad.length === 0, m.text);
+    check(tag('fallback: the data used names both servers'), /Used 55 MB of data with Linode Fremont and Cloudflare\./.test(m.text), m.text);
+    check(tag('fallback: no inline style and the dropdown shows whole'), m.inline === 0 && !m.hidden && m.rect.bottom <= m.ih && !m.scrolls, JSON.stringify([m.inline, m.rect, m.ih]));
+    await shot('fallback', m);
+    await emit(STATES['fail-all']); m = await grow();
+    check(tag('fail-all: every server and its reason, in one line'), m.bad.some((b) => /^Speed test, download: every server failed\. Cloudflare: .*HTTP 429.*; Linode Fremont: could not connect/.test(b)), JSON.stringify(m.bad));
+    await shot('fail-all', m);
     await emit(STATES['fail-speed']); m = await page.evaluate(measure);
     check(tag('fail-speed: the upload says it was skipped and why'), m.bad.some((b) => /^Speed test, upload skipped: the download could not reach speed\.cloudflare\.com$/.test(b)), JSON.stringify(m.bad));
     await emit(STATES['fail-offline']); m = await page.evaluate(measure);

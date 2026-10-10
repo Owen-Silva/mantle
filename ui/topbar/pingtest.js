@@ -15,7 +15,7 @@
 (function () {
   'use strict';
   const WARN = { avg: 100, routerAvg: 20, jitter: 10, loss: 0 };
-  const DEFAULT_CAPS = { rounds: 20, periodMs: 750, downMs: 8000, downBytes: 60e6, upMs: 6000, upBytes: 25e6, answerMs: 5000 };
+  const DEFAULT_CAPS = { rounds: 20, periodMs: 750, downMs: 7000, downBytes: 35e6, upMs: 6000, upBytes: 20e6, answerMs: 5000 };
 
   let api = null;     // { call, on, rerender }
   let st = null;      // the sidecar's last pingtest state (phase "idle" before any run)
@@ -188,8 +188,8 @@
     const n = (s.rows || []).length;
     if (s.phase === 'starting') return 'Finding your router and the servers…';
     if (s.phase === 'ping') return `Pinging ${n} place${n === 1 ? '' : 's'}, ${caps().rounds} times each…`;
-    if (s.phase === 'down') return `Download speed… ${s.down && s.down.live != null ? mbps(s.down.live) : ''}`;
-    if (s.phase === 'up') return `Upload speed… ${s.up && s.up.live != null ? mbps(s.up.live) : ''}`;
+    if (s.phase === 'down') return `Download speed${s.down && s.down.server ? ' from ' + s.down.server : ''}… ${s.down && s.down.live != null ? mbps(s.down.live) : ''}`;
+    if (s.phase === 'up') return `Upload speed${s.up && s.up.server ? ' to ' + s.up.server : ''}… ${s.up && s.up.live != null ? mbps(s.up.live) : ''}`;
     return '';
   }
 
@@ -221,7 +221,18 @@
     const v = (x) => (x.state === 'ok' ? mbps(x.mbps) : x.state === 'running' ? (x.live != null ? mbps(x.live) : 'measuring…')
       : x.state === 'waiting' ? (running ? 'next' : 'not run') : x.state === 'cancelled' ? 'cancelled' : x.state === 'skipped' ? 'skipped' : 'failed');
     const row = (n, x) => `<div class="row2"><span class="n">${n}</span><span class="x${x.state === 'failed' || x.state === 'skipped' ? ' pt-hi' : ''}">${esc(v(x))}</span></div>`;
-    return '<h4>Speed</h4>' + row('Download', d) + row('Upload', u);
+    return '<h4>Speed</h4>' + row('Download', d) + row('Upload', u) + [['Download', d], ['Upload', u]].map(([n, x]) => {
+      // which server measured it, and why a fallback was used (ptfix: Cloudflare can answer 429)
+      if (x.state !== 'ok' || !x.server) return '';
+      return `<div class="info"${x.pick ? ` title="${esc('Region: ' + x.pick)}"` : ''}>${n}: ${esc(mbps(x.mbps))} (${esc(x.server)}${x.note ? '; ' + esc(x.note) : ''})</div>`;
+    }).join('');
+  }
+
+  /** The servers the speed test used, by name: "Linode Fremont and Cloudflare". */
+  function usedWith(s) {
+    const names = [];
+    [s.down, s.up].forEach((x) => { if (x && x.bytes && (x.server || x.host)) { const n = x.server || x.host; if (!names.includes(n)) names.push(n); } });
+    return names.length ? names.join(' and ') : (s.host || 'speed.cloudflare.com');
   }
 
   /** The network a test ran on, in words; short = for a history row. Never a blank. */
@@ -258,7 +269,7 @@
     h += speed(s, running);
     [s.down, s.up].forEach((x) => { if (x && x.why) h += `<div class="info bad">Speed test, ${esc(x.why)}</div>`; });
     if (ran && ((s.down && s.down.bytes) || (s.up && s.up.bytes))) {
-      h += `<div class="info">Used ${mb((s.down ? s.down.bytes : 0) + (s.up ? s.up.bytes : 0))} of data with ${esc(s.host || 'speed.cloudflare.com')}.</div>`;
+      h += `<div class="info">Used ${mb((s.down ? s.down.bytes : 0) + (s.up ? s.up.bytes : 0))} of data with ${esc(usedWith(s))}.</div>`;
     }
     return h;
   }
@@ -303,7 +314,7 @@
     else {
       if (kept) h += entryActions(kept, false);
       h += goRow('pt-start', ran ? 'Run again' : 'Run ping test', `about ${secs} s · up to ${total} MB`);
-      if (!ran) h += `<div class="info">Pings every ${esc(s.label || 'Valorant')} location and your router ${c.rounds} times, then measures download and upload speed with ${esc(s.host || 'speed.cloudflare.com')}. Uses up to ${total} MB of data.</div>`;
+      if (!ran) h += `<div class="info">Pings every ${esc(s.label || 'Valorant')} location and your router ${c.rounds} times, then measures download and upload speed with ${esc(s.host || 'speed.cloudflare.com')} (download from a nearby Linode server if Cloudflare is busy). Uses up to ${total} MB of data.</div>`;
     }
     return h;
   }

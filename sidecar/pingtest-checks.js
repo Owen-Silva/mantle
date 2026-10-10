@@ -15,10 +15,28 @@ const http = require('http');
 const { spawnSync } = require('child_process');
 
 function speedServer(mode) {
-  const st = { served: 0, received: 0, reqs: 0, conns: new Set() };
+  const st = { served: 0, received: 0, reqs: 0, conns: new Set(), downReqs: 0, fileServed: 0, files: [] };
   const chunk = Buffer.alloc(65536, 7);
   const srv = http.createServer((req, res) => {
     st.reqs++;
+    // the fallback stand-in (a Linode speed-test file): /linode/<dc>/100MB-<dc>.bin, by Range
+    if (req.url.startsWith('/linode/')) {
+      st.files.push(req.url);
+      const m = /bytes=(\d+)-(\d+)/.exec(req.headers.range || '');
+      if (!m) { res.writeHead(416); res.end(); return; }
+      let left = +m[2] - +m[1] + 1;
+      res.writeHead(206, { 'Content-Type': 'application/octet-stream', 'Content-Length': left, 'Content-Range': `bytes ${m[1]}-${m[2]}/100000000` });
+      res.on('close', () => { left = 0; });
+      const pumpF = () => {
+        while (left > 0) { const k = Math.min(chunk.length, left); left -= k; st.fileServed += k; if (!res.write(chunk.subarray(0, k))) { res.once('drain', pumpF); return; } }
+        res.end();
+      };
+      pumpF();
+      return;
+    }
+    if (req.url.startsWith('/__down')) st.downReqs++;
+    // Cloudflare's per-address limit: the download is refused with a wait, the upload still works
+    if (mode === '429' && req.url.startsWith('/__down')) { res.writeHead(429, { 'Retry-After': '120', 'Content-Type': 'text/plain' }); res.end('slow down'); return; }
     if (mode === 'silent') return;   // takes the connection, never answers
     if (mode === '403') { req.resume(); res.writeHead(403, { 'Content-Type': 'text/plain' }); res.end('no'); return; }
     if (req.url.startsWith('/__down')) {
@@ -65,12 +83,13 @@ async function pingTestChecks(t, T, exe) {
       process.env.MANTLE_PING_TARGETS = file;
     }
     if (speedUrl) process.env.MANTLE_SPEEDTEST_URL = speedUrl;
+    if (drive.fallback) process.env.MANTLE_SPEEDTEST_FALLBACK = drive.fallback;
     let ps = null;
     try {
       ps = await T.startPassive({ exe });
       return await drive(ps);
     } finally {
-      delete process.env.MANTLE_PING_TARGETS; delete process.env.MANTLE_SPEEDTEST_URL;
+      delete process.env.MANTLE_PING_TARGETS; delete process.env.MANTLE_SPEEDTEST_URL; delete process.env.MANTLE_SPEEDTEST_FALLBACK;
       if (ps) { try { ps.proc.kill(); } catch (_) { /* gone */ } }
       if (file) { try { fs.unlinkSync(file); } catch (_) { /* gone */ } }
     }
@@ -199,6 +218,52 @@ async function pingTestChecks(t, T, exe) {
     t.check('pingtest: nothing listening: "could not connect", upload skipped', last.down.why === 'download: could not connect to 127.0.0.1' && last.up.state === 'skipped', JSON.stringify([last.down.why, last.up.why]));
   });
 
+  // ---- F. Cloudflare says 429: the fallback (a local Linode stand-in) measures, and is named ----------
+  const TEXAS = [{ name: 'US Central (Texas)', host: '127.0.0.1' }];   // maps to the Dallas region
+  const srvF = await speedServer('429');
+  try {
+    const drive = async (ps) => {
+      await ps.call('topbar.pingtest', { action: 'start', test: Object.assign({}, FAST, { rounds: 2 }) }, 4000);
+      const { last, timedOut } = await waitEnd(ps, 30000);
+      const d = last.down || {}, tr = (d.tried || [])[0] || {};
+      t.check('pingtest 429: the download falls back to the nearest Linode region (Texas -> Dallas) and measures', !timedOut && last.phase === 'done' && d.state === 'ok' && d.mbps > 0 &&
+        d.server === 'Linode Dallas' && srvF.files.length > 0 && srvF.files.every((f) => f === '/linode/dallas/100MB-dallas.bin'), JSON.stringify([d, srvF.files.slice(0, 3)]));
+      t.check('pingtest 429: it says why, in plain words, with the wait', d.note === 'Cloudflare was busy: too many requests, it asked to wait 2 min', d.note);
+      t.check('pingtest 429: Cloudflare is listed as tried, with its HTTP answer', tr.server === 'Cloudflare' && tr.status === 429 && /refused it \(HTTP 429 Too Many Requests\), it asked to wait 2 min/.test(tr.why || ''), JSON.stringify(tr));
+      t.check('pingtest 429: the region pick is explained', /closest to Test US Central \(Texas\)/.test(d.pick || ''), d.pick);
+      t.check('pingtest 429: a refusal costs Cloudflare one small request per connection, no more', srvF.downReqs <= 3, `${srvF.downReqs} __down requests`);
+      t.check('pingtest 429: the fallback stays inside the byte cap, by Range', d.bytes <= FAST.downBytes && srvF.fileServed >= d.bytes && srvF.fileServed <= FAST.downBytes + 3 * 10e6, JSON.stringify([d.bytes, srvF.fileServed]));
+      t.check('pingtest 429: the upload still runs on Cloudflare, and says so', last.up.state === 'ok' && last.up.server === 'Cloudflare' && last.up.mbps > 0, JSON.stringify(last.up));
+      t.check('pingtest 429: no failure words when the fallback measured', !d.why, d.why);
+      console.log(`  pingtest 429: down ${d.mbps} Mbps by ${d.server} (${d.note}); up ${last.up.mbps} Mbps by ${last.up.server}`);
+      // a second run inside the wait: Cloudflare is not asked again
+      const n0 = srvF.downReqs;
+      await ps.call('topbar.pingtest', { action: 'start', test: Object.assign({}, FAST, { rounds: 1 }) }, 4000);
+      const r2 = await waitEnd(ps, 30000, (l) => l && l.run === 2 && l.running === false);
+      const d2 = (r2.last && r2.last.down) || {};
+      t.check('pingtest 429: a run inside the wait does not ask Cloudflare again, says so, and still measures', srvF.downReqs === n0 && d2.state === 'ok' && d2.server === 'Linode Dallas' &&
+        /^Cloudflare was busy: too many requests at \d+:\d\d, so it was not asked again until \d+:\d\d$/.test(d2.note || ''), JSON.stringify([srvF.downReqs - n0, d2.note, d2.state]));
+    };
+    drive.fallback = srvF.url + '/linode/{dc}/100MB-{dc}.bin';
+    await withSidecar('f', TEXAS, srvF.url, drive);
+  } finally { srvF.close(); }
+  // every server fails: each reason is said
+  const srvG = await speedServer('429');
+  try {
+    const drive = async (ps) => {
+      await ps.call('topbar.pingtest', { action: 'start', test: Object.assign({}, FAST, { rounds: 1 }) }, 4000);
+      const { last } = await waitEnd(ps, 30000);
+      const d = last.down || {};
+      t.check('pingtest all fail: every server and its reason, in one line', d.state === 'failed' &&
+        /^download: every server failed\. Cloudflare: 127\.0\.0\.1 refused it \(HTTP 429 Too Many Requests\), it asked to wait 2 min; Linode Dallas: (could not connect to 127\.0\.0\.1|127\.0\.0\.1 did not answer in 2 s); Linode Fremont: (could not connect to 127\.0\.0\.1|127\.0\.0\.1 did not answer in 2 s)$/.test(d.why || '') &&
+        (d.tried || []).length === 3 && !d.server, JSON.stringify(d));   // a refused loopback connect takes Windows ~2 s: the 2 s test cap can come first
+      t.check('pingtest all fail: the upload is still tried on Cloudflare (it answered)', last.up.state === 'ok' && last.up.server === 'Cloudflare', JSON.stringify(last.up));
+    };
+    const deadF = await speedServer('ok'); const deadFUrl = deadF.url; deadF.close();
+    drive.fallback = deadFUrl + '/linode/{dc}/100MB-{dc}.bin';
+    await withSidecar('g', TEXAS, srvG.url, drive);
+  } finally { srvG.close(); }
+
   // ---- D. ONE real run: real targets, the real router, speed.cloudflare.com, the real caps ----------
   if (process.env.MANTLE_PINGTEST_REAL === '0') { console.log('  pingtest REAL: skipped (MANTLE_PINGTEST_REAL=0)'); return; }
   await withSidecar('real', null, null, async (ps) => {
@@ -221,14 +286,17 @@ async function pingTestChecks(t, T, exe) {
     t.check('pingtest REAL: done in under 45 s', !timedOut && last.phase === 'done' && secs < 45, `${last && last.phase} ${secs.toFixed(1)} s`);
     t.check('pingtest REAL: the router answered (or says why)', rows.some((r) => r.kind === 'router' && r.got > 0) || !!last.routerWhy, last.routerWhy);
     t.check('pingtest REAL: the Valorant locations answered, one marked best', rows.filter((r) => r.kind === 'server' && r.got > 0).length >= 1 && rows.filter((r) => r.best).length === 1);
-    t.check('pingtest REAL: download and upload in Mbps, inside the caps (60 MB / 8 s, 25 MB / 6 s)', last.down.state === 'ok' && last.down.mbps > 0 && last.down.bytes <= 60e6 && last.down.ms <= 8300 &&
-      last.up.state === 'ok' && last.up.mbps > 0 && last.up.bytes <= 25e6 && last.up.ms <= 6300, JSON.stringify([last.down, last.up]));
+    t.check('pingtest REAL: download in Mbps, inside the caps (35 MB / 7 s), by a named server', last.down.state === 'ok' && last.down.mbps > 0 && last.down.bytes <= 35e6 && last.down.ms <= 7300 && !!last.down.server,
+      JSON.stringify(last.down));
+    t.check('pingtest REAL: upload in Mbps inside the caps (20 MB / 6 s), or a reason in words', (last.up.state === 'ok' && last.up.mbps > 0 && last.up.bytes <= 20e6 && last.up.ms <= 6300) || !!last.up.why,
+      JSON.stringify(last.up));
     t.check('pingtest REAL: idle cost unchanged after a run (nothing left running)', idleAfter - idleBefore < 3, `${idleBefore.toFixed(1)} -> ${idleAfter.toFixed(1)} ms CPU/s`);
     console.log(`  pingtest REAL: ${phases(evs)} in ${secs.toFixed(1)} s, ${evs.length} events`);
     const rw = last.wifi || {};
     t.check('pingtest REAL: the network is recorded (a name, or why it is hidden)', !!rw.kind && (!!rw.name || !!rw.why), JSON.stringify(Object.assign({}, rw, { name: rw.name ? '(read)' : null })));
     console.log(`    network: ${rw.kind} on ${rw.iface}: ${rw.name ? 'name read (' + rw.name.length + ' chars)' : rw.why}${last.wifiChanged ? '; ' + last.wifiChanged : ''}`);
     for (const r of rows) console.log(`    ${r.kind === 'router' ? 'router ' + r.host + ' (' + r.iface + ')' : r.name}: avg ${r.avg} ms, best ${r.min}, worst ${r.max}, jitter ${r.jitter}, loss ${r.loss}% (${r.got}/${r.sent}, ${r.method})${r.best ? ' BEST' : ''}${r.why ? ' why: ' + r.why : ''}`);
+    console.log(`    download by ${last.down.server} (${last.down.host})${last.down.note ? ', because ' + last.down.note : ''}${last.down.pick ? '; region: ' + last.down.pick : ''}; tried: ${JSON.stringify(last.down.tried)}; upload by ${last.up.server}${last.up.why ? ': ' + last.up.why : ''}`);
     console.log(`    download ${last.down.mbps} Mbps (${(last.down.bytes / 1e6).toFixed(1)} MB in ${last.down.ms} ms); upload ${last.up.mbps} Mbps (${(last.up.bytes / 1e6).toFixed(1)} MB in ${last.up.ms} ms)${last.routerWhy ? '; ' + last.routerWhy : ''}`);
     console.log(`    sidecar CPU: idle before ${idleBefore.toFixed(1)} ms/s, during the run ${during.toFixed(1)} ms/s (${(during / 10).toFixed(1)}% of one core over ${secs.toFixed(0)} s), idle after ${idleAfter.toFixed(1)} ms/s`);
   });

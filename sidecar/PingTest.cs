@@ -13,9 +13,21 @@
 //            Per row: sent, got, avg, best/worst, jitter (the mean absolute difference of consecutive
 //            replies), loss %.
 //   2. DOWN  HTTPS GET speed.cloudflare.com/__down?bytes=N (Cloudflare's own public speed test, no key)
-//            on DownStreams (4) connections at once, until DownMs (8 s) or DownBytes (60 MB), first wins.
-//   3. UP    HTTPS POST speed.cloudflare.com/__up, UpStreams (3) connections, UpMs (6 s) or UpBytes (25 MB).
+//            on DownStreams (3) connections, each RAMPING its request size like Cloudflare's own page
+//            (1 MB, then 4 MB, then 10 MB each), until DownMs (7 s) or DownBytes (35 MB), first wins.
+//            So a refusal (HTTP 429, its per-address limit) costs about 3 MB, not a 60 MB run.
+//            FALLBACK (ptfix, 2026-10-09: Owen's live run got "HTTP 429 Too Many Requests" from
+//            Cloudflare): when Cloudflare fails for any reason, the same caps and ramp against an
+//            Akamai/Linode speed-test file (speedtest.<dc>.linode.com/100MB-<dc>.bin, Range requests, so
+//            only the bytes the caps allow are fetched), in the region closest to the best ping of the
+//            ping phase, then Fremont. A 429 is remembered for its Retry-After (else 5 min): a run inside
+//            that wait does not ask Cloudflare again, and says so.
+//   3. UP    HTTPS POST speed.cloudflare.com/__up, UpStreams (3) connections ramping 1, 4, then 5 MB,
+//            UpMs (6 s) or UpBytes (20 MB). No fallback: no public, no-key upload target is run for
+//            this (Linode's are download files only), so the upload stays on Cloudflare, and says why
+//            when it cannot run.
 //   Mbps = the bytes after the ramp (the first second of data, at most 30% of it) over the time after it.
+//   Each half names the server that measured it, and why a fallback was used; every failure has words.
 //   An endpoint that has sent nothing after AnswerMs (5 s) fails the phase with that reason.
 // CANCEL aborts every HTTP request at once and stops every ping loop (a ping in flight ends within its
 // 1 s timeout, into the cancelled run's state, which nothing shows any more). Closing the dropdown does
@@ -28,7 +40,8 @@
 // HARD RULE (as TopbarPing): plain pings and HTTP to public endpoints only. Nothing here reads, touches
 // or talks to Riot's client, its local API, VALORANT or Vanguard.
 //
-// TEST ONLY (--passive sidecars): MANTLE_SPEEDTEST_URL swaps the speed endpoint (a local server), and
+// TEST ONLY (--passive sidecars): MANTLE_SPEEDTEST_URL swaps the speed endpoint (a local server; with it
+// there is no fallback unless MANTLE_SPEEDTEST_FALLBACK gives one: a URL with {dc} for the region), and
 // the start command's "test" object shortens rounds / period / caps or names the router ("none" = no
 // router found). A live sidecar ignores both.
 //
@@ -55,14 +68,30 @@ namespace Mantle {
 
     const string Endpoint = "https://speed.cloudflare.com";
     const int AnswerMs = 5000, EmitEveryMs = 250, BufLen = 65536, GiveUpAfter = 3;
-    const int DownStreams = 4, UpStreams = 3;
-    const long DownChunk = 10000000, UpChunk = 5000000;
+    const string FallbackTpl = "https://speedtest.{dc}.linode.com/100MB-{dc}.bin";
+    const long FallbackSize = 100000000;
+    const int DownStreams = 3, UpStreams = 3, BusyDefaultS = 300;
+    static readonly long[] DownRamp = { 1000000, 4000000, 10000000 };   // per connection: its 1st, 2nd, 3rd+ request
+    static readonly long[] UpRamp = { 1000000, 4000000, 5000000 };
+    // Akamai/Linode speed-test regions: id, name, then words that place a ping row near it
+    static readonly string[][] Dcs = {
+      new[] { "fremont", "Fremont", "us-west-1", "california", "fremont", "san jose", "los angeles", "nevada", "arizona" },
+      new[] { "seattle", "Seattle", "us-west-2", "oregon", "seattle" },
+      new[] { "dallas", "Dallas", "texas", "dallas" },
+      new[] { "chicago", "Chicago", "illinois", "chicago" },
+      new[] { "atlanta", "Atlanta", "georgia", "atlanta" },
+      new[] { "washington", "Washington, DC", "us-east-1", "virginia", "ashburn" },
+      new[] { "newark", "Newark", "us-east-2", "ohio", "new jersey", "newark", "new york" },
+      new[] { "miami", "Miami", "florida", "miami" },
+    };
+    static readonly Dictionary<string, DateTime> _busyUntil = new Dictionary<string, DateTime>();   // "down|url": a 429's wait (UTC)
+    static readonly Dictionary<string, DateTime> _busyAt = new Dictionary<string, DateTime>();
 
     [DllImport("iphlpapi.dll")] static extern int GetBestInterface(uint destAddr, out uint bestIfIndex);
 
     sealed class Caps {
-      public int Rounds = 20, PeriodMs = 750, DownMs = 8000, UpMs = 6000;
-      public long DownBytes = 60000000, UpBytes = 25000000;
+      public int Rounds = 20, PeriodMs = 750, DownMs = 7000, UpMs = 6000;
+      public long DownBytes = 35000000, UpBytes = 20000000;
       public string Router;   // test only: an address, or "none"
       public string[] Wifi;   // test only: the Wi-Fi name at the start and at the end ("A,B")
     }
@@ -77,12 +106,16 @@ namespace Mantle {
     }
     sealed class Speed {
       public string State = "waiting", Why;
+      public string Server, Host, Note, Pick;   // who measured (or is measuring); why a fallback was used; why that region
+      public readonly List<object> Tried = new List<object>();   // every server that failed: { server, host, why }
       public long Bytes, Ms;
       public double Mbps = -1, Live = -1;
     }
     sealed class Run {
       public int Id;
       public string Phase = "starting", Why, Label = "Ping", Test, Url, Host, ListWhy, RouterWhy, WifiChanged;
+      public string Fallback = FallbackTpl;   // the fallback file URL ({dc} = region); null = none (a test endpoint without one)
+      public double ProgMax;
       public IDictionary Wifi;   // the network at the start: kind, name, why (WifiOf)
       public long StartedAt, EndedAt;   // unix ms; EndedAt 0 while it runs
       public Stopwatch Clock = Stopwatch.StartNew();
@@ -118,7 +151,9 @@ namespace Mantle {
           object o;
           if (Program.Passive) {
             string env = Environment.GetEnvironmentVariable("MANTLE_SPEEDTEST_URL");
-            if (!string.IsNullOrEmpty(env)) { r.Url = env.TrimEnd('/'); r.Test = "test speed endpoint from MANTLE_SPEEDTEST_URL: " + r.Url; }
+            if (!string.IsNullOrEmpty(env)) { r.Url = env.TrimEnd('/'); r.Test = "test speed endpoint from MANTLE_SPEEDTEST_URL: " + r.Url; r.Fallback = null; }
+            string fb = Environment.GetEnvironmentVariable("MANTLE_SPEEDTEST_FALLBACK");
+            if (!string.IsNullOrEmpty(fb)) { r.Fallback = fb; r.Test = (r.Test != null ? r.Test + "; " : "") + "test fallback from MANTLE_SPEEDTEST_FALLBACK: " + fb; }
             if (req.TryGetValue("test", out o) && o is Dictionary<string, object>) {
               TestCaps((Dictionary<string, object>)o, r.Caps);
               r.Test = (r.Test != null ? r.Test + "; " : "") + "test caps from the command";
@@ -204,13 +239,16 @@ namespace Mantle {
         ct.ThrowIfCancellationRequested();
 
         SetPhase(r, "down");
-        bool reached = await SpeedPhase(r, true, ct).ConfigureAwait(false);
+        bool reached = await DownPhase(r, ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
-        if (reached) {
+        string busy = BusyWhy(false, r.Url);
+        if (busy != null) lock (_g) { r.Up.State = "skipped"; r.Up.Server = "Cloudflare"; r.Up.Host = r.Host; r.Up.Why = "upload skipped: " + busy; }
+        else if (reached) {
           SetPhase(r, "up");
-          await SpeedPhase(r, false, ct).ConfigureAwait(false);
+          Attempt ua = await SpeedPhase(r, false, new Src { Label = "Cloudflare", Host = r.Host, Url = r.Url }, ct).ConfigureAwait(false);
           ct.ThrowIfCancellationRequested();
-        } else lock (_g) { r.Up.State = "skipped"; r.Up.Why = "upload skipped: the download could not reach " + r.Host; }
+          if (!ua.Ok) { lock (_g) { r.Up.State = "failed"; r.Up.Why = "upload: " + ua.Why; } Emit(r, true); }
+        } else lock (_g) { r.Up.State = "skipped"; r.Up.Server = "Cloudflare"; r.Up.Host = r.Host; r.Up.Why = "upload skipped: the download could not reach " + r.Host; }
         // the network again: a test that moved networks half-way says so
         IDictionary end = WifiOf(await Task.Run(delegate { return FindNet(); }).ConfigureAwait(false), r.Caps, true);
         string a = NetWords(wifi), b = NetWords(end);
@@ -417,18 +455,119 @@ namespace Mantle {
       public long Cap, Reserved, Bytes;
       public bool Stop, Answered, Unreached, Refused;
       public string Why;
-      public int Failed;
+      public int Failed, Status, RetryS = -1;
+    }
+    /// One server for one half: Cloudflare (__down / __up) or a fallback file (File: Range GETs).
+    sealed class Src { public string Label, Host, Url, Pick; public bool File; }
+    /// How one server did: Ok, or Why (with Unreached = never answered; Status 429 = busy, RetryS its wait).
+    sealed class Attempt { public bool Ok, Unreached; public string Why; public int Status, RetryS = -1; }
+
+    /// The download: Cloudflare, then the fallback regions, until one measures. Every failure is kept on
+    /// r.Down.Tried; a fallback that measured says why on r.Down.Note. Returns false when Cloudflare could
+    /// not be reached at all (the upload, Cloudflare only, is then skipped).
+    static async Task<bool> DownPhase(Run r, CancellationToken ct) {
+      Speed sp = r.Down;
+      var cf = new Src { Label = "Cloudflare", Host = r.Host, Url = r.Url };
+      var fails = new List<string>();   // "<server>: <why>", for the all-failed words
+      string note = null, single = null;
+      bool cfReached = true;
+      string busy = BusyWhy(true, r.Url);
+      if (busy != null) {
+        note = busy;
+        fails.Add("Cloudflare: " + busy);
+        lock (_g) sp.Tried.Add(Json.Obj("server", cf.Label, "host", cf.Host, "why", busy, "skipped", true));
+      } else {
+        Attempt a = await SpeedPhase(r, true, cf, ct).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+        if (a.Ok) return true;
+        cfReached = !a.Unreached;
+        single = a.Why;
+        if (a.Status == 429) {
+          Busy(true, r.Url, a.RetryS);
+          note = "Cloudflare was busy: too many requests" + (a.RetryS > 0 ? ", it asked to wait " + Wait(a.RetryS) : "");
+        } else note = "Cloudflare failed: " + a.Why;
+        fails.Add("Cloudflare: " + a.Why);
+        lock (_g) sp.Tried.Add(Json.Obj("server", cf.Label, "host", cf.Host, "why", a.Why, "status", a.Status > 0 ? (object)a.Status : null));
+      }
+      foreach (Src f in Fallbacks(r)) {
+        lock (_g) { sp.Note = note; sp.Bytes = 0; sp.Ms = 0; sp.Live = -1; }
+        Attempt a = await SpeedPhase(r, true, f, ct).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+        if (a.Ok) { lock (_g) { sp.Note = note; sp.Pick = f.Pick; } Emit(r, true); return cfReached; }
+        fails.Add(f.Label + ": " + a.Why);
+        lock (_g) sp.Tried.Add(Json.Obj("server", f.Label, "host", f.Host, "why", a.Why, "status", a.Status > 0 ? (object)a.Status : null));
+      }
+      lock (_g) {
+        sp.State = "failed"; sp.Live = -1; sp.Note = null; sp.Server = null; sp.Host = null; sp.Pick = null;   // nobody measured it: Tried names them all
+        sp.Why = "download: " + (fails.Count == 1 ? (single ?? fails[0]) : "every server failed. " + string.Join("; ", fails.ToArray()));
+      }
+      Emit(r, true);
+      return cfReached;
     }
 
-    /// Returns false when the endpoint could not be reached at all (the upload is then skipped).
-    static async Task<bool> SpeedPhase(Run r, bool down, CancellationToken ct) {
+    /// The fallback servers, nearest first: the region of the best-pinging row that maps to one, then Fremont.
+    static List<Src> Fallbacks(Run r) {
+      var list = new List<Src>();
+      if (string.IsNullOrEmpty(r.Fallback)) return list;
+      var rows = new List<Row>();
+      lock (_g) foreach (Row w in r.Rows) { int got = Got(w); if (w.Kind == "server" && got > 0 && got * 2 >= w.S.Count) rows.Add(w); }
+      rows.Sort(delegate (Row x, Row y) { return Avg(x).CompareTo(Avg(y)); });
+      string[] near = null; string from = null;
+      foreach (Row w in rows) { near = DcFor(w); if (near != null) { from = w.Name; break; } }
+      if (near != null) list.Add(Fallback(r, near, "closest to " + r.Label + " " + from + ", the best ping that maps to a Linode region"));
+      if (near == null || near[0] != "fremont") list.Add(Fallback(r, Dcs[0], near == null ? "Fremont: no ping row maps to a Linode region" : "Fremont: the default, after " + near[1]));
+      return list;
+    }
+
+    static Src Fallback(Run r, string[] dc, string pick) {
+      string url = r.Fallback.Replace("{dc}", dc[0]);
+      string host;
+      try { host = new Uri(url).Host; } catch (Exception) { host = url; }
+      return new Src { Label = "Linode " + dc[1], Host = host, Url = url, File = true, Pick = pick };
+    }
+
+    static double Avg(Row w) { double sum = 0; int n = 0; foreach (double s in w.S) if (s >= 0) { sum += s; n++; } return n > 0 ? sum / n : double.MaxValue; }
+
+    static string[] DcFor(Row w) {
+      string s = ((w.Name ?? "") + " " + (w.Host ?? "") + " " + (w.Via ?? "")).ToLowerInvariant();
+      int i = s.IndexOf("speedtest.");
+      if (i >= 0 && s.IndexOf(".linode.com", i) > i) {
+        string id = s.Substring(i + 10, s.IndexOf(".linode.com", i) - i - 10);
+        foreach (string[] d in Dcs) if (d[0] == id) return d;
+      }
+      foreach (string[] d in Dcs) for (int k = 2; k < d.Length; k++) if (s.Contains(d[k])) return d;
+      return null;
+    }
+
+    // ---- a 429 is remembered for its wait: a run inside it does not ask again, and says so
+    static void Busy(bool down, string url, int retryS) {
+      lock (_g) {
+        string k = (down ? "down|" : "up|") + url;
+        _busyAt[k] = DateTime.Now;
+        _busyUntil[k] = DateTime.Now.AddSeconds(retryS > 0 ? retryS : BusyDefaultS);
+      }
+    }
+    static string BusyWhy(bool down, string url) {
+      lock (_g) {
+        string k = (down ? "down|" : "up|") + url;
+        DateTime until;
+        if (!_busyUntil.TryGetValue(k, out until) || DateTime.Now >= until) return null;
+        return "Cloudflare was busy: too many requests at " + _busyAt[k].ToString("H:mm") + ", so it was not asked again until " + until.ToString("H:mm");
+      }
+    }
+    static string Wait(int s) { return s < 90 ? s + " s" : (int)Math.Round(s / 60.0) + " min"; }
+
+    /// One server, one half, by the caps. Ok: r's Speed holds the Mbps and the server. Not ok: the Speed is
+    /// left for the caller to fill (a fallback, or the failure words).
+    static async Task<Attempt> SpeedPhase(Run r, bool down, Src src, CancellationToken ct) {
       Speed sp = down ? r.Down : r.Up;
       var c = new Ctl { Cap = down ? r.Caps.DownBytes : r.Caps.UpBytes };
       int capMs = down ? r.Caps.DownMs : r.Caps.UpMs, n = down ? DownStreams : UpStreams;
-      lock (_g) sp.State = "running";
+      lock (_g) { sp.State = "running"; sp.Server = src.Label; sp.Host = src.Host; sp.Pick = src.Pick; sp.Bytes = 0; sp.Ms = 0; sp.Live = -1; }
+      Emit(r, true);
       var sw = Stopwatch.StartNew();
       var jobs = new Task[n];
-      for (int i = 0; i < n; i++) jobs[i] = down ? DownWorker(r, c, ct) : UpWorker(r, c, ct);
+      for (int i = 0; i < n; i++) jobs[i] = down ? DownWorker(r, src, c, ct) : UpWorker(r, src, c, ct);
       Task all = Task.WhenAll(jobs);
       var ts = new List<double>();
       var bs = new List<long>();
@@ -442,29 +581,30 @@ namespace Mantle {
         for (int j = ts.Count - 1; j >= 0; j--) if (t - ts[j] >= 1000 || j == 0) { if (t - ts[j] > 150 && b > 0) live = (b - bs[j]) * 8.0 / ((t - ts[j]) / 1000.0) / 1e6; break; }
         lock (_g) { sp.Bytes = b; sp.Ms = (long)t; sp.Live = live; }
         Emit(r, false);
-        if (ct.IsCancellationRequested || all.IsCompleted || t >= capMs || b >= c.Cap) break;
-        bool answered; lock (c) answered = c.Answered;
-        if (!answered && t >= AnswerMs) { lock (c) { if (c.Why == null) c.Why = r.Host + " did not answer in " + (AnswerMs / 1000) + " s"; c.Unreached = true; } break; }
+        bool answered, refused; lock (c) { answered = c.Answered; refused = c.Refused; }
+        if (ct.IsCancellationRequested || all.IsCompleted || t >= capMs || b >= c.Cap || refused) break;   // a refusal ends this server at once
+        if (!answered && t >= AnswerMs) { lock (c) { if (c.Why == null) c.Why = src.Host + " did not answer in " + (AnswerMs / 1000) + " s"; c.Unreached = true; } break; }
       }
       lock (c) {
         c.Stop = true;
         // the time cap came before AnswerMs (short test caps) with nothing back: the same words
-        if (!c.Answered && c.Why == null && !ct.IsCancellationRequested) { c.Why = r.Host + " did not answer in " + Math.Max(1, (int)Math.Round(sw.Elapsed.TotalSeconds)) + " s"; c.Unreached = true; }
+        if (!c.Answered && c.Why == null && !ct.IsCancellationRequested) { c.Why = src.Host + " did not answer in " + Math.Max(1, (int)Math.Round(sw.Elapsed.TotalSeconds)) + " s"; c.Unreached = true; }
       }
       AbortAll(r);
       await Task.WhenAny(all, Task.Delay(2000)).ConfigureAwait(false);
       ct.ThrowIfCancellationRequested();
       double mbps = Mbps(ts, bs);
-      string why; bool unreached, refused;
-      lock (c) { why = c.Why; unreached = c.Unreached || !c.Answered; refused = c.Refused; }
+      var res = new Attempt();
+      lock (c) { res.Why = c.Why; res.Unreached = c.Unreached || !c.Answered; res.Status = c.Status; res.RetryS = c.RetryS; if (mbps > 0 && !c.Refused) res.Ok = true; }
+      if (res.Why == null) res.Why = "no data moved in " + Math.Round(sw.Elapsed.TotalSeconds) + " s";
+      if (res.Status == 429 && res.RetryS > 0) res.Why += ", it asked to wait " + Wait(res.RetryS);
       lock (_g) {
         sp.Bytes = Interlocked.Read(ref c.Bytes);
         sp.Live = -1;
-        if (mbps > 0 && !refused) { sp.State = "ok"; sp.Mbps = Math.Round(mbps, 1); sp.Why = null; }
-        else { sp.State = "failed"; sp.Why = (down ? "download" : "upload") + ": " + (why ?? "no data moved in " + Math.Round(sw.Elapsed.TotalSeconds) + " s"); }
+        if (res.Ok) { sp.State = "ok"; sp.Mbps = Math.Round(mbps, 1); sp.Why = null; }
       }
-      Emit(r, true);
-      return !(sp.State == "failed" && unreached);
+      if (res.Ok) Emit(r, true);
+      return res;
     }
 
     /// Mbps after the ramp: the first second of data (at most 30% of it) is TCP finding its speed.
@@ -493,29 +633,47 @@ namespace Mantle {
       }
     }
 
-    static void Fail(Ctl c, Run r, Exception ex, CancellationToken ct) {
+    static void Fail(Ctl c, Run r, Src src, Exception ex, CancellationToken ct) {
       lock (c) {
         if (c.Stop || ct.IsCancellationRequested) return;   // our own abort, not a failure
         c.Failed++;
-        if (c.Why == null) c.Why = Explain(r, ex);
+        if (c.Why == null) c.Why = Explain(src.Host, ex);
         var we = TopbarPing.Inner(ex) as WebException;
+        var resp = we != null ? we.Response as HttpWebResponse : null;
         if (we != null && we.Response != null) { c.Answered = true; c.Refused = true; }   // it answered, with a refusal (HTTP 4xx/5xx)
         else if (!c.Answered) c.Unreached = true;
+        if (resp != null && c.Status == 0) {
+          c.Status = (int)resp.StatusCode;
+          c.RetryS = RetryAfter(resp.Headers["Retry-After"]);
+        }
       }
     }
 
-    static string Explain(Run r, Exception ex) {
+    /// Retry-After: seconds, or an HTTP date; -1 when absent or unreadable. At most an hour.
+    static int RetryAfter(string v) {
+      if (string.IsNullOrEmpty(v)) return -1;
+      int s;
+      if (int.TryParse(v.Trim(), out s)) return s > 0 ? Math.Min(s, 3600) : -1;
+      DateTime d;
+      if (DateTime.TryParse(v, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out d)) {
+        double left = (d - DateTime.UtcNow).TotalSeconds;
+        return left >= 1 ? (int)Math.Min(left, 3600) : -1;
+      }
+      return -1;
+    }
+
+    static string Explain(string host, Exception ex) {
       var we = TopbarPing.Inner(ex) as WebException;
       if (we != null) {
         var resp = we.Response as HttpWebResponse;
-        if (resp != null) return r.Host + " refused it (HTTP " + (int)resp.StatusCode + " " + resp.StatusDescription + ")";
-        if (we.Status == WebExceptionStatus.Timeout) return r.Host + " did not answer in " + (AnswerMs / 1000) + " s";
-        if (we.Status == WebExceptionStatus.NameResolutionFailure) return "could not look up " + r.Host;
-        if (we.Status == WebExceptionStatus.ConnectFailure) return "could not connect to " + r.Host;
-        if (we.Status == WebExceptionStatus.TrustFailure || we.Status == WebExceptionStatus.SecureChannelFailure) return "a secure connection to " + r.Host + " could not be made (" + we.Message.TrimEnd('.') + ")";
-        return r.Host + " could not be reached: " + we.Message.TrimEnd('.');
+        if (resp != null) return host + " refused it (HTTP " + (int)resp.StatusCode + " " + resp.StatusDescription + ")";
+        if (we.Status == WebExceptionStatus.Timeout) return host + " did not answer in " + (AnswerMs / 1000) + " s";
+        if (we.Status == WebExceptionStatus.NameResolutionFailure) return "could not look up " + host;
+        if (we.Status == WebExceptionStatus.ConnectFailure) return "could not connect to " + host;
+        if (we.Status == WebExceptionStatus.TrustFailure || we.Status == WebExceptionStatus.SecureChannelFailure) return "a secure connection to " + host + " could not be made (" + we.Message.TrimEnd('.') + ")";
+        return host + " could not be reached: " + we.Message.TrimEnd('.');
       }
-      return r.Host + ": " + TopbarPing.Inner(ex).Message.TrimEnd('.');
+      return host + ": " + TopbarPing.Inner(ex).Message.TrimEnd('.');
     }
 
     static HttpWebRequest Make(Run r, string url, string method) {
@@ -538,26 +696,35 @@ namespace Mantle {
 
     static void Done(Run r, WebRequest q) { lock (_g) r.Live.Remove(q); }
 
-    static async Task DownWorker(Run r, Ctl c, CancellationToken ct) {
+    /// One download connection: requests ramping by DownRamp, each for exactly the bytes reserved. A file
+    /// (the fallback) is asked by Range; a server that sends more than asked is cut off at that many.
+    static async Task DownWorker(Run r, Src src, Ctl c, CancellationToken ct) {
       var buf = new byte[BufLen];
-      while (!ct.IsCancellationRequested) {
-        long want = Reserve(c, DownChunk);
+      for (int i = 0; !ct.IsCancellationRequested; i++) {
+        long want = Reserve(c, DownRamp[Math.Min(i, DownRamp.Length - 1)]);
         if (want <= 0) return;
-        HttpWebRequest q = Make(r, r.Url + "/__down?bytes=" + want, "GET");
+        HttpWebRequest q = Make(r, src.File ? src.Url : src.Url + "/__down?bytes=" + want, "GET");
+        if (src.File) {
+          long off = (long)(new Random(i * 7919 + want.GetHashCode()).NextDouble() * Math.Max(1, FallbackSize - want));
+          q.AddRange(off, off + want - 1);
+        }
         try {
           using (var resp = (HttpWebResponse)await q.GetResponseAsync().ConfigureAwait(false)) {
             lock (c) c.Answered = true;
             using (Stream s = resp.GetResponseStream()) {
+              long left = want;
               int got;
-              while ((got = await s.ReadAsync(buf, 0, buf.Length).ConfigureAwait(false)) > 0) {
+              while (left > 0 && (got = await s.ReadAsync(buf, 0, (int)Math.Min(buf.Length, left)).ConfigureAwait(false)) > 0) {
+                left -= got;
                 Interlocked.Add(ref c.Bytes, got);
                 bool stop; lock (c) stop = c.Stop;
                 if (stop || ct.IsCancellationRequested) { q.Abort(); return; }
               }
+              if (resp.ContentLength != want) { q.Abort(); }   // more than asked (no Range): close, do not read it
             }
           }
         } catch (Exception ex) {
-          Fail(c, r, ex, ct);
+          Fail(c, r, src, ex, ct);
           return;
         } finally {
           Done(r, q);
@@ -565,11 +732,11 @@ namespace Mantle {
       }
     }
 
-    static async Task UpWorker(Run r, Ctl c, CancellationToken ct) {
-      while (!ct.IsCancellationRequested) {
-        long want = Reserve(c, UpChunk);
+    static async Task UpWorker(Run r, Src src, Ctl c, CancellationToken ct) {
+      for (int i = 0; !ct.IsCancellationRequested; i++) {
+        long want = Reserve(c, UpRamp[Math.Min(i, UpRamp.Length - 1)]);
         if (want <= 0) return;
-        HttpWebRequest q = Make(r, r.Url + "/__up", "POST");
+        HttpWebRequest q = Make(r, src.Url + "/__up", "POST");
         q.ContentType = "application/octet-stream";
         q.ContentLength = want;
         q.AllowWriteStreamBuffering = false;
@@ -588,7 +755,7 @@ namespace Mantle {
           s.Dispose();
           using (var resp = (HttpWebResponse)await q.GetResponseAsync().ConfigureAwait(false)) { }
         } catch (Exception ex) {
-          Fail(c, r, ex, ct);
+          Fail(c, r, src, ex, ct);
           return;
         } finally {
           Done(r, q);
@@ -612,12 +779,13 @@ namespace Mantle {
 
     static IDictionary CapsObj(Caps c) {
       return Json.Obj("rounds", c.Rounds, "periodMs", c.PeriodMs, "downMs", c.DownMs, "downBytes", c.DownBytes,
-                      "upMs", c.UpMs, "upBytes", c.UpBytes, "answerMs", AnswerMs, "downStreams", DownStreams, "upStreams", UpStreams);
+                      "upMs", c.UpMs, "upBytes", c.UpBytes, "answerMs", AnswerMs, "downStreams", DownStreams, "upStreams", UpStreams);   // the ramp: DownRamp / UpRamp
     }
 
     static IDictionary SpeedObj(Speed s) {
       return Json.Obj("state", s.State, "mbps", s.Mbps >= 0 ? (object)s.Mbps : null, "live", s.Live >= 0 ? (object)Math.Round(s.Live, 1) : null,
-                      "bytes", s.Bytes, "ms", s.Ms, "why", s.Why);
+                      "bytes", s.Bytes, "ms", s.Ms, "why", s.Why,
+                      "server", s.Server, "host", s.Host, "note", s.Note, "pick", s.Pick, "tried", new List<object>(s.Tried));
     }
 
     static IDictionary Snapshot(Run r) {
@@ -661,6 +829,7 @@ namespace Mantle {
         else if (r.Phase == "down") prog = 0.5 + 0.25 * Math.Min(1.0, Math.Max((double)r.Down.Ms / r.Caps.DownMs, (double)r.Down.Bytes / r.Caps.DownBytes));
         else if (r.Phase == "up") prog = 0.75 + 0.25 * Math.Min(1.0, Math.Max((double)r.Up.Ms / r.Caps.UpMs, (double)r.Up.Bytes / r.Caps.UpBytes));
         else if (r.Phase == "done") prog = 1;
+        if (r.EndedAt == 0) { prog = Math.Max(prog, r.ProgMax); r.ProgMax = prog; }   // a fallback restarts its half: the bar never goes back
         return Json.Obj("run", r.Id, "phase", r.Phase, "running", r.EndedAt == 0, "why", r.Why,
                         "startedAt", r.StartedAt, "endedAt", r.EndedAt == 0 ? null : (object)r.EndedAt,
                         "elapsedMs", (r.EndedAt == 0 ? now : r.EndedAt) - r.StartedAt,
