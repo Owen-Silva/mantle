@@ -233,6 +233,7 @@
     bcan.width = 0;
     bcan.height = 0;
     S.bseq = 0;
+    lastPic = null;
   }
 
   // The picture is the capture's quarter size and the canvas stretches it over its box, so
@@ -243,7 +244,7 @@
     var ctx = bcan.getContext('2d');
     var boxW = bcan.clientWidth;
     if (!ctx || !w || !h || !boxW) return false;
-    var token = getComputedStyle(document.documentElement).getPropertyValue('--lg-blur').trim() || 'blur(12px)';
+    var token = getComputedStyle(document.documentElement).getPropertyValue('--lg-blur').trim() || 'blur(5px)';   // = the dark token (Helm's blur); only if --lg-blur failed to load
     bcan.width = w;
     bcan.height = h;
     ctx.filter = token.replace(/blur\(\s*([\d.]+)px\s*\)/, function (_m, n) {
@@ -251,8 +252,40 @@
     });
     ctx.drawImage(img, 0, 0);
     ctx.filter = 'none';
+    lastPic = img;
+    adaptBackdrop();
     return true;
   }
+
+  /* DARK ONLY: THE ONE READABILITY GUARD (ui/shared/glass-adapt.js guard(), the top bar's rule, same
+     code and thresholds; lane same-shell, 2026-10-09, replacing see-glass-b's picture dimming). The pane
+     is one layer of --lg-fill over the blurred capture; the tint thickens (never the picture dimming)
+     only as far as --lg-ink-2 needs for 4.5:1 over the brightest blurred pixel, capped at --lg-fill-pop,
+     into --pane-tint on :root (the dark .panel reads it). With --lg-fill-pop = --lg-fill (the FINAL
+     tokens) there is nothing to thicken and nothing is read. Once per capture, never on a timer; in
+     light nothing runs. window.__switcherGlass is a read-only view. */
+  var GA = window.MantleGlassAdapt || null;
+  var lastPic = null;
+  var adaptSaid = '';
+  function adaptBackdrop() {
+    root.style.removeProperty('--pane-tint');
+    window.__switcherGlass = null;
+    if (root.getAttribute('data-theme') !== 'dark' || !lastPic) return;
+    var T = GA ? GA.guardTokens(getComputedStyle(root)) : null;
+    if (T && !(T.ceil > T.fill.a + 1e-9)) { window.__switcherGlass = { alpha: T.fill.a, engaged: false, why: 'ceiling = fill' }; adaptSaid = ''; return; }
+    var px = T ? GA.pixelsOf(lastPic) : null;
+    // the raw capture (not the canvas, which is already blurred): guard() blurs it the way the page does
+    var r = px ? GA.guard(px, { tokens: T, picPerCss: lastPic.naturalWidth / (bcan.clientWidth || lastPic.naturalWidth) }) : null;
+    if (r) {
+      window.__switcherGlass = { alpha: r.alpha, ratio: r.ratio, engaged: r.engaged };
+      if (r.engaged) root.style.setProperty('--pane-tint', r.tint);
+      adaptSaid = '';
+      return;
+    }
+    var why = GA ? 'the capture behind the switcher could not be read back' : 'ui/shared/glass-adapt.js did not load';
+    if (adaptSaid !== why) { adaptSaid = why; console.warn('[switcher] dark glass at the token tint: ' + why); }
+  }
+  window.addEventListener('mantle-theme', adaptBackdrop);
 
   M.on('switcher.session', function (p) {
     if (!p || !p.lay) return;

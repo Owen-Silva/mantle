@@ -63,7 +63,24 @@
     win(SW * 0.06, SH * 0.08, SW * 0.46, SH * 0.62, dark ? '#181a1f' : '#dfe3ea', dark ? '#1e1e1e' : '#f7f8fa');
     win(SW * 0.48, SH * 0.30, SW * 0.44, SH * 0.58, '#202226', '#2b2d31');
   })();
-  if (flags.get('bg') !== '0') {
+  /* SCENE MODE, MOCK ONLY (lane see-glass-b, 2026-10-09): a harness sets window.__mockScene =
+     {url: a 1920x1080 picture as a data URL} in an init script; the fake desktop becomes that picture
+     (the wallpaper AND the backdrop's source), and the backdrop waits for it to decode. Without
+     __mockScene nothing here changes. */
+  var SCENE = window.__mockScene && window.__mockScene.url ? window.__mockScene : null;
+  var sceneWait = null;
+  if (SCENE) {
+    sceneWait = [];
+    var sceneImg = new Image();
+    sceneImg.onload = function () {
+      desk.getContext('2d').drawImage(sceneImg, 0, 0, SW, SH);
+      var w = sceneWait; sceneWait = null; w.forEach(function (f) { f(); });
+    };
+    sceneImg.src = SCENE.url;
+    document.documentElement.style.background = 'url("' + SCENE.url + '") 0 0 / 100% 100% no-repeat';
+  }
+  function whenScene(fn) { if (sceneWait) sceneWait.push(fn); else fn(); }
+  if (!SCENE && flags.get('bg') !== '0') {
     document.documentElement.style.background = 'url(' + desk.toDataURL('image/png') + ') 0 0 / 100% 100% no-repeat';
   }
 
@@ -175,7 +192,7 @@
     if (flags.get('blur') === '0') {
       setTimeout(function () { emit('switcher.backdrop', { seq: 1, png: null, reason: 'mock: the capture lane said the screen could not be read' }); }, 20);
     } else {
-      setTimeout(function () { var b = backdropPNG(); emit('switcher.backdrop', { seq: 1, png: b.png, w: b.w, h: b.h, ms: 21 }); }, 20);
+      setTimeout(function () { whenScene(function () { var b = backdropPNG(); emit('switcher.backdrop', { seq: 1, png: b.png, w: b.w, h: b.h, ms: 21 }); }); }, 20);
     }
     var sel = flags.get('sel');
     if (sel !== null) setTimeout(function () { emit('switcher.move', { seq: 1, sel: Number(sel), key: 'next' }); }, 60);

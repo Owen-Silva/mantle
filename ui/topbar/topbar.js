@@ -211,7 +211,9 @@
     const off = it.enabled === false || (it.ownerDraw && !it.label);
     const label = armed ? it.confirm : (it.label || (it.ownerDraw ? '(the app draws this item itself)' : '(untitled)'));
     const ck = it.checked ? (it.radio ? '●' : '✓') : '';
-    return `<div class="r${i === sel ? ' sel' : ''}${off ? ' off' : ''}${armed ? ' armed' : ''}" data-l="${level}" data-r="${i}" role="menuitem"` +
+    // .on: the row whose submenu is open (dark: Helm's selected row; light draws it as .sel, as before)
+    const on = i === sel && S.open && S.open.stack && S.open.stack[level + 1];
+    return `<div class="r${i === sel ? ' sel' : ''}${on ? ' on' : ''}${off ? ' off' : ''}${armed ? ' armed' : ''}" data-l="${level}" data-r="${i}" role="menuitem"` +
       `${off ? ' aria-disabled="true"' : ''}><span class="ck">${ck}</span><span class="lb">${esc(label)}</span>` +
       `<span class="kb">${esc(it.key || '')}</span><span class="ar">${it.items ? '▸' : ''}</span></div>`;
   }
@@ -250,6 +252,7 @@
     if (o && o.stack) o.stack.forEach((lv) => { if (lv.el && lv.el.isConnected) lv.scroll = lv.el.scrollTop; });
     menusEl.innerHTML = '';
     if (!o) return;
+    menuGlassStart();   // dark: once per menu session (a no-op while one is open, and in light)
     if (o.stat) { renderStatMenu(o); return; }
     o.stack.forEach((lv, level) => {
       const dd = document.createElement('div');
@@ -274,6 +277,7 @@
       if (lv.scroll) dd.scrollTop = lv.scroll;
       keepSelVisible(dd, lv.sel);
       lv.el = dd;
+      placeGlass(dd, level);
     });
     if (S.edit) {
       const inp = menusEl.querySelector('input.lbi');
@@ -383,6 +387,7 @@
   function tellClosed(refocus) {
     S.asked = null;
     clearTimeout(S.waitT); S.waitT = 0;
+    menuGlassEnd();
     call('topbar.menuState', { open: false, refocus });
   }
 
@@ -412,7 +417,7 @@
       const fits = ddBottom(dd) <= h || !!(S.open && S.open.gaveUp);   // gave up waiting: shown as it is
       dd.classList.toggle('wait', !fits);
       if (!fits) waiting++;
-      else if (dd._owner) dd._owner.shown = true;   // later re-renders do not fade in again
+      else if (dd._owner && !menusEl.classList.contains('pre')) dd._owner.shown = true;   // later re-renders do not fade in again (held for its picture = not shown yet)
     }
     if (!waiting) { clearTimeout(S.waitT); S.waitT = 0; }
     return waiting;
@@ -585,6 +590,7 @@
     dd.style.left = Math.max(4, Math.round(x)) + 'px';
     fitDown(dd, 0);
     dd.scrollTop = scroll;
+    placeGlass(dd, 0);
     notifyMain();
   }
 
@@ -827,11 +833,15 @@
     const data = g.getImageData(0, 0, w, h).data;
     const f = GM.parseFilter(cssVar('--lg-blur'));
     const cssW = bdropEl.clientWidth || barEl.clientWidth || window.innerWidth || w;
-    const fill = GM.parseColor(cssVar('--lg-fill')) || { r: 30, g: 31, b: 34, a: 0.50 };
-    const ceil = GM.parseColor(cssVar('--lg-fill-pop')) || { a: 0.82 };
-    const ink = GM.parseColor(cssVar('--lg-ink-2')) || { r: 196, g: 199, b: 206 };
+    // the bars' own token (lane same-bars, FINAL RULES: Helm's strip, --lg-fill-bar .75) is the floor and
+    // the colour; the ceiling is --lg-fill-pop: the shared guard's inputs (glass-adapt.js guardTokens {bar})
+    const GT = window.MantleGlassAdapt && window.MantleGlassAdapt.guardTokens(getComputedStyle(document.documentElement), { bar: true });
+    const fill = (GT && GT.fill) || GM.parseColor(cssVar('--lg-fill')) || { r: 30, g: 31, b: 34, a: 0.50 };
+    const ceil = { a: GT && GT.ceil != null ? GT.ceil : ((GM.parseColor(cssVar('--lg-fill-pop')) || { a: 0.82 }).a) };
+    const ink = (GT && GT.ink) || GM.parseColor(cssVar('--lg-ink-2')) || { r: 196, g: 199, b: 206 };
     const px = GM.glassPixels(data, w, h, { sigma: f.blur * (w / cssW), saturate: f.saturate, brightness: f.brightness });
-    const r = GM.glassTint({ px, ink, tint: fill, need: 4.5, floor: fill.a, ceil: ceil.a, step: 0.02 });
+    const GA = window.MantleGlassAdapt;   // the shared guard's need (4.7: the drawn strip peaked at 4.41 when the model said 4.58)
+    const r = GM.glassTint({ px, ink, tint: fill, need: (GA && GA.GUARD && GA.GUARD.need) || 4.7, floor: fill.a, ceil: ceil.a, step: 0.02 });
     GS.solve = r;
     GS.settle = GM.glassSettle(GS.settle, r.alpha, 4);
     GS.tint = GS.settle.cur;
@@ -839,7 +849,185 @@
   }
   mantle.on('topbar.backdrop', setBackdrop);
   // a theme change re-reads the tokens: the next picture is solved against the new ones
-  window.addEventListener('mantle-theme', () => { if (GS.png) solveTint(++GS.seq); });
+  // An OPEN menu is laid out again in the new theme's metrics (dark is Helm's: 30 px rows, padding 4/5x10,
+  // so the same menu is taller), which re-asks main for the window's height and waits (.wait) until it
+  // has grown; it would otherwise stay hidden or cut at the old height (Windows' own light/dark switch
+  // can land while a menu is open). Into dark: its glass session starts there; out of it: it ends.
+  window.addEventListener('mantle-theme', () => {
+    if (GS.png) solveTint(++GS.seq);
+    if (!S.open) return;
+    if (!isDark()) menuGlassEnd();
+    renderMenus();
+  });
+
+  /* ---- THE DROPDOWNS' GLASS, dark only (lane same-bars, 2026-10-09) ---------------------------
+     THE ONE RECIPE (topbar.css .dd.glass): a blurred picture of what is behind the menu + ONE tint.
+     A menu SESSION (S.open going from nothing to a menu, until tellClosed) asks main ONCE for its
+     picture (glass.topbarMenu -> {png, w, h, at}: the screen under this window's width, from its top
+     to the work area's bottom, in CSS px of this page; the bar is left out of it). Hovers, submenus,
+     the 1 s stat sample and sliding across the titles all reuse it. The picture is blurred ONCE on a
+     canvas with the token's own --lg-blur (its blur rescaled to picture px; edges clamped so no
+     transparent black is pulled in; NO extra brightness) and set on #menus as --dd-bd, inherited by
+     every dropdown, which places it at the screen position it covers. The tint per dropdown is the
+     shared guard's (MantleGlassAdapt.guardRect over the UNBLURRED picture, blurred once in
+     glassPicture): --lg-fill, thicker only where ink-2 would fall under 4.5:1.
+     PRE-SHOW: until the picture is ready (or MENU_PRESHOW_MS pass) the dropdowns wait hidden
+     (#menus.pre), so the first one never flashes from the fallback to glass. A failure or a timeout
+     shows them on the fallback face (one layer of --lg-fill-pop) and the strip says why, once per
+     reason; a picture that lands after the menu showed is not swapped in (that would be the flash). */
+  const MENU_PRESHOW_MS = 250;
+  const GA = window.MantleGlassAdapt;
+  const MG = { seq: 0, cur: null, said: null };
+  GS.menu = null;   // read-only view for the shots: {state, why, shotMs, readyMs, visibleMs, levels[]}
+  const isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
+  const now = () => (window.performance && performance.now ? performance.now() : Date.now());
+  function menuGlassStart() {
+    if (MG.cur || !isDark()) return;
+    const ses = MG.cur = { seq: ++MG.seq, t0: now(), state: 'waiting', baked: null, cache: {}, timer: 0 };
+    GS.menu = { seq: ses.seq, state: 'waiting', why: null, shotMs: null, readyMs: null, visibleMs: null, levels: [] };
+    menusEl.classList.add('pre');
+    ses.timer = setTimeout(() => menuGlassSettle(ses, null, `its picture of the screen took longer than ${MENU_PRESHOW_MS} ms`), MENU_PRESHOW_MS);
+    call('glass.topbarMenu').then((r) => menuGlassLoad(ses, r), (e) => menuGlassSettle(ses, null, (e && e.message) || String(e)));
+  }
+  async function menuGlassLoad(ses, r) {
+    if (MG.cur !== ses || ses.state !== 'waiting') return;
+    const at = r && r.at;
+    if (!r || r.ok === false || typeof r.png !== 'string' || r.png.slice(0, 5) !== 'data:' || !at || !(at.w > 0) || !(at.h > 0)) {
+      menuGlassSettle(ses, null, (r && r.reason) || 'Mantle sent no usable picture of the screen under it');
+      return;
+    }
+    const v = GS.menu && GS.menu.seq === ses.seq ? GS.menu : {};
+    v.shotMs = r.ms != null ? r.ms : null;
+    v.replyAt = Math.round(now() - ses.t0);
+    let im;
+    try { im = await loadImg(r.png); } catch (_) { menuGlassSettle(ses, null, 'its picture of the screen did not decode'); return; }
+    if (MG.cur !== ses || ses.state !== 'waiting') return;
+    v.decodedAt = Math.round(now() - ses.t0);
+    const baked = bakeMenu(im, at, v);
+    v.bakedAt = Math.round(now() - ses.t0);
+    menuGlassSettle(ses, baked.url ? baked : null, baked.url ? null : baked.why);
+  }
+  // The picture as the glass shows it, and the guard's view of it. -> {url, pic, T, sx, sy, at} or {why}
+  function bakeMenu(im, at, v) {
+    v = v || {};
+    const t = now();
+    try {
+      const w = im.naturalWidth, h = im.naturalHeight;
+      if (!w || !h) return { why: 'its picture of the screen is empty' };
+      const sx = w / at.w, sy = h / at.h;
+      const cs = getComputedStyle(document.documentElement);
+      let sigma = 0;
+      const f = cs.getPropertyValue('--lg-blur').trim().replace(/blur\(\s*([\d.]+)px\s*\)/, (_, b) => { sigma = parseFloat(b) * sx; return 'blur(' + sigma.toFixed(2) + 'px)'; });
+      const P = Math.max(1, Math.ceil(sigma * 3));
+      const a = document.createElement('canvas'); a.width = w + 2 * P; a.height = h + 2 * P;
+      const ga = a.getContext('2d');
+      ga.imageSmoothingEnabled = false;
+      ga.drawImage(im, P, P);
+      ga.drawImage(im, 0, 0, 1, h, 0, P, P, h);              // the edges, stretched out into the margin
+      ga.drawImage(im, w - 1, 0, 1, h, P + w, P, P, h);
+      ga.drawImage(im, 0, 0, w, 1, P, 0, w, P);
+      ga.drawImage(im, 0, h - 1, w, 1, P, P + h, w, P);
+      ga.drawImage(im, 0, 0, 1, 1, 0, 0, P, P);              // and the four corners
+      ga.drawImage(im, w - 1, 0, 1, 1, P + w, 0, P, P);
+      ga.drawImage(im, 0, h - 1, 1, 1, 0, P + h, P, P);
+      ga.drawImage(im, w - 1, h - 1, 1, 1, P + w, P + h, P, P);
+      const b = document.createElement('canvas'); b.width = w; b.height = h;
+      const gb = b.getContext('2d');
+      gb.filter = f || 'none';   // the token's filter, nothing added
+      gb.drawImage(a, -P, -P);
+      const url = b.toDataURL('image/png');
+      v.blurMs = Math.round(now() - t);
+      if (!GA) return { why: 'the shared glass rule (glass-adapt.js) did not load' };
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const gc = c.getContext('2d', { willReadFrequently: true });
+      gc.drawImage(im, 0, 0);
+      const T = GA.guardTokens(cs);
+      const data = gc.getImageData(0, 0, w, h).data;
+      if (!data || !T) return { why: 'the shared glass rule could not read its picture' };
+      v.readMs = Math.round(now() - t) - v.blurMs;
+      return { url, data, w, h, T, sx, sy, at };
+    } catch (e) {
+      return { why: `its picture could not be blurred on a canvas (${(e && e.message) || e})` };
+    }
+  }
+  function menuGlassSettle(ses, baked, why) {
+    if (MG.cur !== ses || ses.state !== 'waiting') return;
+    clearTimeout(ses.timer); ses.timer = 0;
+    ses.state = baked ? 'glass' : 'fallback';
+    ses.baked = baked;
+    const v = GS.menu && GS.menu.seq === ses.seq ? GS.menu : null;
+    if (v) { v.state = ses.state; v.why = why || null; v.readyMs = Math.round(now() - ses.t0); }
+    if (baked) {
+      menusEl.style.setProperty('--dd-bd', 'url("' + baked.url + '")');
+      menusEl.style.setProperty('--dd-bd-size', baked.at.w + 'px ' + baked.at.h + 'px');
+      MG.said = null;
+    } else if (why && why !== MG.said) {
+      MG.said = why;
+      setNote('The menu is not frosted: ' + why);
+    }
+    menusEl.classList.remove('pre');
+    for (const dd of menusEl.children) placeGlass(dd, dd._level || 0);
+    const waiting = reveal();
+    if (v && !waiting && menusEl.children.length) v.visibleMs = Math.round(now() - ses.t0);
+  }
+  function menuGlassEnd() {
+    const ses = MG.cur;
+    if (!ses) return;
+    clearTimeout(ses.timer);
+    MG.cur = null;
+    menusEl.classList.remove('pre');
+    menusEl.style.removeProperty('--dd-bd');
+    menusEl.style.removeProperty('--dd-bd-size');
+  }
+  /* The shared guard (MantleGlassAdapt.glassPicture + guardRect, the strip's rule and thresholds) for ONE
+     dropdown's rectangle (picture px). Blurring the whole picture in JS cost ~170 ms at 1920x1080@125%
+     (600x337 px), most of the 250 ms pre-show hold, so only the rectangle plus a margin wider than the
+     blur kernel (3 sigma + 2 px) is cut out and blurred: every pixel under the dropdown reads exactly the
+     neighbours it reads in the whole picture (the margin's mirrored edge is never reached), and a crop
+     that meets the picture's real edge mirrors there as the whole picture does. Same answer, ~1/20 the
+     work; cached per rectangle by placeGlass. */
+  function menuGuard(b, rr, whole) {
+    const W = b.w, H = b.h;
+    const pad = whole ? Math.max(W, H) : Math.ceil(3 * ((b.T.filter && b.T.filter.blur) || 0) * b.sx) + 2;
+    const x0 = Math.max(0, Math.floor(rr.x) - pad), y0 = Math.max(0, Math.floor(rr.y) - pad);
+    const x1 = Math.min(W, Math.ceil(rr.x + rr.w) + pad), y1 = Math.min(H, Math.ceil(rr.y + rr.h) + pad);
+    if (x1 <= x0 || y1 <= y0) return null;
+    const cw = x1 - x0, ch = y1 - y0, sub = new Uint8ClampedArray(cw * ch * 4);
+    for (let y = 0; y < ch; y++) sub.set(b.data.subarray(((y0 + y) * W + x0) * 4, ((y0 + y) * W + x1) * 4), y * cw * 4);
+    const pic = GA.glassPicture({ data: sub, width: cw, height: ch }, b.T, b.sx);
+    return GA.guardRect(pic, b.T, { x: rr.x - x0, y: rr.y - y0, w: rr.w, h: rr.h });
+  }
+  // for the shots only: the crop's answer against the whole picture's, for every open dropdown
+  GS.menuGuardCompare = () => {
+    const ses = MG.cur;
+    if (!ses || !ses.baked) return null;
+    const b = ses.baked, at = b.at;
+    return [...menusEl.children].map((dd) => {
+      const r = dd.getBoundingClientRect(), rr = { x: (r.left - at.x) * b.sx, y: (r.top - at.y) * b.sy, w: r.width * b.sx, h: r.height * b.sy };
+      const t0 = now(), crop = menuGuard(b, rr), t1 = now(), whole = menuGuard(b, rr, true), t2 = now();
+      return { crop, whole, cropMs: Math.round(t1 - t0), wholeMs: Math.round(t2 - t1) };
+    });
+  };
+  // One dropdown on the session's picture: the piece of it the dropdown covers, and the guard's tint
+  // for exactly that rectangle (cached per rectangle: a hover re-renders the same boxes).
+  function placeGlass(dd, level) {
+    dd._level = level;
+    const ses = MG.cur;
+    if (!ses || ses.state !== 'glass' || !isDark()) { dd.classList.remove('glass'); return; }
+    const b = ses.baked, at = b.at, r = dd.getBoundingClientRect();
+    const key = [r.left, r.top, r.width, r.height].map((n) => Math.round(n * 4)).join(',');
+    let g = ses.cache[key];
+    if (g === undefined) { const t = now(); g = ses.cache[key] = menuGuard(b, { x: (r.left - at.x) * b.sx, y: (r.top - at.y) * b.sy, w: r.width * b.sx, h: r.height * b.sy }); if (GS.menu) GS.menu.guardMs = Math.round(now() - t); }
+    if (!g) {   // outside its picture (cannot happen while the picture covers the window): the fallback face
+      dd.classList.remove('glass');
+      if (GS.menu) GS.menu.levels[level] = { glass: false, why: 'this dropdown lies outside the picture' };
+      return;
+    }
+    dd.style.setProperty('--dd-tint', g.tint);
+    dd.style.setProperty('--dd-bd-pos', (at.x - r.left) + 'px ' + (at.y - r.top) + 'px');   // background-origin: border-box
+    dd.classList.add('glass');
+    if (GS.menu) GS.menu.levels[level] = { glass: true, tint: g.tint, alpha: g.alpha, engaged: g.engaged, ratio: g.ratio, short: g.short };
+  }
 
   renderBar();
   call('topbar.hello').then((r) => {

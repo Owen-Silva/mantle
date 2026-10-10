@@ -356,3 +356,133 @@
 .spq-apsw-err { display: flex; align-items: flex-start; gap: 6px; padding: 2px 8px 2px; color: var(--lg-warn); font-size: 12px; line-height: 1.45; }
 .spq-apsw-glyph { flex: none; display: inline-flex; margin-top: 2px; }
 @media (prefers-reduced-motion: reduce) { .spq-apsw-btn, .spq-apsw-track, .spq-apsw-knob { transition: none; } }
+
+/* ---------------------------------------------------------------- DARK = Helm's look
+   (lane same-bars-mods, 2026-10-09; HELM-SPEC rows 3-24). Light above is untouched.
+   Hover surface-2 (--lg-hover), pressed / selected surface-3 (--lg-press); a selected tab and the
+   playing row are surface-3 + a hairline, NOT an accent tick or accent text (no accent on rows; the
+   accent stays for state: an "on" tool, the auto-pause switch when on, the primary button, links).
+   Helm controls: primary .btn 30 / 0 12 / 13-500, secondary .btn.sm 26 / 0 9 / 12-500 with the inner lip
+   (as bar.css's tiles), icon buttons ink-2 with surface-3 hover, the input 32 tall on --lg-field with a hairline
+   (strong on hover, accent-line on focus), the toggle 32 x 18 with a 12 px knob. Group labels 11/600
+   uppercase +.04em; title 13, subtitle 12. 120 ms colour ease, the shared focus ring, one divider,
+   disabled at --lg-disabled, and the list's thin scrollbar gives way to the one Helm scrollbar. */
+:root[data-theme="dark"] .spq { border-top-color: var(--lg-divider); }
+:root[data-theme="dark"] .spq-head,
+:root[data-theme="dark"] .spq-tab,
+:root[data-theme="dark"] .spq-tool,
+:root[data-theme="dark"] .spq-sbtn,
+:root[data-theme="dark"] .spq-more-btn,
+:root[data-theme="dark"] .spq-clear,
+:root[data-theme="dark"] .spq-apsw-btn {
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), color var(--lg-dur-ui) var(--lg-ease-ui), box-shadow var(--lg-dur-ui) var(--lg-ease-ui), opacity var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .spq-head:focus-visible,
+:root[data-theme="dark"] .spq-tab:focus-visible,
+:root[data-theme="dark"] .spq-tool:focus-visible,
+:root[data-theme="dark"] .spq-btn:focus-visible,
+:root[data-theme="dark"] .spq-sbtn:focus-visible,
+:root[data-theme="dark"] .spq-link:focus-visible,
+:root[data-theme="dark"] .spq-clear:focus-visible,
+:root[data-theme="dark"] .spq-more-btn:focus-visible,
+:root[data-theme="dark"] .spq-opt input:focus-visible,
+:root[data-theme="dark"] .spq-apsw-btn:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+
+/* the player row: tabs are Helm's segmented buttons, 12/500 */
+:root[data-theme="dark"] .spq-tab { font-size: 12px; font-weight: 500; }
+:root[data-theme="dark"] .spq-tab:active { background: var(--lg-press); }
+:root[data-theme="dark"] .spq-tab.on { background: var(--lg-press); color: var(--lg-ink); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .spq-tab.on:focus-visible { box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .spq-tab.on::after { content: none; }
+:root[data-theme="dark"] .spq-tool { color: var(--lg-ink-2); }
+:root[data-theme="dark"] .spq-tool:hover { background: var(--lg-press); color: var(--lg-ink); }
+:root[data-theme="dark"] .spq-tool:active { background: var(--lg-card); }
+:root[data-theme="dark"] .spq-tool:disabled,
+:root[data-theme="dark"] .spq-tool:disabled:hover { opacity: var(--lg-disabled); background: transparent; color: var(--lg-ink-2); }
+:root[data-theme="dark"] .spq-tool.on, :root[data-theme="dark"] .spq-tool.on:hover { color: var(--lg-acc); }
+
+/* the list */
+:root[data-theme="dark"] .spq-scroll { scrollbar-width: auto; scrollbar-color: auto; }
+:root[data-theme="dark"] .spq-sec { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+:root[data-theme="dark"] .spq-item,
+:root[data-theme="dark"] .spq-row { border-radius: var(--lg-r); }
+:root[data-theme="dark"] .spq-item { transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), box-shadow var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .spq-item:has(.spq-row:focus-visible) { box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .spq-item.cur { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .spq-item.cur:has(.spq-row:focus-visible) { box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .spq-item.cur::before { content: none; }
+:root[data-theme="dark"] .spq-item.cur .spq-t { color: var(--lg-ink); }
+:root[data-theme="dark"] .spq-tools { transition: opacity var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .spq-t { font-size: 13px; }
+:root[data-theme="dark"] .spq-a,
+:root[data-theme="dark"] .spq-fine { font-size: 12px; }
+
+/* buttons */
+:root[data-theme="dark"] .spq-btn {
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), color var(--lg-dur-ui) var(--lg-ease-ui), opacity var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .spq-btn:hover { opacity: 1; background: var(--lg-acc-strong); }
+:root[data-theme="dark"] .spq-btn:active { opacity: 1; background: var(--lg-acc); }
+:root[data-theme="dark"] .spq-btn:disabled { opacity: var(--lg-disabled); background: var(--lg-acc); }
+:root[data-theme="dark"] .spq-btn.busy, :root[data-theme="dark"] .spq-btn.busy:hover { opacity: .6; }
+:root[data-theme="dark"] .spq-btn.armed, :root[data-theme="dark"] .spq-btn.armed:hover { background: var(--lg-warn-soft); color: var(--lg-warn); opacity: 1; }
+:root[data-theme="dark"] .spq-sbtn {
+  padding: 0 9px;
+  background: var(--lg-card);
+  box-shadow: inset 0 1px 0 var(--lg-edge-inner);
+  font-size: 12px;
+  font-weight: 500;
+}
+:root[data-theme="dark"] .spq-sbtn:hover { background: var(--lg-press); box-shadow: inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .spq-sbtn:active { background: var(--lg-card); opacity: 1; }
+:root[data-theme="dark"] .spq-sbtn.armed, :root[data-theme="dark"] .spq-sbtn.armed:hover { background: var(--lg-warn-soft); color: var(--lg-warn); box-shadow: none; }
+:root[data-theme="dark"] .spq-link { border-radius: var(--lg-r-ctl); }
+
+/* search */
+:root[data-theme="dark"] .spq-input {
+  height: 32px;
+  background: var(--lg-field);
+  border-color: var(--lg-edge-out);
+  transition: border-color var(--lg-dur-ui) var(--lg-ease-ui), box-shadow var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .spq-input:hover { border-color: var(--lg-edge-strong); }
+:root[data-theme="dark"] .spq-input:focus { border-color: var(--lg-acc-line); box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .spq-clear { width: 24px; height: 24px; color: var(--lg-ink-2); }
+:root[data-theme="dark"] .spq-clear:hover { background: var(--lg-press); color: var(--lg-ink); }
+:root[data-theme="dark"] .spq-clear:active { background: var(--lg-card); }
+
+/* More */
+:root[data-theme="dark"] .spq-more-btn { height: 26px; color: var(--lg-ink-2); font-weight: 500; }
+:root[data-theme="dark"] .spq-more-btn:hover { background: var(--lg-press); color: var(--lg-ink); }
+:root[data-theme="dark"] .spq-more-btn:active { background: var(--lg-card); }
+:root[data-theme="dark"] .spq-opt input:disabled + span { opacity: var(--lg-disabled); }
+
+/* the auto-pause switch: Helm's .toggle */
+:root[data-theme="dark"] .spq-apsw-btn { height: 30px; font-size: 13px; }
+:root[data-theme="dark"] .spq-apsw-track {
+  width: 32px;
+  height: 18px;
+  border-radius: var(--lg-r-chip);
+  background: var(--lg-press);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-strong);
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), box-shadow var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .spq-apsw-knob {
+  width: 12px;
+  height: 12px;
+  transition: transform var(--lg-dur-ui) var(--lg-ease-ui), background-color var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .spq-apsw-btn.on .spq-apsw-track { background: var(--lg-acc); box-shadow: none; }
+:root[data-theme="dark"] .spq-apsw-btn.on .spq-apsw-knob { transform: translateX(14px); background: var(--lg-acc-on); }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="dark"] .spq *, :root[data-theme="dark"] .spq *::after, :root[data-theme="dark"] .spq *::before { transition: none !important; }
+}
+/* dark: --lg-sunk is Helm's input well there; the empty-state disc and the loading rows are cards */
+:root[data-theme="dark"] .spq-eico,
+:root[data-theme="dark"] .spq-skel .spq-art,
+:root[data-theme="dark"] .spq-sk1,
+:root[data-theme="dark"] .spq-sk2 { background: var(--lg-card); }
+:root[data-theme="dark"] .spq-empty.bad .spq-eico { background: var(--lg-warn-soft); }

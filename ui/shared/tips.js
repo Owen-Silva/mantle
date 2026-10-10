@@ -330,7 +330,10 @@
       ask: function (h) {
         var b = bridge();
         if (!b) return Promise.reject(new Error('window.mantle is not present, so no room above the bar could be asked for'));
-        return b.call('bar.popover', { open: true, height: h, key: 'tip' });
+        // dark: main also takes one picture of what is behind the bar window for the tip's glass
+        var args = { open: true, height: h, key: 'tip' };
+        if (dark()) args.backdrop = true;
+        return b.call('bar.popover', args);
       },
       // key 'tip' on the close too: today's main ignores it (any close shuts the one room), but it
       // lets main tell a tip's close from a popover's if it ever keeps a room per owner.
@@ -355,11 +358,93 @@
 
   function popoverOpen() { return !!(room && room.popover && room.popover()); }
 
+  /* --- glass (DARK ONLY; lane same-huds, 2026-10-09) ---
+     Owen: every surface the same glass, Helm's look. A tip above the pill floats over the desktop,
+     so it gets what the bar's pop-ups get: ONE picture of the bar window's whole rectangle, taken by
+     main when the tip asks for room (bar.popover {backdrop: true} -> 'bar.popbackdrop' {key:'tip'}),
+     blurred once with --lg-blur and nothing else onto a canvas the tip's size, under ONE --lg-fill
+     layer (inline, so tips.css's own face is the fallback). The picture covers the whole window, so
+     the next tip in the same held room reuses it: no capture per tip. A tip inside an open pop-up
+     uses that pop-up's picture (the same window rectangle). Until a picture lands the tip waits,
+     unseen, at most GLASS_HOLD ms; when one cannot, it keeps its own face and glass.why says why.
+     Light: nothing here runs. */
+  var GLASS_HOLD = 150;
+  var glass = { img: null, key: null, at: null, win: null, why: '', bakes: 0, ms: null, holdT: 0, url: null, sig: '' };
+  var glassCanvas = null, glassOff = null;
+  function dark() { return document.documentElement.getAttribute('data-theme') === 'dark'; }
+  function onPopBackdrop(p) {
+    if (!p || !dark()) return;
+    if (typeof p.png !== 'string' || p.png.slice(0, 5) !== 'data:') {
+      if (p.key === 'tip') { glass.why = 'no picture behind the tip' + (p.reason ? ': ' + p.reason : ''); unholdGlass(); }
+      return;
+    }
+    var im = new Image();
+    im.onload = function () {
+      glass.img = im; glass.key = p.key; glass.at = p.at || { x: 0, y: 0, w: 1, h: 1 }; glass.win = p.win || null;
+      glass.ms = typeof p.ms === 'number' ? p.ms : null; glass.why = ''; glass.sig = '';
+      if (shown) paintGlass();
+    };
+    im.onerror = function () { if (p.key === 'tip') { glass.why = 'the picture behind the tip did not decode'; unholdGlass(); } };
+    im.src = p.png;
+  }
+  // a pop-up's picture only while a pop-up is open; the tip's own only while its room is held
+  function glassUsable() { return !!(glass.img && dark() && room && (popoverOpen() || (glass.key === 'tip' && held > 0))); }
+  function holdGlass() {
+    if (!tip || glass.holdT) return;
+    tip.style.visibility = 'hidden';
+    glass.holdT = setTimeout(unholdGlass, GLASS_HOLD);
+  }
+  function unholdGlass() {
+    if (glass.holdT) { clearTimeout(glass.holdT); glass.holdT = 0; }
+    if (tip) tip.style.removeProperty('visibility');
+  }
+  function clearGlass() {
+    if (!tip) return;
+    glass.sig = '';
+    ['background-image', 'background-color', 'background-size', 'background-repeat', 'background-origin'].forEach(function (k) { tip.style.removeProperty(k); });
+  }
+  function dropGlass(why) { glass.img = null; glass.key = null; glass.why = why || ''; unholdGlass(); clearGlass(); }
+  function paintGlass() {
+    if (!tip || !last) return;
+    if (!glassUsable()) { clearGlass(); return; }
+    var r = tip.getBoundingClientRect();
+    if (!(r.width > 0) || !(r.height > 0)) return;
+    var W = glass.win && glass.win.w > 0 ? glass.win.w : window.innerWidth;
+    var H = glass.win && glass.win.h > 0 ? glass.win.h : window.innerHeight;
+    var ax = glass.at.x * W, ay = glass.at.y * H, aw = glass.at.w * W, ah = glass.at.h * H;
+    // the page is anchored to the bar's edge: a window that grew since keeps the picture on that edge
+    if (document.body.getAttribute('data-edge') !== 'top') ay += window.innerHeight - H;
+    var sig = [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height), glass.img.src.length, ax, ay].join(',');
+    if (sig === glass.sig) { unholdGlass(); return; }
+    var tok = getComputedStyle(document.documentElement).getPropertyValue('--lg-blur').trim() || 'none';
+    if (!glassCanvas) glassCanvas = document.createElement('canvas');
+    var c = glassCanvas, w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+    c.width = w; c.height = h;
+    var url;
+    try {
+      var g = c.getContext('2d');
+      g.clearRect(0, 0, w, h);
+      g.filter = tok;
+      g.drawImage(glass.img, ax - r.left, ay - r.top, aw, ah);
+      g.filter = 'none';
+      url = c.toDataURL('image/png');
+    } catch (e) { glass.why = 'the tip\'s picture could not be drawn: ' + msgOf(e); clearGlass(); unholdGlass(); return; }
+    glass.sig = sig; glass.bakes++;
+    tip.style.backgroundImage = 'linear-gradient(var(--lg-fill), var(--lg-fill)), url("' + url + '")';
+    tip.style.backgroundColor = 'transparent';
+    tip.style.backgroundSize = 'auto, 100% 100%';
+    tip.style.backgroundRepeat = 'no-repeat, no-repeat';
+    tip.style.backgroundOrigin = 'border-box, border-box';
+    unholdGlass();
+  }
+
   function askRoom(need) {
     if (!room) return;
     if (relT) { clearTimeout(relT); relT = 0; }
     if (held && need <= held && need >= held - ROOM_HYST) return;
     held = need;
+    // dark: this ask brings a fresh picture; without a usable one the tip waits for it, unseen
+    if (dark() && !glassUsable()) holdGlass();
     var p;
     try { p = room.ask(need); } catch (e) { p = Promise.reject(e); }
     Promise.resolve(p).then(function (r) {
@@ -379,6 +464,7 @@
     if (relT) { clearTimeout(relT); relT = 0; }
     if (!held || shown) return;
     held = 0;
+    if (glass.key === 'tip') dropGlass('the room above the bar was given back');
     // A popover opened since: bar.js's open replaced this room in main, and a close now would
     // shut the popover's.
     if (popoverOpen()) return;
@@ -472,6 +558,7 @@
     tip.setAttribute('data-side', p.side);
     last = { x: x, y: y, w: w, h: h, side: p.side, need: p.need, covers: p.covers || null, ax: a.left, ay: a.top };
     if (p.need) askRoom(p.need);
+    if (dark()) paintGlass();
   }
 
   function showNow(instant) {
@@ -487,6 +574,7 @@
     shown = true;
     describe(anchor);
     tip.classList.add('on');
+    if (dark()) paintGlass();
     startWatch();
   }
 
@@ -645,6 +733,11 @@
     on(window, 'blur', onBlur, false);
     on(document, 'visibilitychange', onVis, false);
     on(window, 'resize', onResize, false);
+    // dark glass: the bar's pop-up pictures (one per room asked) and a theme switch
+    if (room && window.mantle && typeof window.mantle.on === 'function') {
+      try { glassOff = window.mantle.on('bar.popbackdrop', onPopBackdrop); } catch (e) { glass.why = 'no bar.popbackdrop: ' + msgOf(e); }
+    }
+    on(window, 'mantle-theme', function () { if (!dark()) dropGlass('light'); else if (shown) paintGlass(); }, false);
 
     // A title written back as an ATTRIBUTE (setAttribute, innerHTML, a clone) on an adopted
     // element: take it again, so the native tooltip stays gone and the tip shows the new words.
@@ -680,6 +773,9 @@
     listeners = [];
     if (moTitle) moTitle.disconnect();
     if (moBar) moBar.disconnect();
+    if (typeof glassOff === 'function') { try { glassOff(); } catch (_) { /* the bridge is gone */ } }
+    glassOff = null;
+    dropGlass('uninstalled');
     moTitle = moBar = null;
     unDescribe();
     installed = false;
@@ -696,7 +792,8 @@
       anchor: n ? (n.id ? '#' + n.id : n.tagName.toLowerCase() + (n.className && typeof n.className === 'string' ? '.' + n.className.split(/\s+/).join('.') : '')) : null,
       text: n ? textOf(n) : '', held: held, note: roomNote, lastError: lastErr,
       box: shown && last ? { x: last.x, y: last.y, w: last.w, h: last.h, side: last.side, need: last.need, covers: last.covers } : null,
-      room: room ? 'bar' : null
+      room: room ? 'bar' : null,
+      glass: { on: !!glass.sig, key: glass.key, why: glass.why, bakes: glass.bakes, ms: glass.ms, held: !!glass.holdT }
     };
   }
 

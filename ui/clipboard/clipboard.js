@@ -284,12 +284,24 @@
     // the second Win+V waited out main's whole 300 ms cap), and main only shows it after this
     // report. So hidden = the DOM is final, report now; visible = two frames, the one with this
     // list in it produced and not just scheduled.
-    if (document.visibilityState !== 'visible') setTimeout(report, 0);
-    else requestAnimationFrame(function () { requestAnimationFrame(report); });
+    var ready = function () {
+      if (document.visibilityState !== 'visible') setTimeout(report, 0);
+      else requestAnimationFrame(function () { requestAnimationFrame(report); });
+    };
+    // Dark: main shows the window only after the report, so the picture of what is behind it is
+    // taken (and baked) first and the panel never opens as the thick fallback face. Light: at once.
+    var bd = window.MantleHudBackdrop;
+    if (bd && document.documentElement.getAttribute('data-theme') === 'dark') bd.request('opened').then(ready, ready);
+    else ready();
   });
 
   M.on('clipboard.changed', function (p) { if (p && p.list) apply(p.list); });
-  M.on('clipboard.notice', function (p) { if (p) notice(p); });
+  M.on('clipboard.notice', function (p) {
+    if (!p) return;
+    notice(p);
+    // a notice brings the panel up without the opening path: one picture for it too (dark only)
+    if (window.MantleHudBackdrop && document.visibilityState !== 'visible') window.MantleHudBackdrop.request('notice', { hold: true });
+  });
   M.on('clipboard.hide', function () { q.value = ''; S.armed = false; document.body.classList.remove('noting'); });
 
   window.__clip = S;   // the mock harness and shoot.js read the page's state from here

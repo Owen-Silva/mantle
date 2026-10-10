@@ -14,6 +14,15 @@
   --warn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E");
 }
 
+/* DARK, SEE-THROUGH (lane see-huds, 2026-10-09). Owen, on dark Mantle: "mantle needs to be more see
+   through everything". --hud-face is --lg-fill-strong three times over: ~88% at the dark .50, a slab.
+   In dark the face is ONE layer of --lg-fill (FINAL RULES: = --lg-fill-pop, both .83), the bar popovers' fill for a surface with nothing
+   blurred behind it, so the screen behind shows through about 2.5x as much (share ~.18, was ~.07 at .58, ~.12 at .50).
+   Light is untouched. */
+:root[data-theme="dark"] {
+  --hud-face: var(--lg-fill-pop);   /* the no-picture face: the token for it (.88), raised over --lg-fill so faint text stays readable over a bright window (lane helm-wall) */
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -120,3 +129,35 @@ body[data-below] { align-items: flex-start; }
 .undo:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
 .undo:disabled { color: var(--lg-ink-3); background: transparent; }
 @media (prefers-reduced-motion: reduce) { .undo, .toast { transition: none; } }
+
+/* DARK (lane see-huds, 2026-10-09): on the one-layer face the accent label measured 4.1:1 over a bright
+   photo. Undo is an action, not a state, so in dark it is a plain button: --lg-ink in its hairline.
+   Light is untouched. */
+:root[data-theme="dark"] .undo { color: var(--lg-ink); }
+:root[data-theme="dark"] .undo:disabled { color: var(--lg-ink-3); }
+
+/* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
+   Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
+   literal Helm). The face is ONE layer of --lg-fill (root block above). The toast wears the pop-ups'
+   edge: its --lg-edge-out hairline plus the --lg-lip-up lip over --lg-shadow. HELM-SPEC rows applied:
+   12 type (12.5 -> 13, 11.5 -> 12), 16 (Undo is a Helm button: --lg-card in its hairline with the inner
+   lip, --lg-ink, 13/500; hover --lg-press + the strong hairline, pressed --lg-card), 19 focus,
+   23 disabled, 24 motion (hover 120 ms on Helm's curve, it was the 560 ms window reveal; no exit fade:
+   the page times the hide itself). NOT applied: Undo stays 28 px tall (Helm's button is 30): the toast
+   is sized by main from the page, and 2 px are not worth a layout change here. Light is untouched. */
+:root[data-theme="dark"], :root[data-theme="dark"] body { font-size: 13px; }
+:root[data-theme="dark"] .line { font-size: 12px; }
+:root[data-theme="dark"] .toast { box-shadow: var(--lg-lip-up), var(--lg-shadow); transition: none; }
+:root[data-theme="dark"] .undo {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--lg-ink);
+  background: var(--lg-card);
+  box-shadow: inset 0 1px 0 var(--lg-edge-inner);
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), border-color var(--lg-dur-ui) var(--lg-ease-ui), color var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .undo:hover { background: var(--lg-press); border-color: var(--lg-edge-strong); }
+:root[data-theme="dark"] .undo:active { background: var(--lg-card); }
+:root[data-theme="dark"] .undo:disabled { color: var(--lg-ink); background: var(--lg-card); opacity: var(--lg-disabled); }
+:root[data-theme="dark"] .undo:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+@media (prefers-reduced-motion: reduce) { :root[data-theme="dark"] .undo { transition: none; } }

@@ -183,5 +183,6 @@
     card.hidden = false;
     return;
   }
-  mantle.on('timer.done', show);
+  // dark: one picture of what is behind this pop-up per show (ui/shared/hud-backdrop.js)
+  mantle.on('timer.done', function (p) { show(p); if (window.MantleHudBackdrop) window.MantleHudBackdrop.request('shown', { hold: true }); });
 })();

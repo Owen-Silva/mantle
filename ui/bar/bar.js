@@ -352,6 +352,172 @@
     }
   }
 
+  /* DARK GLASS: THE ONE RECIPE (lanes see-glass then same-bars, 2026-10-09). Owen, in dark: "mantle
+     needs to be more see through everything ... even the taskbar", then "the reason i want everything
+     at 50% is cause it will all match way better if its the same". So the strip is blurred with
+     --lg-blur and nothing else, under ONE layer of --lg-fill (.50), exactly like the top bar. Half a
+     tint of near-black cannot hold light ink over a white page on its own, so the bar has the ONE
+     readability guard every surface shares (../shared/glass-adapt.js guard: the top bar's rule, the
+     same code and thresholds): the TINT thickens (never the picture dimming) to the thinnest alpha at
+     which --lg-ink-2 reads >= 4.5:1 over the brightest blurred pixel under the pane, and only then is
+     --bar-tint set; over Owen's wallpaper it never is. A moving picture settles through the shared
+     hysteresis (thicker at once, thinner only by a real step). Once per strip, on its load; never in
+     light (light must not move). window.__barGlass is a read-only view of it for the checks. */
+  function isDark() { return document.documentElement.getAttribute('data-theme') === 'dark'; }
+  // bar: the island is Helm's rail (--lg-fill-bar), a pop-up Helm's panel (--lg-fill) (FINAL RULES)
+  function guardTokens(bar) {
+    var G = window.MantleGlassAdapt;
+    return G ? G.guardTokens(getComputedStyle(document.documentElement), { bar: !!bar }) : null;
+  }
+  var barGlass = window.__barGlass = { settle: null, solve: null, tint: null, pop: null };
+  function resetBarTint() {
+    barGlass.settle = null; barGlass.solve = null; barGlass.tint = null;
+    el.bar.style.removeProperty('--bar-tint');
+  }
+  function adaptBdrop() {
+    var G = window.MantleGlassAdapt;
+    var px = G && isDark() && el.backdrop.naturalWidth ? G.pixelsOf(el.backdrop) : null;
+    var T = px ? guardTokens(true) : null;
+    if (!px || !T) { resetBarTint(); return; }
+    // the img overscans its clip by 14px a side and the picture is stretched over all of it
+    var shownW = el.bdrop.clientWidth + 28, shownH = el.bdrop.clientHeight + 28;
+    var sx = px.width / Math.max(1, shownW), sy = px.height / Math.max(1, shownH);
+    var r = G.guard(px, { tokens: T, picPerCss: sx,
+      rect: { x: 14 * sx, y: 14 * sy, w: el.bdrop.clientWidth * sx, h: el.bdrop.clientHeight * sy } });
+    if (!r) { resetBarTint(); return; }
+    barGlass.solve = r;
+    barGlass.settle = G.glassSettle(barGlass.settle, r.alpha, G.GUARD.hold);
+    var a = barGlass.settle.cur;
+    barGlass.tint = a;
+    if (a > T.fill.a + 1e-9) el.bar.style.setProperty('--bar-tint', G.tintCss(T.fill, a));
+    else el.bar.style.removeProperty('--bar-tint');
+  }
+
+  /* DARK POP-UPS: THE SAME GLASS (same lanes and day). A pop-up had no blur under it, only a
+     near-opaque fill, because CSS backdrop-filter cannot see past this page (and on tall cards it
+     dropped raster tiles). So openPop asks main for one picture of the window's whole content
+     rectangle (bar.popover {backdrop: true}, dark only) and holds the pop-up unpainted (.bdwait) until
+     it is on it: PRE-SHOW, the pop-up never opens as a slab and then thins. The picture is blurred
+     ONCE on a canvas with the token's own --lg-blur and nothing else (bakePopBd) and becomes the
+     pop-up's own background under ONE tint (bar.css .pop.bd): --lg-fill, or --pop-tint when the
+     shared guard says the piece under THIS pop-up needs it (guardRect). Its own background, not a
+     layer: it stays put while a capped panel scrolls. If it does not land within POP_BD_WAIT_MS, or
+     cannot be taken, the pop-up shows its dense fallback and the bar says why. `at` is where the
+     picture sits in the window, as fractions of the window it was taken from (`win`); it is pinned to
+     the bar's own edge (the page is anchored there), so a window that grows away keeps it aligned. */
+  var POP_BD_WAIT_MS = 250;
+  var popBd = null, popBdWait = 0;
+  function popBdHold(on) {
+    if (popBdWait) { clearTimeout(popBdWait); popBdWait = 0; }
+    if (!on) { el.pop.classList.remove('bdwait'); return; }
+    el.pop.classList.add('bdwait');
+    var key = popKey, t0 = Date.now();
+    popBdWait = setTimeout(function () {
+      popBdWait = 0;
+      if (popKey !== key) return;
+      el.pop.classList.remove('bdwait');
+      barGlass.pop = { key: key, ms: Date.now() - t0, timedOut: true };
+      fail('popbackdrop', 'Pop-up not blurred', 'The picture of what is behind this pop-up did not arrive within ' +
+        POP_BD_WAIT_MS + ' ms, so it opened with its thicker fill');
+    }, POP_BD_WAIT_MS);
+    barGlass.pop = { key: key, t0: t0 };
+  }
+  function setPopBackdrop(p) {
+    if (!p || !popKey || p.key !== popKey || !isDark()) return;
+    if (typeof p.png !== 'string' || p.png.slice(0, 5) !== 'data:') {
+      popBdHold(false);
+      fail('popbackdrop', 'Pop-up not blurred', 'Mantle could not take a picture of what is behind this pop-up,' +
+        ' so it is showing its thicker fill instead' + (p.reason ? ': ' + p.reason : ''));
+      return;
+    }
+    clearFail('popbackdrop');
+    var mine = popBd = { key: p.key, at: p.at || { x: 0, y: 0, w: 1, h: 1 }, win: p.win || null, img: null, pic: null, url: null, ms: p.ms };
+    var im = new Image();
+    im.onload = function () { if (popBd === mine) { mine.img = im; placePopBd(); } };
+    im.onerror = function () {
+      if (popBd !== mine) return;
+      popBdHold(false);
+      fail('popbackdrop', 'Pop-up not blurred', 'The picture of what is behind this pop-up did not decode, so it is showing its thicker fill');
+    };
+    im.src = p.png;
+  }
+  /* The picture as the glass shows it: the token's filter with its blur rescaled from CSS px to
+     picture px, and NOTHING else. The edges are clamped out into a margin first (the outermost row
+     and column stretched), so the blur does not pull transparent black in at the window's edges,
+     where a right-hand pop-up sits 8px from it. Null when the canvas cannot. */
+  function bakePopBd(img, picPerCss) {
+    try {
+      var w = img.naturalWidth, h = img.naturalHeight;
+      var token = getComputedStyle(document.documentElement).getPropertyValue('--lg-blur').trim();
+      var sigma = 0;
+      var f = token.replace(/blur\(\s*([\d.]+)px\s*\)/, function (_, b) { sigma = parseFloat(b) * picPerCss; return 'blur(' + sigma.toFixed(2) + 'px)'; });
+      var P = Math.max(1, Math.ceil(sigma * 3));
+      var a = document.createElement('canvas'); a.width = w + 2 * P; a.height = h + 2 * P;
+      var ga = a.getContext('2d');
+      ga.imageSmoothingEnabled = false;
+      ga.drawImage(img, P, P);
+      ga.drawImage(img, 0, 0, 1, h, 0, P, P, h);              // left
+      ga.drawImage(img, w - 1, 0, 1, h, P + w, P, P, h);      // right
+      ga.drawImage(img, 0, 0, w, 1, P, 0, w, P);              // top
+      ga.drawImage(img, 0, h - 1, w, 1, P, P + h, w, P);      // bottom
+      ga.drawImage(img, 0, 0, 1, 1, 0, 0, P, P);              // the four corners
+      ga.drawImage(img, w - 1, 0, 1, 1, P + w, 0, P, P);
+      ga.drawImage(img, 0, h - 1, 1, 1, 0, P + h, P, P);
+      ga.drawImage(img, w - 1, h - 1, 1, 1, P + w, P + h, P, P);
+      var b = document.createElement('canvas'); b.width = w; b.height = h;
+      var gb = b.getContext('2d');
+      gb.filter = f || 'none';
+      gb.drawImage(a, -P, -P);
+      return b.toDataURL('image/png');
+    } catch (_) {
+      return null;
+    }
+  }
+  function placePopBd() {
+    var s = el.pop.style;
+    if (!popBd || !popBd.img || el.pop.hidden || popBd.key !== popKey || !isDark()) return;
+    var W = window.innerWidth, H = window.innerHeight;
+    var ww = popBd.win && popBd.win.w > 0 ? popBd.win.w : W, wh = popBd.win && popBd.win.h > 0 ? popBd.win.h : H;
+    var ax = popBd.at.x * ww, aw = popBd.at.w * ww, ah = popBd.at.h * wh;
+    var ay = popBd.at.y * wh;
+    if (el.body.getAttribute('data-edge') !== 'top') ay = H - (wh - ay);   // pinned to the bottom edge
+    var r = el.pop.getBoundingClientRect();
+    var G = window.MantleGlassAdapt, T = guardTokens(), res = null;
+    if (G && T && aw > 0 && ah > 0) {
+      var sx = popBd.img.naturalWidth / aw, sy = popBd.img.naturalHeight / ah;
+      if (!popBd.pic) {
+        var px = G.pixelsOf(popBd.img);
+        popBd.pic = px ? G.glassPicture(px, T, sx) : null;
+        popBd.url = popBd.pic ? bakePopBd(popBd.img, sx) : null;
+      }
+      // the same rule, code and thresholds as the strip and the top bar: --lg-ink-2 at 4.5:1
+      if (popBd.pic) res = G.guardRect(popBd.pic, T, { x: (r.left - ax) * sx, y: (r.top - ay) * sy, w: r.width * sx, h: r.height * sy });
+    }
+    if (!res || !popBd.url) {   // cannot tell or cannot draw: the fallback, and say so
+      el.pop.classList.remove('bd');
+      popBdHold(false);
+      fail('popbackdrop', 'Pop-up not blurred', 'The picture of what is behind this pop-up could not be read back, so it is showing its thicker fill');
+      return;
+    }
+    s.setProperty('--pop-bd', 'url("' + popBd.url + '")');
+    s.setProperty('--pop-bd-size', aw + 'px ' + ah + 'px');
+    s.setProperty('--pop-bd-x', (ax - r.left) + 'px');
+    s.setProperty('--pop-bd-y', (ay - r.top) + 'px');
+    s.setProperty('--pop-bd-pos', (ax - r.left) + 'px ' + (ay - r.top) + 'px');   // background-origin: border-box
+    if (res.engaged) s.setProperty('--pop-tint', res.tint); else s.removeProperty('--pop-tint');
+    el.pop.classList.add('bd');
+    var was = barGlass.pop && barGlass.pop.key === popBd.key ? barGlass.pop : null;
+    barGlass.pop = { key: popBd.key, alpha: res.alpha, engaged: res.engaged, ratio: res.ratio, short: res.short, shotMs: popBd.ms,
+      ms: was && was.t0 ? Date.now() - was.t0 : (was ? was.ms : null), timedOut: !!(was && was.timedOut) };
+    if (el.pop.classList.contains('bdwait')) popBdHold(false);
+  }
+  function clearPopBd() {
+    popBd = null;
+    popBdHold(false);
+    el.pop.classList.remove('bd');
+    ['--pop-bd', '--pop-bd-size', '--pop-bd-x', '--pop-bd-y', '--pop-bd-pos', '--pop-tint'].forEach(function (n) { el.pop.style.removeProperty(n); });
+  }
+
   /* The clear has to wait for the pill to be GONE. Clearing it the moment 'bar.hide' arrives
      drops the blurred strip out from under a pill that is still on screen, and the glass flashes
      to the flat fallback fill on its way down. So: on the transform's transitionend, or on a
@@ -381,6 +547,7 @@
        src at all the <img> draws nothing, which is what a hidden bar should hold. */
     el.backdrop.removeAttribute('src');
     el.body.classList.add('no-backdrop');
+    resetBarTint();                          // the guard belongs to the strip it was solved for
   }
 
   /* Hover is the signal main hides on: it cannot see the pointer inside this window. */
@@ -2007,6 +2174,7 @@
      notifications, downloads, the jump list, the media card) is not asked for twice, and a panel
      already scrolling at the cap is not re-asked while it still does not fit. */
   function popResized() {
+    placePopBd();                      // a pop-up that changed size moved its top: re-pin its picture
     if (!popKey || isFlyKey(popKey) || el.pop.hidden || !popLast || popLast.key !== popKey) return;
     var need = popNeed();
     if (need === popLast.asked) return;
@@ -2039,6 +2207,7 @@
     popKey = null;
     popLast = null;
     el.pop.hidden = true;
+    clearPopBd();                      // a picture belongs to the pop-up it was taken for
     el.pop.className = 'pop';          // drop any per-panel class (.cal, and .popcapped)
     el.pop.style.maxHeight = '';       // a cap belongs to the panel that was held to it
     el.pop.textContent = '';
@@ -2058,6 +2227,8 @@
        windows changed) keeps the window grown: closing first would shrink it and grow it straight
        back, a visible jump on every icon crossed. The one bar.popover call below resizes it only if
        the height changed, and main takes the old pictures down on that call. */
+    // ...and keeps its picture: the window and what is behind it are the same, only the card moved
+    var keepBd = o.swap && isFlyKey(popKey) && popBd && popBd.img ? popBd : null;
     if (o.swap && isFlyKey(popKey)) { flyTeardown(); el.pop.className = 'pop'; el.pop.style.maxHeight = ''; }
     else closePop();
     popKey = key;
@@ -2072,7 +2243,9 @@
        the popover instead of letting it silently disappear off the edge of the window. A panel
        taller than the room main can give scrolls, and says so (callR -> popFit). */
     var h = popNeed();
-    var room = callR('bar.popover', { open: true, height: h, key: key }).catch(function (e) {
+    var ask = { open: true, height: h, key: key };
+    if (isDark()) ask.backdrop = true;  // dark: one picture of what is behind it (see setPopBackdrop)
+    var room = callR('bar.popover', ask).catch(function (e) {
       if (popKey !== key) return;
       var note = document.createElement('div');
       note.className = 'note';
@@ -2081,6 +2254,9 @@
     });
 
     popPlace(anchor);
+    // dark, PRE-SHOW: unpainted until its picture is on it (setPopBackdrop / placePopBd), at most
+    // POP_BD_WAIT_MS; a flyout swapped for a flyout re-pins the picture it already has
+    if (isDark()) { if (keepBd) { keepBd.key = key; popBd = keepBd; placePopBd(); } else popBdHold(true); }
     return room;
   }
 
@@ -3683,6 +3859,9 @@
     on('bar.hide', function (p) { lastEventAt = Date.now(); slide(false, p && p.why, null, p && p.ms); });
     on('bar.pinned', renderDock);
     on('bar.backdrop', setBackdrop);
+    on('bar.popbackdrop', setPopBackdrop);
+    el.backdrop.addEventListener('load', adaptBdrop);
+    window.addEventListener('mantle-theme', function () { adaptBdrop(); placePopBd(); });
     /* Pushed the moment a part changes while the panel is open (the sidecar's watch), and
        replayed on subscribe, so the panel opens on a whole picture. Levels are 0-100: this
        wrote them straight into the 0-1 glyph until 2026-09-23 ("Volume 3700%"). A part the

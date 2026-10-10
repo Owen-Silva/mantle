@@ -1,0 +1,17 @@
+/* wall-bdrop.css - the wallpaper picture under an app window's tint, DARK ONLY (lane helm-wall-apps, 2026-10-09).
+   ui/shared/wall-bdrop.js builds #wall-bdrop (a canvas of the blurred wallpaper + ONE tint layer) and sets
+   html.wall-on once the picture is painted. Nothing here matches in light: the element is never built there
+   and every rule is [data-theme="dark"].wall-on.
+   The root stands on the OPAQUE ground (the window has no acrylic in dark, lib/features/_wall-window.js), so
+   wherever the picture does not reach (the window partly off the display, or on another one) the ground
+   shows under the tint, never a hole. body is cleared because an in-flow background paints OVER a z-index -1
+   layer; each page clears its own full-window containers the same way. !important because every page's
+   root/body tint rule has its own weight, and in wall mode none of them may paint (the tint is the layer's). */
+#wall-bdrop { display: none; }
+html.wall-on[data-theme="dark"] { background: var(--lg-ground) !important; }
+html.wall-on[data-theme="dark"] body { background: transparent !important; }
+html.wall-on[data-theme="dark"] #wall-bdrop {
+  display: block; position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; contain: strict;
+}
+#wall-bdrop > .wall-pic { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+#wall-bdrop > .wall-tint { position: absolute; inset: 0; background: var(--wall-tint, var(--lg-fill)); }

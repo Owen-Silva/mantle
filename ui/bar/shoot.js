@@ -331,8 +331,12 @@ function deskOf(shotDesk) {
 }
 function withStrip(q) {
   const st = process.env.BAR_STRIP;
-  if (!st) return q;
-  return (q ? q + '&' : '?') + 'strip=' + encodeURIComponent(st);
+  if (st) q = (q ? q + '&' : '?') + 'strip=' + encodeURIComponent(st);
+  /* BAR_SCENE=<image url> (lane see-glass, 2026-10-09): a whole screen behind the page, which the mock
+     paints on <html> and cuts the strip and a dark pop-up's picture from (mock-mantle.js ?scene=). */
+  const sc = process.env.BAR_SCENE;
+  if (sc) q = (q ? q + '&' : '?') + 'scene=' + encodeURIComponent(sc);
+  return q;
 }
 const ONLY = process.argv.slice(2);
 let RUN = ONLY.length ? SHOTS.filter(s => ONLY.some(w => s.name.includes(w))) : SHOTS;
@@ -348,7 +352,7 @@ function usePass(p) {
   OUT = p.out || OUT;
   PAGE = p.page || 'file:///C:/Users/user/mantle/ui/bar/index.html';
   THEME = p.theme || '';
-  env('BAR_STRIP', p.strip); env('BAR_DESK', p.desk); env('BAR_SUFFIX', p.suffix); env('BAR_SKIP_EXISTING', p.skipExisting ? '1' : '');
+  env('BAR_STRIP', p.strip); env('BAR_DESK', p.desk); env('BAR_SCENE', p.scene); env('BAR_SUFFIX', p.suffix); env('BAR_SKIP_EXISTING', p.skipExisting ? '1' : '');
   RUN = p.only && p.only.length ? SHOTS.filter(s => p.only.some(w => s.name.includes(w))) : SHOTS;
   fs.mkdirSync(OUT, { recursive: true });
   console.log('PASS ' + JSON.stringify(p) + ' : ' + RUN.length + ' shots');
@@ -372,7 +376,10 @@ if (process.env.BAR_TRAY_JSON) {
   /* ...and when another lane holds the lock past those 8 min, lowcpu refuses (rightly: no second
      browser). That is a queue, not a failure of this run, so wait for the next turn, six times. */
   for (let i = 1; !b; i++) {
-    try { b = await chromium.launch({ headless: true, executablePath: exe, timeout: 9 * 60000 }); }
+    /* a scene (BAR_SCENE) is a file:// picture the mock cuts up on a canvas: without file access the
+       canvas is tainted and the strip cannot be handed over */
+    const sceneArgs = (process.env.BAR_SCENE || PASSES.some((p) => p && p.scene)) ? ['--allow-file-access-from-files'] : [];
+    try { b = await chromium.launch({ headless: true, executablePath: exe, timeout: 9 * 60000, args: sceneArgs }); }
     catch (e) {
       const why = String(e && e.message || e).split('\n')[0];
       if (i >= 6 || !/lowcpu|lock|Timeout/i.test(why)) throw e;
@@ -418,7 +425,7 @@ if (process.env.BAR_TRAY_JSON) {
            nothing would composite onto white and misrepresent every contrast judgement. Paint a
            plausible dark desktop behind it — on <html>, never on the bar. The ?bg=1 shot brings
            its own (much louder) wallpaper from the mock, so leave that one alone. */
-        if (!s.q.includes('bg=1'))
+        if (!s.q.includes('bg=1') && !process.env.BAR_SCENE)
           await page.addStyleTag({ content: 'html{background:' + deskOf(s.desk) + ' !important;}' });
         if (process.env.BAR_EXTRA_CSS) await page.addStyleTag({ content: process.env.BAR_EXTRA_CSS });
         await page.evaluate(() => document.fonts.ready);

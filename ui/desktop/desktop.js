@@ -420,6 +420,7 @@
     backdropIssue = reason;
     document.body.classList.add('no-backdrop');
     console.warn('[desktop] backdrop:', reason);
+    queueAdapt();
     renderState(null);
   }
 
@@ -442,6 +443,7 @@
     }
     backdropIssue = '';
     document.body.classList.remove('no-backdrop');
+    adaptBackdropPicture(p.png);      // dark: solve the panes' brightness from this capture
     console.log('[desktop] backdrop', (p.w || '?') + 'x' + (p.h || '?'),
       'captured in', (p.ms != null ? p.ms + 'ms' : 'an unreported time'));
     renderState(null);
@@ -489,6 +491,7 @@
     wall = null;
     wallEl.replaceChildren();
     document.body.classList.remove('has-wall');
+    queueAdapt();
     renderState(null);
   }
 
@@ -510,6 +513,7 @@
     wall.drawn = true;
     wall.el.classList.add('on');
     document.body.classList.add('has-wall');
+    queueAdapt();                     // dark: the panes now frost THIS picture
     renderState(null);
   }
 
@@ -715,6 +719,127 @@
     if (wallPause.unload && !was.unload) { clearWall(); return; }
     if (!wallPause.unload && was.unload && wallLast) { setWallpaper(Object.assign({}, wallLast, wallPause)); return; }
     applyPause();
+  }
+
+  // ---------------------------------------------------------------------
+  // DARK ONLY: THE ONE READABILITY GUARD (ui/shared/glass-adapt.js guard(),
+  // the top bar's rule, same code and thresholds; lane same-shell, 2026-10-09,
+  // replacing see-glass-b's picture dimming, which the recipe no longer
+  // allows). A pane is one layer of --lg-fill over the blurred picture; the
+  // tint thickens (never the picture dimming) only as far as --lg-ink-2 needs
+  // for 4.5:1 over the brightest blurred pixel under the pane, capped at
+  // --lg-fill-pop, and the answer goes into --pane-tint on that .pane (the
+  // dark ::after in desktop.css reads it). With --lg-fill-pop = --lg-fill (the
+  // FINAL tokens) there is nothing to thicken, so nothing is read at all.
+  // The picture is Mantle's own wallpaper when it is a picture on screen
+  // (#wall), else main's still capture, drawn ONCE per picture at an eighth of
+  // the screen; it reruns on a new picture, a layout change (ResizeObserver) or
+  // a theme change, never on a timer. A video or web wallpaper cannot be read
+  // back: the token tint, and the console says why once. Light: nothing runs.
+  // ---------------------------------------------------------------------
+  const GA = window.MantleGlassAdapt || null;
+  const ADAPT_SCALE = 8;
+  const adapt = { key: '', canvas: null, bdImg: null, bdUrl: '', queued: false, said: '' };
+
+  function adaptSay(why) {
+    if (adapt.said === why) return;
+    adapt.said = why;
+    if (why) console.warn('[desktop] dark panes at the token brightness: ' + why);
+  }
+
+  function clearAdapt() {
+    document.querySelectorAll('.pane').forEach((p) => p.style.removeProperty('--pane-tint'));
+    window.__desktopGlass = null;
+  }
+
+  // what is under the panes right now: { key, draw(g, W, H) } or { why } when it cannot be read
+  function adaptSource() {
+    const body = document.body;
+    if (body.classList.contains('has-wall')) {
+      if (!wall || !wall.el || wall.el.tagName !== 'IMG' || !wall.el.naturalWidth) {
+        return { why: 'the wallpaper is a ' + ((wall && wall.type) || 'moving') + ' wallpaper, which cannot be read back' };
+      }
+      const img = wall.el;
+      const fit = img.style.objectFit || 'cover';
+      const look = (wall.item && wall.item.look && wall.item.look.filter) || '';
+      return {
+        key: 'wall|' + wall.url + '|' + fit + '|' + look + '|' + innerWidth + 'x' + innerHeight,
+        draw(g, W, H) {
+          // the picture where object-fit put it (centred), on the page's black
+          const nw = img.naturalWidth, nh = img.naturalHeight;
+          let dw = W, dh = H;
+          if (fit !== 'fill') {
+            const cover = Math.max(W / nw, H / nh), contain = Math.min(W / nw, H / nh), own = 1 / ADAPT_SCALE;
+            const s = fit === 'contain' ? contain : fit === 'none' ? own : fit === 'scale-down' ? Math.min(own, contain) : cover;
+            dw = nw * s; dh = nh * s;
+          }
+          g.fillStyle = '#000';
+          g.fillRect(0, 0, W, H);
+          g.filter = look || 'none';
+          g.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+          g.filter = 'none';
+        },
+      };
+    }
+    if (body.classList.contains('no-backdrop') || !adapt.bdImg || !adapt.bdImg.naturalWidth) return { why: '' };
+    const img = adapt.bdImg;
+    return { key: 'bd|' + adapt.bdUrl.length + '|' + adapt.bdUrl.slice(-48) + '|' + innerWidth + 'x' + innerHeight,
+      draw(g, W, H) { g.drawImage(img, 0, 0, W, H); } };   // background-size: 100vw 100vh
+  }
+
+  function adaptPanes() {
+    if (document.documentElement.getAttribute('data-theme') !== 'dark' || !GA) {
+      clearAdapt();
+      if (!GA && document.documentElement.getAttribute('data-theme') === 'dark') adaptSay('ui/shared/glass-adapt.js did not load');
+      return;
+    }
+    const src = adaptSource();
+    if (!src.key) { clearAdapt(); adaptSay(src.why); return; }
+    const W = Math.max(1, Math.round(innerWidth / ADAPT_SCALE)), H = Math.max(1, Math.round(innerHeight / ADAPT_SCALE));
+    if (!adapt.canvas) adapt.canvas = document.createElement('canvas');
+    const c = adapt.canvas;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    if (adapt.key !== src.key) {
+      c.width = W; c.height = H;
+      src.draw(g, W, H);
+      adapt.key = src.key;
+    }
+    const T = GA.guardTokens(getComputedStyle(document.documentElement));
+    // the ceiling at or under the fill leaves the guard nothing to thicken: the same answer, unread
+    if (!(T.ceil > T.fill.a + 1e-9)) { clearAdapt(); window.__desktopGlass = { alpha: T.fill.a, engaged: false, why: 'ceiling = fill' }; adaptSay(''); return; }
+    let failed = '', pic = null;
+    try { pic = GA.glassPicture(g.getImageData(0, 0, W, H), T, 1 / ADAPT_SCALE); } catch (_) { failed = 'the wallpaper picture could not be read back (the page may not read that file)'; }
+    const seen = [];
+    document.querySelectorAll('.pane').forEach((p) => {
+      const r = p.getBoundingClientRect();
+      const res = pic ? GA.guardRect(pic, T, { x: r.left / ADAPT_SCALE, y: r.top / ADAPT_SCALE, w: r.width / ADAPT_SCALE, h: r.height / ADAPT_SCALE }) : null;
+      if (res && res.engaged) p.style.setProperty('--pane-tint', res.tint); else p.style.removeProperty('--pane-tint');
+      seen.push(res ? { alpha: res.alpha, ratio: res.ratio, engaged: res.engaged } : null);
+    });
+    window.__desktopGlass = { panes: seen };
+    adaptSay(failed);
+  }
+
+  function queueAdapt() {
+    if (adapt.queued) return;
+    adapt.queued = true;
+    requestAnimationFrame(() => { adapt.queued = false; adaptPanes(); });
+  }
+
+  // main's still capture, as a decoded picture the canvas can read (a data: URL, so never tainted)
+  function adaptBackdropPicture(url) {
+    if (adapt.bdUrl === url) return;
+    adapt.bdUrl = url;
+    const img = new Image();
+    img.onload = () => { if (adapt.bdUrl === url) { adapt.bdImg = img; queueAdapt(); } };
+    img.src = url;
+  }
+
+  window.addEventListener('mantle-theme', queueAdapt);
+  window.addEventListener('resize', queueAdapt);
+  if (typeof ResizeObserver === 'function') {
+    const ro = new ResizeObserver(queueAdapt);
+    document.querySelectorAll('.cluster, .pane').forEach((el) => ro.observe(el));
   }
 
   // Fires immediately with the current state, then on every change.

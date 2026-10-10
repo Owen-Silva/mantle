@@ -46,17 +46,23 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
  * No picture (a peek, a full-screen window under the bar, a failure, before the first one): no
  * #bdrop, and the dark fallback above. LIGHT never matches any of this: it is pixel for pixel as before. */
 #bdrop { display: none; }
-/* the dark fallback, NOTHING blurred under it (a peek, a full-screen window under the bar, a failure,
-   the moment before the first picture): the most see-through tint at which ink-2 still reads 4.5:1 over
-   the measured worst cases, a SHARP bright busy photo (.76 -> 4.74:1; .56 was 2.56:1) and a busy
-   terminal (.70 -> 4.55:1; .56 was 3.14:1). Light keeps --lg-fill-fb. */
-:root[data-theme="dark"] #bar { background-color: rgba(30,31,34,.76); }
+/* SAME BARS (lane same-bars, 2026-10-09; Owen: "everything the same ... go by what helm looks like"):
+   the dark fallback (NOTHING blurred under it: a peek, a full-screen window under the bar, a failure,
+   the moment before the first picture) is the token fallback, --lg-fill-pop, not a per-surface literal
+   (it was rgba(30,31,34,.76)); and the strip runs FLUSH
+   like Helm's: no line at its bottom edge. The light set's inset --lg-edge-out is black .42 in dark,
+   and over a maximized window it read as a dark 1-2 px groove under the bar (rows 33-34 at 125%,
+   luma 35.6 between 62 above and 53 below, Owen saw it), and in the final tokens --lg-edge-out is a
+   WHITE hairline, which would be a light line there instead. Helm's strip has no line at either edge,
+   so in dark the strip has none: no box-shadow at all. Its tint is the bars' own token, --lg-fill-bar
+   (Helm's rail / top strip, .75), floored there by the guard (topbar.js solveTint). */
+:root[data-theme="dark"] #bar { background-color: var(--lg-fill-pop); box-shadow: none; }
 :root[data-theme="dark"] body.glass #bdrop {
   display: block; position: absolute; left: 0; right: 0; top: 0; height: var(--tb-h);
   background-repeat: no-repeat; background-size: 100% 100%; pointer-events: none;
 }
 :root[data-theme="dark"] body.glass #bar {
-  background-color: var(--tb-tint, var(--lg-fill-fb));
+  background-color: var(--tb-tint, var(--lg-fill-bar));
   -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur);
 }
 /* FIT (2026-09-25, Owen: the stats were cut at "CPU 82%" at the screen's right edge). The stats
@@ -133,10 +139,10 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 /* fades in once, when it first appears: a re-render (hover, the 1 s stat sample) does not replay it */
 /* a long list scrolls: Settings' thin thumb that shows only while the pointer is over it, never Chromium's
    arrowed grey gutter */
-.dd::-webkit-scrollbar { width: 6px; }
-.dd::-webkit-scrollbar-button { display: none; height: 0; }
-.dd::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
-.dd:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); }
+:root:not([data-theme="dark"]) .dd::-webkit-scrollbar { width: 6px; }   /* dark: the global Helm scrollbar (glass-light.css) */
+:root:not([data-theme="dark"]) .dd::-webkit-scrollbar-button { display: none; height: 0; }
+:root:not([data-theme="dark"]) .dd::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+:root:not([data-theme="dark"]) .dd:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); }
 .dd.anim { animation: dd-in 140ms var(--lg-ease) backwards; }
 .dd.wait { visibility: hidden; animation: none; }
 @keyframes dd-in { from { opacity: 0; transform: translateY(-3px); } }
@@ -167,6 +173,67 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
   content: ''; position: absolute; left: 8px; top: 7px; width: 12px; height: 12px;
   background: currentColor; -webkit-mask: var(--warn-glyph) center / 12px 12px no-repeat;
 }
+
+/* THE DROPDOWNS IN DARK: HELM'S MENU ON A REAL PICTURE (lane same-bars, 2026-10-09). Owen: "everything
+ * the same ... go by what helm looks like", then "Match Helm's real look" (BRIEF-SEE-2 FINAL RULES).
+ * THE ONE RECIPE, as the bottom bar's pop-ups wear it: a blurred picture of what is behind the menu +
+ * ONE tint layer. The face was --hud-face, --lg-fill-strong three times over nothing blurred. Now
+ * topbar.js asks main for ONE picture per menu session (glass.topbarMenu: the screen under the bar
+ * window's width, top down to the work area's bottom, the bar itself left out), blurs it ONCE on a
+ * canvas with the token's own --lg-blur (nothing added), and every dropdown shows the piece of it it
+ * covers (--dd-bd at --dd-bd-pos: its own background, so it stays put while a long menu scrolls; no
+ * backdrop-filter). The tint is the shared readability guard's (ui/shared/glass-adapt.js guardRect,
+ * the strip's rule and thresholds): --lg-fill (Helm's panel, .83), whose floor and ceiling are the same
+ * here, so it never thickens. The first dropdown of a session waits hidden (#menus.pre) until the
+ * picture is ready or 250 ms pass, so it never flashes from the fallback to glass. No picture: ONE layer
+ * of --lg-fill-pop (the same .83), and the strip says why.
+ * Helm's menu (HELM-SPEC rows 4-24): its panel edge (the white --lg-edge-out hairline + the lip), menu
+ * radius --lg-r (10), shadow s3 (--lg-shadow), padding 4, min-width 180, items >= 30 tall, padding
+ * 5 10, gap 10, radius --lg-r-ctl; hover --lg-hover, pressed / the row whose submenu is open --lg-press
+ * + an inset hairline, never the accent; dividers --lg-divider 4px 6px; the type scale 11/12/13 (menu
+ * text 13, group header 12/600 28 tall); disabled --lg-disabled; focus --lg-focus. Menus have NO open
+ * animation in Helm (row 24), so none here. Light keeps every rule above this block. */
+:root[data-theme="dark"] .dd {
+  min-width: 180px; padding: 4px; font-size: 13px;
+  background: var(--lg-fill-pop);
+  border-color: var(--lg-edge-out);
+  border-radius: var(--lg-r);
+  box-shadow: var(--lg-lip-up), var(--lg-shadow);
+}
+:root[data-theme="dark"] .dd.glass {
+  background:
+    linear-gradient(var(--dd-tint, var(--lg-fill)), var(--dd-tint, var(--lg-fill))) 0 0 / 100% 100% no-repeat border-box,
+    var(--dd-bd) var(--dd-bd-pos, 0 0) / var(--dd-bd-size, cover) no-repeat border-box;
+}
+:root[data-theme="dark"] .dd.anim { animation: none; }
+:root[data-theme="dark"] #menus.pre > .dd { visibility: hidden; }
+/* the stat dropdown in Helm type (13 px, 10 px side padding) needs a little more room than light's 420: at 420 the
+   PING one cut "Measured to" to "Measur..." beside its host (label 58 of 73 px). Helm's 10 px gap + 440 px fit it */
+:root[data-theme="dark"] .dd.stat { min-width: 280px; max-width: 440px; }
+:root[data-theme="dark"] .r { height: auto; min-height: 30px; padding: 5px 10px; column-gap: 10px; border-radius: var(--lg-r-ctl); }
+:root[data-theme="dark"] .r.on,
+:root[data-theme="dark"] .r.sel:not(.off):active { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .r .ck { font-size: 12px; }
+:root[data-theme="dark"] .r .kb { font-size: 12px; }
+:root[data-theme="dark"] .r .ar { font-size: 11px; }
+:root[data-theme="dark"] .r.off,
+:root[data-theme="dark"] .r.off.sel { color: inherit; background: none; opacity: var(--lg-disabled); }
+:root[data-theme="dark"] .r.edit .lbi { height: 24px; padding: 0 10px; border-color: var(--lg-acc-line); border-radius: var(--lg-r-ctl); background: var(--lg-field); }
+:root[data-theme="dark"] .sep { margin: 4px 6px; background: var(--lg-divider); }
+:root[data-theme="dark"] .info { font-size: 12px; padding: 5px 10px 4px; }
+:root[data-theme="dark"] .info.bad { padding-left: 28px; }
+:root[data-theme="dark"] .info.bad::before { left: 10px; }
+:root[data-theme="dark"] .dd.stat h4 { margin: 0 10px; height: 28px; line-height: 28px; font-size: 12px; letter-spacing: .04em; }
+:root[data-theme="dark"] .row2 { padding: 2px 10px; column-gap: 10px; }
+:root[data-theme="dark"] .core { border-radius: var(--lg-r-ctl); background: var(--lg-field); }
+/* the strip in Helm's type scale (no half pixels), its focus ring and disabled titles, its icons at
+   Helm's stroke (1.6 per 16 px of viewBox, round caps) */
+:root[data-theme="dark"] body { font-size: 13px; }
+:root[data-theme="dark"] .paused,
+:root[data-theme="dark"] .warn { font-size: 12px; }
+:root[data-theme="dark"] .t:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .t.dim { color: inherit; opacity: var(--lg-disabled); }
+:root[data-theme="dark"] #bar svg { stroke-width: 1.6; stroke-linecap: round; }
 
 /* stat detail dropdowns */
 .dd.stat { min-width: 280px; }

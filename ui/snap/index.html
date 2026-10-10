@@ -11,6 +11,7 @@
 <!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="snap.css">
+<link rel="stylesheet" href="../shared/hud-backdrop.css">
 </head>
 <!-- ONE window, three faces (body.mode-*): the Win+Z layout picker, Snap Assist filling the space a
      snap left empty, and the notice that says why a window could not be snapped. Main sizes and
@@ -51,5 +52,8 @@
 <script src="mock-mantle.js"></script>
 <script src="layouts.js"></script>
 <script src="snap.js"></script>
+<!-- dark only: the blurred picture of the screen behind this window, once main sends snap.backdrop (lane see-huds) -->
+<script src="../shared/glass-adapt.js"></script>
+<script src="../shared/hud-backdrop.js" data-event="snap.backdrop" data-pane="#panel"></script>
 </body>
 </html>

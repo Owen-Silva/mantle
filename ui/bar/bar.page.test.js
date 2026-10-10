@@ -240,7 +240,16 @@ async function run() {
         box.remove();
         return { white: bg('#tray .ti.light .tico'), black: bg('#tray .ti.dark .tico'), plain: bg('#tray .ti:not(.light):not(.dark) .tico'),
           blur: getComputedStyle(document.querySelector('.bdrop img')).filter, scheme, sep: bg('.sep'), div: bg('.dock .div'),
-          edge: getComputedStyle(document.querySelector('.bar')).getPropertyValue('--pane-edge').trim() };
+          edge: getComputedStyle(document.querySelector('.bar')).getPropertyValue('--pane-edge').trim(),
+          // what the TOKENS resolve to in this theme (FINAL RULES: Helm's values), read rather than retyped
+          tok: (() => {
+            const pr = document.createElement('i'); document.body.appendChild(pr);
+            const v = (prop, val, key) => { pr.style.setProperty(prop, val); const c = getComputedStyle(pr)[key]; pr.style.removeProperty(prop); return c; };
+            const o = { ink2: v('color', 'var(--lg-ink-2)', 'color'), blur: v('filter', 'var(--lg-blur)', 'filter'),
+              divider: v('background-color', 'var(--lg-divider, var(--lg-edge-out))', 'backgroundColor'),
+              edgeOut: getComputedStyle(document.documentElement).getPropertyValue('--lg-edge-out').trim() };
+            pr.remove(); return o;
+          })() };
       });
       const flip = (theme) => pg.eval((th) => {
         if (th) document.documentElement.dataset.theme = th; else delete document.documentElement.dataset.theme;
@@ -257,17 +266,60 @@ async function run() {
       await pg.wait(50);
       const D = await read();
       t.check('dark: (dark) a white tray glyph needs no plate on dark glass', D.white === 'rgba(0, 0, 0, 0)', D);
-      t.check('dark: (dark) a black tray glyph sits on the light ink plate', D.black === 'rgb(196, 199, 206)', D);
+      t.check('dark: (dark) a black tray glyph sits on the light ink plate (--lg-ink-2)', D.black === D.tok.ink2, D);
       t.check('dark: (dark) a coloured glyph still gets none', D.plain === 'rgba(0, 0, 0, 0)', D);
-      t.check('dark: (dark) the backdrop blur is the theme\'s, with no extra dimming (50%, Helm\'s look)', /saturate\(1\.4\)/.test(D.blur) && !/brightness/.test(D.blur), D.blur);
+      t.check('dark: (dark) the backdrop blur is the token alone (Helm: blur only, no saturate, no dim)', D.blur === D.tok.blur && !/brightness|saturate/.test(D.blur), { blur: D.blur, tok: D.tok.blur });
       t.check('dark: (dark) game mode\'s checkboxes are a dark box', D.scheme === 'dark', D.scheme);
       t.check('dark: (light) the separators are the dark hairline', L.sep === 'rgba(11, 14, 26, 0.1)' && L.div === L.sep, L);
-      t.check('dark: (dark) the separators are the faint WHITE hairline, not a black groove', D.sep === 'rgba(255, 255, 255, 0.1)' && D.div === D.sep, D);
-      t.check('dark: (dark) the bar\'s own outer edge stays the black line', /^rgba\(0,\s*0,\s*0,/.test(D.edge), D.edge);
+      t.check('dark: (dark) the separators are Helm\'s divider, a faint WHITE hairline', D.sep === D.tok.divider && D.sep.indexOf('rgba(255, 255, 255,') === 0 && D.div === D.sep, D);
+      // lane same-bars (2026-10-09, FINAL RULES): --lg-edge-out IS Helm's white hairline in dark, and the island uses it
+      t.check('dark: (dark) the bar\'s own outer edge is Helm\'s white hairline (--lg-edge-out in dark)', D.edge === D.tok.edgeOut && D.edge.replace(/\s/g, '').indexOf('rgba(255,255,255,') === 0, { edge: D.edge, tok: D.tok.edgeOut });
+      t.check('dark: (light) the bar\'s own outer edge is still the dark line', /^rgba\(11,\s*14,\s*26,/.test(L.edge), L.edge);
       await flip(null);
       await pg.wait(50);
       const B = await read();
       t.check('dark: back to light, every one of them is as it was', JSON.stringify(B) === JSON.stringify(L), { before: L, after: B });
+
+      /* THE ONE RECIPE (lane same-bars, 2026-10-09; Owen: "everything at 50% ... it will all match way
+         better if its the same"). The strip: one --lg-fill over the blurred picture, the shared guard
+         (ui/shared/glass-adapt.js) thickening the TINT only when ink-2 would fall under 4.5:1. A pop-up:
+         held unpainted until its picture lands (pre-show), then ONE tint layer over that picture. */
+      const glass = async (strip, desk) => {
+        const g = await open(PILL + '&strip=' + strip, W);
+        await g.eval((d) => { document.documentElement.style.background = d; document.documentElement.dataset.theme = 'dark';
+          window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: 'dark' } })); }, desk);
+        await g.wait(700);   // a strip or two at the mock's pace, each solved on load
+        const s = await g.eval(() => {
+          const pr = document.createElement('i'); document.body.appendChild(pr);
+          const col = (val) => { pr.style.setProperty('background-color', val); const c = getComputedStyle(pr).backgroundColor; pr.style.removeProperty('background-color'); return c; };
+          const tok = { bar: col('var(--lg-fill-bar)'), fill: col('var(--lg-fill)') };
+          pr.remove();
+          return { tint: document.querySelector('.bar').style.getPropertyValue('--bar-tint'), tok,
+            fill: getComputedStyle(document.querySelector('.bar'), '::after').backgroundColor,
+            filter: getComputedStyle(document.querySelector('.bdrop img')).filter, solve: window.__barGlass && window.__barGlass.solve };
+        });
+        // clicked from inside the page so the class is read in the same task the pop-up opened in
+        const early = await g.eval(() => { document.querySelector('#clock').click(); return document.querySelector('#pop').className; });
+        await g.wait(400);
+        const p = await g.eval(() => { const e = document.querySelector('#pop'), cs = getComputedStyle(e);
+          return { cls: e.className, vis: cs.visibility, anim: cs.animationName, img: cs.backgroundImage, tint: e.style.getPropertyValue('--pop-tint'), g: window.__barGlass.pop }; });
+        await g.close();
+        return { s, early, p };
+      };
+      const alphaOf = (c) => { const m = /rgba\([^)]*,\s*([\d.]+)\)/.exec(c || ''); return m ? +m[1] : 1; };
+      const dk = await glass('dark', '#141619');
+      t.check('glass: (dark strip) the guard stays out: the island is --lg-fill-bar exactly (Helm\'s rail)', !dk.s.tint && dk.s.fill === dk.s.tok.bar && /^rgba\(/.test(dk.s.tok.bar), dk.s);
+      t.check('glass: (dark) the strip is blurred with the token alone, no brightness', !/brightness/.test(dk.s.filter), dk.s.filter);
+      t.check('glass: (dark) a pop-up opens held unpainted until its picture lands (pre-show)', /\bbdwait\b/.test(dk.early), dk.early);
+      t.check('glass: (dark desk) the pop-up is ONE --lg-fill layer over its picture (Helm\'s panel), guard out, no open animation',
+        /\bbd\b/.test(dk.p.cls) && !/bdwait/.test(dk.p.cls) && dk.p.vis === 'visible' && (dk.p.img.match(/gradient/g) || []).length === 1 &&
+        dk.p.img.indexOf(dk.s.tok.fill) >= 0 && /url\(/.test(dk.p.img) && !dk.p.tint && dk.p.g && dk.p.g.engaged === false && dk.p.anim === 'none', { p: dk.p, fill: dk.s.tok.fill });
+      const lt = await glass('light', '#ffffff');
+      t.check('glass: (bright strip) the guard thickens the island\'s TINT (the bar colour, never the picture) until ink-2 holds 4.5:1',
+        lt.s.tint && lt.s.solve && lt.s.solve.alpha > alphaOf(lt.s.tok.bar) && lt.s.solve.ratio >= 4.5 && !/brightness/.test(lt.s.filter), lt.s);
+      t.check('glass: (white desk) the pop-up stays ONE --lg-fill layer, and ink-2 already holds 4.5:1 on it',
+        lt.p.g && lt.p.g.engaged === false && lt.p.g.ratio >= 4.5 && !lt.p.tint && (lt.p.img.match(/gradient/g) || []).length === 1 && lt.p.img.indexOf(lt.s.tok.fill) >= 0, lt.p);
+
       t.check('dark: no page errors', pg.errors.length === 0, pg.errors);
       await pg.close();
     }

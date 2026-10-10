@@ -9,6 +9,7 @@
 <!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="layouts.css">
+<link rel="stylesheet" href="../shared/hud-backdrop.css">
 </head>
 <body>
 <!-- The result of a window layout (lib/features/layouts.js): "Work: 3 placed, 1 opened, 1 not
@@ -25,5 +26,8 @@
   <button id="undo" class="undo" type="button" title="Put the windows back where they were" hidden>Undo</button>
 </div>
 <script src="layouts.js"></script>
+<!-- dark only: the blurred picture of the screen behind this window, once main sends layouts.backdrop (lane see-huds) -->
+<script src="../shared/glass-adapt.js"></script>
+<script src="../shared/hud-backdrop.js" data-event="layouts.backdrop" data-pane="#t"></script>
 </body>
 </html>

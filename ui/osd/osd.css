@@ -30,6 +30,15 @@
   --warn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E");
 }
 
+/* DARK, SEE-THROUGH (lane see-huds, 2026-10-09). Owen, on dark Mantle: "mantle needs to be more see
+   through everything". --hud-face is --lg-fill-strong three times over: ~88% at the dark .50, a slab.
+   In dark the face is ONE layer of --lg-fill (FINAL RULES: = --lg-fill-pop, both .83), the bar popovers' fill for a surface with nothing
+   blurred behind it, so the screen behind shows through about 2.5x as much (share ~.18, was ~.07 at .58, ~.12 at .50).
+   Light is untouched. */
+:root[data-theme="dark"] {
+  --hud-face: var(--lg-fill-pop);   /* the no-picture face: the token for it (.88), raised over --lg-fill so faint text stays readable over a bright window (lane helm-wall) */
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -272,4 +281,53 @@ body[data-below] .osd.open .more svg { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .osd, .more svg, .glyph, .more, .amute, .retry { transition: none; }
+}
+
+/* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
+   Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
+   literal Helm). The face is ONE layer of --lg-fill (root block above). The pill wears the pop-ups'
+   edge: its --lg-edge-out hairline plus the --lg-lip-up lip over --lg-shadow. HELM-SPEC rows applied:
+   12 type (12.5 -> 13), 16 icon buttons (transparent, --lg-ink-2, hover --lg-press, pressed --lg-card,
+   "on" = --lg-press + hairline instead of an accent block; the retry button is a Helm button),
+   18 dividers, 19 focus, 23 disabled, 24 motion (hover 120 ms on Helm's curve; no exit fade: osd.js
+   times the hide itself, fadeMs, it does not wait on a transition event). Light is untouched. */
+:root[data-theme="dark"], :root[data-theme="dark"] body { font-size: 13px; }
+:root[data-theme="dark"] .osd { box-shadow: var(--lg-lip-up), var(--lg-shadow); transition: none; }
+:root[data-theme="dark"] .osd.open .pill { border-top-color: var(--lg-divider); }
+:root[data-theme="dark"] body[data-below] .osd.open .pill { border-bottom-color: var(--lg-divider); }
+:root[data-theme="dark"] .app + .app { border-top-color: var(--lg-divider); }
+:root[data-theme="dark"] .glyph,
+:root[data-theme="dark"] .more,
+:root[data-theme="dark"] .amute {
+  color: var(--lg-ink-2);
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), color var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .glyph:hover,
+:root[data-theme="dark"] .more:hover,
+:root[data-theme="dark"] .amute:hover { background: var(--lg-press); color: var(--lg-ink); }
+:root[data-theme="dark"] .glyph:active,
+:root[data-theme="dark"] .more:active,
+:root[data-theme="dark"] .amute:active { background: var(--lg-card); }
+:root[data-theme="dark"] .glyph.on,
+:root[data-theme="dark"] .amute.on { background: var(--lg-press); color: var(--lg-ink); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .osd[data-kind="brightness"] .glyph:hover { background: transparent; color: var(--lg-ink-2); }
+:root[data-theme="dark"] .retry {
+  background: var(--lg-card);
+  color: var(--lg-ink);
+  font-weight: 500;
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out), inset 0 1px 0 var(--lg-edge-inner);
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), box-shadow var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .retry:hover { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-strong), inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .retry:active { background: var(--lg-card); }
+:root[data-theme="dark"] .glyph.pending,
+:root[data-theme="dark"] .amute.pending,
+:root[data-theme="dark"] .level:disabled { opacity: var(--lg-disabled); }
+:root[data-theme="dark"] .glyph:focus-visible,
+:root[data-theme="dark"] .more:focus-visible,
+:root[data-theme="dark"] .amute:focus-visible,
+:root[data-theme="dark"] .retry:focus-visible,
+:root[data-theme="dark"] .level:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="dark"] .glyph, :root[data-theme="dark"] .more, :root[data-theme="dark"] .amute, :root[data-theme="dark"] .retry { transition: none; }
 }

@@ -16,7 +16,19 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
 
-const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// the newest installed Playwright Chromium (the pinned chromium-1234 build was removed 2026-10-05;
+// lane same-finish, 2026-10-09, same recipe as ui/desktop/wall-player.test.js)
+const CHROME = (() => {
+  const fsx = require('fs');
+  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  try {
+    for (const d of fsx.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
+      const p = base + '/' + d + '/chrome-win64/chrome.exe';
+      if (fsx.existsSync(p)) return p;
+    }
+  } catch (_) { /* reported below as "no chromium at" */ }
+  return base + '/chromium-*/chrome-win64/chrome.exe';
+})();
 const PAGE = 'file:///C:/Users/user/mantle/ui/osd/index.html';
 const OUT = process.env.MANTLE_SHOOT_OUT || path.join(os.tmpdir(), 'mantle-osd', 'shots');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;

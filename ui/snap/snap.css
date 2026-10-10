@@ -28,6 +28,16 @@
   --warn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E");
 }
 
+/* DARK, SEE-THROUGH (lane see-huds, 2026-10-09). Owen, on dark Mantle: "mantle needs to be more see
+   through everything". --hud-face is --lg-fill-strong three times over: ~88% at the dark .50, a slab.
+   In dark the face is ONE layer of --lg-fill (FINAL RULES: = --lg-fill-pop, both .83), the bar popovers' fill for a surface with nothing
+   blurred behind it, so the screen behind shows through about 2.5x as much (share ~.18, was ~.07 at .58, ~.12 at .50).
+   Light is untouched. */
+:root[data-theme="dark"] {
+  --hud-face: var(--lg-fill-pop);   /* the no-picture face: the token for it (.88), raised over --lg-fill so faint text stays readable over a bright window (lane helm-wall) */
+  --hud-ground: var(--hud-face);   /* assist: the face alone, no --lg-sunk stacked on it (lane same-huds-css) */
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -132,7 +142,6 @@ body.mode-picker .picker, body.mode-assist .assist, body.mode-notice .notice { d
 /* Dark: --lg-fill-fb is darker than the face, so the zones read as holes in the layout instead of
    the raised cells they are in light. Raised in dark is lighter: the tile wash. */
 :root[data-theme="dark"] .zone { background: var(--lg-tile); }
-:root[data-theme="dark"] .zone.sel, :root[data-theme="dark"] .zone:active { background: linear-gradient(var(--lg-press), var(--lg-press)), var(--lg-tile); }
 
 /* ---- Snap Assist ----------------------------------------------------------------------------- */
 
@@ -202,3 +211,40 @@ body.is-empty .tiles { display: none; }
   background: var(--lg-warn); -webkit-mask: var(--warn-glyph) center / 12px 12px no-repeat;
 }
 .n-x { color: var(--lg-ink-2); line-height: 1.4; }
+
+/* DARK (lane see-huds, 2026-10-09): on the one-layer face the quiet --lg-ink-3 words fell under 4.5:1 over a
+   bright page, so in dark they are --lg-ink-2 (light is untouched). */
+:root[data-theme="dark"] .h-app,
+:root[data-theme="dark"] .foot,
+:root[data-theme="dark"] .cap .min,
+:root[data-theme="dark"] .more { color: var(--lg-ink-2); }
+
+/* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
+   Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
+   literal Helm). The face is ONE layer of --lg-fill (root block above; the assist ground is the face
+   alone). The panel is Helm's big pane (--lg-r-xl) with its --lg-edge-out hairline plus the
+   --lg-lip-up lip over --lg-shadow. HELM-SPEC rows applied: 3 (a layout card is a --lg-field well,
+   its zones --lg-card cells), 10 radii (layout card = row radius, zone and letter tile = control
+   radius), 12 type (12.5 -> 13, 11.5 -> 12, 10 -> 11, 15 -> 16), 14 (window tiles: hover --lg-hover,
+   chosen = --lg-press + one hairline, NO accent ring; pressed --lg-press; the preview well lays no
+   second fill), a chosen ZONE is a chip that is on (the accent wash and the accent line, 1px, one
+   layer), 24 (hover 120 ms on Helm's curve). Light is untouched. */
+:root[data-theme="dark"] { --panel-r: var(--lg-r-xl); }
+:root[data-theme="dark"], :root[data-theme="dark"] body { font-size: 13px; }
+:root[data-theme="dark"] .foot { font-size: 12px; }
+:root[data-theme="dark"] .letter { font-size: 11px; }
+:root[data-theme="dark"] .pv .letter { font-size: 16px; }
+:root[data-theme="dark"] .panel { box-shadow: var(--lg-lip-up), var(--lg-shadow); }
+:root[data-theme="dark"] .layout { border-radius: var(--lg-r); background: var(--lg-field); }
+:root[data-theme="dark"] .zone { border-radius: var(--lg-r-ctl); background: var(--lg-card); }
+:root[data-theme="dark"] .zone:hover { box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
+:root[data-theme="dark"] .zone.sel,
+:root[data-theme="dark"] .zone:active { background: var(--lg-acc-soft); box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
+:root[data-theme="dark"] .tile { border-radius: var(--lg-r); transition: background-color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .tile:hover { background: var(--lg-hover); }
+:root[data-theme="dark"] .tile.sel { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .tile:active { background: var(--lg-press); }
+:root[data-theme="dark"] .pv { background: transparent; }
+:root[data-theme="dark"] .letter,
+:root[data-theme="dark"] .pv .letter { border-radius: var(--lg-r-ctl); }
+@media (prefers-reduced-motion: reduce) { :root[data-theme="dark"] .tile { transition: none; } }

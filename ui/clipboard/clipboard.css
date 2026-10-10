@@ -293,3 +293,88 @@ body.noting .note { display: block; }
   padding: 0 4px;
   margin-right: 3px;
 }
+
+/* ---- DARK, SEE-THROUGH (lane see-huds, 2026-10-09) --------------------------------------------
+   Owen, on dark Mantle: "mantle needs to be more see through everything". The panel above is
+   --lg-fill-strong three times under --lg-sunk (~89% at the dark .50) and every card on it is the
+   fill once more: a slab. In dark the panel is ONE layer of --lg-fill (FINAL RULES: = --lg-fill-pop, both .83), the bar popovers' fill for
+   a surface with nothing blurred behind it (this window has no screen capture), so the screen behind
+   shows through about 2.5x as much. The cards on it are white washes, not more fill: a card is raised
+   by being lighter, the way dark Settings does it. The placeholder goes to --lg-ink-2: --lg-ink-3 on
+   the thinner pane fell under 4.5:1 over a bright page. The floating .note keeps its opaque ground
+   (it sits over the rows' text). Light is untouched. */
+:root[data-theme="dark"] .panel { background: var(--lg-fill); }
+:root[data-theme="dark"] .filter { background: var(--lg-sunk); }
+:root[data-theme="dark"] .banner,
+:root[data-theme="dark"] .img { background: var(--lg-sunk); }
+:root[data-theme="dark"] .filter input::placeholder { color: var(--lg-ink-2); }
+
+/* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
+   Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
+   literal Helm). The pane is ONE layer of --lg-fill with its --lg-edge-out hairline, the --lg-lip-up
+   lip and --lg-shadow, at Helm's big-pane radius (--lg-r-xl). HELM-SPEC rows applied: 3 (the filter
+   is a --lg-field, the banner a --lg-card), 10 radii, 12 type (12.5 -> 13, 13.5 -> 14, 11.5 -> 12),
+   14 + 15 rows (nothing at rest, --lg-hover, chosen = --lg-press + one hairline, NO accent tick, Helm's
+   list-row padding 6 6 6 12 and 36 px floor), 16 chip (24 px pill, --lg-card, hairline, 12/500; hover
+   --lg-press + the strong hairline) and icon buttons (hover --lg-press, pressed --lg-card), input
+   (hairline, strong on hover, the accent line typed), 19 focus, 20 scrollbar (the global Helm bar),
+   21/22 (no accent caret: it follows the text). The note over the rows stays opaque (it covers their
+   text): ONE layer of the ground, pop-up radius and lip. Light is untouched. */
+:root[data-theme="dark"] { --panel-r: var(--lg-r-xl); --row-r: var(--lg-r); }
+:root[data-theme="dark"], :root[data-theme="dark"] body { font-size: 13px; }
+:root[data-theme="dark"] .title,
+:root[data-theme="dark"] .empty-t { font-size: 14px; }
+:root[data-theme="dark"] .txt,
+:root[data-theme="dark"] .empty-x,
+:root[data-theme="dark"] .note-x { font-size: 13px; }
+:root[data-theme="dark"] .meta,
+:root[data-theme="dark"] .foot { font-size: 12px; }
+:root[data-theme="dark"] .panel { background: var(--lg-fill); box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow); }
+:root[data-theme="dark"] .chip {
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--lg-r-chip);
+  background: var(--lg-card);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+  font-weight: 500;
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), color var(--lg-dur-ui) var(--lg-ease-ui), box-shadow var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .chip:hover { background: var(--lg-press); color: var(--lg-ink); box-shadow: inset 0 0 0 1px var(--lg-edge-strong); }
+:root[data-theme="dark"] .chip:active { background: var(--lg-card); }
+:root[data-theme="dark"] .filter { background: var(--lg-field); }
+:root[data-theme="dark"] .filter:hover { box-shadow: inset 0 0 0 1px var(--lg-edge-strong); }
+:root[data-theme="dark"] .filter.armed,
+:root[data-theme="dark"] .filter.typing { box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
+:root[data-theme="dark"] .filter input { caret-color: auto; }
+:root[data-theme="dark"] .banner { background: var(--lg-card); }
+:root[data-theme="dark"] .row {
+  min-height: 36px;
+  padding: 6px 6px 6px 12px;
+  background: transparent;
+  box-shadow: none;
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .row:hover { background: var(--lg-hover); }
+:root[data-theme="dark"] .row.sel { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .row:active { background: var(--lg-press); }
+:root[data-theme="dark"] .row.sel::before { display: none; }
+:root[data-theme="dark"] .img { border-radius: var(--lg-r-ctl); }
+:root[data-theme="dark"] .act { transition: background-color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .act:hover { background: var(--lg-press); }
+:root[data-theme="dark"] .act:active { background: var(--lg-card); }
+:root[data-theme="dark"] .note {
+  border-radius: var(--lg-r-pop);
+  background: var(--lg-ground);
+  box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+}
+:root[data-theme="dark"] .chip:focus-visible,
+:root[data-theme="dark"] .act:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+/* the global Helm scrollbar (glass-light.css), restated here because this list's own 6px rule would
+   otherwise win over the zero-specificity global one */
+:root[data-theme="dark"] .list::-webkit-scrollbar { width: 10px; height: 10px; }
+:root[data-theme="dark"] .list::-webkit-scrollbar-thumb,
+:root[data-theme="dark"] .list:hover::-webkit-scrollbar-thumb { background: var(--lg-scroll); border: 3px solid transparent; background-clip: padding-box; border-radius: 10px; }
+:root[data-theme="dark"] .list::-webkit-scrollbar-thumb:hover { background-color: var(--lg-scroll-hover); }
+/* the chosen row's wash lifts the ground under its meta line: --lg-ink-2 measured 4.0:1 there over a
+   bright photo, so on the chosen row the meta is --lg-ink (4.5:1+) */
+:root[data-theme="dark"] .row.sel .meta { color: var(--lg-ink); }

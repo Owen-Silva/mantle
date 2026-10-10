@@ -28,6 +28,12 @@
   var N = Math.max(0, Number(F.has('n') ? F.get('n') : 7));
   var D = Math.max(1, Number(F.get('d') || 2));
   var DARK = F.get('dark') === '1';
+  /* SCENE MODE, MOCK ONLY (lane see-glass-b, 2026-10-09): a harness sets window.__mockScene = {url} (a
+     1920x1080 picture as a data URL) in an init script; it becomes the desktop behind the page, and the
+     stand-in blur-behind also darkens by the sidecar's default acrylic tint (60% black, Glass.cs
+     DefaultTint 0x99000000) so the page's fill is judged over what DWM really hands it. Without
+     __mockScene nothing here changes. */
+  var SCENE = window.__mockScene && window.__mockScene.url ? window.__mockScene : null;
   var LONG = F.get('long') === '1';
   var listeners = {};
   function emit(name, payload) { (listeners[name] || []).forEach(function (cb) { cb(payload); }); }
@@ -105,7 +111,8 @@
     });
     // The desktop goes on <html>'s background, BEHIND <body>, so body's backdrop-filter (standing in
     // for the sidecar's blur-behind) really blurs it; a child canvas would paint over the blur.
-    document.documentElement.style.background = 'url(' + back.toDataURL() + ') 0 0 / 100% 100% no-repeat';
+    document.documentElement.style.background = SCENE ? 'url("' + SCENE.url + '") 0 0 / 100% 100% no-repeat'
+      : 'url(' + back.toDataURL() + ') 0 0 / 100% 100% no-repeat';
     if (!document.body.contains(pics)) document.body.appendChild(pics);
   }
 
@@ -145,7 +152,7 @@
     setupCanvases();
     pics.getContext('2d').clearRect(0, 0, pics.width, pics.height);
     var glass = F.get('glass') === '0' ? { ok: false, reason: 'SetWindowCompositionAttribute was refused (mock)' } : { ok: true };
-    document.body.style.backdropFilter = glass.ok ? 'blur(28px) saturate(150%)' : '';
+    document.body.style.backdropFilter = glass.ok ? 'blur(28px) saturate(150%)' + (SCENE ? ' brightness(.4)' : '') : '';
     var s = state();
     s.seq = seq; s.glass = glass;
     window.__mock.openAt = performance.now();

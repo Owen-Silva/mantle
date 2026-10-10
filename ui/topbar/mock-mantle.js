@@ -104,6 +104,7 @@
       if (fail && !/hello|menuState|menus|statsDetail|uia$/.test(name)) return Promise.resolve({ ok: false, reason: 'the app did not accept the command (PostMessage failed: it runs as administrator above Mantle)' });
       switch (name) {
         case 'topbar.hello': return Promise.resolve({ focus, stats });
+        case 'glass.topbarMenu': return menuPicture();
         case 'topbar.menus': return Promise.resolve({ menu: focus.menu, inited: 1 });
         case 'topbar.uia': return Promise.resolve({ menu: { source: 'uia', hwnd: focus.hwnd, items: [
           { t: 'item', pos: 0, label: 'View', mn: 'v', items: [], lazy: true, enabled: true }, { t: 'item', pos: 1, label: 'History', mn: 'h', items: null, enabled: true }] } });
@@ -118,6 +119,71 @@
       }
     },
   };
+  /* THE SCENE (lane same-bars, 2026-10-09): what is "behind" the bar in a shot, for the dark glass.
+     ?scene=<file URL> (cover-fit to the SCREEN, as the desktop draws a wallpaper) or ?flat=<#hex>
+     (a known flat backdrop, to measure the tint's composite alpha); ?maxwin=1 adds a dark maximized
+     window from the bar's bottom down. The page's own background shows the same scene, and main's two
+     pictures are made from it as main makes them: the strip's ('topbar.backdrop', the desktop's top
+     strip, wallpaper only) and the menus' (glass.topbarMenu: everything under the window's width down
+     to the work area's bottom), both 4x downscaled PHYSICAL pixels. ?bdms=<ms> delays the menus'
+     picture (a slow capture), ?bdfail=1 fails it. File pictures need --allow-file-access-from-files. */
+  const SCENE = q.get('scene'), FLAT = q.get('flat'), MAXWIN = q.get('maxwin') === '1', MAXWIN_RGB = '#202020';
+  const sceneReady = (SCENE || FLAT) ? new Promise((res) => {
+    if (!SCENE) { res(null); return; }
+    const im = new Image();
+    im.onload = () => res(im); im.onerror = () => res(null);
+    im.src = SCENE;
+  }) : null;
+  const scr = () => ({ w: (window.screen && window.screen.width) || window.innerWidth, h: (window.screen && window.screen.height) || window.innerHeight });
+  // the screen's rectangle (x, y, w, h in CSS px) drawn into a canvas of cw x ch
+  function drawScene(im, x, y, w, h, cw, ch, withWin) {
+    const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+    const g = c.getContext('2d');
+    const s = scr(), k = cw / w;
+    g.save(); g.scale(k, ch / h); g.translate(-x, -y);
+    if (im) {
+      const f = Math.max(s.w / im.naturalWidth, s.h / im.naturalHeight), dw = im.naturalWidth * f, dh = im.naturalHeight * f;
+      g.drawImage(im, (s.w - dw) / 2, (s.h - dh) / 2, dw, dh);
+    } else { g.fillStyle = FLAT || '#000'; g.fillRect(0, 0, s.w, s.h); }
+    if (withWin && MAXWIN) { g.fillStyle = MAXWIN_RGB; g.fillRect(0, 28, s.w, s.h - 28); }
+    g.restore();
+    return c;
+  }
+  const phys4 = (n) => Math.max(1, Math.round(n * (window.devicePixelRatio || 1) / 4));
+  async function menuPicture() {
+    const t0 = performance.now();
+    const ms = +(q.get('bdms') || 0);
+    if (ms) await new Promise((r) => setTimeout(r, ms));
+    if (q.get('bdfail') === '1') return { ok: false, reason: 'mock: the capture failed (bdfail=1)' };
+    if (!sceneReady) return { ok: false, reason: 'mock: no scene to take a picture of (no ?scene= or ?flat=)' };
+    const im = await sceneReady;
+    const s = window.screen || {};
+    const at = { x: 0, y: 0, w: window.innerWidth, h: (s.availHeight || s.height || window.innerHeight) - (window.screenY || 0) };
+    const c = drawScene(im, 0, 0, at.w, at.h, phys4(at.w), phys4(at.h), true);
+    return { ok: true, png: c.toDataURL('image/png'), w: c.width, h: c.height, at, ms: Math.round(performance.now() - t0) };
+  }
+  if (sceneReady) {
+    window.addEventListener('load', async () => {
+      const im = await sceneReady;
+      const s = scr();
+      // the page's own background: the screen as it is under the window (the window sits at 0,0)
+      if (im) {
+        const f = Math.max(s.w / im.naturalWidth, s.h / im.naturalHeight), dw = im.naturalWidth * f, dh = im.naturalHeight * f;
+        document.body.style.setProperty('background', `url("${SCENE}") ${(s.w - dw) / 2}px ${(s.h - dh) / 2}px / ${dw}px ${dh}px no-repeat`);
+      } else document.body.style.setProperty('background', FLAT || '#000');
+      if (MAXWIN) {
+        const win = document.createElement('div');
+        win.id = 'mock-maxwin';
+        for (const [k, v] of [['position', 'fixed'], ['left', '0'], ['right', '0'], ['top', '28px'], ['bottom', '0'], ['background', MAXWIN_RGB]]) win.style.setProperty(k, v);
+        document.body.insertBefore(win, document.body.firstChild);
+      }
+      if (document.documentElement.getAttribute('data-theme') === 'dark' && q.get('strip') !== '0') {   // strip=0: the strip on its fallback
+        const strip = drawScene(im, 0, 0, s.w, 28, phys4(s.w), phys4(28), false);
+        window.mantle.emit('topbar.backdrop', { png: strip.toDataURL('image/png'), ms: 0 });
+      }
+      document.documentElement.dataset.scene = '1';
+    });
+  }
   window.addEventListener('load', () => {
     if (q.get('stats') === 'paused') window.mantle.emit('topbar.stats', { paused: true, reason: 'the screen is locked' });
     if (q.get('note') === '1') window.mantle.emit('topbar.note', { text: 'the top bar cannot follow the focused app: the sidecar did not answer within 4 s' });

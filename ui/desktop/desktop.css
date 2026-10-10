@@ -176,6 +176,36 @@ body.has-wall .pane { -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: 
 body.has-wall .pane > .bdrop { display: none; }
 body.has-wall .pane::after { background-color: var(--lg-fill); }
 
+/* DARK (lanes see-glass-b, same-shell; 2026-10-09). One layer of --lg-fill over the blurred picture,
+   blurred with --lg-blur and nothing else. The one allowed deviation is THE shared readability guard
+   (ui/shared/glass-adapt.js guard(), the top bar's rule): desktop.js sets --pane-tint on a pane only if
+   --lg-ink-2 needs a thicker tint over the brightest blurred pixel under it, capped at --lg-fill-pop.
+   No picture at all (the capture failed): whatever is behind shows SHARP, so the no-picture token. */
+:root[data-theme="dark"] .pane::after { background-color: var(--pane-tint, var(--lg-fill)); }
+:root[data-theme="dark"] body.no-backdrop:not(.has-wall) .pane::after { background-color: var(--lg-fill-pop); }
+
+/* DARK, ONE SHEET (lane same-shell, 2026-10-09; Owen: "can you make sure everything is the same").
+   Every dark surface is the same glass: one --lg-fill over the blurred picture, the token hairlines,
+   the token radius. Here that means: the pane takes the pop-up radius token (same 16px value, now
+   from the token), the Mission Control frame drops its --lg-sunk well (a second layer on the pane;
+   its hairline still marks the frame while the dashboard paints), and the "Needs attention" pane
+   keeps the plain --lg-edge-out hairline every other pane has (its warn heading and warn pips
+   already say "look at me"; a coloured edge is a bespoke border). */
+:root[data-theme="dark"] .pane { border-radius: var(--lg-r-pop); }
+:root[data-theme="dark"] .mc-frame { background: transparent; }
+:root[data-theme="dark"] .strip::after { border-color: var(--lg-edge-out); }
+/* HELM (HELM-SPEC.md rows 6, 11, 12, 18). The panes are Helm panels: Helm's panel shadow (s2 =
+   --lg-drop-dn; --lg-shadow is s3, for pop-ups). Helm's face and features, the display cut for the
+   clock; the section labels are Helm's group label (11px, 600, +.04em, upper case); the one half-pixel
+   size snaps to Helm's 12; the readout rows are split by the divider token. */
+:root[data-theme="dark"] .pane { box-shadow: var(--lg-drop-dn); }
+:root[data-theme="dark"] body { font-family: var(--lg-font); font-feature-settings: "ss01", "cv11"; }
+:root[data-theme="dark"] .clock { font-family: var(--lg-font-display); }
+:root[data-theme="dark"] .tile-head { font-weight: 600; letter-spacing: .04em; }
+:root[data-theme="dark"] .head-note { font-weight: 500; }   /* as before: it inherited the label's 500 */
+:root[data-theme="dark"] .note { font-size: 12px; }
+:root[data-theme="dark"] .row + .row { border-top-color: var(--lg-divider); }
+
 /* the content, above both layers */
 .pane > :not(.bdrop) { position: relative; z-index: 2; }
 
@@ -334,10 +364,11 @@ dd {
   gap: 8px;
 }
 
-.strip-list::-webkit-scrollbar { width: 6px; }
-.strip-list::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 3px; }
-.strip-list::-webkit-scrollbar-thumb:hover { background: var(--lg-press); }
-.strip-list::-webkit-scrollbar-track { background: transparent; }
+/* light only since lane same-shell (2026-10-09): dark takes the global Helm scrollbar in glass-light.css */
+:root:not([data-theme="dark"]) .strip-list::-webkit-scrollbar { width: 6px; }
+:root:not([data-theme="dark"]) .strip-list::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 3px; }
+:root:not([data-theme="dark"]) .strip-list::-webkit-scrollbar-thumb:hover { background: var(--lg-press); }
+:root:not([data-theme="dark"]) .strip-list::-webkit-scrollbar-track { background: transparent; }
 
 .strip-list li {
   display: grid;

@@ -100,8 +100,12 @@
   const docEl = document.documentElement;
   const glassAsked = /[?&]glass=acrylic(&|$)/.test(location.search);
   S.glass = glassAsked ? { material: 'acrylic', ok: null, why: null } : null;
+  /* lane helm-wall-apps (2026-10-09): in DARK there is no acrylic; the page paints the desktop wallpaper
+     (ui/shared/wall-bdrop.js), so the glass face is on while that picture is, and About says why when it is not. */
+  const darkPage = () => docEl.getAttribute('data-theme') === 'dark';
   function glassApply() {
-    docEl.classList.toggle('glass', !!(glassAsked && S.glass && S.glass.ok === true));
+    const W = window.MantleWallBdrop;
+    docEl.classList.toggle('glass', darkPage() ? !!(W && W.state === 'on') : !!(glassAsked && S.glass && S.glass.ok === true));
     docEl.classList.toggle('inactive', !document.hasFocus());
   }
   function glassTake(g) {
@@ -111,6 +115,8 @@
     if (S.view === 'about') schedule();
   }
   glassApply();
+  window.addEventListener('mantle-wall', () => { glassApply(); if (S.view === 'about') schedule(); });
+  window.addEventListener('mantle-theme', () => glassApply());
   window.addEventListener('focus', () => docEl.classList.remove('inactive'));
   window.addEventListener('blur', () => docEl.classList.add('inactive'));
 
@@ -1195,8 +1201,14 @@
       row({ id: 'about.mode', label: v.mode === 'test' ? 'Test copy' : 'Running as your shell', tile: tile(icon('about')),
         help: v.mode === 'test' ? 'A test copy of Mantle: switches here show what they would do and change nothing on this PC' : 'Mantle starts when you sign in and replaces the Windows taskbar, Start and Settings' })));
     const gl = S.glass;
+    const W = window.MantleWallBdrop;
     out.push(groupT('Window', 'about-w'));
-    out.push(card('about-w', row({ id: 'about.glass', tile: tile(icon('display')),
+    // dark (lane helm-wall-apps): the wallpaper picture, not DWM's acrylic
+    if (darkPage()) out.push(card('about-w', row({ id: 'about.glass', tile: tile(icon('display')),
+      label: W && W.state === 'on' ? 'Wallpaper glass window' : W && W.state === 'off' ? 'Solid window (no wallpaper picture)' : 'Wallpaper glass: waiting for the picture…',
+      help: W && W.state === 'on' ? 'In dark the window paints your wallpaper, blurred, under its tint, the way Helm does' : null,
+      why: W && W.state === 'off' ? W.reason || 'no reason came back' : !W ? 'the wallpaper picture script did not load' : gl && gl.ok === false ? gl.why || null : null })));
+    else out.push(card('about-w', row({ id: 'about.glass', tile: tile(icon('display')),
       label: !gl ? 'Solid window' : gl.ok === true ? 'Frosted glass window' : gl.ok === false ? 'Solid window (glass is off)' : 'Frosted glass: checking with Windows…',
       help: !gl ? 'This window was opened without the frosted glass look' : gl.ok === true ? 'The frosted glass shows while the window is active; Windows draws it solid while it is in the background' : null,
       why: gl && gl.ok === false ? gl.why || 'no reason came back' : null })));

@@ -49,7 +49,24 @@
      awful wallpaper: bright, saturated, high-frequency. If text still reads
      over that, it reads over anything. Set through CSSOM rather than a <style>
      tag because the page's CSP allows the first and blocks the second. */
-  if (flags.get('bg') === '1') {
+  /* SCENE MODE, MOCK ONLY (lane see-glass-b, 2026-10-09): a harness sets window.__mockScene =
+     {url: a 1920x1080 picture as a data URL} in an init script. The page then sits over that
+     picture as the window would at LAUNCHER_RECT, and the backdrop main would send is the same
+     picture cropped to that rect and downscaled 4x. Without __mockScene nothing here changes. */
+  var SCENE = window.__mockScene && window.__mockScene.url ? window.__mockScene : null;
+  var LAUNCHER_RECT = { x: 620, y: 310, w: 680, h: 460 };
+  var sceneImg = null, sceneWait = null;
+  if (SCENE) {
+    sceneWait = [];
+    sceneImg = new Image();
+    sceneImg.onload = function () { var w = sceneWait; sceneWait = null; w.forEach(function (f) { f(); }); };
+    sceneImg.src = SCENE.url;
+    document.documentElement.style.background = 'url("' + SCENE.url + '") ' + (-LAUNCHER_RECT.x) + 'px ' +
+      (-LAUNCHER_RECT.y) + 'px / 1920px 1080px no-repeat';
+  }
+  function whenScene(fn) { if (sceneWait) sceneWait.push(fn); else fn(); }
+
+  if (!SCENE && flags.get('bg') === '1') {
     document.documentElement.style.background =
       'repeating-linear-gradient(115deg, #ff7a45 0px, #ffd166 90px, #fff2e0 150px, ' +
       '#8ef0c8 210px, #6bb7ff 280px, #c79bff 340px, #ff7a45 420px)';
@@ -272,6 +289,10 @@
     var c = document.createElement('canvas');
     c.width = BD_W; c.height = BD_H;
     var g = c.getContext('2d');
+    if (SCENE) {
+      g.drawImage(sceneImg, LAUNCHER_RECT.x, LAUNCHER_RECT.y, LAUNCHER_RECT.w, LAUNCHER_RECT.h, 0, 0, BD_W, BD_H);
+      return c.toDataURL('image/png');
+    }
     var grad = g.createLinearGradient(0, 0, BD_W, BD_H);
     var stops = ['#2f6fe0', '#b23fd0', '#d64545', '#e0a059', '#1f8f4e', '#2f6fe0'];
     for (var i = 0; i < stops.length; i++) grad.addColorStop(i / (stops.length - 1), stops[i]);
@@ -367,14 +388,14 @@
 
   /* 300ms after load, which is when main's first frame lands (it captures once just before the
      window is shown), then the State that says the capture is healthy. Nothing repeats. */
-  if (!NO_BLUR) setTimeout(function () {
+  if (!NO_BLUR) setTimeout(function () { whenScene(function () {
     emit('launcher.backdrop', {
       png: backdropPNG(), w: BD_W, h: BD_H,
       rect: { x: 620, y: 310, w: 680, h: 460 },   // physical px of the launcher's rect
       ms: 7,
     });
     emit('state', STATE);
-  }, 300);
+  }); }, 300);
 
   // a test can drive the visible event by hand
   window.__mockShow = function () { emit('launcher:visible', true); };

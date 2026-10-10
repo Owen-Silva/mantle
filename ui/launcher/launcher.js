@@ -158,6 +158,39 @@
     }
   }
 
+  /* DARK ONLY: THE ONE READABILITY GUARD (ui/shared/glass-adapt.js guard(), the top bar's rule, same
+     code and thresholds; lane same-shell, 2026-10-09, replacing see-glass-b's picture dimming). The pane
+     is one layer of --lg-fill over the blurred picture; the tint thickens (never the picture dimming)
+     only as far as --lg-ink-2 needs for 4.5:1 over the brightest blurred pixel, capped at --lg-fill-pop,
+     into --pane-tint on .panel (the dark ::after reads it). With --lg-fill-pop = --lg-fill (the FINAL
+     tokens) there is nothing to thicken and nothing is read. Once per picture that arrives (its load
+     event), never on a timer; in light nothing runs. window.__launcherGlass is a read-only view. */
+  var GA = window.MantleGlassAdapt || null;
+  var panelEl = document.querySelector('.panel');
+  var adaptSaid = '';
+  function adaptBackdrop() {
+    if (!panelEl) return;
+    var img = els.backdrop;
+    var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    panelEl.style.removeProperty('--pane-tint');
+    window.__launcherGlass = null;
+    if (!dark || !haveBackdrop || !img || !img.naturalWidth) return;
+    var T = GA ? GA.guardTokens(getComputedStyle(document.documentElement)) : null;
+    if (T && !(T.ceil > T.fill.a + 1e-9)) { window.__launcherGlass = { alpha: T.fill.a, engaged: false, why: 'ceiling = fill' }; adaptSaid = ''; return; }
+    var px = T ? GA.pixelsOf(img) : null;
+    var r = px ? GA.guard(px, { tokens: T, picPerCss: img.naturalWidth / (img.clientWidth || img.naturalWidth) }) : null;
+    if (r) {
+      window.__launcherGlass = { alpha: r.alpha, ratio: r.ratio, engaged: r.engaged };
+      if (r.engaged) panelEl.style.setProperty('--pane-tint', r.tint);
+      adaptSaid = '';
+      return;
+    }
+    var why = GA ? 'the picture behind the launcher could not be read back' : 'ui/shared/glass-adapt.js did not load';
+    if (adaptSaid !== why) { adaptSaid = why; console.warn('[launcher] dark glass at the token tint: ' + why); }
+  }
+  if (els.backdrop) els.backdrop.addEventListener('load', adaptBackdrop);
+  window.addEventListener('mantle-theme', adaptBackdrop);
+
   function clearBackdrop() {
     if (!els.bdrop || !els.backdrop) return;     // already reported by bdropNodes()
     haveBackdrop = false;

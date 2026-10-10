@@ -9,6 +9,7 @@
 <!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="timer.css">
+<link rel="stylesheet" href="../shared/hud-backdrop.css">
 </head>
 <body>
 <!-- "Timer done" (lib/features/timer.js): made when a timer reaches zero, at the primary screen's
@@ -35,5 +36,8 @@
 <script src="mock-mantle.js"></script>
 <script src="../../lib/features/_timer-core.js"></script>
 <script src="timer.js"></script>
+<!-- dark only: the blurred picture of the screen behind this window, once main sends timer.backdrop (lane see-huds) -->
+<script src="../shared/glass-adapt.js"></script>
+<script src="../shared/hud-backdrop.js" data-event="timer.backdrop" data-pane="#card"></script>
 </body>
 </html>

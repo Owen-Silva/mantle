@@ -9,6 +9,7 @@
      plain words, what was not and why), a click opens the file, Copy path / Open folder. -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="card.css">
+<link rel="stylesheet" href="../shared/hud-backdrop.css">
 </head>
 <body>
 <div id="card" hidden>
@@ -34,5 +35,8 @@
 <script src="card-mock.js"></script>
 <script src="geometry.js"></script>
 <script src="card.js"></script>
+<!-- dark only: the blurred picture of the screen behind this window, once main sends screenshot.card.backdrop (lane see-huds) -->
+<script src="../shared/glass-adapt.js"></script>
+<script src="../shared/hud-backdrop.js" data-event="screenshot.card.backdrop" data-pane="#card"></script>
 </body>
 </html>

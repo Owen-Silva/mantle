@@ -34,8 +34,9 @@
 
 /* The popover can never be taller than main's cap (POPOVER_MAX, 480 px) — the list scrolls instead. */
 .ntf-list { max-height: 300px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 8px; }
-.ntf-list::-webkit-scrollbar { width: 6px; }
-.ntf-list::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 3px; }
+/* light only: dark uses glass-light.css's one Helm scrollbar (HELM-SPEC row 20) */
+:root:not([data-theme="dark"]) .ntf-list::-webkit-scrollbar { width: 6px; }
+:root:not([data-theme="dark"]) .ntf-list::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 3px; }
 
 .ntf-group { display: flex; flex-direction: column; gap: 3px; }
 .ntf-group.busy { opacity: .5; }
@@ -108,3 +109,23 @@
 .ntf-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--lg-edge-out); }
 .ntf-detail { flex: 1 0 100%; min-width: 0; padding: 0 2px; color: var(--lg-ink-3); font-size: 11px; line-height: 1.35; }
 .ntf-foot .qslink { flex: 0 0 auto; margin-left: auto; }
+
+/* DARK = Helm's look (lane same-bars-mods, 2026-10-09; HELM-SPEC rows 3-24). Light above is untouched.
+   A toast is a Helm card: surface-2 (--lg-card), surface-3 on hover, Helm's 120 ms colour ease, the
+   shared focus ring. Type on Helm's scale: title 13/600, body 13, group 12/600 in a 28 px header,
+   time 11; the count badge 11 on a pill. One --lg-divider above the foot. */
+:root[data-theme="dark"] .notifs .nbadge { border-radius: var(--lg-r-chip); font-size: 11px; }
+:root[data-theme="dark"] .ntf-ghead { min-height: 28px; }
+:root[data-theme="dark"] .ntf-letter { font-size: 11px; }
+:root[data-theme="dark"] .ntf-card {
+  background: var(--lg-card);
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .ntf-card:hover { background: var(--lg-press); }
+:root[data-theme="dark"] .ntf-card.dead:hover { background: var(--lg-card); }
+:root[data-theme="dark"] .ntf-card:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .ntf-title,
+:root[data-theme="dark"] .ntf-body { font-size: 13px; }
+:root[data-theme="dark"] .ntf-foot { border-top-color: var(--lg-divider); }
+:root[data-theme="dark"] .ntf-clear:disabled { color: var(--lg-ink-2); opacity: var(--lg-disabled); }
+@media (prefers-reduced-motion: reduce) { :root[data-theme="dark"] .ntf-card { transition: none; } }

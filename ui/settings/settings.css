@@ -437,32 +437,107 @@ html.glass { background: var(--lg-fill-strong); }
 html.glass body { background: linear-gradient(var(--lg-sunk), var(--lg-sunk)) var(--lg-fill-strong); }
 html.glass.inactive, html.glass.inactive body { background: var(--lg-ground); }
 
-/* ---------------------------------------------------------------- dark glass (lane dm-settings, 2026-10-08)
-   <html data-theme="dark"> re-values every --lg-* token (shared/glass-light.css), and nearly all of this
-   file follows on its own. These rules are the few places where the light set leaned on "white is the
-   lighter layer": there a card, a field or a chosen segment is --lg-fill-strong, a WHITE face that sits
-   above the window. Dark --lg-fill-strong is a dark grey, so the same rule would sink a card BELOW the
-   window it stands on. So in dark the layers that stand up are a white wash at low alpha over the window
-   (Windows 11's own dark cards are ~.05 white), and the window itself is the plain dark tint with no lift.
-   Everything here is scoped to [data-theme="dark"]: light mode does not move. No glow, no lit rims, no
-   text-shadow: the hairline and the step in grey carry the layer. */
-:root[data-theme="dark"] .card,
-:root[data-theme="dark"] .tileb,
-:root[data-theme="dark"] .banner > div { background-color: rgba(255,255,255,.045); }
-/* fields: a slightly lighter face than the card, so a box reads as a box on the card and on the window */
-:root[data-theme="dark"] .find input,
-:root[data-theme="dark"] select,
-:root[data-theme="dark"] .inp,
-:root[data-theme="dark"] .kc { background: rgba(255,255,255,.06); }
-:root[data-theme="dark"] .find input:focus,
-:root[data-theme="dark"] .inp:focus { background: rgba(0,0,0,.18); }
+/* ---------------------------------------------------------------- dark: Helm's look (lanes dm-settings, see-apps, same-apps; 2026-10-08/09)
+   <html data-theme="dark"> re-values every --lg-* token (shared/glass-light.css: Helm's own values,
+   HELM-SPEC.md). Owen: "they should all also have the same style ... if there is a conflict go by what
+   helm looks like", then "Match Helm's real look". This block holds only WHICH token goes where:
+   - ONE tint layer per region, painted on the window itself: the title strip is Helm's top strip
+     (--lg-fill-bar), the sidebar and the page under it Helm's content panel (--lg-fill). Cards, home tiles
+     and banners are Helm's cards inside a panel (--lg-card); fields Helm's input (--lg-field). DWM's
+     acrylic is under the page (lib/features/settings.js); what it adds the page cannot take away (lane
+     report: acrylic vs Helm's blur(5px) picture).
+   - Rows hover --lg-hover; the chosen nav item, search result or segment is --lg-press + an inset
+     hairline, NO accent tick (Helm: no accent on rows; the nav icon keeps the accent ink). Icon buttons
+     hover --lg-press; buttons and the switch are Helm's.
+   - Every line --lg-divider; focus Helm's ring; scrollbars and ::selection are the global Helm rules in
+     glass-light.css (this file's own are restated / dropped in dark); type Helm's scale; disabled --lg-disabled;
+     motion --lg-dur-ui / --lg-ease-ui.
+   Inactive and refused glass keep the solid --lg-ground (rules above, unchanged). No glow, no lit rims,
+   no text-shadow. Everything here is scoped to [data-theme="dark"]: light mode does not move. */
+html.glass[data-theme="dark"]:not(.inactive) { background: linear-gradient(var(--lg-fill-bar) 0 40px, var(--lg-fill) 40px); }
+html.glass[data-theme="dark"]:not(.inactive) body { background: transparent; }
+/* lane helm-wall-apps (2026-10-09): in dark the window is opaque and the page paints the desktop wallpaper
+   (ui/shared/wall-bdrop.js/.css); --wall-tint is its ONE tint layer = the same tint the root carries above. */
+:root[data-theme="dark"] { --wall-tint: linear-gradient(var(--lg-fill-bar) 0 40px, var(--lg-fill) 40px); }
+/* cards inside the panel: Helm surface-2 + the token hairline and lip */
+:root[data-theme="dark"] :is(.card, .tileb, .banner > div) { background-color: var(--lg-card); border-color: var(--lg-edge-out); box-shadow: var(--lg-lip-up); }
+:root[data-theme="dark"] .tileb:hover { background-image: none; background-color: var(--lg-press); }
+:root[data-theme="dark"] .tileb:active { background-image: none; background-color: var(--lg-card); }
+:root[data-theme="dark"] .card > .klist:last-child > .row:last-child { border-bottom-left-radius: calc(var(--lg-r) - 1px); border-bottom-right-radius: calc(var(--lg-r) - 1px); }
+/* fields: Helm's input (field + hairline; hover the strong edge; focus the accent line + Helm's ring) */
+:root[data-theme="dark"] :is(.find input, select, .inp, .kc) { background-color: var(--lg-field); border-color: var(--lg-edge-out); }
+:root[data-theme="dark"] :is(.find input, select, .inp):hover { border-color: var(--lg-edge-strong); }
+:root[data-theme="dark"] :is(.find input:focus, .inp:focus, select:focus-visible) { outline: none; border-color: var(--lg-acc-line); box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .kc { border-radius: var(--lg-r-ctl); }
 /* the native list a <select> drops down is drawn from the option's own colours: opaque, never see-through */
 :root[data-theme="dark"] select option { background-color: var(--lg-ground); color: var(--lg-ink); }
-/* the chosen segment is raised out of its recess: a lighter face, not a dark one */
-:root[data-theme="dark"] .seg button[aria-checked="true"] { background: rgba(255,255,255,.12); box-shadow: 0 0 0 1px var(--lg-edge-out); }
-/* selection: the accent at low alpha, the ink kept (Chromium's blue would be the only blue on the page) */
-:root[data-theme="dark"] ::selection { background: color-mix(in srgb, var(--lg-acc) 36%, transparent); color: var(--lg-ink); }
-/* the window's tint: the card fill twice, as in light, but without the lifting wash (in light it is an ink
-   wash that keeps a white window behind from going paper-white; the dark tint needs no help to stay dark,
-   and a white wash would only flatten the step up to the cards) */
-html.glass[data-theme="dark"]:not(.inactive) body { background: var(--lg-fill-strong); }
+/* buttons: Helm's .btn (card + hairline + inner lip; hover press + strong edge; pressed back to the card) */
+:root[data-theme="dark"] :is(.btn, .ibtn) {
+  border: 1px solid var(--lg-edge-out); background: var(--lg-card); box-shadow: inset 0 1px 0 var(--lg-edge-inner);
+  border-radius: var(--lg-r-ctl); font-weight: 500;
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), border-color var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] :is(.btn, .ibtn):hover:not(:disabled) { background: var(--lg-press); border-color: var(--lg-edge-strong); }
+:root[data-theme="dark"] :is(.btn, .ibtn):active:not(:disabled) { background: var(--lg-card); }
+:root[data-theme="dark"] :is(.btn.acc, .ibtn.on) { background: var(--lg-acc); border-color: transparent; color: var(--lg-acc-on); box-shadow: none; }
+:root[data-theme="dark"] :is(.btn.acc, .ibtn.on):hover:not(:disabled) { background: var(--lg-acc-strong); border-color: transparent; }
+:root[data-theme="dark"] .btn.quiet { background: transparent; border-color: transparent; box-shadow: none; color: var(--lg-ink-2); }
+:root[data-theme="dark"] .btn.quiet:hover:not(:disabled) { background: var(--lg-press); border-color: transparent; color: var(--lg-ink); }
+/* icon buttons in the strip: hover --lg-press (Helm's icon-btn), pressed back to the card */
+:root[data-theme="dark"] .winbtn:not(.close):hover, :root[data-theme="dark"] .winbtn.close:active { background: var(--lg-press); }
+:root[data-theme="dark"] .winbtn:not(.close):active { background: var(--lg-card); }
+/* the switch: Helm's toggle (32 x 18, pill, the strong edge on surface-3; on = the accent) */
+:root[data-theme="dark"] .sw { width: 32px; height: 18px; border: 1px solid var(--lg-edge-strong); border-radius: var(--lg-r-chip); background: var(--lg-press); transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), border-color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .sw::after { top: 2px; left: 2px; background: var(--lg-ink-2); transition: transform var(--lg-dur-ui) var(--lg-ease-ui), background-color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .sw:hover { background: var(--lg-press); }
+:root[data-theme="dark"] .sw[aria-checked="true"] { background: var(--lg-acc); border-color: transparent; }
+:root[data-theme="dark"] .sw[aria-checked="true"]::after { transform: translateX(14px); background: var(--lg-acc-on); }
+/* chips: Helm's pill */
+:root[data-theme="dark"] .testchip { border-radius: var(--lg-r-chip); background: var(--lg-card); font-size: 12px; font-weight: 500; padding: 0 9px; }
+/* rows: hover --lg-hover, pressed --lg-press; the chosen nav item / result / segment --lg-press + inset hairline, no tick */
+:root[data-theme="dark"] .nav-i:hover { background: var(--lg-hover); }
+:root[data-theme="dark"] .nav-i:active { background: var(--lg-press); }
+:root[data-theme="dark"] :is(.nav-i[aria-current="page"], .res-i[aria-selected="true"], .seg button[aria-checked="true"]) { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .nav-i[aria-current="page"]::before { content: none; }
+:root[data-theme="dark"] .seg { background: var(--lg-field); }
+:root[data-theme="dark"] .seg button { border-radius: var(--lg-r-ctl); }
+:root[data-theme="dark"] .seg button[aria-checked="true"] { font-weight: 500; }
+:root[data-theme="dark"] .nav-i { transition: background-color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .row { transition: background-color var(--lg-dur-ui-slow) var(--lg-ease-ui); }
+/* every line one divider */
+:root[data-theme="dark"] .row { border-top-color: var(--lg-divider); }
+/* focus: Helm's ring, no outline */
+:root[data-theme="dark"] :focus-visible { outline: none; box-shadow: var(--lg-focus); }
+/* ...also on a control whose box-shadow is set inline (the wallpaper photo tiles paint their hairline / picked
+   ring that way): the inline style beat the rule above, so with the outline gone a focused tile showed NO ring
+   (lane same-finish, found by personalization.test.js 17 dark) */
+:root[data-theme="dark"] [style*="box-shadow"]:focus-visible { box-shadow: var(--lg-focus) !important; }
+/* scrollbars: Helm's, always shown (the global rule in glass-light.css, restated over this file's own) */
+html:root:root[data-theme="dark"] *::-webkit-scrollbar { width: 10px; height: 10px; }
+html:root:root[data-theme="dark"] *::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+html:root:root[data-theme="dark"] *::-webkit-scrollbar-thumb { background: var(--lg-scroll); border: 3px solid transparent; background-clip: padding-box; border-radius: 10px; }
+html:root:root[data-theme="dark"] *::-webkit-scrollbar-thumb:hover { background-color: var(--lg-scroll-hover); }
+/* type: Helm's scale (12.5 -> 13, 11.5 -> 12) and the disabled opacity; generated per rule, same specificity as the light rule */
+:where(:root[data-theme="dark"]) .banner,
+:where(:root[data-theme="dark"]) .summary,
+:where(:root[data-theme="dark"]) .tile,
+:where(:root[data-theme="dark"]) .sw-l,
+:where(:root[data-theme="dark"]) .seg button,
+:where(:root[data-theme="dark"]) .rng-v,
+:where(:root[data-theme="dark"]) select,
+:where(:root[data-theme="dark"]) .inp,
+:where(:root[data-theme="dark"]) .btn,
+:where(:root[data-theme="dark"]) .corners label,
+:where(:root[data-theme="dark"]) .fail .row-l,
+:where(:root[data-theme="dark"]) .loading,
+:where(:root[data-theme="dark"]) .empty { font-size: 13px; }
+:where(:root[data-theme="dark"]) .row-h.mono,
+:where(:root[data-theme="dark"]) .kc { font-size: 12px; }
+:where(:root[data-theme="dark"]) .backbtn:disabled,
+:where(:root[data-theme="dark"]) .sw:disabled,
+:where(:root[data-theme="dark"]) .seg button:disabled,
+:where(:root[data-theme="dark"]) input[type="range"]:disabled,
+:where(:root[data-theme="dark"]) select:disabled,
+:where(:root[data-theme="dark"]) .inp:disabled,
+:where(:root[data-theme="dark"]) .btn:disabled,
+:where(:root[data-theme="dark"]) .ibtn:disabled { opacity: var(--lg-disabled); }

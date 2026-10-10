@@ -169,6 +169,7 @@
     if (k !== kind) { why = null; kind = k; if (k !== 'volume') setOpen(false); }
     document.body.toggleAttribute('data-below', !!p.below);
     if (typeof p.seq === 'number') seq = p.seq;   // echoed in osd.faded, so main never hides a newer show
+    var fresh = !shown;
     if (fading) { clearTimeout(fading); fading = 0; }
     el.osd.classList.remove('fading');
     el.osd.hidden = false;
@@ -176,6 +177,8 @@
     if (p.expand && kind === 'volume') setOpen(true);
     paint();
     fader.poke();
+    // dark: one picture of what is behind the pop-up per show, not per key repeat (ui/shared/hud-backdrop.js)
+    if (fresh && window.MantleHudBackdrop) window.MantleHudBackdrop.request('shown', { hold: true });
   }
 
   function level(p) {

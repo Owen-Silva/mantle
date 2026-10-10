@@ -132,10 +132,6 @@ textarea {
 textarea.twin { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; overflow: hidden; flex: none; min-height: 0; }
 textarea::placeholder { color: var(--lg-ink-3); }
 textarea::selection { background: var(--lg-acc-soft); color: var(--lg-ink); }
-/* dark: the .18 accent wash that reads on a near-white pane all but vanishes on the dark one, so a
-   selection there carries twice the accent (still a wash, still the ink on top). */
-:root[data-theme="dark"] textarea::selection,
-:root[data-theme="dark"] .find input::selection { background: rgba(157,151,236,.36); }
 /* thin, and shown only while the pointer is over the text (Settings, 377e901); the transparent
    border keeps the thumb off the sheet's hairline and rounded corner */
 textarea::-webkit-scrollbar { width: 8px; }
@@ -187,3 +183,76 @@ body.mock::before {
   box-shadow: inset 0 -1px 0 var(--lg-edge-out), var(--lg-lip-up);
 }
 body.mock .pad { top: 30px; }
+
+/* ---- DARK, SEE-THROUGH (lane see-huds, 2026-10-09) --------------------------------------------
+   Owen, on dark Mantle: "mantle needs to be more see through everything". The pad above is
+   --lg-fill-strong three times under --lg-sunk (~89% at the dark .50) and the sheet, the find row and
+   the chosen tab are the fill once more: a slab. In dark the pad is ONE layer of --lg-fill (FINAL RULES: = --lg-fill-pop, both .83), the bar
+   popovers' fill for a surface with nothing blurred behind it, so the screen behind shows through
+   about 2.5x as much; the sheet and the find row are a white wash on it and the chosen tab the tile
+   wash (raised = lighter, as dark Settings does it). The quiet words (the footer, the find count, the
+   placeholders) go to --lg-ink-2: --lg-ink-3 on the thinner pad fell under 4.5:1 over a bright page.
+   The mock's top-bar strip is the bar's own --lg-fill. Light is untouched. */
+:root[data-theme="dark"] .pad { background: var(--lg-fill); }
+:root[data-theme="dark"] .sheet,
+:root[data-theme="dark"] .find { background-color: var(--lg-sunk); }
+:root[data-theme="dark"] .tab.on,
+:root[data-theme="dark"] .tab.on:hover { background: var(--lg-press); }   /* chosen = --lg-press + its hairline (HELM-SPEC row 14) */
+:root[data-theme="dark"] .foot,
+:root[data-theme="dark"] .find,
+:root[data-theme="dark"] .count,
+:root[data-theme="dark"] textarea::placeholder,
+:root[data-theme="dark"] .find input::placeholder { color: var(--lg-ink-2); }
+:root[data-theme="dark"] body.mock::before { background-color: var(--lg-fill); }
+
+/* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
+   Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
+   literal Helm). The pad is ONE layer of --lg-fill at the pop-up radius, ONE outer hairline (it had a
+   border AND a ring) and the --lg-lip-up lip over --lg-shadow. HELM-SPEC rows applied: 3 (the sheet
+   and the find box are --lg-field), 10 radii, 12 type (12.5 -> 13, 11.5 -> 12), 14 (the chosen tab
+   and a toggled icon = --lg-press + one hairline; hover --lg-hover), 16 (Undo is a ghost button:
+   --lg-ink-2, hover --lg-press + ink, 500; inputs hairline, strong on hover, the accent line on
+   focus), 19 focus, 20 scrollbar (the global Helm bar), 21 selection (--lg-acc-select), 22 (no accent
+   caret), 23 disabled, 24 motion (a pop-up has no open animation; hover 120 ms on Helm's curve). No JS
+   waits on the pad's animation. Light is untouched. */
+:root[data-theme="dark"] body,
+:root[data-theme="dark"] .find input { font-size: 13px; }
+:root[data-theme="dark"] .count,
+:root[data-theme="dark"] .foot { font-size: 12px; }
+:root[data-theme="dark"] .pad {
+  background: var(--lg-fill);
+  border-radius: var(--lg-r-pop);
+  border-color: var(--lg-edge-out);
+  box-shadow: var(--lg-lip-up), var(--lg-shadow);
+}
+:root[data-theme="dark"] .pad.anim { animation: none; }
+:root[data-theme="dark"] .tab,
+:root[data-theme="dark"] .add,
+:root[data-theme="dark"] .ico,
+:root[data-theme="dark"] .undo { transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .ico.on,
+:root[data-theme="dark"] .ico.on:hover { background: var(--lg-press); color: var(--lg-ink); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .ico:disabled,
+:root[data-theme="dark"] .ico:disabled:hover { opacity: var(--lg-disabled); }
+:root[data-theme="dark"] .undo { color: var(--lg-ink-2); font-weight: 500; }
+:root[data-theme="dark"] .undo:hover { background: var(--lg-press); color: var(--lg-ink); }
+:root[data-theme="dark"] .sheet,
+:root[data-theme="dark"] .find { background-color: var(--lg-field); }
+:root[data-theme="dark"] .find:hover { box-shadow: inset 0 0 0 1px var(--lg-edge-strong); }
+:root[data-theme="dark"] .find:focus-within { box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] .find input { caret-color: auto; }
+:root[data-theme="dark"] textarea::selection,
+:root[data-theme="dark"] .find input::selection { background: var(--lg-acc-select); color: var(--lg-ink); }
+:root[data-theme="dark"] .tab:focus-visible,
+:root[data-theme="dark"] .add:focus-visible,
+:root[data-theme="dark"] .ico:focus-visible,
+:root[data-theme="dark"] .undo:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+/* the global Helm scrollbar (glass-light.css), restated: the textarea's own 8px rule would win */
+:root[data-theme="dark"] textarea::-webkit-scrollbar { width: 10px; height: 10px; }
+:root[data-theme="dark"] textarea::-webkit-scrollbar-thumb,
+:root[data-theme="dark"] textarea:hover::-webkit-scrollbar-thumb { background: var(--lg-scroll); border: 3px solid transparent; background-clip: padding-box; border-radius: 10px; }
+:root[data-theme="dark"] textarea::-webkit-scrollbar-thumb:hover { background-color: var(--lg-scroll-hover); }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="dark"] .tab, :root[data-theme="dark"] .add, :root[data-theme="dark"] .ico, :root[data-theme="dark"] .undo { transition: none; }
+}

@@ -577,6 +577,8 @@
       activate(p.reload.active, false);
     } else renderFoot();
     if (p && p.focus) focusText();
+    // dark: one picture of what is behind the pad for this opening (ui/shared/hud-backdrop.js)
+    if (window.MantleHudBackdrop) window.MantleHudBackdrop.request('opened', { hold: true });
   });
   mantle.on('notes.new', () => newNote());
 

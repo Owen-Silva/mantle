@@ -22,7 +22,19 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const Lay = require('./layout.js');
 
-const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// the newest installed Playwright Chromium (the pinned chromium-1234 build was removed 2026-10-05;
+// lane same-finish, 2026-10-09, same recipe as ui/desktop/wall-player.test.js)
+const CHROME = (() => {
+  const fsx = require('fs');
+  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  try {
+    for (const d of fsx.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
+      const p = base + '/' + d + '/chrome-win64/chrome.exe';
+      if (fsx.existsSync(p)) return p;
+    }
+  } catch (_) { /* reported below as "no chromium at" */ }
+  return base + '/chromium-*/chrome-win64/chrome.exe';
+})();
 const PAGE = 'file:///' + path.resolve(__dirname, 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT || path.join(require('os').tmpdir(), 'mantle-switcher-page-shots');
 

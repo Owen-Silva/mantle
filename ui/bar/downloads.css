@@ -31,8 +31,9 @@
 /* Main caps a popover at 480 px (POPOVER_MAX): 12 rows scroll inside the list instead (eight and a half
    rows show; the cut row says there is more). */
 .dl-list { max-height: 366px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 1px; }
-.dl-list::-webkit-scrollbar { width: 6px; }
-.dl-list::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 3px; }
+/* light only: dark uses glass-light.css's one Helm scrollbar (HELM-SPEC row 20) */
+:root:not([data-theme="dark"]) .dl-list::-webkit-scrollbar { width: 6px; }
+:root:not([data-theme="dark"]) .dl-list::-webkit-scrollbar-thumb { background: var(--lg-tile); border-radius: 3px; }
 
 .dl-row {
   position: relative;
@@ -117,3 +118,27 @@
 .dl-folder:active:not(:disabled) { background: var(--lg-press); }
 /* Off (no folder to open): visibly off, its tooltip says why (the same quiet look as the calendar's). */
 .dl-folder:disabled, .dl-folder:disabled:hover { color: var(--lg-ink-3); background: transparent; opacity: .6; }
+
+/* DARK = Helm's look (lane same-bars-mods, 2026-10-09; HELM-SPEC rows 3-24). Light above is untouched.
+   Rows: hover surface-2 (--lg-hover), pressed surface-3, Helm's 120 ms colour ease, the shared focus
+   ring; title 13/500, subtitle 12; Show in folder is Helm's 30 px icon button; one --lg-divider. The
+   row stays 42 tall (a 28 px glyph tile and two lines: Helm's 36 row has no second line). */
+:root[data-theme="dark"] .dl-row { transition: background-color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .dl-row:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .dl-icon { border-radius: var(--lg-r-ctl); }
+:root[data-theme="dark"] .dl-name { font-size: 13px; }
+:root[data-theme="dark"] .dl-meta { font-size: 12px; }
+:root[data-theme="dark"] .dl-reveal {
+  flex-basis: 30px;
+  width: 30px;
+  height: 30px;
+  color: var(--lg-ink-2);
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), color var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .dl-reveal:hover { background: var(--lg-press); color: var(--lg-ink); }
+:root[data-theme="dark"] .dl-reveal:active { background: var(--lg-card); }
+:root[data-theme="dark"] .dl-reveal:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .dl-foot { border-top-color: var(--lg-divider); }
+:root[data-theme="dark"] .dl-folder:disabled,
+:root[data-theme="dark"] .dl-folder:disabled:hover { color: var(--lg-ink-2); opacity: var(--lg-disabled); }
+@media (prefers-reduced-motion: reduce) { :root[data-theme="dark"] .dl-row, :root[data-theme="dark"] .dl-reveal { transition: none; } }

@@ -18,8 +18,22 @@ const path = require('path');
 const fs = require('fs');
 const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
 
-const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
-const PAGE = 'file:///' + path.join(__dirname, 'index.html').split(path.sep).join('/');   // this checkout's page (a worktree shoots its own)
+// the newest installed Playwright Chromium (the pinned chromium-1234 build was removed 2026-10-05;
+// lane same-finish, 2026-10-09, same recipe as ui/desktop/wall-player.test.js)
+const CHROME = (() => {
+  const fsx = require('fs');
+  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  try {
+    for (const d of fsx.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
+      const p = base + '/' + d + '/chrome-win64/chrome.exe';
+      if (fsx.existsSync(p)) return p;
+    }
+  } catch (_) { /* reported below as "no chromium at" */ }
+  return base + '/chromium-*/chrome-win64/chrome.exe';
+})();
+const PAGE = process.env.MANTLE_TOPBAR_PAGE || 'file:///' + path.join(__dirname, 'index.html').split(path.sep).join('/');   // this checkout's page (a worktree shoots its own)
+// MANTLE_THEME=dark: the shot list above in dark (<html data-theme="dark"> before the first paint)
+const THEME = process.env.MANTLE_THEME === 'dark' ? 'dark' : 'light';
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/topbar/shots';
 
@@ -211,11 +225,22 @@ function measureDrop() {
     note: (document.querySelector('.warn') || {}).textContent || '',
   };
 }
+// A real window keeps painting after main's setBounds. The emulated one does not in every build: in
+// the full chrome.exe (chromium-1228, picked above since the 1234 build went) the page STOPS producing
+// frames after Emulation.setDeviceMetricsOverride (1 rAF a second): innerHeight changes but no
+// 'resize' is fired and no CSS animation starts, so a dropdown waiting for the window (.wait, revealed
+// on resize) stayed hidden and a fade-in never ended ("once the window has grown", "no re-fade", every
+// ping test check). Playwright's headless shell keeps painting. One capture forces a frame, after which
+// the page paints on its own and fires its own resize, as after main's setBounds.
+async function setWindowHeight(page, cdp, h, screenH) {
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1536, height: h, deviceScaleFactor: 1.25, mobile: false, screenWidth: 1536, screenHeight: screenH });
+  await cdp.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: 8, height: 8, scale: 1 } }).catch(() => {});   // mid-navigation: the new page paints itself
+}
 // Resizes the WINDOW (viewport) and leaves the emulated SCREEN alone, as main's setBounds does:
 // page.setViewportSize would shrink the emulated screen with it (screen.availHeight 38).
 async function windowSizer(page, screenH) {
   const cdp = await page.context().newCDPSession(page);
-  const set = (h) => cdp.send('Emulation.setDeviceMetricsOverride', { width: 1536, height: h, deviceScaleFactor: 1.25, mobile: false, screenWidth: 1536, screenHeight: screenH });
+  const set = (h) => setWindowHeight(page, cdp, h, screenH);
   // page.screenshot re-applies Playwright's own viewport (38 px): capture through the same session
   set.shot = async (file, h) => fs.writeFileSync(file, Buffer.from((await cdp.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: 1536, height: h, scale: 1 } })).data, 'base64'));
   return set;
@@ -431,14 +456,280 @@ async function otherPages(browser, check) {
   }
 }
 
+/* ---- 8. THE DARK GLASS, SAME AS EVERY SURFACE (lane same-bars, 2026-10-09) ---------------------
+   Owen: "everything at 50% ... it will all match way better if its the same". Over three scenes, as the
+   desktop draws them (cover-fit to a 1920x1080 screen at 125%): (a) Owen's real wallpaper, (b) a bright
+   busy photo, (c) a dark terminal. Per surface (the strip, a menu, a stat menu, a submenu): picture
+   yes/no, tint layers (1), the MEASURED composite alpha of the tint (over a known flat #6a6a6a backdrop:
+   alpha = (B - P) / (B - T) from the pixel), the guard over (a), and ink-2's contrast against the
+   brightest ground pixel under each surface (a second shot with every word made transparent). Then the
+   pre-show (no frame shows a dropdown before its glass; a slow or failed picture shows the fallback and
+   says why), and the strip's bottom edge (Owen's dark line), row by row. */
+const SCENES_DIR = 'C:/Users/user/AppData/Local/Temp/claude/mantle-dark/see-glass/scenes/';
+const SCENES = [['a', 'a-owen-snow-peak.jpg'], ['b', 'b-bright-sand-ripples.jpg'], ['c', 'c-dark-terminal.png']];
+const GLASS_OUT = process.env.MANTLE_GLASS_OUT || 'C:/Users/user/AppData/Local/Temp/claude/mantle-dark/shots-see/same-bars/topbar';
+const PRISTINE = process.env.MANTLE_TOPBAR_PRISTINE || '';   // a copy of the page before this lane (index.html URL), for before/after
+const FLAT = '#6a6a6a';
+const SURF = [   // [name, query, which box]
+  ['strip', 'app=npp', 'bar'],
+  ['menu', 'app=npp&open=2', 'dd0'],
+  ['stat', 'app=npp&stat=cpu', 'dd0'],
+  ['submenu', 'app=npp&open=2&sub=2', 'dd1'],
+];
+function darkInit() {
+  const set = () => { if (document.documentElement) document.documentElement.setAttribute('data-theme', 'dark'); };
+  set();
+  document.addEventListener('readystatechange', set);
+}
+// Pixel maths on a PNG, in a page (no PNG decoder in node here). ops: [{k:'region', r:{x,y,w,h}} | {k:'rows', x0, x1, y0, y1}]
+async function pngOps(lab, buf, ops) {
+  return lab.evaluate(async ({ b64, ops }) => {
+    const im = new Image(); im.src = 'data:image/png;base64,' + b64; await im.decode();
+    const c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
+    const g = c.getContext('2d'); g.drawImage(im, 0, 0);
+    const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    const L = (r, gg, b) => 0.2126 * lin(r) + 0.7152 * lin(gg) + 0.0722 * lin(b);
+    return ops.map((op) => {
+      if (op.k === 'rows') {
+        const d = g.getImageData(op.x0, op.y0, op.x1 - op.x0, op.y1 - op.y0 + 1).data, w = op.x1 - op.x0, out = [];
+        for (let y = 0; y <= op.y1 - op.y0; y++) {
+          let s = 0, R = 0, G = 0, B = 0;
+          for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; R += d[i]; G += d[i + 1]; B += d[i + 2]; s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]; }
+          const hx = (v) => Math.round(v / w).toString(16).padStart(2, '0');
+          out.push({ row: op.y0 + y, luma: Math.round((s / w) * 10) / 10, hex: '#' + hx(R) + hx(G) + hx(B) });
+        }
+        return out;
+      }
+      const r = op.r, d = g.getImageData(r.x, r.y, r.w, r.h).data, px = [];
+      let best = null, bl = -1;
+      for (let i = 0; i < d.length; i += 4) { const l = L(d[i], d[i + 1], d[i + 2]); px.push(l); if (l > bl) { bl = l; best = [d[i], d[i + 1], d[i + 2]]; } }
+      const chans = [0, 1, 2].map((ch) => { const v = []; for (let i = ch; i < d.length; i += 4) v.push(d[i]); v.sort((a, b) => a - b); return v[v.length >> 1]; });
+      px.sort((a, b) => a - b);
+      return { max: best, maxL: bl, medL: px[px.length >> 1], median: chans };
+    });
+  }, { b64: buf.toString('base64'), ops });
+}
+const contrastL = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+const linC = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+const lumC = (c) => 0.2126 * linC(c[0]) + 0.7152 * linC(c[1]) + 0.0722 * linC(c[2]);
+const rgbOf = (s) => { const m = /rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)/.exec(s || ''); if (m) return [+m[1], +m[2], +m[3]]; const h = /#([0-9a-f]{6})/i.exec(s || ''); return h ? [0, 2, 4].map((i) => parseInt(h[1].slice(i, i + 2), 16)) : null; };
+
+async function glassPage(browser, page, q, opts) {
+  const p = await browser.newPage({ viewport: { width: 1920, height: (opts && opts.h) || 600 }, screen: { width: 1920, height: 1080 }, deviceScaleFactor: 1.25, bypassCSP: !!(opts && opts.bypass) });
+  if (!(opts && opts.light)) await p.addInitScript(darkInit);
+  const errs = [];
+  p.on('pageerror', (e) => errs.push(e.message));
+  await p.goto(page + '?' + q);
+  await p.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 8000 });
+  if (/scene=|flat=/.test(q)) await p.waitForFunction(() => document.documentElement.dataset.scene === '1', null, { timeout: 8000 });
+  // the strip's tint solved, the menus' session settled, the submenu's hover delay and the 200 ms wipe run
+  await p.waitForFunction(() => { const G = window.__topbarGlass || {}; const S = window.__topbar || {};
+    return (!document.body.classList.contains('glass') || G.tint != null) && (!S.open || !G.menu || G.menu.state !== 'waiting'); }, null, { timeout: 8000 }).catch(() => {});
+  await p.waitForTimeout(/sub=/.test(q) ? 900 : 450);
+  p._errs = errs;
+  return p;
+}
+async function boxOf(p, which) {
+  return p.evaluate((which) => {
+    const el = which === 'bar' ? document.getElementById('bar') : document.querySelectorAll('#menus > .dd')[which === 'dd1' ? 1 : 0];
+    if (!el) return null;
+    const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    return { x: r.left, y: r.top, w: r.width, h: r.height, cls: el.className, bgImage: cs.backgroundImage.slice(0, 60) + (cs.backgroundImage.length > 60 ? '…' : ''),
+      grads: (cs.backgroundImage.match(/linear-gradient/g) || []).length, urls: (cs.backgroundImage.match(/url\(/g) || []).length,
+      bgColor: cs.backgroundColor, border: cs.borderTopColor, radius: cs.borderTopLeftRadius, anim: cs.animationName, tint: cs.getPropertyValue('--dd-tint').trim() };
+  }, which);
+}
+const HIDE_INK = '#bar *, .dd, .dd * { color: transparent !important; caret-color: transparent !important; } .dd svg, #bar svg, .dd .sep, .core i, .warn::before, .info.bad::before, .t.tool.bad::after { visibility: hidden !important; } .dd input { border-color: transparent !important; }';
+
+async function glassChecks(browser, check) {
+  fs.mkdirSync(GLASS_OUT, { recursive: true });
+  const lab = await browser.newPage();
+  const table = [];
+  const ink2 = [196, 199, 206];
+  let inkSeen = null;
+  // 1. per surface: the flat backdrop (alpha), then the three scenes (guard, contrast, shots)
+  for (const [name, q, which] of SURF) {
+    const row = { surface: name };
+    {
+      const p = await glassPage(browser, PAGE, q + '&flat=' + encodeURIComponent(FLAT), { bypass: true });
+      const box = await boxOf(p, which);
+      const st = await p.evaluate((WHICH) => ({ G: JSON.parse(JSON.stringify({ tint: window.__topbarGlass.tint, menu: window.__topbarGlass.menu })), ink2: getComputedStyle(document.documentElement).getPropertyValue('--lg-ink-2').trim(), fill: getComputedStyle(document.documentElement).getPropertyValue(WHICH === 'bar' ? '--lg-fill-bar' : '--lg-fill').trim() }), which);
+      inkSeen = rgbOf(st.ink2) || ink2;
+      await p.addStyleTag({ content: HIDE_INK });
+      await p.waitForTimeout(60);
+      const buf = await p.screenshot();
+      const k = 1.25, ins = 8;
+      const r = box ? { x: Math.round((box.x + ins) * k), y: Math.round((box.y + ins) * k), w: Math.round((box.w - 2 * ins) * k), h: Math.round((box.h - 2 * ins) * k) } : null;
+      const [m] = r ? await pngOps(lab, buf, [{ k: 'region', r }]) : [null];
+      const T = rgbOf(st.fill) || [30, 31, 34], B = rgbOf(FLAT);
+      row.token = which === 'bar' ? '--lg-fill-bar' : '--lg-fill'; row.tokenAlpha = +((/,\s*([\d.]+)\s*\)$/.exec(st.fill) || [])[1]);
+      row.alpha = m ? Math.round(([0, 1, 2].reduce((s, c) => s + (B[c] - m.median[c]) / (B[c] - T[c]), 0) / 3) * 1000) / 1000 : null;
+      row.flatPixel = m ? m.median : null;
+      row.box = box;
+      row.picture = which === 'bar' ? /\bglass\b/.test(await p.evaluate(() => document.body.className)) : !!(box && /\bglass\b/.test(box.cls));
+      row.layers = which === 'bar' ? (box && box.grads === 0 ? 1 : 1 + (box ? box.grads : 0)) : (box ? box.grads : null);
+      await p.close();
+    }
+    for (const [sk, file] of SCENES) {
+      const p = await glassPage(browser, PAGE, q + '&scene=' + encodeURIComponent('file:///' + SCENES_DIR + file), { bypass: true });
+      await p.screenshot({ path: path.join(GLASS_OUT, `${sk}-${name}.png`) });
+      const box = await boxOf(p, which);
+      const G = await p.evaluate(() => JSON.parse(JSON.stringify({ tint: window.__topbarGlass.tint, solve: window.__topbarGlass.solve, menu: window.__topbarGlass.menu, note: ((document.querySelector('.warn') || {}).title || '') })));
+      await p.addStyleTag({ content: HIDE_INK });
+      await p.waitForTimeout(60);
+      const buf = await p.screenshot();
+      const k = 1.25, ins = 8;
+      const r = box ? { x: Math.round((box.x + ins) * k), y: Math.round((box.y + (which === 'bar' ? 2 : ins)) * k), w: Math.round((box.w - 2 * ins) * k), h: Math.round((box.h - (which === 'bar' ? 4 : 2 * ins)) * k) } : null;
+      const [m] = r ? await pngOps(lab, buf, [{ k: 'region', r }]) : [null];
+      const inkL = lumC(inkSeen || ink2);
+      row[sk] = { worst: m ? Math.round(contrastL(inkL, m.maxL) * 100) / 100 : null, typical: m ? Math.round(contrastL(inkL, m.medL) * 100) / 100 : null, brightest: m ? m.max : null };
+      if (which === 'bar') row[sk].guard = { alpha: G.tint, engaged: G.tint != null && G.solve ? G.tint > row.tokenAlpha + 1e-9 : null, ratio: G.solve && G.solve.ratio };
+      else { const lv = G.menu && G.menu.levels && G.menu.levels[which === 'dd1' ? 1 : 0]; row[sk].guard = lv ? { alpha: lv.alpha, engaged: lv.engaged, ratio: lv.ratio } : { state: G.menu && G.menu.state, why: G.menu && G.menu.why }; }
+      if (p._errs.length) row[sk].errs = p._errs;
+      await p.close();
+    }
+    table.push(row);
+  }
+  // 2. the checks over the table
+  for (const row of table) {
+    const n = row.surface;
+    check(`glass ${n}: wears a picture (dark, a scene behind it)`, row.picture === true, JSON.stringify(row.box));
+    check(`glass ${n}: exactly ONE tint layer`, row.layers === 1, JSON.stringify(row.box));
+    check(`glass ${n}: the measured composite alpha of the tint over a flat backdrop is ${row.token}'s ${row.tokenAlpha} (+-.02)`, row.alpha != null && Math.abs(row.alpha - row.tokenAlpha) <= 0.02, `alpha ${row.alpha} pixel ${row.flatPixel}`);
+    // Over Owen's wallpaper the tint stays the token's or at most .04 thicker: the guard's 4.7 margin (the
+    // drawn strip read 4.41 at exactly .50) may lift the strip to ~.52 there, and nothing more.
+    check(`glass ${n}: over Owen's wallpaper (a) the tint is the token's, or at most .04 thicker for readability`, row.a && row.a.guard && (row.a.guard.engaged === false || row.a.guard.alpha <= row.tokenAlpha + 0.04), JSON.stringify(row.a && row.a.guard));
+    for (const sk of ['a', 'b', 'c']) check(`glass ${n}: ink-2 reads >= 4.5:1 over the brightest ground pixel, scene ${sk}`, row[sk] && row[sk].worst >= 4.5, JSON.stringify(row[sk]));
+    for (const sk of ['a', 'b', 'c']) check(`glass ${n}: no page error, scene ${sk}`, !(row[sk] && row[sk].errs), JSON.stringify(row[sk] && row[sk].errs));
+  }
+  console.log('GLASS TABLE (surface | picture | layers | alpha over ' + FLAT + ' | guard on a | ink-2 worst/typical a, b, c):');
+  for (const row of table) {
+    const g = (sk) => row[sk] ? `${row[sk].worst}/${row[sk].typical}` + (row[sk].guard && row[sk].guard.engaged ? ` [guard ${row[sk].guard.alpha}]` : '') : '-';
+    console.log(`  ${row.surface} | ${row.picture ? 'yes' : 'NO'} | ${row.layers} | ${row.token} ${row.tokenAlpha}: measured ${row.alpha} (${row.flatPixel}) | ${row.a && row.a.guard ? (row.a.guard.engaged ? 'ENGAGED ' + row.a.guard.alpha : 'no') + ' (ratio ' + row.a.guard.ratio + ')' : '-'} | a ${g('a')}, b ${g('b')}, c ${g('c')}`);
+  }
+  fs.writeFileSync(path.join(GLASS_OUT, 'glass-table.json'), JSON.stringify(table, null, 1));
+
+  // 3. the style: the bar's pop-up look, tokens only
+  {
+    const p = await glassPage(browser, PAGE, 'app=npp&open=2&scene=' + encodeURIComponent('file:///' + SCENES_DIR + SCENES[0][1]));
+    const s = await p.evaluate(() => { const dd = document.querySelector('#menus > .dd'), cs = getComputedStyle(dd), root = getComputedStyle(document.documentElement), v = (n) => root.getPropertyValue(n).trim();
+      const probe = (val, prop) => { const e = document.createElement('div'); e.style.setProperty(prop, val); document.body.appendChild(e); const o = getComputedStyle(e).getPropertyValue(prop); e.remove(); return o; };
+      const sep = document.querySelector('.dd .sep'), row = document.querySelector('.dd .r');
+      return { border: cs.borderTopColor, wantBorder: probe(v('--lg-edge-out'), 'color'), radius: cs.borderTopLeftRadius, wantRadius: v('--lg-r'), shadow: cs.boxShadow, wantShadow: probe(v('--lg-lip-up') + ', ' + v('--lg-shadow'), 'box-shadow'),
+        anim: cs.animationName, sep: sep && getComputedStyle(sep).backgroundColor, wantSep: probe(v('--lg-divider'), 'color'), rowR: row && getComputedStyle(row).borderTopLeftRadius, wantRowR: v('--lg-r-ctl'),
+        rowH: row && row.getBoundingClientRect().height, pad: cs.paddingTop, font: row && getComputedStyle(row).fontSize, backdrop: cs.backdropFilter || cs.webkitBackdropFilter || 'none' }; });
+    check('glass style: the dropdown rim is Helm\'s panel hairline (--lg-edge-out, white .09)', s.border === s.wantBorder, JSON.stringify([s.border, s.wantBorder]));
+    check('glass style: radius --lg-r (Helm menu 10), shadow = --lg-lip-up + --lg-shadow, rows --lg-r-ctl', s.radius === s.wantRadius && s.shadow === s.wantShadow && s.rowR === s.wantRowR, JSON.stringify(s));
+    check('glass style: Helm menu metrics: padding 4, rows >= 30 tall, text 13 px', s.pad === '4px' && s.rowH >= 30 && s.font === '13px', JSON.stringify([s.pad, s.rowH, s.font]));
+    check('glass style: no open animation (Helm menus have none); no backdrop-filter on the dropdowns', s.anim === 'none' && s.backdrop === 'none', JSON.stringify([s.anim, s.backdrop]));
+    check('glass style: separators are --lg-divider', s.sep === s.wantSep, JSON.stringify([s.sep, s.wantSep]));
+    // the guard per dropdown (a crop with a margin wider than the kernel) = the guard over the whole picture
+    const cmp = await p.evaluate(() => window.__topbarGlass.menuGuardCompare && window.__topbarGlass.menuGuardCompare());
+    check('glass guard: the cropped guard gives the whole picture\'s answer (alpha, ratio)', Array.isArray(cmp) && cmp.length > 0 && cmp.every((c) => c.crop && c.whole && c.crop.alpha === c.whole.alpha && c.crop.ratio === c.whole.ratio), JSON.stringify(cmp));
+    console.log('GUARD crop vs whole picture: ' + JSON.stringify((cmp || []).map((c) => ({ alpha: [c.crop && c.crop.alpha, c.whole && c.whole.alpha], ratio: [c.crop && c.crop.ratio, c.whole && c.whole.ratio], ms: [c.cropMs, c.wholeMs] }))));
+    await p.close();
+  }
+  // 4. PRE-SHOW: sample every frame from the click; no frame may show a dropdown without its glass
+  {
+    const sample = async (q) => {
+      const p = await glassPage(browser, PAGE, 'app=npp&scene=' + encodeURIComponent('file:///' + SCENES_DIR + SCENES[0][1]) + q);
+      const res = await p.evaluate(() => new Promise((done) => {
+        const frames = [], t0 = performance.now();
+        const tick = () => {
+          const dds = [...document.querySelectorAll('#menus > .dd')];
+          const vis = dds.filter((d) => getComputedStyle(d).visibility === 'visible');
+          frames.push({ t: Math.round(performance.now() - t0), n: dds.length, vis: vis.length, glass: vis.filter((d) => d.classList.contains('glass')).length });
+          if (performance.now() - t0 < 900) requestAnimationFrame(tick);
+          else done({ frames, menu: JSON.parse(JSON.stringify(window.__topbarGlass.menu)), note: ((document.querySelector('.warn') || {}).title || ''), calls: window.__mockCalls.filter((c) => c.name === 'glass.topbarMenu').length });
+        };
+        document.querySelector('.t[data-i="2"]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        requestAnimationFrame(tick);
+        // slide to the next title and back while open: the same session, no second picture
+        setTimeout(() => { const t = document.querySelector('.t[data-i="3"]'); t && t.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); }, 500);
+        setTimeout(() => { const t = document.querySelector('.t[data-i="2"]'); t && t.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); }, 650);
+      }));
+      await p.close();
+      res.firstVisible = (res.frames.find((f) => f.vis > 0) || {}).t;
+      res.flash = res.frames.filter((f) => f.vis > f.glass).length;
+      return res;
+    };
+    const ok = await sample('');
+    check('pre-show: no frame shows a dropdown without its glass (no flash from the fallback)', ok.flash === 0 && ok.firstVisible != null, JSON.stringify({ first: ok.firstVisible, flash: ok.flash, menu: ok.menu }));
+    check('pre-show: ONE picture per menu session (sliding across the titles reuses it)', ok.calls === 1, String(ok.calls));
+    check('pre-show: shown within the 250 ms hold', ok.firstVisible != null && ok.firstVisible <= 300, String(ok.firstVisible));
+    console.log(`PRE-SHOW (mock, scene a, no capture delay): open -> first visible frame ${ok.firstVisible} ms; page-side ready ${ok.menu && ok.menu.readyMs} ms, visibleMs ${ok.menu && ok.menu.visibleMs}; breakdown ${JSON.stringify(ok.menu)}`);
+    const slow = await sample('&bdms=420');
+    check('pre-show: a picture slower than 250 ms -> shown at ~250 ms on the fallback, and the strip says why', slow.firstVisible >= 230 && slow.firstVisible <= 330 && slow.menu.state === 'fallback' && /not frosted: .*longer than 250 ms/.test(slow.note), JSON.stringify({ first: slow.firstVisible, menu: slow.menu, note: slow.note }));
+    check('pre-show: the late picture is NOT swapped in mid-session (that would be the flash)', slow.frames.filter((f) => f.glass > 0).length === 0, JSON.stringify(slow.frames.slice(-2)));
+    const bad = await sample('&bdfail=1');
+    check('pre-show: a failed picture -> the fallback face at once, and the reason on the strip', bad.menu.state === 'fallback' && /not frosted: mock: the capture failed/.test(bad.note) && bad.firstVisible != null && bad.firstVisible < 200, JSON.stringify({ first: bad.firstVisible, menu: bad.menu, note: bad.note }));
+    console.log(`PRE-SHOW slow (420 ms capture): first visible ${slow.firstVisible} ms, ${slow.menu.state}; failed: first visible ${bad.firstVisible} ms, ${bad.menu.state}`);
+    // the fallback face: ONE layer of --lg-fill-pop, measured
+    const p = await glassPage(browser, PAGE, 'app=npp&open=2&bdfail=1&flat=' + encodeURIComponent(FLAT), { bypass: true });
+    const box = await boxOf(p, 'dd0');
+    const pop = await p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--lg-fill-pop').trim());
+    await p.addStyleTag({ content: HIDE_INK });
+    await p.waitForTimeout(60);
+    const buf = await p.screenshot({ path: path.join(GLASS_OUT, 'fallback-menu-flat.png') });
+    const [m] = await pngOps(lab, buf, [{ k: 'region', r: { x: Math.round((box.x + 8) * 1.25), y: Math.round((box.y + 8) * 1.25), w: Math.round((box.w - 16) * 1.25), h: Math.round((box.h - 16) * 1.25) } }]);
+    const T = rgbOf(pop), B = rgbOf(FLAT), pa = (/,\s*([\d.]+)\s*\)$/.exec(pop) || [])[1];
+    const a = Math.round(([0, 1, 2].reduce((s, c) => s + (B[c] - m.median[c]) / (B[c] - T[c]), 0) / 3) * 1000) / 1000;
+    check('fallback: one layer of --lg-fill-pop (measured alpha = its alpha +-.02), no picture', !/\bglass\b/.test(box.cls) && box.grads === 0 && Math.abs(a - +pa) <= 0.02, JSON.stringify({ a, pa, box }));
+    console.log(`FALLBACK menu face: measured alpha ${a} (token ${pa})`);
+    await p.close();
+  }
+  // 5. LIGHT: no picture is asked for, nothing pre-hidden, no glass class
+  {
+    const p = await glassPage(browser, PAGE, 'app=npp&open=2&scene=' + encodeURIComponent('file:///' + SCENES_DIR + SCENES[0][1]), { light: true });
+    const l = await p.evaluate(() => ({ calls: window.__mockCalls.filter((c) => c.name === 'glass.topbarMenu').length, pre: document.getElementById('menus').classList.contains('pre'), glass: document.querySelectorAll('.dd.glass').length, menu: window.__topbarGlass.menu }));
+    check('light: no menu picture is asked for, nothing waits, no glass', l.calls === 0 && !l.pre && l.glass === 0 && l.menu == null, JSON.stringify(l));
+    await p.close();
+  }
+  // 6. THE STRIP'S BOTTOM EDGE (Owen's dark line): physical rows 27-42 at 125%, scene a + a dark
+  // maximized window from the bar down; the strip with its picture and on its fallback
+  const rows = async (page, tag, q) => {
+    const p = await glassPage(browser, page, 'app=npp&maxwin=1&scene=' + encodeURIComponent('file:///' + SCENES_DIR + SCENES[0][1]) + q, { h: 200 });
+    const buf = await p.screenshot({ clip: { x: 0, y: 0, width: 1920, height: 40 }, path: path.join(GLASS_OUT, `edge-${tag}.png`) });
+    const x = await p.evaluate(() => { const l = document.getElementById('left').getBoundingClientRect(), r = document.getElementById('right').getBoundingClientRect(); return [Math.ceil(l.right) + 20, Math.floor(r.left) - 20]; });
+    const x0 = Math.max(Math.round(x[0] * 1.25), 800), x1 = Math.max(x0 + 50, Math.min(Math.round(x[1] * 1.25), 1500));
+    const [out] = await pngOps(lab, buf, [{ k: 'rows', x0, x1, y0: 27, y1: 42 }]);
+    await p.close();
+    return out;
+  };
+  const edge = {};
+  for (const [page, who] of [[PAGE, 'after']].concat(PRISTINE ? [[PRISTINE, 'before']] : [])) {
+    for (const [q, kind] of [['', 'glass'], ['&strip=0', 'fallback']]) edge[`${who}-${kind}`] = await rows(page, `${who}-${kind}`, q);
+  }
+  console.log('STRIP EDGE rows 27-42 (physical, 125%), mean luma over the empty middle of the strip:');
+  console.log('  row | ' + Object.keys(edge).join(' | '));
+  for (let i = 0; i < 16; i++) console.log(`  ${27 + i} | ` + Object.keys(edge).map((k) => `${edge[k][i].luma} ${edge[k][i].hex}`).join(' | '));
+  for (const kind of ['glass', 'fallback']) {
+    const e = edge[`after-${kind}`];
+    const L = (row) => e[row - 27].luma;
+    // the strip ends at physical row 34 (28 DIP x 1.25 = 35 rows); the window starts at 35
+    const lo = Math.min(L(31), L(32), L(35), L(36)) - 1, hi = Math.max(L(31), L(32), L(35), L(36)) + 1;
+    check(`edge (${kind}): rows 33-34 are neither darker nor lighter than their neighbours (no line under the strip)`, [33, 34].every((y) => L(y) >= lo && L(y) <= hi), JSON.stringify(e.slice(4, 10)));
+  }
+  fs.writeFileSync(path.join(GLASS_OUT, 'edge-rows.json'), JSON.stringify(edge, null, 1));
+  // the before pair over (a), for the see-through comparison
+  if (PRISTINE) for (const [name, q] of SURF.slice(1, 2)) {
+    const p = await glassPage(browser, PRISTINE, q + '&scene=' + encodeURIComponent('file:///' + SCENES_DIR + SCENES[0][1]));
+    await p.screenshot({ path: path.join(GLASS_OUT, `before-a-${name}.png`) });
+    await p.close();
+  }
+  await lab.close();
+}
+
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch(fs.existsSync(CHROME) ? { executablePath: CHROME, headless: true } : { headless: true });   // the 1234 build is gone (2026-10-05): playwright's own then
+  const browser = await chromium.launch(Object.assign(fs.existsSync(CHROME) ? { executablePath: CHROME } : {}, { headless: true, args: ['--allow-file-access-from-files'] }));   // the 1234 build is gone (2026-10-05): playwright's own then
   let fails = 0, checks = 0;
   const check = (name, ok, detail) => { checks++; if (!ok) { fails++; console.log('  FAIL ' + name + (detail ? ' (' + detail + ')' : '')); } };
   try {
+    if (process.env.MANTLE_ONLY_GLASS === '1') { await glassChecks(browser, check); console.log(`TOPBAR GLASS ONLY: ${checks - fails} passed, ${fails} failed`); return; }   // the glass section alone (debugging)
     for (const [w, h] of [[1536, 420], [1280, 420]]) {
       const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1.25 });
+      if (THEME === 'dark') await page.addInitScript(darkInit);
       for (const [name, q] of SHOTS) {
         if (w === 1280 && !/^0[12]|^10/.test(name)) continue;
         await page.goto(PAGE + '?' + q);
@@ -503,6 +794,7 @@ async function otherPages(browser, check) {
     await dropChecks(browser, check);
     await toolChecks(browser, check);
     await otherPages(browser, check);
+    if (process.env.MANTLE_GLASS !== '0') await glassChecks(browser, check);   // the dark glass (lane same-bars); MANTLE_GLASS=0 skips it
     await require('./pingtest-shots').pingTestChecks(browser, check, PAGE, OUT);   // the ping test in the PING dropdown (lane pingtest)
   } finally {
     await browser.close();

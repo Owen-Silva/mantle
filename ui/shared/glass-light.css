@@ -144,69 +144,107 @@
    <html data-theme="dark"> switches it (set before first paint by the theme plumbing; absent or
    "light" = the light set above).
 
-   The direction is NOT the "AI slop" dark (feedback 2026-09-11): no blue-black ground, no neon
-   accent, no glow at rest, no lit rims. A neutral grey pane with almost no colour cast, plain
-   hairlines (a faint white lip inside, a black line outside), depth from real shadow, and the
-   accent taken down to a desaturated light indigo used for state only.
-
-   Why each number:
-   - fill .50 on #1E1F22 (strong .50 too; fb .56 and pop .82 are for surfaces with nothing blurred
-     behind them). The first dark set (10-09 00:55) was .56 / .76 / .80 / .92 with the capture dimmed
-     to .80, and Owen, looking at it over his mountain wallpaper: "mantle needs to be more see through
-     everything". It went to .34 for an hour, then Owen: "can you change it to 50% since that is the
-     same as i set helm to" -- Helm's Background "Dim 50%" (~/helm ui/shell/settings.js: a wash at
-     --bg-dim .5 over the blurred photo behind every panel). So .50 over the blurred capture with NO
-     extra brightness dimming is Helm's look, and the two apps match. Surfaces that stacked fills to
-     fake a surface must not do it in dark; one layer, the blur keeps text legible.
-   - ink #F1F2F4 / #C4C7CE / #8E94A0: --lg-ink-3 clears 4.5:1 on --lg-fill-pop.
-   - accent #9D97EC is #4436E8's hue, lighter and less saturated; ink on it (--lg-acc-on, near
-     black) is ~7:1. White on it would not be, which is why --lg-acc-on flips too.
-   - states are WHITE at low alpha here (ink is light now): the light set's rule, mirrored. */
+   History: the first dark set was Mantle's own (neutral grey .56, indigo accent). Owen: "mantle needs
+   to be more see through everything", then "50% since that is the same as i set helm to", then "same
+   style ... go by what helm looks like". Helm's 50% dim turned out to sit under a .66 panel, so the set
+   below is Helm's REAL look, value for value (Owen chose "Match Helm's real look"). Still not the AI-slop
+   dark: no glow, no neon, plain hairlines, accent for state only. */
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --lg-fill:        rgba(30,31,34,.50);
-  --lg-fill-fb:     rgba(30,31,34,.56);
-  --lg-fill-strong: rgba(32,33,36,.50);
-  --lg-fill-pop:    rgba(32,33,36,.82);
+  /* HELM'S REAL LOOK (Owen, 2026-10-09: "they should all also have the same style ... if there is a
+     conflict go by what helm looks like ... helm shouldnt be edited only the other stuff should", then,
+     told that a Helm panel is not 50% but its .50 wash + a .66 panel = ~.83: "Match Helm's real look").
+     Every value below is Helm's (~/helm ui/styles/tokens.css + ui/shell/shell.css at Owen's settings:
+     blur 5px, dim .50), resolved to ONE layer over the blurred picture. Source table:
+     %TEMP%\claude\mantle-dark\HELM-SPEC.md. Light is untouched this round. */
 
-  --lg-edge-in:  rgba(255,255,255,.10);
-  --lg-edge-out: rgba(0,0,0,.42);
+  --lg-fill:        rgba(19,20,21,.83);   /* Helm content panel: wash (9,10,11,.50) + panel (22,23,24,.66) */
+  --lg-fill-bar:    rgba(9,10,11,.50);    /* Helm rail / top strip: NO fill of their own (helm ui/shell/shell.css .rail/.strip), so only the .50 wash. Both bars. */
+  --lg-fill-strong: var(--lg-fill);
+  --lg-fill-fb:     rgba(19,20,21,.86);   /* only when the picture failed */
+  --lg-fill-pop:    rgba(19,20,21,.88);   /* the guard's CEILING and the no-picture face: .05 over --lg-fill so faint text over a bright window can thicken just enough (Helm's ink-2 measured 4.3-4.4:1 at exactly .83 over a white page) */
+  --lg-fill-0:      rgba(19,20,21,0);
 
-  --lg-shadow:    0 1px 1px rgba(0,0,0,.20), 0 10px 28px -12px rgba(0,0,0,.45), 0 26px 56px -28px rgba(0,0,0,.55);
-  --lg-shadow-up: 0 -1px 1px rgba(0,0,0,.20), 0 -10px 28px -12px rgba(0,0,0,.45), 0 -26px 56px -28px rgba(0,0,0,.55);
+  --lg-card:  rgba(40,41,43,.62);         /* Helm surface-2: cards inside a panel, row hover */
+  --lg-field: rgba(10,11,12,.46);         /* Helm --code-bg: inputs, search fields */
+  --lg-scrim: rgba(6,7,8,.48);           /* Helm --scrim: behind a modal dialog */
 
-  --lg-lip-up:    inset 0 1px 0 rgba(255,255,255,.10);
+  --lg-edge-in:     rgba(255,255,255,.07);  /* Helm panel lip */
+  --lg-edge-out:    rgba(255,255,255,.09);  /* Helm --hairline: a faint WHITE line, never black */
+  --lg-edge-strong: rgba(255,255,255,.16);
+  --lg-edge-inner:  rgba(255,255,255,.05);
+  --lg-edge-0:      rgba(255,255,255,0);
+  --lg-divider:     rgba(255,255,255,.09);
+
+  /* Helm s3 (menus, modals) and s2 (panels). Each -0 twin has the same layers at 0, for transitions. */
+  --lg-shadow:    0 4px 12px rgba(0,0,0,.34), 0 24px 64px rgba(0,0,0,.42);
+  --lg-shadow-up: 0 -4px 12px rgba(0,0,0,.34), 0 -24px 64px rgba(0,0,0,.42);
+  --lg-drop-dn:   0 2px 6px rgba(0,0,0,.30), 0 12px 32px rgba(0,0,0,.32);
+  --lg-drop-dn-0: 0 2px 6px rgba(0,0,0,0),   0 12px 32px rgba(0,0,0,0);
+  --lg-drop-up:   0 -2px 6px rgba(0,0,0,.30), 0 -12px 32px rgba(0,0,0,.32);
+  --lg-drop-up-0: 0 -2px 6px rgba(0,0,0,0),   0 -12px 32px rgba(0,0,0,0);
+
+  --lg-lip-up:    inset 0 1px 0 rgba(255,255,255,.07);
   --lg-lip-up-0:  inset 0 1px 0 rgba(255,255,255,0);
-  --lg-lip-dn:    inset 0 -1px 0 rgba(255,255,255,.10);
+  --lg-lip-dn:    inset 0 -1px 0 rgba(255,255,255,.07);
   --lg-lip-dn-0:  inset 0 -1px 0 rgba(255,255,255,0);
-  --lg-drop-up:   0 -1px 1px rgba(0,0,0,.20), 0 -10px 28px -12px rgba(0,0,0,.45), 0 -26px 56px -28px rgba(0,0,0,.55);
-  --lg-drop-up-0: 0 -1px 1px rgba(0,0,0,0),   0 -10px 28px -12px rgba(0,0,0,0),   0 -26px 56px -28px rgba(0,0,0,0);
-  --lg-drop-dn:   0 1px 1px rgba(0,0,0,.20), 0 10px 28px -12px rgba(0,0,0,.45), 0 26px 56px -28px rgba(0,0,0,.55);
-  --lg-drop-dn-0: 0 1px 1px rgba(0,0,0,0),   0 10px 28px -12px rgba(0,0,0,0),   0 26px 56px -28px rgba(0,0,0,0);
 
-  --lg-fill-0: rgba(30,31,34,0);
-  --lg-edge-0: rgba(0,0,0,0);
-  --lg-ink-0:  rgba(196,199,206,0);
+  --lg-ink:   #ececea;
+  --lg-ink-2: #a9aaa7;
+  --lg-ink-3: #75767a;
+  --lg-ink-0: rgba(169,170,167,0);
 
-  --lg-ink:   #F1F2F4;
-  --lg-ink-2: #C4C7CE;
-  --lg-ink-3: #8E94A0;
+  --lg-acc:        #9fb4cc;               /* Helm steel blue; state only, never on a row */
+  --lg-acc-strong: #b7c8db;
+  --lg-acc-on:     #11161c;
+  --lg-acc-soft:   rgba(159,180,204,.14);
+  --lg-acc-line:   rgba(159,180,204,.42);
+  --lg-acc-select: rgba(159,180,204,.32);
 
-  --lg-acc:      #9D97EC;
-  --lg-acc-on:   #15131F;
-  --lg-acc-soft: rgba(157,151,236,.18);
-
-  --lg-hover: rgba(255,255,255,.07);
-  --lg-press: rgba(255,255,255,.11);
-  --lg-tile:  rgba(255,255,255,.09);
-  --lg-sunk:  rgba(255,255,255,.05);
+  --lg-hover: rgba(40,41,43,.62);          /* Helm row hover = surface-2 */
+  --lg-press: rgba(62,63,66,.62);          /* Helm row selected / menu item active = surface-3 */
+  --lg-tile:  var(--lg-card);
+  --lg-sunk:  var(--lg-field);
 
   --lg-dot-ring: rgba(0,0,0,.55);
 
-  --lg-warn:      #E0A059;                 /* Mantle's own --amber: a dark-theme colour, home again */
-  --lg-warn-soft: rgba(224,160,89,.14);
+  --lg-warn:      #d6b874;
+  --lg-warn-soft: rgba(214,184,116,.14);
+  --lg-ok:        #8fbf9b;
+  --lg-danger:    #e0877c;
 
-  --lg-ground: #1B1C1F;
-  --lg-blur:   blur(12px) saturate(140%);
+  --lg-focus: 0 0 0 1px rgba(20,21,22,.9), 0 0 0 3px rgba(159,180,204,.55);
+  --lg-scroll:       rgba(255,255,255,.14);
+  --lg-scroll-hover: rgba(255,255,255,.24);
+  --lg-disabled: .45;
+
+  /* Helm radii: menu item / button / input 6, row / menu 10, panel / pop-up 14, palette / modal 18. */
+  --lg-r:      10px;
+  --lg-r-ctl:  6px;
+  --lg-r-pop:  14px;
+  --lg-r-xl:   18px;
+  --lg-r-pill: 18px;                       /* the bar island's ends: Helm's largest radius */
+  --lg-r-chip: 999px;
+
+  /* Helm motion for UI state (hover, press, pop-in). --lg-dur / --lg-ease stay: the bar's reveal. */
+  --lg-dur-ui:      120ms;
+  --lg-dur-ui-slow: 200ms;
+  --lg-ease-ui:     cubic-bezier(.2,0,0,1);
+
+  --lg-font:         "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --lg-font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --lg-mono:         "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+
+  --lg-ground: #131415;
+  --lg-blur:   blur(5px);                  /* Owen's Helm blur; no saturate, no dim */
 }
+
+/* Helm's global rules, dark only, at ZERO specificity (:where) so any page rule still wins. */
+:where(:root[data-theme="dark"]) ::selection { background: var(--lg-acc-select); }
+:where(:root[data-theme="dark"]) ::-webkit-scrollbar { width: 10px; height: 10px; }
+:where(:root[data-theme="dark"]) ::-webkit-scrollbar-track { background: transparent; }
+:where(:root[data-theme="dark"]) ::-webkit-scrollbar-thumb {
+  background: var(--lg-scroll); border: 3px solid transparent; background-clip: padding-box; border-radius: 10px;
+}
+:where(:root[data-theme="dark"]) ::-webkit-scrollbar-thumb:hover { background-color: var(--lg-scroll-hover); }

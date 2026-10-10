@@ -223,10 +223,23 @@
     return (it && it.minimized) || (th && th.minimized) ? 'Minimized' : '';
   }
 
+  // lane helm-wall-apps (2026-10-09): in dark the page paints the wallpaper (ui/shared/wall-bdrop.js); with no
+  // picture the page stands on the solid ground and the foot says why. Light: the blur-behind, as before.
+  function darkPage() { return document.documentElement.getAttribute('data-theme') === 'dark'; }
+  function wallFace() {
+    var W = window.MantleWallBdrop;
+    document.body.classList.toggle('no-glass', darkPage() ? !(W && W.state === 'on') : !(S.glass && S.glass.ok));
+  }
+  window.addEventListener('mantle-wall', function () { wallFace(); renderFoot(); });
+
   function renderFoot() {
     // one line per reason (warn glyph + words), the scroll position last in quiet ink
     var parts = [];
-    if (S.glass && !S.glass.ok) parts.push('No blur: ' + (S.glass.reason || 'the blur-behind could not be applied'));
+    if (darkPage()) {
+      var W = window.MantleWallBdrop;
+      if (W && W.state === 'off') parts.push('No wallpaper picture: ' + (W.reason || 'no reason came back'));
+      if (S.glass && !S.glass.ok) parts.push('The blur-behind is still on: ' + (S.glass.reason || 'it could not be turned off'));
+    } else if (S.glass && !S.glass.ok) parts.push('No blur: ' + (S.glass.reason || 'the blur-behind could not be applied'));
     if (S.thumbsWhy) parts.push('No live previews: ' + S.thumbsWhy);
     var sh = sharedThumbWhy();
     if (sh) parts.push('No preview for ' + sh.count + ' windows: ' + (sh.why || 'no reason was given'));
@@ -502,7 +515,8 @@
     if (m.selHwnd) {
       for (var i = 0; i < S.items.length; i++) if (S.items[i].hwnd === m.selHwnd) { S.sel = i; break; }
     }
-    document.body.classList.toggle('no-glass', !(S.glass && S.glass.ok));
+    if (darkPage() && m.at && window.MantleWallBdrop) window.MantleWallBdrop.at(m.at.x, m.at.y);   // where the display it opens on sits
+    wallFace();
     document.body.classList.remove('is-idle');
     toast.classList.remove('on');
     renderAll(S.items[S.sel] ? S.items[S.sel].hwnd : null);

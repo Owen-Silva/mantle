@@ -67,7 +67,7 @@ async function open(ctx, q, wall, h) {
       if (ch === 'bar.popover') {
         const st = String(new Error().stack || '');
         const who = /shared\/tips\.js/.test(st) ? 'tips' : 'page';
-        window.__roomLog.push({ who, open: !!(p && p.open), key: (p && p.key) || null, h: (p && p.height) || 0 });
+        window.__roomLog.push({ who, open: !!(p && p.open), key: (p && p.key) || null, h: (p && p.height) || 0, bd: !!(p && p.backdrop) });
         window.__owner = p && p.open ? { key: p.key || 'unnamed', h: p.height } : null;
       }
       return orig.apply(this, arguments);
@@ -193,7 +193,11 @@ const shots = [];
       else ok(t.left >= 0 && t.right <= g.vw && t.top >= 0 && t.bottom <= g.pill.top - 0.5, `${tag}: boxed in, the tip uses the room beside the panel: in the window, never over the pill (${box}; pill top ${Math.round(g.pill.top)})`);
       ok(gap >= 0 && gap <= 7.5, `${tag}: the tip sits next to the link (gap ${gap.toFixed(1)} px, side ${s.box && s.box.side})`);
       ok(g.ov !== 'ellipsis' && g.ws !== 'nowrap' && g.sw <= g.cw + 0.5 && g.sh <= g.ch + 0.5, `${tag}: wrapped in whole lines, nothing cut (overflow ${g.ov}, ${g.ws}, ${g.sw}/${g.cw} wide, ${g.sh}/${g.ch} tall)`);
-      ok(/^rgb\(/.test(g.bg) && g.img !== 'none', `${tag}: an opaque surface under the frost (${g.bg} under ${g.img.slice(0, 48)})`);
+      // light: an opaque surface under the frost. dark (lane same-huds, Helm's look): a tip in the pop-up
+      // is the pop-up's glass, ONE --lg-fill layer over its blurred picture on no ground
+      const darkNow = await page.evaluate(() => document.documentElement.dataset.theme === 'dark');
+      if (darkNow) ok(g.bg === 'rgba(0, 0, 0, 0)' && (g.img.match(/linear-gradient/g) || []).length === 1 && /url\("data:image\/png/.test(g.img), `${tag}: dark: one --lg-fill layer over the pop-up's picture (${g.bg} under ${g.img.slice(0, 60)})`);
+      else ok(/^rgb\(/.test(g.bg) && g.img !== 'none', `${tag}: an opaque surface under the frost (${g.bg} under ${g.img.slice(0, 48)})`);
       const pad = 12;
       const x0 = Math.max(0, Math.min(P.left, t.left) - pad), x1 = Math.min(g.vw, Math.max(P.right, t.right) + pad);
       const file = path.join(OUT, `tip-qs-powerwarn-${words}-${wall}-${scale}x.png`);
@@ -242,11 +246,22 @@ const shots = [];
     ok(s.box.y >= pill.top - s.box.need - 1 && s.box.y + s.box.h <= pill.top - 5.9, `the tip is inside the room it asked for and clear of the pill (y ${s.box.y}..${s.box.y + s.box.h}, pill top ${pill.top}, room ${s.box.need})`);
     const multi = await page.evaluate(() => { const t = document.getElementById('mantle-tip'); return { lines: Math.round(t.getBoundingClientRect().height / 16), txt: t.textContent }; });
     ok(multi.txt.includes('\n') && multi.lines >= 2, 'the multi-line title keeps its line break');
-    const look = await page.evaluate(() => { const c = getComputedStyle(document.getElementById('mantle-tip')); return { pe: c.pointerEvents, ws: c.whiteSpace, bg: c.backgroundColor, img: c.backgroundImage, fam: c.fontFamily, dark: document.documentElement.dataset.theme === 'dark' }; });
+    const look = await page.evaluate(() => {
+      const c = getComputedStyle(document.getElementById('mantle-tip'));
+      const d = document.createElement('i'); d.style.color = getComputedStyle(document.documentElement).getPropertyValue('--lg-fill').trim(); document.body.appendChild(d);
+      const fill = getComputedStyle(d).color; d.remove();
+      return { pe: c.pointerEvents, ws: c.whiteSpace, bg: c.backgroundColor, img: c.backgroundImage, fam: c.fontFamily, dark: document.documentElement.dataset.theme === 'dark', fill, glass: window.MantleTips.state().glass };
+    });
     ok(look.pe === 'none' && look.ws === 'pre-line', 'pointer-events none, pre-line');
-    // light: the pinned values; dark (data-theme="dark"): the dark block's --lg-ground #1B1C1F under --lg-fill-strong rgba(32,33,36,.80)
-    const face = look.dark ? (/^rgb\(27, 28, 31\)$/.test(look.bg) && /32, 33, 36, 0\.8\b/.test(look.img))
+    // light: the pinned values (opaque: the frost on --lg-ground). dark (lanes see-huds then same-huds,
+    // 2026-10-09, "everything the same", Helm's look): the tip above the pill is the bar pop-ups' glass,
+    // ONE --lg-fill layer over the blurred picture main took when the tip asked for its room
+    // (bar.popover {backdrop: true} -> bar.popbackdrop {key:'tip'}; the mock answers it), on no ground.
+    const layers = look.img.split(/,\s*(?=linear-gradient|url)/);
+    const face = look.dark ? (/^rgba\(0, 0, 0, 0\)$/.test(look.bg) && layers.length === 2 && layers[0] === `linear-gradient(${look.fill}, ${look.fill})` && /^url\("data:image\/png/.test(layers[1]) && look.glass.on && look.glass.key === 'tip')
                            : (/^rgb\(244, 246, 250\)$/.test(look.bg) && /255, 255, 255, 0\.72/.test(look.img));
+    if (look.dark) ok(L.log.some((e) => e.who === 'tips' && e.open && e.bd), `dark: the tip's room ask carried backdrop: true and its picture came back (${JSON.stringify(look.glass)})`);
+    else ok(!L.log.some((e) => e.who === 'tips' && e.bd) && !look.glass.on, 'light: the tip never asks for a picture and keeps its own frost');
     ok(face && /Segoe UI/.test(look.fam), `the popover frost on an opaque ground, and the bar's face (${look.img.slice(0, 44)} over ${look.bg}; ${look.fam.split(',')[0]})`);
 
     // live update in place: the volume keys while the tip is up

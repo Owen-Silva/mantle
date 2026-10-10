@@ -25,7 +25,23 @@
 
   /* A stand-in wallpaper, MOCK ONLY: on disk there is nothing behind the page, so glass over
      white tells you nothing. Loud on purpose — if the ink survives this, a photograph is easy. */
-  if (q.get('bg') === '1') {
+  /* SCENE MODE, MOCK ONLY (lane see-glass-b, 2026-10-09): a harness sets window.__mockScene = {url}
+     (a 1920x1080 picture as a data URL) in an init script. It is the wallpaper on <html>, and the
+     capture main sends is that picture downscaled 8x; with ?wall=1 it is also handed over as Mantle's
+     own picture wallpaper ('wallpaper' {item.type 'picture'}), so the panes take the has-wall path.
+     Without __mockScene nothing here changes. */
+  var SCENE = window.__mockScene && window.__mockScene.url ? window.__mockScene : null;
+  var sceneImg = null, sceneWait = null;
+  if (SCENE) {
+    sceneWait = [];
+    sceneImg = new Image();
+    sceneImg.onload = function () { var w = sceneWait; sceneWait = null; w.forEach(function (f) { f(); }); };
+    sceneImg.src = SCENE.url;
+    document.documentElement.style.background = 'url("' + SCENE.url + '") 0 0 / 100% 100% no-repeat';
+  }
+  function whenScene(fn) { if (sceneWait) sceneWait.push(fn); else fn(); }
+
+  if (!SCENE && q.get('bg') === '1') {
     document.documentElement.style.background =
       'linear-gradient(120deg,#0b0d10 0%,#2f6fe0 18%,#d64545 38%,#1f8f4e 55%,#b23fd0 72%,#e0a059 88%,#0b0d10 100%)';
   }
@@ -38,6 +54,10 @@
     var c = document.createElement('canvas');
     c.width = w; c.height = h;
     var g = c.getContext('2d');
+    if (SCENE) {
+      g.drawImage(sceneImg, 0, 0, w, h);
+      return { png: c.toDataURL('image/png'), w: w, h: h };
+    }
     var grad = g.createLinearGradient(0, 0, w, h);
     ['#0b0d10', '#2f6fe0', '#b23fd0', '#e0a059', '#1f8f4e'].forEach(function (s, i, a) {
       grad.addColorStop(i / (a.length - 1), s);
@@ -72,7 +92,11 @@
       (listeners[channel] || (listeners[channel] = [])).push(cb);
       setTimeout(function () {
         if (channel === 'state') cb(state());
-        if (channel === 'desktop.backdrop' && q.get('nobd') !== '1') cb(Object.assign(screenPNG(), { rect: { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }, ms: 42 }));
+        if (channel === 'desktop.backdrop' && q.get('nobd') !== '1') whenScene(function () { cb(Object.assign(screenPNG(), { rect: { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }, ms: 42 })); });
+        if (channel === 'wallpaper' && SCENE && q.get('wall') === '1') {
+          cb({ ok: true, reason: '', paused: false, unload: false, item: { id: 'scene-' + (SCENE.name || 'x'), title: 'scene', type: 'picture',
+            url: SCENE.url, look: { fit: 'cover', filter: '', rate: 1 }, props: [] } });
+        }
       }, 40);
       return function off() {
         listeners[channel] = (listeners[channel] || []).filter(function (f) { return f !== cb; });

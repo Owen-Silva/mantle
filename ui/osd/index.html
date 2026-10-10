@@ -12,6 +12,7 @@
 <!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="osd.css">
+<link rel="stylesheet" href="../shared/hud-backdrop.css">
 </head>
 <body>
 <!-- ONE surface. Collapsed it is the pill: glyph (a click mutes), the level as a bar you can drag,
@@ -42,5 +43,8 @@
 <script src="../bar/qs-send.js"></script>
 <script src="osd-model.js"></script>
 <script src="osd.js"></script>
+<!-- dark only: the blurred picture of the screen behind this window, once main sends osd.backdrop (lane see-huds) -->
+<script src="../shared/glass-adapt.js"></script>
+<script src="../shared/hud-backdrop.js" data-event="osd.backdrop" data-pane="#osd"></script>
 </body>
 </html>

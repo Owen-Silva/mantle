@@ -94,5 +94,6 @@
     show({ text: 'Window layouts', lines: ['this pop-up could not connect to Mantle: restart Mantle to fix it'], tone: 'warn' });
     return;
   }
-  mantle.on('layouts.toast', show);
+  // dark: one picture of what is behind this pop-up per show (ui/shared/hud-backdrop.js)
+  mantle.on('layouts.toast', function (p) { show(p); if (window.MantleHudBackdrop) window.MantleHudBackdrop.request('shown', { hold: true }); });
 })();

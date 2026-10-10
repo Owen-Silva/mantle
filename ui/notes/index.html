@@ -9,6 +9,7 @@
 <!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="notes.css">
+<link rel="stylesheet" href="../shared/hud-backdrop.css">
 </head>
 <body>
 <!-- Quick notes (lib/features/notes.js): drops down from the top bar like one of its menus.
@@ -60,5 +61,8 @@
 </main>
 <script src="mock-mantle.js"></script>
 <script src="notes.js"></script>
+<!-- dark only: the blurred picture of the screen behind this window, once main sends notes.backdrop (lane see-huds) -->
+<script src="../shared/glass-adapt.js"></script>
+<script src="../shared/hud-backdrop.js" data-event="notes.backdrop" data-pane="#pad"></script>
 </body>
 </html>

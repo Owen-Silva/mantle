@@ -130,3 +130,36 @@
 }
 .cell .ontop-badge svg { display: block; }
 .pop.jl .jl-i.ontop-on .jl-ico { color: var(--lg-acc); }
+
+/* DARK = Helm's menu (lane same-bars-mods, 2026-10-09; HELM-SPEC rows 3-24). Light above is untouched.
+   Helm .menu: padding 4; .menu-item 30 min, 5 / 10, gap 10, 13 px ink, icons ink-2, radius 6, hover
+   and keyboard focus = surface-3 (--lg-press) with no ring and no accent (keyboard focus adds the
+   selected row's hairline); .menu-label 11/600 uppercase +.04em at 6 10 4; .menu-sep margin 4 6 in
+   --lg-divider. The list's own thin scrollbar gives way to glass-light.css's one Helm scrollbar. */
+:root[data-theme="dark"] .pop.jl { padding: 4px; }
+:root[data-theme="dark"] .pop.jl .jl-list { scrollbar-width: auto; scrollbar-color: auto; }
+:root[data-theme="dark"] .pop.jl .jl-h { margin: 6px 10px 4px; font-size: 11px; }
+:root[data-theme="dark"] .pop.jl .jl-h:first-child { margin-top: 2px; }
+:root[data-theme="dark"] .pop.jl .jl-i {
+  gap: 10px;
+  min-height: 30px;
+  padding: 5px 10px;
+  color: var(--lg-ink);
+  font-size: 13px;
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), color var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .pop.jl .jl-i:hover,
+:root[data-theme="dark"] .pop.jl .jl-i:active { background: var(--lg-press); color: var(--lg-ink); }
+:root[data-theme="dark"] .pop.jl .jl-i:focus-visible { background: var(--lg-press); color: var(--lg-ink); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .pop.jl .jl-i.close:hover { color: var(--lg-warn); }
+:root[data-theme="dark"] .pop.jl .jl-ico { color: var(--lg-ink-2); }
+:root[data-theme="dark"] .pop.jl .jl-i.ontop-on .jl-ico { color: var(--lg-acc); }
+:root[data-theme="dark"] .pop.jl .jl-ico.letter { color: var(--lg-ink); font-size: 11px; }
+:root[data-theme="dark"] .pop.jl .jl-sep { margin: 4px 6px; background: var(--lg-divider); }
+:root[data-theme="dark"] .pop.jl .jl-sub { margin-left: 27px; border-left-color: var(--lg-divider); }
+:root[data-theme="dark"] .pop.jl .jl-why { padding: 3px 10px 4px; font-size: 12px; }
+:root[data-theme="dark"] .pop.jl .jl-quiet,
+:root[data-theme="dark"] .pop.jl .jl-note { padding: 6px 10px; }
+:root[data-theme="dark"] .pop.jl .jl-note,
+:root[data-theme="dark"] .pop.jl .jl-foot { border-top-color: var(--lg-divider); }
+@media (prefers-reduced-motion: reduce) { :root[data-theme="dark"] .pop.jl .jl-i { transition: none; } }

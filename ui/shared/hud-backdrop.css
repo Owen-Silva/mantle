@@ -1,0 +1,21 @@
+/* hud-backdrop.css - a floating HUD's pane with the blurred picture behind it, DARK ONLY (lane
+ * see-huds, 2026-10-09; the why is in hud-backdrop.js). ui/shared/hud-backdrop.js puts the class
+ * .hud-bd on the pane once a picture has been baked, and the baked picture in --hud-bd-img.
+ *
+ * Then the pane is Helm's glass: ONE --lg-fill layer (.50) over the blurred picture, and the pane's
+ * own hairlines and shadow, untouched. Its own dark face (one --lg-fill-pop layer) is replaced, not
+ * stacked under. Without .hud-bd nothing here applies; in light nothing here applies at all.
+ * The doubled class outranks each surface's own `:root[data-theme="dark"] .panel { background }`. */
+:root[data-theme="dark"] .hud-bd.hud-bd {
+  background-color: transparent;
+  /* --hud-tint: set only when the shared readability guard thickens the tint (hud-backdrop.js) */
+  background-image: linear-gradient(var(--hud-tint, var(--lg-fill)), var(--hud-tint, var(--lg-fill))), var(--hud-bd-img);
+  background-size: auto, 100% 100%;
+  background-position: 0 0, 0 0;
+  background-repeat: no-repeat, no-repeat;
+  background-origin: border-box, border-box;
+  background-clip: border-box, border-box;
+}
+/* request(why, {hold}): the pane waits, unseen, for its picture (at most `hold` ms), so a show is
+   never one frame of the thick fallback face and then the glass */
+:root[data-theme="dark"] .hud-hold.hud-hold { opacity: 0 !important; transition: none !important; }

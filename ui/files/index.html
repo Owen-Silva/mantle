@@ -9,6 +9,7 @@
 <!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="files.css">
+<link rel="stylesheet" href="../shared/wall-bdrop.css">
 </head>
 <body>
 <!-- Mantle Files (lib/features/files.js): the File Explorer replacement. The page never touches the
@@ -68,6 +69,7 @@
     <span id="stsel"></span>
     <span class="grow"></span>
     <span id="stnote" class="stnote"></span>
+    <span id="stwall" class="stnote" hidden></span>
     <span id="stload" class="stload" hidden></span>
     <span class="views">
       <button class="ib sm" id="vdetails" type="button" title="Details (Ctrl+Shift+6)" aria-label="Details view"></button>
@@ -81,6 +83,8 @@
 <div class="modal" id="modal" hidden></div>
 <script src="model.js"></script>
 <script src="mock-mantle.js"></script>
+<!-- dark: the wallpaper under the tint, as Helm does (lane helm-wall-apps) -->
+<script src="../shared/wall-bdrop.js" data-event="files.wall" data-pos="files.wallpos"></script>
 <script src="list.js"></script>
 <script src="panes.js"></script>
 <script src="files.js"></script>

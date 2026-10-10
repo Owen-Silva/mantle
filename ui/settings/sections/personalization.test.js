@@ -452,8 +452,11 @@ function galleryShots(t) {
       check(`17 ${T}: Space on a focused tile picks it`, await lastSet(p) === 'builtin:stone' && await picked(p) === 'builtin:stone' && await active(p) === 'builtin:stone');
       check(`17 ${T}: the pick is the grid's tab stop`, (await tiles(p)).filter((x) => x.tab === 0).map((x) => x.id).join() === 'builtin:stone');
       await p.keyboard.press('ArrowRight');
+      await p.waitForTimeout(250);   // dark's ring eases in over --lg-dur-ui
       check(`17 ${T}: ArrowRight moves to the next photo, with a focus ring`, await active(p) === 'builtin:cloud-peaks' &&
-        await p.evaluate(() => getComputedStyle(document.activeElement).outlineStyle) === 'solid');
+        /* light: a solid outline; dark: Helm's ring, box-shadow var(--lg-focus), no outline (lane same-finish) */
+        await p.evaluate((dk) => { const cs = getComputedStyle(document.activeElement);
+          return dk ? cs.outlineStyle === 'none' && /rgba\(159, 180, 204, 0\.55\) 0px 0px 0px 3px/.test(cs.boxShadow) : cs.outlineStyle === 'solid'; }, T === 'dark'));
       await p.keyboard.press('ArrowLeft');
       await p.click('[data-credit]');
       await p.waitForTimeout(200);

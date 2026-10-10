@@ -20,7 +20,18 @@ const fs = require('fs');
 const os = require('os');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// the newest installed Playwright Chromium (the pinned chromium-1234 build was removed 2026-10-05;
+// lane same-shell, 2026-10-09)
+const CHROME = (() => {
+  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  try {
+    for (const d of fs.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
+      const p = base + '/' + d + '/chrome-win64/chrome.exe';
+      if (fs.existsSync(p)) return p;
+    }
+  } catch (_) { /* reported below as "no chromium at" */ }
+  return base + '/chromium-*/chrome-win64/chrome.exe';
+})();
 const PAGE = 'file:///' + path.join(ROOT, 'ui', 'desktop', 'index.html').replace(/\\/g, '/') + '?ok=1';
 const BASE = (process.argv.find((a) => a.startsWith('--base=')) || '').slice(7);
 

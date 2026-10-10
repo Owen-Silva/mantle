@@ -17,6 +17,16 @@
   --warn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E");
 }
 
+/* DARK, SEE-THROUGH (lane see-huds, 2026-10-09). Owen, on dark Mantle: "mantle needs to be more see
+   through everything". --hud-face is --lg-fill-strong three times over: ~88% at the dark .50, a slab.
+   In dark the face is ONE layer of --lg-fill (FINAL RULES: = --lg-fill-pop, both .83), the bar popovers' fill for a surface with nothing
+   blurred behind it, so the screen behind shows through about 2.5x as much (share ~.18, was ~.07 at .58, ~.12 at .50).
+   Light is untouched. */
+:root[data-theme="dark"] {
+  --hud-face: var(--lg-fill);
+  --hud-ground: var(--hud-face);   /* the tool bar: the face alone, no --lg-sunk stacked on it (lane same-huds-css) */
+}
+
 html, body {
   margin: 0; height: 100%; overflow: hidden;
   background: transparent;
@@ -119,3 +129,34 @@ body.mode-window, body.mode-full { cursor: default; }
    right after the overlay moves on screen. Not a theme colour on purpose: it must be a colour the
    frozen frame under it is very unlikely to have, and it is gone within ~50 ms. */
 #canary { position: fixed; z-index: 2147483647; background: #FF00FF; pointer-events: none; }
+
+/* DARK (lane see-huds, 2026-10-09): on the one-layer face the quiet --lg-ink-3 words fell under 4.5:1 over a
+   bright page, so in dark they are --lg-ink-2 (light is untouched). */
+:root[data-theme="dark"] #problem em { color: var(--lg-ink-2); }
+
+/* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
+   Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
+   literal Helm). The face is ONE layer of --lg-fill (root block above) and the tool bar is the face
+   alone (no --lg-sunk stacked on it). The bar, the size and hint pills and the problem card wear the
+   pop-ups' edge: their --lg-edge-out hairline plus the --lg-lip-up lip over --lg-shadow. HELM-SPEC
+   rows applied: 14 (the chosen mode = --lg-press + one hairline, hover --lg-hover), 16 (label 500),
+   19 focus, 24 (hover 120 ms on Helm's curve). NOT applied: the mode buttons stay pill-shaped inside
+   the pill bar (a 6 px corner inside an 18 px pill reads as a mistake); the dim, the selection rings
+   and the guides are the capture's own marks over any screen, not glass, so they keep their colours.
+   Type is already on Helm's scale. Light is untouched. */
+:root[data-theme="dark"] .pill,
+:root[data-theme="dark"] #bar,
+:root[data-theme="dark"] #problem { box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow); }
+/* in-page backdrop-filter over the frozen frame: the bar and the pills sit over this page's OWN
+   still of the screen (#frame + #dim), so they blur it in place, no capture needed; they are short
+   (bar ~44px, pills ~28px), so the tall-card raster-tile glitch does not apply. ONE --lg-fill. */
+:root[data-theme="dark"] .pill,
+:root[data-theme="dark"] #bar {
+  background: var(--lg-fill);
+  -webkit-backdrop-filter: var(--lg-blur);
+  backdrop-filter: var(--lg-blur);
+}
+:root[data-theme="dark"] #bar button { transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] #bar button[aria-pressed="true"] { font-weight: 500; }
+:root[data-theme="dark"] #bar button:focus-visible,
+:root[data-theme="dark"] #bar button[aria-pressed="true"]:focus-visible { box-shadow: var(--lg-focus); }

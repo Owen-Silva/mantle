@@ -1790,6 +1790,21 @@
   /* ---- events from main ---------------------------------------------------------------------------- */
   function listen() {
     const on = (ev, fn) => window.mantle.on(ev, (p) => { try { fn(p || {}); } catch (e) { console.error(ev, e); toast('Part of the window did not update', { kind: 'err', sub: 'Press F5 to refresh. If it keeps happening, restart Mantle.' }); } });
+    // lane see-apps (2026-10-09): Windows refused this window's frame in Mantle's appearance (lib/features/files.js
+    // lightFrame). In dark the page is only a breath of tint over the acrylic, and acrylic of the OTHER appearance
+    // under light ink is unreadable: files.css stands the page on its solid ground while data-frame="refused".
+    on('files.frame', (ev) => { document.documentElement.dataset.frame = ev.ok === false ? 'refused' : 'ok'; });
+    // lane helm-wall-apps (2026-10-09): in dark the page paints the wallpaper (ui/shared/wall-bdrop.js); with no
+    // picture the window keeps its solid face and the status bar says why
+    const wallNote = () => {
+      const W = window.MantleWallBdrop, el = $('stwall');
+      if (!el) return;
+      const why = W && W.state === 'off' && document.documentElement.dataset.theme === 'dark' ? `No wallpaper picture: ${W.reason || 'no reason came back'}` : '';
+      el.hidden = !why; el.textContent = why; el.title = why;
+    };
+    window.addEventListener('mantle-wall', wallNote);
+    window.addEventListener('mantle-theme', wallNote);
+    wallNote();
     on('files.items', onItems);
     on('files.found', onFound);
     on('files.size', (ev) => MF.side.onSize(ev));

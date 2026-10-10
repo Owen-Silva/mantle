@@ -131,12 +131,66 @@ body.no-backdrop .panel::after {
    desktop the lift took the subtitle and placeholder (--lg-ink-3) under 4.5:1 (4.23 measured on the
    mock, ui/launcher/shoot.js MANTLE_THEME=dark). Without it the pane sits ~6 darker, as Win11's own
    dark flyouts do; the rows' washes still read on it. (lane dm-files-launcher, 2026-10-08) */
+/* DARK, SEE-THROUGH (lane see-glass-b, 2026-10-09; Owen: "mantle needs to be more see through
+   everything"). The three layers above were ~88% opaque in dark: the picture behind barely showed.
+   Now ONE layer of tint (--lg-fill) over the picture blurred with --lg-blur alone; the only deviation
+   is THE shared readability guard (launcher.js adaptBackdrop -> --pane-tint, a thicker tint, never a
+   dimmer picture). */
 :root[data-theme="dark"] .panel::after {
-  background-image: linear-gradient(var(--pane-fill), var(--pane-fill)), linear-gradient(var(--lg-fill), var(--lg-fill));
+  background-color: var(--pane-tint, var(--lg-fill));
+  background-image: none;
 }
+/* no picture: the desktop shows through SHARP and nothing can be solved, so one layer thick enough to
+   read over a white window on its own (--lg-fill-pop, the opacity the two strong layers made) */
 :root[data-theme="dark"] body.no-backdrop .panel::after {
-  background-image: linear-gradient(var(--pane-fill), var(--pane-fill)), linear-gradient(var(--pane-fill), var(--pane-fill));
+  background-color: var(--lg-fill-pop);
+  background-image: none;
 }
+/* DARK, ONE SHEET (lane same-shell, 2026-10-09; Owen: "can you make sure everything is the same").
+   The launcher is a pop-up like the bar's: the pop-up radius token, not its own 20px. Its inner
+   pieces wash with the same tokens as the bar's cells: the letter tile and the key caps take
+   --lg-tile (not the --lg-sunk recess), the caps the control radius. A letter tile on the picked
+   row is tile over tile, ~.17 against the row's .09, so the square still reads. */
+:root[data-theme="dark"] .panel { border-radius: var(--lg-r-xl); }
+/* HELM IS THE REFERENCE (Owen: "if there is a conflict go by what helm looks like"; HELM-SPEC.md rows
+   10, 14, 24). The panel is a palette: Helm's xl radius (--lg-r-xl, 18px).
+   Rows: hover --lg-hover, the picked row --lg-press with a hairline ring and NO
+   accent bar (Helm puts no accent on rows; an armed power row keeps its warn tick, which is state,
+   not accent); colour changes ease over Helm's 120ms instead of a two-step switch. The open is Helm's
+   palette: 120ms, opacity + 4px drop + .985 scale, on Helm's curve; no exit animation. */
+:root[data-theme="dark"] { --in: var(--lg-dur-ui); }
+:root[data-theme="dark"] .panel {
+  transform: translateY(-4px) scale(.985);
+  transition:
+    opacity    var(--in) var(--lg-ease-ui),
+    transform  var(--in) var(--lg-ease-ui),
+    box-shadow var(--in) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] body.up .panel { transform: translateY(0) scale(1); }
+:root[data-theme="dark"] body:not(.up) .panel { transition: none; }
+:root[data-theme="dark"] .row { transition: background-color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .row.is-sel { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .row.is-sel:not(.is-armed) .row-main::before { content: none; }
+/* HELM, the rest of HELM-SPEC.md (rows 11, 12, 17, 18, 20). Type on Helm's scale (13 base, row title
+   13, subtitle 12, the typed line 16) in Helm's face and features; glyphs at Helm's 1.6 stroke for 16px
+   (the 12px warn mark: 1.6 in its 16-unit box = 1.2 on screen, Helm's scaled stroke); every divider
+   the divider token; the global dark scrollbar (glass-light.css) instead of this page's own. */
+:root[data-theme="dark"] body { font-family: var(--lg-font); font-size: 13px; font-feature-settings: "ss01", "cv11"; }
+:root[data-theme="dark"] #q { font-size: 16px; }
+:root[data-theme="dark"] .name { font-size: 13px; }
+:root[data-theme="dark"] .sub { font-size: 12px; }
+:root[data-theme="dark"] .grp-status { font-size: 13px; }
+:root[data-theme="dark"] .ico svg { stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+:root[data-theme="dark"] .why:not(.is-ok)::before, :root[data-theme="dark"] .src-error::before,
+:root[data-theme="dark"] .grp-status.is-error::before, :root[data-theme="dark"] .notice::before,
+:root[data-theme="dark"] .empty.is-bad::before {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
+}
+:root[data-theme="dark"] .slot { border-bottom-color: var(--lg-divider); }
+:root[data-theme="dark"] .foot, :root[data-theme="dark"] .notice { border-top-color: var(--lg-divider); }
+:root[data-theme="dark"] .ico { background: var(--lg-tile); }
+:root[data-theme="dark"] .ico:not(.is-letter) { background: transparent; }
+:root[data-theme="dark"] kbd { background: var(--lg-tile); border-radius: var(--lg-r-ctl); }
 
 /* ---- the backdrop ------------------------------------------------------
    .bdrop is the clip; the image inside it is deliberately 14px LARGER on every side than the box,
@@ -225,12 +279,13 @@ body.no-backdrop .panel::after {
    never Chromium's arrowed grey gutter. Ink at low alpha, never white: a white thumb on a
    white-tinted pane is invisible. (No scrollbar-width/-color here: setting either makes Chromium
    ignore every ::-webkit-scrollbar rule below.) */
-.results::-webkit-scrollbar { width: 6px; }
-.results::-webkit-scrollbar-button { display: none; height: 0; }
-.results::-webkit-scrollbar-track { background: transparent; }
-.results::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
-.results:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); }
-.results::-webkit-scrollbar-thumb:hover { background: var(--lg-press); }
+/* light only since lane same-shell (2026-10-09): dark takes the global Helm scrollbar in glass-light.css */
+:root:not([data-theme="dark"]) .results::-webkit-scrollbar { width: 6px; }
+:root:not([data-theme="dark"]) .results::-webkit-scrollbar-button { display: none; height: 0; }
+:root:not([data-theme="dark"]) .results::-webkit-scrollbar-track { background: transparent; }
+:root:not([data-theme="dark"]) .results::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+:root:not([data-theme="dark"]) .results:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); }
+:root:not([data-theme="dark"]) .results::-webkit-scrollbar-thumb:hover { background: var(--lg-press); }
 
 /* the rows are the bar's cells: ink washes at low alpha for hover and press, and the same wash
    one step stronger for the row Enter would fire */

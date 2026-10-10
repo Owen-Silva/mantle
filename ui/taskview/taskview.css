@@ -37,6 +37,47 @@ html, body {
    Without the blur (no-glass) a much thicker fill carries the page on its own, honestly. */
 body { background: linear-gradient(var(--lg-sunk), var(--lg-sunk)), linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)) var(--lg-fill-strong); }
 body.no-glass { background: var(--lg-ground); }
+/* DARK, SEE-THROUGH (lane see-glass-b, 2026-10-09; Owen: "mantle needs to be more see through
+   everything"). In dark the three layers above made ~83% over a blur-behind that Windows ALREADY darkens
+   by 60% (the sidecar's acrylic tint, Glass.cs DefaultTint): the desktop all but vanished. One layer
+   of --lg-fill, as every blurred surface. NOTE (lane same-shell): that acrylic still lays its own 60% black
+   under this page, so the page reads darker than the one-layer recipe; the fix is main's/the sidecar's
+   (a zero tint for this window), not CSS. No blur-behind: the solid ground, as before. */
+:root[data-theme="dark"] body { background: var(--lg-fill); }
+:root[data-theme="dark"] body.no-glass { background: var(--lg-ground); }
+/* lane helm-wall-apps (2026-10-09): in dark the window is opaque and the page paints the desktop wallpaper
+   (ui/shared/wall-bdrop.js/.css); --wall-tint is its ONE tint layer = the same tint body carries above. */
+:root[data-theme="dark"] { --wall-tint: var(--lg-fill); }
+/* DARK, ONE SHEET (lane same-shell, 2026-10-09; Owen: "can you make sure everything is the same").
+   Then HELM IS THE REFERENCE (HELM-SPEC.md rows 3, 10-12, 14, 16-19, 24). The page's one --lg-fill
+   is the glass. The desktop cards are Helm cards (--lg-card, hover --lg-press); the window tiles are a
+   list laid out as a grid: bare at rest, hover --lg-hover, the picked one Helm's selected row
+   (--lg-press + a 1px hairline, no accent ring: Helm puts no accent on rows). The filter pill and the
+   rename field are Helm inputs (--lg-field, control radius; the editing field's edge is --lg-acc-line).
+   Keyboard focus is Helm's focus ring, not an outline. Type on Helm's scale, glyph strokes at Helm's
+   1.6-per-16px, colour changes over Helm's 120ms curve. The drag chip floats over the window pictures
+   with no blurred picture of its own: the no-picture token (= the fill), chip radius. */
+:root[data-theme="dark"] .desk:not(.is-drop) { background: var(--lg-card); transition: background-color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .desk:not(.is-drop):hover { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .desk.is-focus, :root[data-theme="dark"] .desk-add.is-focus { outline: none; box-shadow: inset 0 0 0 1px var(--lg-edge-out), var(--lg-focus); }
+:root[data-theme="dark"] .desk-name-in { background: var(--lg-field); border-color: var(--lg-acc-line); }
+:root[data-theme="dark"] .pill { background: var(--lg-field); border-radius: var(--lg-r-ctl); }
+:root[data-theme="dark"] { --tile-r: var(--lg-r); }
+:root[data-theme="dark"] .tile { background: transparent; transition: background-color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .tile:hover { background: var(--lg-hover); }
+:root[data-theme="dark"] .tile.is-sel { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .pv { background: transparent; }
+:root[data-theme="dark"] .pv .big.letter { border-radius: var(--lg-r); }
+:root[data-theme="dark"] .ico.letter { border-radius: var(--lg-r-ctl); font-size: 11px; }
+:root[data-theme="dark"] .chip { border-radius: var(--lg-r-chip); font-size: 11px; }
+:root[data-theme="dark"] .chip.warn { font-size: 12px; }
+:root[data-theme="dark"] .toast { background: var(--lg-card); font-size: 13px; }
+:root[data-theme="dark"] .chip-drag { background: var(--lg-fill-pop); border-radius: var(--lg-r-chip); }
+:root[data-theme="dark"] body { font-family: var(--lg-font); font-size: 13px; font-feature-settings: "ss01", "cv11"; }
+:root[data-theme="dark"] .desk-name, :root[data-theme="dark"] .desk-name-in { font-size: 13px; }
+:root[data-theme="dark"] .q-count, :root[data-theme="dark"] .pv-why { font-size: 12px; }
+:root[data-theme="dark"] .glass-ico { stroke-width: 1.4; }            /* Helm's 1.6 at 16px, scaled to 14 */
+:root[data-theme="dark"] .desk-x svg, :root[data-theme="dark"] .x svg { stroke-width: 1; } /* ... and to 10 */
 body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale on the next open */
 
 /* ---------------------------------------------------------------- the desktop strip */

@@ -1512,9 +1512,15 @@ async function revealByPage(geo, why, visible) {
   if (!visible || barParked) {
     try {
       // gamequiet: no pre-reveal picture while a game runs; the page keeps its flat tint.
-      const shot = backdropQuiet('the bar') ? null
+      // dark (lane helm-wall): the wallpaper under the pill, cut from the still; v1's screen shot only
+      // where there is no still (a web wallpaper) -- and in light, as before
+      const wall = backdropQuiet('the bar') || getTheme().get().theme !== 'dark' ? null : await wallStill.rect(shotRect);
+      const skip = !!wall && (wall.ok || !wall.capture);   // the wallpaper answered, or there is nothing to capture instead
+      const shot = skip ? null : backdropQuiet('the bar') ? null
         : await sidecar.call('backdrop', { x: shotRect.x, y: shotRect.y, w: shotRect.w, h: shotRect.h, scale: BACKDROP_SCALE }, 2000);
-      if (shot && shot.png) {
+      if (wall && wall.ok) {
+        broadcast('bar.backdrop', { png: wall.png, w: wall.w, h: wall.h, rect: { x: wall.rect.x, y: wall.rect.y, w: wall.rect.w, h: wall.rect.h }, ms: wall.ms, source: wall.source });
+      } else if (shot && shot.png) {
         broadcast('bar.backdrop', { png: shot.png, w: shot.w, h: shot.h, rect: { x: shotRect.x, y: shotRect.y, w: shotRect.w, h: shotRect.h }, ms: Number(shot.ms) || 0 });
       }
     } catch (_) { /* the loop retries after landing; a reveal never waits on this */ }
@@ -1853,6 +1859,8 @@ const BACKDROP_MS = 250;              // 4 fps: it is a wallpaper, not a video
 const BACKDROP_SCALE = 4;             // downscale; the page blurs it anyway
 const BACKDROP_SETTLE_MS = 25;        // for the exclusion to take effect before the shot
 const BACKDROP_MAX_FAILS = 3;
+const WALL_WAIT_MS = 400;             // dark: a shown bar/launcher whose wallpaper is still loading looks again this often
+const WALL_WAIT_TRIES = 10;           // ...at most this many times per show (4 s), then the State change / refresh()
 // The desktop layer is the whole screen and sits under the wallpaper, so its
 // picture can be tiny: 8x down is 240x135 here, which a heavy CSS blur cannot
 // tell from the original.
@@ -1883,10 +1891,16 @@ function setBackdropPiece(key, patch) {
  * needed, which is why every first frame is taken before the window is shown.
  */
 async function captureBackdrop(win, rect, scale, protect, onProtectError) {
+  // How many protected captures of this window are in flight, kept ON the window (lane see-glass,
+  // 2026-10-09). The bar's 4 fps loop and a dark pop-up's one shot (barPopBackdrop) both protect the
+  // bar window; without the count, whichever finished first switched protection off under the other
+  // one's capture, and that one photographed the bar itself.
+  const COUNT = Symbol.for('mantle.protectedCaptures');
   let protectedOn = false;
   const t0 = Date.now();
   try {
     if (protect && win && !win.isDestroyed()) {
+      win[COUNT] = (win[COUNT] || 0) + 1;
       win.setContentProtection(true);
       protectedOn = true;
       await wait(BACKDROP_SETTLE_MS);
@@ -1897,10 +1911,32 @@ async function captureBackdrop(win, rect, scale, protect, onProtectError) {
   } catch (err) {
     return { ok: false, err };
   } finally {
-    if (protectedOn && win && !win.isDestroyed()) {
-      try { win.setContentProtection(false); } catch (e2) { onProtectError(e2); }
+    if (protectedOn) {
+      const left = Math.max(0, (win[COUNT] || 1) - 1);
+      win[COUNT] = left;
+      if (!left && !win.isDestroyed()) {
+        try { win.setContentProtection(false); } catch (e2) { onProtectError(e2); }
+      }
     }
   }
+}
+
+/*
+ * THE PICTURE BEHIND A DARK GLASS SURFACE (lane helm-wall, 2026-10-09). Owen: "you need to get the see
+ * through to look just like helm". Helm's panels show only its blurred PHOTO, never the windows behind
+ * it, so in dark every surface's picture is the WALLPAPER under its rectangle (lib/wall-still.js), not a
+ * screen capture: same {ok, png, w, h, ms} as captureBackdrop, plus `rect` (the physical rectangle the
+ * png covers exactly) and `source`. A web wallpaper or an unreadable video has no still: then v1's
+ * capture, with `note` saying so. No wallpaper picture at all: {ok:false, err} and the page keeps its
+ * fallback face with the reason, as before. Light: captureBackdrop, untouched.
+ */
+async function backdropPicture(win, rect, scale, protect, onProtectError) {
+  if (getTheme().get().theme !== 'dark') return captureBackdrop(win, rect, scale, protect, onProtectError);
+  const w = await wallStill.rect(rect);
+  if (w.ok) return { ok: true, png: w.png, w: w.w, h: w.h, ms: w.ms, rect: w.rect, source: w.source };
+  if (!w.capture) return { ok: false, err: new Error(w.reason), wall: true, transient: !!w.transient };
+  const r = await captureBackdrop(win, rect, scale, protect, onProtectError);
+  return Object.assign(r, { source: 'screen', note: `a capture of the screen behind, not the wallpaper: ${w.reason}` });
 }
 
 /**
@@ -1931,8 +1967,16 @@ function makeBackdrop(opts) {
   const onProtectError = (e) => set({ ok: false, reason: `${opts.label} could not be put back into screen captures, so it will be missing from screenshots: ${e.message}` });
 
   let quiet = null;                   // set while a game runs: no capture at all (gameQuiet)
+  // opts.wall (lane helm-wall): in dark the picture is the WALLPAPER under the window (backdropPicture),
+  // which does not move, so a frame that came from it ends the loop: one cut per show or per change of
+  // wallpaper (refresh), nothing on a timer. A web wallpaper's screen-capture fallback keeps the loop.
+  let source = null;                  // where the last good frame came from: 'mantle' | 'windows' | 'screen'
+  let active = false;                 // between start() and stop(): refresh() re-cuts only then
+  let wallMiss = false;               // the last frame found no wallpaper picture (dark): 'wait' | 'none'
+  let waits = 0;                      // looks again while the wallpaper loads (WALL_WAIT_TRIES at most per show)
   /** One frame. Returns true if it worked. Never throws. */
   async function frame(protect) {
+    wallMiss = false;
     // gamequiet: checked before the content protection and the sidecar, on every frame, so a
     // loop that was running when the game started ends at its next tick.
     quiet = backdropQuiet(opts.label);
@@ -1949,17 +1993,32 @@ function makeBackdrop(opts) {
     const fit = clampToDisplay(asked);
     const rect = fit.rect;
     const trimmed = fit.changed ? ` (${fit.note})` : '';
-    const r = await captureBackdrop(win, rect, opts.scale, protect, onProtectError);
+    const r = opts.wall ? await backdropPicture(win, rect, opts.scale, protect, onProtectError)
+      : await captureBackdrop(win, rect, opts.scale, protect, onProtectError);
     if (r.ok) {
       fails = 0;
       frames++;
-      const shot = { png: r.png, w: r.w, h: r.h, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h }, ms: r.ms };
+      source = r.source || 'screen';
+      const got = r.rect || rect;
+      const shot = { png: r.png, w: r.w, h: r.h, rect: { x: got.x, y: got.y, w: got.w, h: got.h }, ms: r.ms, source };
       broadcast(opts.event, shot);
       if (opts.onFrame) { try { opts.onFrame(shot); } catch (_) { /* a keeper of the last frame never stops the loop */ } }
-      set(trimmed
-        ? { ok: true, ms: r.ms, reason: `${opts.label} is blurring a live picture of what is behind it${trimmed}` }
-        : { ok: true, ms: r.ms });
+      if (source === 'mantle' || source === 'windows') {
+        set({ on: false, ok: true, ms: r.ms, source, reason: `${opts.label} shows the ${source === 'mantle' ? 'desktop' : 'Windows'} wallpaper under it, blurred (Helm's method): no capture, no loop${trimmed}` });
+      } else {
+        set(trimmed || r.note
+          ? { ok: true, ms: r.ms, source, reason: `${opts.label} is blurring a live picture of what is behind it${trimmed}${r.note ? ` (${r.note})` : ''}` }
+          : { ok: true, ms: r.ms, source });
+      }
       return true;
+    }
+    if (r.wall) {
+      // dark, and no wallpaper picture at all: the page keeps its fallback face and says why; no
+      // retry loop (refresh() cuts again when the wallpaper picture changes)
+      wallMiss = r.transient ? 'wait' : 'none';   // 'wait': the wallpaper is still loading
+      broadcast(opts.event, { png: null, reason: r.err.message });
+      set({ on: false, ok: false, ms: 0, reason: `${opts.label} has no wallpaper picture under it, so it shows its flat tint: ${r.err.message}` });
+      return false;
     }
     if (Sidecar.isOldExeError(r.err)) {
       off = `the sidecar exe has no "backdrop" command yet, so ${opts.label} falls back to its flat tint: run npm run build:sidecar`;
@@ -1983,8 +2042,24 @@ function makeBackdrop(opts) {
         return;
       }
     } else if (frames === 1) {
-      process.stdout.write(`mantle: ${opts.key} backdrop capture on: ${fps} fps, first frame ${state.get().backdrop[opts.key].ms} ms\n`);
+      process.stdout.write(source === 'mantle' || source === 'windows'
+        ? `mantle: ${opts.key} backdrop: the ${source} wallpaper, cut in ${state.get().backdrop[opts.key].ms} ms (no loop)\n`
+        : `mantle: ${opts.key} backdrop capture on: ${fps} fps, first frame ${state.get().backdrop[opts.key].ms} ms\n`);
     }
+    // the wallpaper does not move: no loop (a failure without a picture waits for refresh() too)
+    if (opts.wall && (source === 'mantle' || source === 'windows') && ok) return;
+    if (!ok && wallMiss) {
+      // the wallpaper is still loading ('wait'): look again a few times while the window is SHOWN (the
+      // State change when it draws also refreshes; this covers a draw that changes no State). Never while
+      // hidden: stop() clears the timer.
+      if (wallMiss === 'wait' && active && !shuttingDown && waits < WALL_WAIT_TRIES) {
+        waits++;
+        timer = setTimeout(() => { tick().catch(() => {}); }, WALL_WAIT_MS);
+        if (timer.unref) timer.unref();
+      }
+      return;
+    }
+    if (ok) waits = 0;
     if (!shuttingDown && timer === null && opts.ms) {
       timer = setTimeout(() => { tick().catch(() => {}); }, opts.ms);
       if (timer.unref) timer.unref();
@@ -1998,10 +2073,16 @@ function makeBackdrop(opts) {
       const ok = await frame(false);
       // A failure has already written its own reason (which names this window);
       // leave it alone rather than paper over it with a cheerful one.
-      if (ok) set({ on: !!timer, ok: true, reason: `${opts.label} has a fresh picture of what is behind it (${why})` });
+      if (ok) {
+        set({ on: !!timer, ok: true, reason: source === 'mantle' || source === 'windows'
+          ? `${opts.label} shows the ${source === 'mantle' ? 'desktop' : 'Windows'} wallpaper under it, blurred (Helm's method) (${why})`
+          : `${opts.label} has a fresh picture of what is behind it (${why})` });
+      }
       return ok;
     },
     start(why) {
+      active = true;
+      waits = 0;
       if (timer || shuttingDown || !opts.ms) return;
       if (off) { set({ on: false, ok: false, reason: off }); return; }
       const q = backdropQuiet(opts.label);
@@ -2012,10 +2093,21 @@ function makeBackdrop(opts) {
       tick().catch(() => {});
     },
     stop(why) { stop(why); },
-    peek: () => ({ timer: !!timer, fails, frames, off }),
+    /**
+     * The wallpaper or the theme changed: a SHOWN wall-backed window takes its picture again (no-op
+     * when hidden or while v1's loop runs). One tick: in dark it cuts the wallpaper and stops; in light
+     * it captures and the 4 fps loop runs again, as before.
+     */
+    refresh(why) {
+      if (!opts.wall || !active || timer || shuttingDown || off) return;
+      process.stdout.write(`mantle: ${opts.key} backdrop: picture again (${why})\n`);
+      tick().catch(() => {});
+    },
+    peek: () => ({ timer: !!timer, fails, frames, off, source, active }),
   };
 
   function stop(why) {
+    active = false;
     const wasRunning = !!timer || frames > 0;
     if (timer) clearTimeout(timer);
     timer = null;
@@ -2041,7 +2133,150 @@ const barBackdrop = makeBackdrop({
   // The PILL, not the window: the page attaches this image to the pill, and the
   // window also covers the transparent strip under it (17 px of wrong scenery).
   rect: () => barGeometry().pill.phys,
+  wall: true,                         // dark: the wallpaper under the pill, one cut per landing (lane helm-wall)
 });
+
+/*
+ * A dark pop-up's picture of what is behind it (lane see-glass, 2026-10-09). Owen, in dark: "mantle
+ * needs to be more see through everything ... even the taskbar". A pop-up had no blur under it (only
+ * a near-opaque fill), so it could not be see-through and readable at once. The page asks for this
+ * (bar.popover {backdrop: true}, dark theme only) and gets ONE protected shot of the bar window's
+ * whole content rectangle, 4x down, as 'bar.popbackdrop'; it hangs the piece under the pop-up in a
+ * blurred pseudo-element (bar.css) -- an image filter, NOT backdrop-filter, so the tall-card raster
+ * tile glitch has nothing to do with it. One shot per open, no loop: a pop-up lives seconds and the
+ * blur is ~48 px wide. `at` is where the shot sits in the window, as fractions of `win` (the content
+ * size in DIP when it was taken), so the page needs no DPI arithmetic. A failure goes to the page,
+ * which keeps the dense fill and says why.
+ */
+async function barPopBackdrop(key) {
+  const send = (p) => broadcast('bar.popbackdrop', Object.assign({ key }, p));
+  if (!barWin || barWin.isDestroyed()) return;
+  const quiet = backdropQuiet('the pop-up');
+  if (quiet) { send({ png: null, reason: quiet }); return; }
+  let cb, phys;
+  try { cb = barWin.getContentBounds(); phys = toPhys(cb); } catch (e) { send({ png: null, reason: `the bar window has no rectangle: ${e.message}` }); return; }
+  const fit = clampToDisplay(phys);
+  const r = await backdropPicture(barWin, fit.rect, BACKDROP_SCALE, true, (e) => {
+    process.stdout.write(`mantle: the bar could not be put back into screen captures after a pop-up picture: ${e.message}\n`);
+  });
+  if (!r.ok) {
+    process.stdout.write(`mantle: pop-up backdrop for ${key} failed: ${r.err.message}\n`);
+    send({ png: null, reason: Sidecar.isOldExeError(r.err) ? 'the sidecar exe has no "backdrop" command yet: run npm run build:sidecar' : r.err.message });
+    return;
+  }
+  const got = r.rect || fit.rect;
+  const at = { x: (got.x - phys.x) / phys.w, y: (got.y - phys.y) / phys.h, w: got.w / phys.w, h: got.h / phys.h };
+  send({ png: r.png, w: r.w, h: r.h, at, win: { w: cb.width, h: cb.height }, ms: r.ms, source: r.source || 'screen' });
+}
+
+/*
+ * The top bar's dropdowns: their picture of what is behind them, DARK ONLY (lane same-bars,
+ * 2026-10-09; Owen: "everything at 50% ... it will all match way better if its the same"). A dropdown
+ * hangs over the app in front, with nothing blurred under it, so it was a stacked near-opaque face.
+ * The page asks ONCE per menu session (glass.topbarMenu, before it shows the first dropdown), and
+ * main takes ONE protected shot (the top bar excluded from it) of everything a dropdown can cover:
+ * the top bar window's width, from its top down to the work area's bottom, whatever size the window
+ * is right now (it grows to the menu after). The answer IS the reply: {png, w, h, at} with `at` the
+ * shot's rectangle in DIP relative to the window's content origin, so the page needs no DPI sums.
+ * A game rest, light, or a failure answers {ok:false, reason}: the page keeps its fallback and says so.
+ */
+async function topbarPopBackdrop() {
+  const t0 = Date.now();
+  const win = BrowserWindow.getAllWindows().find((w) => {
+    try { return !w.isDestroyed() && String(w.webContents.getURL() || '').replace(/\\/g, '/').split(/[?#]/)[0].toLowerCase().endsWith('/ui/topbar/index.html'); } catch (_) { return false; }
+  });
+  const done = (p) => {
+    setBackdropPiece('topbar-menu', { ok: !!p.png, ms: Date.now() - t0, reason: p.reason || null, at: Date.now(), source: p.source || null });
+    return p.png ? Object.assign({ ok: true }, p) : { ok: false, reason: p.reason };
+  };
+  if (!win) return done({ reason: 'the top bar window is not open' });
+  if (getTheme().get().theme !== 'dark') return done({ reason: 'light: the dropdowns keep their own face, no picture is taken' });
+  const quiet = backdropQuiet('the top bar\'s menus');
+  if (quiet) return done({ reason: quiet });
+  let cb, area, dip, phys;
+  try {
+    cb = win.getContentBounds();
+    area = screen.getDisplayMatching(cb).workArea;
+    dip = { x: cb.x, y: cb.y, width: cb.width, height: Math.max(cb.height, area.y + area.height - cb.y) };
+    phys = toPhys(dip);
+  } catch (e) { return done({ reason: `the top bar window has no rectangle: ${e.message}` }); }
+  const fit = clampToDisplay(phys);
+  if (fit.note && !fit.changed) return done({ reason: `the top bar is not on the desktop: ${fit.note}` });
+  const r = await backdropPicture(win, fit.rect, BACKDROP_SCALE, true, (e) => {
+    process.stdout.write(`mantle: the top bar could not be put back into screen captures after a menu picture: ${e.message}\n`);
+  });
+  if (!r.ok) {
+    process.stdout.write(`mantle: top bar menu backdrop failed: ${r.err.message}\n`);
+    return done({ reason: Sidecar.isOldExeError(r.err) ? 'the sidecar exe has no "backdrop" command yet: run npm run build:sidecar' : r.err.message });
+  }
+  const sx = dip.width / phys.w, sy = dip.height / phys.h;
+  const got = r.rect || fit.rect;
+  const at = { x: (got.x - phys.x) * sx, y: (got.y - phys.y) * sy, w: got.w * sx, h: got.h * sy };
+  return done({ png: r.png, w: r.w, h: r.h, at, ms: r.ms, source: r.source || 'screen' });
+}
+
+/*
+ * A floating HUD's picture of what is behind it, DARK ONLY (lane same-huds, 2026-10-09). Owen: "the
+ * reason i want everything at 50% is cause it will all match way better if its the same". A HUD (the
+ * volume pop-up, clipboard, notes, timer, the on-top and layouts toasts, the screenshot card, snap)
+ * floats over any window with nothing blurred under it, so without a picture it can only be a .82
+ * slab. The pop-ups' path (barPopBackdrop): the page asks once per show (hud.backdrop {key}, from
+ * ui/shared/hud-backdrop.js, dark only), main takes ONE protected shot of that window's content
+ * rectangle (protected always: a HUD shown during the shot must not photograph itself) and sends it
+ * to THAT window alone as '<key>.backdrop' {png, w, h, at, win, ms}. No loop, nothing while hidden
+ * or in light. A game rest or a failure goes to the page with the reason (it keeps its own face)
+ * and into State.backdrop['hud-<key>'], which the checks and the dev console read.
+ */
+const HUD_BACKDROP_PAGES = {
+  osd: 'osd/index.html', clipboard: 'clipboard/index.html', notes: 'notes/index.html', timer: 'timer/index.html',
+  ontop: 'ontop/index.html', layouts: 'layouts/index.html', snap: 'snap/index.html', 'screenshot.card': 'screenshot/card.html',
+};
+const HUD_PARK_WAIT_MS = 600;         // a parked HUD is moved in when its page has painted (snap: 150 ms at most)
+async function hudBackdrop(key) {
+  const page = Object.prototype.hasOwnProperty.call(HUD_BACKDROP_PAGES, key) ? HUD_BACKDROP_PAGES[key] : null;
+  if (!page) return { ok: false, reason: `there is no HUD called "${String(key).slice(0, 40)}"` };
+  const win = BrowserWindow.getAllWindows().find((w) => {
+    try { return !w.isDestroyed() && String(w.webContents.getURL() || '').replace(/\\/g, '/').split(/[?#]/)[0].toLowerCase().endsWith(`/ui/${page}`); } catch (_) { return false; }
+  });
+  const done = (p) => {
+    setBackdropPiece(`hud-${key}`, { ok: !!p.png, ms: p.ms || 0, reason: p.reason || null, at: Date.now(), source: p.source || null });
+    if (win && !win.isDestroyed()) { try { win.webContents.send('mantle:event', { name: `${key}.backdrop`, payload: p }); } catch (_) { /* the page is reloading */ } }
+    return p.png ? { ok: true, ms: p.ms, w: p.w, h: p.h } : { ok: false, reason: p.reason };
+  };
+  if (!win) return done({ png: null, reason: `the ${key} window is not open` });
+  if (getTheme().get().theme !== 'dark') return done({ png: null, reason: 'light: the HUD keeps its own face, no picture is taken' });
+  const quiet = backdropQuiet(`the ${key} pop-up`);
+  if (quiet) return done({ png: null, reason: quiet });
+  let cb, phys, fit;
+  const measure = () => {
+    try { cb = win.getContentBounds(); phys = toPhys(cb); } catch (e) { return `the ${key} window has no rectangle: ${e.message}`; }
+    fit = clampToDisplay(phys);
+    return fit.note && !fit.changed ? `the ${key} window is not on the desktop: ${fit.note}` : null;
+  };
+  let bad = measure();
+  if (bad && !win.isDestroyed()) {
+    // parked off screen (snap, the screenshot card park their window and move it in when painted):
+    // the shot waits for that move, at most HUD_PARK_WAIT_MS, then measures again
+    await new Promise((res) => {
+      const moved = () => { clearTimeout(t); res(); };
+      const t = setTimeout(() => { if (!win.isDestroyed()) win.removeListener('move', moved); res(); }, HUD_PARK_WAIT_MS);
+      win.once('move', moved);
+    });
+    if (win.isDestroyed()) return done({ png: null, reason: `the ${key} window closed before its picture` });
+    bad = measure();
+  }
+  if (bad) return done({ png: null, reason: bad });
+  const r = await backdropPicture(win, fit.rect, BACKDROP_SCALE, true, (e) => {
+    process.stdout.write(`mantle: the ${key} pop-up could not be put back into screen captures: ${e.message}\n`);
+  });
+  if (!r.ok) {
+    process.stdout.write(`mantle: ${key} backdrop failed: ${r.err.message}\n`);
+    return done({ png: null, reason: Sidecar.isOldExeError(r.err) ? 'the sidecar exe has no "backdrop" command yet: run npm run build:sidecar' : r.err.message });
+  }
+  const got = r.rect || fit.rect;
+  const at = { x: (got.x - phys.x) / phys.w, y: (got.y - phys.y) / phys.h, w: got.w / phys.w, h: got.h / phys.h };
+  return done({ png: r.png, w: r.w, h: r.h, at, win: { w: cb.width, h: cb.height }, ms: r.ms, source: r.source || 'screen' });
+}
 
 // The launcher: same loop, same 4 fps, its own window rectangle.
 const launcherBackdrop = makeBackdrop({
@@ -2052,6 +2287,7 @@ const launcherBackdrop = makeBackdrop({
   scale: BACKDROP_SCALE,
   win: () => launcherWin,
   rect: () => windowPhysRect(launcherWin),
+  wall: true,                         // dark: the wallpaper under the launcher, one cut per show (lane helm-wall)
 });
 
 /*
@@ -2072,9 +2308,32 @@ const desktopBackdrop = makeBackdrop({
   rect: () => windowPhysRect(desktopWin),
   // kept for the top bar (lib/topbar-strip.js): where the desktop page draws no wallpaper, this
   // picture of Windows' own wallpaper is what is under the bar
-  onFrame: (shot) => { desktopStill = shot; },
+  onFrame: (shot) => { desktopStill = shot; if (shot && shot.png) wallStill.invalidate('Windows\' wallpaper was photographed again'); },
 });
 let desktopStill = null;
+// THE WALLPAPER PICTURE (lane helm-wall, 2026-10-09; lib/wall-still.js): what every dark glass surface
+// shows under its tint -- the desktop's wallpaper at that surface's rectangle, as Helm shows its photo.
+const wallStill = require('./lib/wall-still').makeWallStill({
+  desktopWin: () => desktopWin,
+  windowsStill: () => desktopStill,
+  wallpaper: () => state.get().wallpaper || null,
+  display: () => { const b = screen.getPrimaryDisplay().bounds; return { dip: { x: b.x, y: b.y, width: b.width, height: b.height }, phys: toPhys(b) }; },
+  nativeImage: require('electron').nativeImage,
+  dark: () => getTheme().get().theme === 'dark',
+  log: (line) => process.stdout.write(`mantle: wallpaper glass: ${line}\n`),
+});
+wallStill.onChange((why) => { barBackdrop.refresh(why); launcherBackdrop.refresh(why); });
+// a theme flip with the bar or launcher up: dark cuts the wallpaper, light restarts v1's capture loop
+themeFollowers.add((t) => { barBackdrop.refresh(`the theme is now ${t}`); launcherBackdrop.refresh(`the theme is now ${t}`); });
+/** What features and lib/switcher.js get (ctx.host.wall / ctx.wall). Dark only; light answers {ok:false}. */
+const wallHost = {
+  full: () => wallStill.full(),
+  rect: (phys, opts) => wallStill.rect(phys, opts),
+  onChange: (fn) => wallStill.onChange(fn),
+};
+// a different wallpaper (or one that just drew) is looked at again; never before the theme exists
+// (getTheme() would make it, possibly ahead of a test profile's userData path)
+state.on('change', () => { if (themeCore) wallStill.watch(); });
 // THE TOP BAR'S GLASS (lane see-topbar, 2026-10-09): the top bar's backdrop is the desktop layer's
 // own top strip, read from its page (no screen capture). ctx.host.desktopStrip; see lib/topbar-strip.js.
 const topbarStrip = require('./lib/topbar-strip').makeStripReader({
@@ -2210,7 +2469,18 @@ function startFeatures() {
         // lane dm-core: Mantle's appearance for main-drawn colours (window grounds, DWM frames)
         theme: themeHost,
         // lane see-topbar: the desktop layer's top strip, for the top bar's frosted backdrop in dark
-        desktopStrip: (a) => topbarStrip.read(a) },
+        // lane helm-wall: in dark the strip is the WALLPAPER's top rows (lib/wall-still.js), not the
+        // desktop page (its widgets live there); the page's own strip where there is no still
+        desktopStrip: async (a) => {
+          if (getTheme().get().theme !== 'dark') return topbarStrip.read(a);
+          const w = await wallStill.strip(a && a.h);
+          if (w.ok) return w;
+          if (w.capture) return topbarStrip.read(a);
+          return { ok: false, transient: !!w.transient, reason: w.reason };
+        },
+        // lane helm-wall: the wallpaper picture for the app windows (Files, Task Manager, Settings, Task
+        // view): full() the whole primary display's still, rect(phys) a cut, onChange(fn) -> off()
+        wall: wallHost },
     });
     COMMANDS['features.list'] = async () => features.list();
     if (flags.test) {
@@ -4121,6 +4391,10 @@ const COMMANDS = {
   // keeps its top edge and descends, so the bar itself never appears to move.
   // In hover mode (barTall, 2026-09-24) the window already HAS the room and only its shape
   // grows: resizing it was what made the pill jump.
+  // a HUD page, dark only, once per show: one picture of what is behind its window (see hudBackdrop)
+  'hud.backdrop': async (a) => hudBackdrop(String((a && a.key) || '')),
+  // the top bar's dropdowns, dark: one picture of everything they can cover (lane same-bars; topbarPopBackdrop)
+  'glass.topbarMenu': async () => topbarPopBackdrop(),
   'bar.popover': async (a) => {
     if (!barWin || barWin.isDestroyed()) throw new Error('the bar window is gone, so there is nothing to make room in');
     const open = !!(a && a.open);
@@ -4200,6 +4474,8 @@ const COMMANDS = {
     // The window just changed size, which is another moment Windows can re-order
     // the topmost band -- and a popover nobody can click is worse than no popover.
     if (open && !flags.dock) raiseBar('a popover opened');
+    // dark pop-ups: one picture of what is behind them, not awaited (see barPopBackdrop)
+    if (open && extra && a && a.backdrop === true) barPopBackdrop((a && a.key) || 'unnamed').catch(() => {});
     if (open && extra < asked) {
       process.stdout.write(`mantle: the bar asked for ${asked}px of popover room and got ${extra}px (the cap is ${POPOVER_MAX}px)\n`);
     }
@@ -7891,6 +8167,9 @@ app.whenReady().then(() => {
     windows: () => lastWindows,
     iconFor: (candidates) => iconFor(candidates),
     onWinKey: (key) => broadcast('bar.winkey', { key }),
+    // lane helm-wall: in dark the overlay's picture is the wallpaper under it, not a screen capture
+    wall: wallHost,
+    dark: () => getTheme().get().theme === 'dark',
   });
   startFeatures();
 

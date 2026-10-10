@@ -256,3 +256,101 @@ html { background: var(--lg-fill-strong); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* ---------------------------------------------------------------- dark: Helm's look (lanes see-apps + same-apps, 2026-10-09)
+   Owen: "they should all also have the same style ... if there is a conflict go by what helm looks like",
+   then "Match Helm's real look". Every value is a dark token from shared/glass-light.css (Helm's own,
+   HELM-SPEC.md); this block holds only WHICH token goes where:
+   - ONE tint layer per region, painted on the window itself: the header strip is Helm's rail/strip
+     (--lg-fill-bar), everything under it Helm's content panel (--lg-fill). The stat cards and the list
+     are Helm's cards inside a panel (--lg-card). DWM's acrylic is under the page (lib/features/taskmgr.js);
+     what it adds the page cannot take away (lane report: acrylic vs Helm's blur(5px) picture).
+   - Rows hover --lg-hover; the chosen row or tab is --lg-press + an inset hairline, NO accent tick or
+     underline (Helm: no accent on rows). Icon buttons hover --lg-press; buttons are Helm's .btn.
+   - The menu: one --lg-fill over a --lg-blur of the page under it, Helm's radius/shadow, no open animation.
+   - Every line --lg-divider; focus Helm's ring; scrollbars Helm's; type Helm's scale; disabled --lg-disabled.
+   ":where(...)" keeps these at the light rules' weight where a state rule above must still win. Unchanged:
+   the solid ground when the dark frame was refused (data-frame="dark"). Light does not move. */
+:root[data-theme="dark"]:not([data-frame="dark"]) { background: linear-gradient(var(--lg-fill-bar) 0 44px, var(--lg-fill) 44px); }
+:root[data-theme="dark"]:not([data-frame="dark"]) .app { background: transparent; }
+/* lane helm-wall-apps (2026-10-09): in dark the window is opaque and the page paints the desktop wallpaper
+   (ui/shared/wall-bdrop.js/.css); --wall-tint is its ONE tint layer = the same tint the root carries above. */
+:root[data-theme="dark"] { --wall-tint: linear-gradient(var(--lg-fill-bar) 0 44px, var(--lg-fill) 44px); }
+/* the frame's shade tints no glass in wall mode: .app stays clear over the picture */
+html.wall-on[data-theme="dark"] .app { background: transparent; }
+/* cards inside the panel: Helm surface-2 + the token hairline and lip */
+:where(:root[data-theme="dark"]) :is(.stat, .view, .st.ask) { background: var(--lg-card); border-color: var(--lg-edge-out); box-shadow: var(--lg-lip-up); }
+/* the search field: Helm's input */
+:where(:root[data-theme="dark"]) .search { background: var(--lg-field); border-color: var(--lg-edge-out); }
+:where(:root[data-theme="dark"]) .search:hover { border-color: var(--lg-edge-strong); }
+:where(:root[data-theme="dark"]) .search:focus-within { border-color: var(--lg-acc-line); box-shadow: var(--lg-focus); }
+/* buttons: Helm's .btn (card + hairline + inner lip; hover press + strong edge; pressed back to the card) */
+:where(:root[data-theme="dark"]) .btn,
+:where(:root[data-theme="dark"]) .acts button:not(.more),
+:where(:root[data-theme="dark"]) .st button {
+  border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl);
+  background: var(--lg-card); box-shadow: inset 0 1px 0 var(--lg-edge-inner); font-weight: 500;
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), border-color var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:where(:root[data-theme="dark"]) .btn:not(.acc, :disabled):hover,
+:where(:root[data-theme="dark"]) .acts button:not(.more):hover,
+:where(:root[data-theme="dark"]) .st button:not(.go):hover { background: var(--lg-press); border-color: var(--lg-edge-strong); }
+:where(:root[data-theme="dark"]) .btn:not(.acc, :disabled):active,
+:where(:root[data-theme="dark"]) .acts button:not(.more):active,
+:where(:root[data-theme="dark"]) .st button:not(.go):active { background: var(--lg-card); }
+:where(:root[data-theme="dark"]) :is(.btn:disabled, .btn:disabled:hover, .btn:disabled:active) { background: var(--lg-card); border-color: var(--lg-edge-out); }
+:where(:root[data-theme="dark"]) .btn.acc { background: var(--lg-acc); border-color: transparent; color: var(--lg-acc-on); box-shadow: none; }
+:where(:root[data-theme="dark"]) .btn.acc:hover:not(:disabled) { background: var(--lg-acc-strong); filter: none; }
+:where(:root[data-theme="dark"]) .st button.go { border-color: transparent; box-shadow: none; }
+/* icon buttons and bare controls: hover --lg-press (Helm's icon-btn), pressed back to the card */
+:where(:root[data-theme="dark"]) :is(.ibtn, .qx, .chev, .cols > button, .stog, .acts .more, .wc button:not(.x)):hover,
+:where(:root[data-theme="dark"]) :is(.ibtn, .acts .more)[aria-expanded="true"] { background: var(--lg-press); }
+:where(:root[data-theme="dark"]) :is(.ibtn, .qx, .chev, .cols > button, .stog, .acts .more, .wc button:not(.x)):active { background: var(--lg-card); }
+:where(:root[data-theme="dark"]) :is(.qx, .cols > button, .chev) { border-radius: var(--lg-r-ctl); }
+/* rows and tabs: hover --lg-hover; chosen --lg-press + inset hairline; no accent tick or underline */
+:where(:root[data-theme="dark"]) .tab:hover,
+:where(:root[data-theme="dark"]) .row:hover .rmain,
+:where(:root[data-theme="dark"]) .prow:hover { background: var(--lg-hover); }
+:where(:root[data-theme="dark"]) .tab:active { background: var(--lg-press); }
+:where(:root[data-theme="dark"]) .tab.on,
+:where(:root[data-theme="dark"]) .row.sel .rmain { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:where(:root[data-theme="dark"]) .tab.on { font-weight: 500; }
+:where(:root[data-theme="dark"]) .tab.on::after,
+:where(:root[data-theme="dark"]) .row.sel .rmain::before { content: none; }
+/* chips: Helm's pill */
+:where(:root[data-theme="dark"]) .tag:not(.bad) { border-radius: var(--lg-r-chip); background: var(--lg-card); font-size: 12px; font-weight: 500; padding: 0 9px; }
+/* every line one divider */
+:where(:root[data-theme="dark"]) :is(.row, .prow) { border-top-color: var(--lg-divider); }
+:where(:root[data-theme="dark"]) :is(.gamehead, .opt, .lastfree, .spark) { border-bottom-color: var(--lg-divider); }
+:where(:root[data-theme="dark"]) .members { border-left-color: var(--lg-divider); }
+/* the menu: one --lg-fill over a --lg-blur of the page; Helm's hairline, lip, radius, shadow, metrics; no open animation */
+:where(:root[data-theme="dark"]) .menu {
+  background: var(--lg-fill);
+  -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur);
+  border-color: var(--lg-edge-out); border-radius: var(--lg-r);
+  box-shadow: var(--lg-lip-up), var(--lg-shadow);
+  min-width: 180px; animation: none;
+}
+:where(:root[data-theme="dark"]) .menu button { gap: 10px; padding: 0 10px; }
+:where(:root[data-theme="dark"]) :is(.menu button:hover, .menu button:focus, .menu button:active) { background: var(--lg-press); }
+/* focus: Helm's ring, no outline (the search box carries it on its box, above) */
+:root[data-theme="dark"] :focus-visible:not(input) { outline: none; box-shadow: var(--lg-focus); }
+/* scrollbars: Helm's, always shown (the global rule in glass-light.css, restated over this file's own) */
+html:root:root[data-theme="dark"] *::-webkit-scrollbar { width: 10px; height: 10px; }
+html:root:root[data-theme="dark"] *::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+html:root:root[data-theme="dark"] *::-webkit-scrollbar-thumb { background: var(--lg-scroll); border: 3px solid transparent; background-clip: padding-box; border-radius: 10px; }
+html:root:root[data-theme="dark"] *::-webkit-scrollbar-thumb:hover { background-color: var(--lg-scroll-hover); }
+/* type: Helm's scale (12.5 -> 13, 11.5 -> 12, 13.5 -> 14) and the disabled opacity; generated per rule, same specificity as the light rule */
+:where(:root[data-theme="dark"]) body { font-size: 13px; }
+:where(:root[data-theme="dark"]) .stat .sub,
+:where(:root[data-theme="dark"]) .cols,
+:where(:root[data-theme="dark"]) .cols > button,
+:where(:root[data-theme="dark"]) .sect .sect-why,
+:where(:root[data-theme="dark"]) .nm .lk,
+:where(:root[data-theme="dark"]) .why,
+:where(:root[data-theme="dark"]) .menu kbd,
+:where(:root[data-theme="dark"]) .prow .pwhy { font-size: 12px; }
+:where(:root[data-theme="dark"]) .stog { font-size: 14px; }
+:where(:root[data-theme="dark"]) .btn:disabled,
+:where(:root[data-theme="dark"]) .btn:disabled:hover,
+:where(:root[data-theme="dark"]) .btn:disabled:active { opacity: var(--lg-disabled); }

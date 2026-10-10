@@ -32,3 +32,25 @@
 .tbwhy { width: 0; min-width: 100%; margin-top: 5px; color: var(--lg-ink-2); line-height: 1.4; }
 .tbwhy.warn { color: var(--lg-warn); }
 .tbwhy[hidden] { display: none; }
+
+/* DARK = Helm's look (lane same-bars-mods, 2026-10-09; HELM-SPEC rows 3-24). Light above is untouched.
+   The tile is Helm's .btn: 30 tall, 0 12, 13/500, surface-2 (--lg-card) with the inner
+   lip, surface-3 (--lg-press) on hover; "Show top bar" stays the accent block (Helm's primary button). */
+:root[data-theme="dark"] .tbbtn {
+  height: 30px;
+  padding: 0 12px;
+  background: var(--lg-card);
+  box-shadow: inset 0 1px 0 var(--lg-edge-inner);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), color var(--lg-dur-ui) var(--lg-ease-ui), box-shadow var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .tbbtn:hover { background: var(--lg-press); box-shadow: inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .tbbtn:active { background: var(--lg-card); }
+:root[data-theme="dark"] .tbbtn:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .tbbtn.on, :root[data-theme="dark"] .tbbtn.on:hover { background: var(--lg-acc); color: var(--lg-acc-on); box-shadow: none; }
+:root[data-theme="dark"] .tbbtn.on:hover { background: var(--lg-acc-strong); }
+:root[data-theme="dark"] .tbbtn.on:focus-visible { box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .tbbtn:disabled { opacity: var(--lg-disabled); }
+:root[data-theme="dark"] .tbrow.dead .tbbtn { background: var(--lg-card); color: var(--lg-ink-3); box-shadow: inset 0 1px 0 var(--lg-edge-inner); opacity: 1; }
+@media (prefers-reduced-motion: reduce) { :root[data-theme="dark"] .tbbtn { transition: none; } }

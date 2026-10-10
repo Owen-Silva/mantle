@@ -78,6 +78,39 @@
     console.log('[mock] ?bg=1: wallpaper stand-in painted on <html> (mock only)');
   }
 
+  /* ?scene=<image url> (lane see-glass, 2026-10-09): a whole screen behind the bar, MOCK ONLY. The
+     picture is laid over the viewport the way a wallpaper fills a screen (cover, anchored to the
+     bottom, where the bar is), painted on <html> from that one canvas, and the SAME canvas is what
+     the strip (bar.backdrop) and a dark pop-up's picture (bar.popbackdrop) are cut from, so what the
+     glass blurs is exactly what is behind it in the shot. Used to judge the dark glass over Owen's
+     wallpaper, a bright photo and a terminal. */
+  var scene = null;
+  if (q.get('scene')) {
+    var sceneImg = new Image();
+    sceneImg.onload = function () {
+      var W = window.innerWidth, H = window.innerHeight, c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      var s = Math.max(W / sceneImg.naturalWidth, H / sceneImg.naturalHeight);
+      var dw = sceneImg.naturalWidth * s, dh = sceneImg.naturalHeight * s;
+      c.getContext('2d').drawImage(sceneImg, (W - dw) / 2, H - dh, dw, dh);
+      scene = c;
+      document.documentElement.style.background = 'url("' + c.toDataURL('image/png') + '") 0 0 / 100% 100% no-repeat';
+      console.log('[mock] ?scene: ' + W + 'x' + H + ' painted on <html> (mock only)');
+    };
+    sceneImg.onerror = function () { console.error('[mock] ?scene could not be loaded: ' + q.get('scene')); };
+    sceneImg.src = q.get('scene');
+  }
+  /* A piece of what is behind the page, 4x down, the way main's sidecar would hand it over: from the
+     scene when there is one, else the flat colour the harness put behind the page. */
+  function behindPNG(x, y, w, h) {
+    var c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w / 4)); c.height = Math.max(1, Math.round(h / 4));
+    var g = c.getContext('2d');
+    if (scene) g.drawImage(scene, x, y, w, h, 0, 0, c.width, c.height);
+    else { g.fillStyle = getComputedStyle(document.documentElement).backgroundColor || '#141619'; g.fillRect(0, 0, c.width, c.height); }
+    return c.toDataURL('image/png');
+  }
+
   /* Two genuine 32x32 PNGs (generated, not placeholders) so the icon path is exercised with
      real bitmaps; two items carry icon:null + an iconReason so the letter tile and its
      explanation are exercised too. Real Windows icons arrive from the sidecar as PNG data URLs. */
@@ -1426,6 +1459,14 @@
       case 'shell.restore':
       case 'shell.quit':
       case 'bar.popover':
+        // a dark pop-up asks for a picture of what is behind the window (main.js barPopBackdrop):
+        // one, ~60 ms later (about what the protected capture takes), of the whole viewport
+        if (payload && payload.open && payload.backdrop === true) {
+          setTimeout(function () {
+            emit('bar.popbackdrop', { key: payload.key, png: behindPNG(0, 0, window.innerWidth, window.innerHeight),
+              at: { x: 0, y: 0, w: 1, h: 1 }, win: { w: window.innerWidth, h: window.innerHeight }, ms: 60 });
+          }, 60);
+        }
         // main's shape too (main.js bar.popover): the room it gave, and whether the ask was over its cap
         return { ok: true, reason: '', mock: true, max: 640, height: Math.min(640, Number(payload && payload.height) || 0), capped: !!(payload && payload.open && Number(payload.height) > 640) };
       // The flyout's live previews are drawn by DWM from Electron main; a browser page has no
@@ -1582,6 +1623,10 @@
      glance. Drawn on a canvas and handed over as a PNG data URL, exactly the shape of the real
      payload. Six frames, then it stops: a mock may not leave a timer running for ever. */
   function stripPNG(shift) {
+    if (scene) {
+      var bar = document.querySelector('.bar'), r = bar && bar.getBoundingClientRect();
+      if (r && r.width > 0) return behindPNG(r.left, r.top, r.width, r.height);
+    }
     var w = 360, h = 12, c = document.createElement('canvas');
     c.width = w; c.height = h;
     var g = c.getContext('2d');

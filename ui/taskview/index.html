@@ -13,6 +13,7 @@
      every Mantle surface, Owen 2026-09-21). -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="taskview.css">
+<link rel="stylesheet" href="../shared/wall-bdrop.css">
 </head>
 <!-- no-glass until main says the blur-behind took: the thicker fallback fill carries the page alone -->
 <body class="no-glass is-idle">
@@ -51,6 +52,8 @@
   <!-- the window being dragged towards a desktop -->
   <div class="chip-drag" id="dragChip" aria-hidden="true"></div>
 <script src="mock-mantle.js"></script>
+<!-- dark: the wallpaper under the tint, as Helm does (lane helm-wall-apps) -->
+<script src="../shared/wall-bdrop.js" data-event="taskview.wall"></script>
 <script src="layout.js"></script>
 <script src="taskview.js"></script>
 </body>

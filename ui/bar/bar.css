@@ -234,6 +234,21 @@ body[data-edge="top"].edge .bar::after { border-width: 0 1px 1px; }
   filter: var(--lg-blur);
   transform: translateZ(0);
 }
+/* DARK: THE ONE RECIPE (lane same-bars, 2026-10-09; Owen: "everything at 50% ... it will all match way
+   better if its the same"). The strip is blurred with --lg-blur and nothing else (the base rule above),
+   under ONE layer of --lg-fill. The only deviation is the readability guard every surface shares
+   (../shared/glass-adapt.js guard, the top bar's rule): bar.js sets --bar-tint, the same colour at a
+   thicker alpha, ONLY when --lg-ink-2 would fall under 4.5:1 over the brightest blurred pixel; over
+   Owen's wallpaper it is never set.
+   FINAL RULES (Owen: "Match Helm's real look"): BOTH bars are Helm's rail, --lg-fill-bar (.75, a dark-
+   only token), and the guard floors there. The island's rim is --lg-edge-out, which in dark IS Helm's
+   faint white hairline (the base rule), with Helm's lip; its ends are --lg-r-pill (18 in dark). Docked
+   flush to the screen edge (body.edge), the bar runs flush like the top bar and Helm: no line and no
+   lip on the side that faces the windows (a rim there read as a line over a maximized window). */
+:root[data-theme="dark"] body.up .bar { --pane-fill: var(--bar-tint, var(--lg-fill-bar)); }
+:root[data-theme="dark"] body.no-backdrop.up .bar { --pane-fill: var(--lg-fill-fb); }
+:root[data-theme="dark"] body.edge.up .bar { --pane-edge: var(--lg-edge-0); --pane-lip: var(--lg-lip-up-0); }
+:root[data-theme="dark"] body[data-edge="top"].edge.up .bar { --pane-lip: var(--lg-lip-dn-0); }
 
 /* Before the first event the bar paints in the flush state with NO transition, so the very first
    reveal is a detach and not a half-drawn bar fading out of nowhere. */
@@ -588,22 +603,42 @@ button.chip:hover { background: var(--lg-press); }
   background-color: var(--lg-fill-pop);   /* r6-art: not --lg-fill-strong, see glass-light.css */
   border: 1px solid var(--lg-edge-in);
   border-radius: var(--lg-r-pop);
-  box-shadow: inset 0 1px 0 var(--lg-edge-in), var(--lg-shadow);
+  box-shadow: var(--lg-lip-up), var(--lg-shadow);   /* the lip token: the same value as the old edge-in literal, in both themes */
   color: var(--lg-ink-2);
   font-size: 12.5px;
 }
 body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
 .pop[hidden] { display: none; }
+/* DARK POP-UPS: THE ONE RECIPE (lanes see-glass then same-bars, 2026-10-09; Owen: "more see through
+   everything ... even the taskbar", then "everything at 50% ... it will all match way better if its
+   the same"). Once main's picture of what is behind the window lands (bar.js setPopBackdrop adds .bd),
+   the pop-up is the bar's glass: ONE layer of tint over the piece of that picture it sits on. The
+   picture arrives blurred with the token's own --lg-blur and nothing else (bar.js bakePopBd, once per
+   picture on a canvas), so nothing here filters anything: no backdrop-filter (the tall-card raster-tile
+   glitch was backdrop-filter), no filtered layer. The tint is --lg-fill, or --pop-tint (the same colour,
+   thicker) only when the shared readability guard says --lg-ink-2 would fall under 4.5:1 over this
+   piece (../shared/glass-adapt.js guardRect, the top bar's rule). It is the pop-up's OWN background,
+   which stays put while a capped panel scrolls, under the pop-up's own hairline and lip.
+   PRE-SHOW (.bdwait): in dark the pop-up is held unpainted until its picture is on it (or bar.js gives
+   up after POP_BD_WAIT_MS and says why), so it never opens as a slab and then thins. In light, until
+   the picture lands, and when it cannot: the dense fallback fill above. */
+:root[data-theme="dark"] .pop.bd {
+  background-color: transparent;
+  background-image: linear-gradient(var(--pop-tint, var(--lg-fill)), var(--pop-tint, var(--lg-fill))), var(--pop-bd);
+  background-origin: border-box;
+  background-position: 0 0, var(--pop-bd-pos);
+  background-size: 100% 100%, var(--pop-bd-size);
+  background-repeat: no-repeat;
+}
+:root[data-theme="dark"] .pop.bdwait { visibility: hidden; animation-play-state: paused; }
 /* DARK GLASS: the lines INSIDE a surface (a popover's dividers and control outlines, the dock's
    pinned|running hairline, the right side's separators, a chip's ring) are --lg-edge-out, the dark
    line that reads on the light pane. On the dark pane a black line is a groove at ~1.1:1 and all
    but vanishes over a dark wallpaper; the dark set's inner line is the faint white one, the same
    hairline the popover's own rim is. So inside these, and only in dark, the outer line IS the inner
    one. The bar's own outer edge (.bar --pane-edge) keeps its black line (dm-bar, 2026-10-08). */
-:root[data-theme="dark"] .pop,
-:root[data-theme="dark"] .dock .div,
-:root[data-theme="dark"] .sep,
-:root[data-theme="dark"] .chip { --lg-edge-out: var(--lg-edge-in); }
+/* FINAL RULES (lane same-bars): --lg-edge-out is Helm's white hairline in dark now, so the swap above is
+   gone; every divider is --lg-divider (the HELM block at the end of this file). */
 /* THE ENTRANCE (2026-09-24). It used to be the WINDOW growing up behind the popover for 200 ms, and
    those resizes are what made the pill jump when a button was pressed (main.js barTall). The window
    no longer changes size, so the same wipe is drawn here: uncovered from its bottom edge up, 200 ms
@@ -626,11 +661,11 @@ body[data-edge="top"] .pop { animation-name: pop-wipe-down; }
    padding), on the panel's own surface laid three times plus the warn tint, so the rows passing under it
    stay out of its way. Only while capped: a panel that fits has neither the line nor a scrollbar. */
 .pop.popcapped { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
-.pop.popcapped::-webkit-scrollbar { width: 6px; }
-.pop.popcapped::-webkit-scrollbar-button { display: none; height: 0; }
-.pop.popcapped::-webkit-scrollbar-track { background: transparent; }
-.pop.popcapped::-webkit-scrollbar-thumb { background: var(--lg-press); border-radius: 3px; }
-.pop.popcapped::-webkit-scrollbar-thumb:hover { background: var(--lg-ink-3); }
+:root:not([data-theme="dark"]) .pop.popcapped::-webkit-scrollbar { width: 6px; }
+:root:not([data-theme="dark"]) .pop.popcapped::-webkit-scrollbar-button { display: none; height: 0; }
+:root:not([data-theme="dark"]) .pop.popcapped::-webkit-scrollbar-track { background: transparent; }
+:root:not([data-theme="dark"]) .pop.popcapped::-webkit-scrollbar-thumb { background: var(--lg-press); border-radius: 3px; }
+:root:not([data-theme="dark"]) .pop.popcapped::-webkit-scrollbar-thumb:hover { background: var(--lg-ink-3); }
 .pop > .note.popcap {
   position: sticky; top: -11px; z-index: 2;   /* sticky insets count from INSIDE the panel's 11px top padding */
   margin: -11px -12px 9px; padding: 7px 12px;
@@ -640,6 +675,19 @@ body[data-edge="top"] .pop { animation-name: pop-wipe-down; }
               linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), var(--lg-fill-strong);
   font-size: 12px; line-height: 1.4;
 }
+/* DARK (lane same-bars): not the surface laid three times (a slab over glass) but the pop-up's OWN
+   glass again, the same picture at the same place and the same one tint, so the rows scrolling under
+   the line are hidden by exactly what the panel is made of; the warn tint sits on top. The line starts
+   at the panel's padding edge, 1px in from its border box, hence the -1px. Light is untouched. */
+:root[data-theme="dark"] .pop.bd > .note.popcap {
+  background-image: linear-gradient(var(--lg-warn-soft), var(--lg-warn-soft)),
+                    linear-gradient(var(--pop-tint, var(--lg-fill)), var(--pop-tint, var(--lg-fill))), var(--pop-bd);
+  background-color: transparent;
+  background-position: 0 0, 0 0, calc(var(--pop-bd-x) - 1px) calc(var(--pop-bd-y) - 1px);
+  background-size: 100% 100%, 100% 100%, var(--pop-bd-size);
+  background-repeat: no-repeat;
+}
+:root[data-theme="dark"] .pop:not(.bd) > .note.popcap { background: linear-gradient(var(--lg-warn-soft), var(--lg-warn-soft)), var(--lg-fill-pop); }
 .pop.dl > .note.popcap { margin-left: -8px; margin-right: -8px; padding-left: 8px; padding-right: 8px; }
 .pop.ntf > .note.popcap { margin-left: -10px; margin-right: -10px; padding-left: 10px; padding-right: 10px; }
 
@@ -1173,3 +1221,91 @@ body.pill .chips { display: none; }
 .mc-stxt { min-width: 0; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mc-auto { color: var(--lg-ink-3); }
 .mc-foot { margin-top: 8px; }
+
+/* ================================================================ DARK: HELM'S LOOK (lane same-bars)
+   FINAL RULES, 2026-10-09. Owen: "they should all also have the same style ... if there is a conflict go
+   by what helm looks like", then "Match Helm's real look". HELM-SPEC.md rows 3-24, applied to the bar
+   and its pop-ups, DARK ONLY (light is frozen this round, so every rule here is scoped to dark). The
+   surfaces themselves (one tint over one blurred picture, their edges and radii) are above; this is
+   what sits on them. Rows not applied here, and why, are in the lane's report. */
+/* row 4: the pop-up's edge is Helm's panel edge, the white hairline + the lip (base rule's box-shadow) */
+:root[data-theme="dark"] .pop { border-color: var(--lg-edge-out); }
+/* row 24: "menus and popovers: no open animation; no exit animations" */
+:root[data-theme="dark"] .pop,
+:root[data-theme="dark"] body[data-edge="top"] .pop { animation: none; }
+/* row 18: every divider is Helm's hairline */
+:root[data-theme="dark"] .sep,
+:root[data-theme="dark"] .dock .div { background: var(--lg-divider); }
+:root[data-theme="dark"] .pop .note { border-top-color: var(--lg-divider); }
+:root[data-theme="dark"] .pop > .note.popcap { border-bottom-color: var(--lg-divider); }
+/* row 19: focus is Helm's ring, a box-shadow, no outline */
+:root[data-theme="dark"] .btn:focus-visible,
+:root[data-theme="dark"] .cell:focus-visible,
+:root[data-theme="dark"] .dmore:focus-visible,
+:root[data-theme="dark"] .qstile:focus-visible,
+:root[data-theme="dark"] .mc-btn:focus-visible,
+:root[data-theme="dark"] .pop button:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+/* row 23: disabled is .45 everywhere */
+:root[data-theme="dark"] .pop .item:disabled,
+:root[data-theme="dark"] .calbtn:disabled,
+:root[data-theme="dark"] .calbtn:disabled:hover,
+:root[data-theme="dark"] .card .x:disabled,
+:root[data-theme="dark"] .qstile.dead .qsico,
+:root[data-theme="dark"] .qsrow.dead { opacity: var(--lg-disabled); }
+/* row 24: hover colour changes are smooth at Helm's 120 ms, not two steps (the reveal's 560 ms on
+   .bar stays: window geometry, no Helm analogue; a dragged cell's transform keeps its own timing) */
+:root[data-theme="dark"] .btn, :root[data-theme="dark"] .cell, :root[data-theme="dark"] .cell .ico,
+:root[data-theme="dark"] .cell .ind, :root[data-theme="dark"] .dmore, :root[data-theme="dark"] .ovf-app,
+:root[data-theme="dark"] .ovf-ico, :root[data-theme="dark"] button.chip, :root[data-theme="dark"] .pop .item,
+:root[data-theme="dark"] .pop .x, :root[data-theme="dark"] .card, :root[data-theme="dark"] .qstile,
+:root[data-theme="dark"] .qsmute, :root[data-theme="dark"] .qslink, :root[data-theme="dark"] .qsgear,
+:root[data-theme="dark"] .calbtn, :root[data-theme="dark"] .mc-btn, :root[data-theme="dark"] .mc-s {
+  transition-duration: var(--lg-dur-ui); transition-timing-function: var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .dock.dragging .cell { transition: transform 160ms var(--lg-ease), background-color var(--lg-dur-ui) var(--lg-ease-ui); }
+/* row 15: a menu row (the More menu's and every panel's .item) is Helm's menu item: 30 tall, 5 / 10 */
+:root[data-theme="dark"] .pop .item { min-height: 30px; padding: 5px 10px; }
+/* row 12: Helm's type scale, 11 / 12 / 13 / 14 / 16 / 20, no half pixels. Text 13, a subtitle or a
+   date 12, a group label 11/600 uppercase +.04em, the big readout 16. (Letters inside 14-16 px icon
+   tiles keep their size: they are glyphs, not type.) */
+:root[data-theme="dark"] body,
+:root[data-theme="dark"] .dmore,
+:root[data-theme="dark"] .pop,
+:root[data-theme="dark"] .battery .pct,
+:root[data-theme="dark"] .qslbl,
+:root[data-theme="dark"] .qsrowhead,
+:root[data-theme="dark"] .qspower,
+:root[data-theme="dark"] .qslink,
+:root[data-theme="dark"] .caltitle,
+:root[data-theme="dark"] .calbtn,
+:root[data-theme="dark"] .calday,
+:root[data-theme="dark"] .mtxt { font-size: 13px; }
+:root[data-theme="dark"] .clock .d,
+:root[data-theme="dark"] .chip,
+:root[data-theme="dark"] .ovf-name,
+:root[data-theme="dark"] .card-why,
+:root[data-theme="dark"] .qssub,
+:root[data-theme="dark"] .caldowc,
+:root[data-theme="dark"] .pop .mitem kbd { font-size: 12px; }
+:root[data-theme="dark"] .chip { font-weight: 500; }
+:root[data-theme="dark"] .pop h3 { font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+:root[data-theme="dark"] .pop .big,
+:root[data-theme="dark"] .calhead .big { font-size: 16px; }
+/* row 16 (and the shell lane's note): --lg-sunk is Helm's INPUT well in dark (--lg-field), the wrong look
+   for a chip or a button. A chip is Helm's chip (surface-2, its hairline ring, a pill); a quiet button
+   is Helm's button (surface-2 with the inner lip); hover/press stay --lg-hover / --lg-press, never accent. */
+:root[data-theme="dark"] .chip:not(.warn) { background: var(--lg-card); border-radius: var(--lg-r-chip); }
+:root[data-theme="dark"] .chip.warn { border-radius: var(--lg-r-chip); }
+:root[data-theme="dark"] button.chip:not(.warn):hover,
+:root[data-theme="dark"] .dmore:hover,
+:root[data-theme="dark"] .pop .mute:hover,
+:root[data-theme="dark"] .mc-btn.main:hover { background: var(--lg-press); }
+:root[data-theme="dark"] .dmore,
+:root[data-theme="dark"] .pop .mute,
+:root[data-theme="dark"] .mc-btn.main,
+:root[data-theme="dark"] .mc-btn.main.off:hover,
+:root[data-theme="dark"] .mc-btn.main.off:active,
+:root[data-theme="dark"] .qstile.dead,
+:root[data-theme="dark"] .qstile.dead:hover { background: var(--lg-card); box-shadow: inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .card-shot,
+:root[data-theme="dark"] .mc-lock { background: var(--lg-card); }

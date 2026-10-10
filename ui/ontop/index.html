@@ -9,6 +9,7 @@
 <!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="ontop.css">
+<link rel="stylesheet" href="../shared/hud-backdrop.css">
 </head>
 <body>
 <!-- The confirmation for "Keep on top" (lib/features/ontop.js): the volume pop-up's pill, in the
@@ -22,5 +23,8 @@
   <span class="words"><span id="text" class="text"></span><span id="why" class="why"></span></span>
 </div>
 <script src="ontop.js"></script>
+<!-- dark only: the blurred picture of the screen behind this window, once main sends ontop.backdrop (lane see-huds) -->
+<script src="../shared/glass-adapt.js"></script>
+<script src="../shared/hud-backdrop.js" data-event="ontop.backdrop" data-pane="#t"></script>
 </body>
 </html>

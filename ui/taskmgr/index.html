@@ -9,6 +9,7 @@
 <!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="taskmgr.css">
+<link rel="stylesheet" href="../shared/wall-bdrop.css">
 </head>
 <body>
 <!-- Mantle's task manager (lib/features/taskmgr.js), RAM first: one row per app, biggest first,
@@ -80,6 +81,8 @@
   <div id="menu" class="menu" role="menu" hidden></div>
 </main>
 <script src="mock-mantle.js"></script>
+<!-- dark: the wallpaper under the tint, as Helm does (lane helm-wall-apps) -->
+<script src="../shared/wall-bdrop.js" data-event="taskmgr.wall" data-pos="taskmgr.wallpos"></script>
 <script src="taskmgr.js"></script>
 </body>
 </html>

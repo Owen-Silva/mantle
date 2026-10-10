@@ -318,7 +318,11 @@
     if (document.documentElement.dataset.frame !== frame) document.documentElement.dataset.frame = frame;
     // one line each: a warning is the warn glyph + its words; the test-Mantle line is quiet ink.
     // A read error shows here only while there IS a list (with none, the list itself says it).
-    const notes = [m.loaded ? m.error : null, P.note, look.iconWhy ? `This window's own icon: ${look.iconWhy}.` : null, look.lightWhy ? `Glass: ${look.lightWhy}; the window stays solid.` : null].filter(Boolean);
+    // lane helm-wall-apps (2026-10-09): in dark the page paints the wallpaper (ui/shared/wall-bdrop.js); with no
+    // picture the window keeps its solid face and says why here
+    const W = window.MantleWallBdrop;
+    const wallWhy = W && W.state === 'off' && document.documentElement.dataset.theme === 'dark' ? `No wallpaper picture: ${W.reason || 'no reason came back'}; the window stays solid.` : null;
+    const notes = [m.loaded ? m.error : null, P.note, look.iconWhy ? `This window's own icon: ${look.iconWhy}.` : null, look.lightWhy ? `Glass: ${look.lightWhy}; the window stays solid.` : null, wallWhy].filter(Boolean);
     const lines = notes.map((t) => warnLine('nl', t)).concat(m.test ? ['<span class="nl quiet"><span>Test Mantle: Close, Force close and Trim memory only say what they would do.</span></span>'] : []);
     $('note').hidden = !lines.length;
     setHtml($('note'), lines.join(''));
@@ -576,6 +580,7 @@
   // What a tick costs this page (script + DOM, not the layout after it), read by the lane's CDP bench:
   // two performance.now() calls a tick.
   const PERF = window.__taskmgrPerf = { ticks: 0, ms: 0, max: 0 };
+  window.addEventListener('mantle-wall', () => { if (P.m) render(); });
   window.mantle.on('taskmgr.model', (m) => {
     const t = performance.now();
     P.m = m;

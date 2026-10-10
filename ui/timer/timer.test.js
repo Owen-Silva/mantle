@@ -13,7 +13,19 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 const path = require('path');
 const { execSync } = require('child_process');
 
-const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// the newest installed Playwright Chromium (the pinned chromium-1234 build was removed 2026-10-05;
+// lane same-finish, 2026-10-09, same recipe as ui/desktop/wall-player.test.js)
+const CHROME = (() => {
+  const fsx = require('fs');
+  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  try {
+    for (const d of fsx.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
+      const p = base + '/' + d + '/chrome-win64/chrome.exe';
+      if (fsx.existsSync(p)) return p;
+    }
+  } catch (_) { /* reported below as "no chromium at" */ }
+  return base + '/chromium-*/chrome-win64/chrome.exe';
+})();
 const PAGE = 'file:///' + path.resolve(__dirname, 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/7e5085b9-5bec-43fe-aecd-5fe5701b290a/scratchpad/lanes/topbar/timer/shots';
@@ -95,9 +107,19 @@ function gaming() {
     const order = [];
     for (let k = 0; k < 4; k++) { await page.keyboard.press('Tab'); order.push(await page.evaluate(() => document.activeElement.textContent)); }
     check('keyboard: Tab walks +1 min, +5 min, Restart, Dismiss', JSON.stringify(order) === '["+1 min","+5 min","Restart","Dismiss"]', order);
-    const ring = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
+    /* the focus ring contract: light draws a 2px solid outline; dark draws Helm's ring, box-shadow
+       var(--lg-focus) with NO outline (HELM-SPEC row 19). Both themes are checked on the focused Dismiss. */
+    const ringOf = () => page.evaluate(() => { const cs = getComputedStyle(document.activeElement); return { o: cs.outlineStyle, sh: cs.boxShadow }; });
+    const ring = await ringOf();
     await page.screenshot({ path: path.join(OUT, 'focus-dismiss.png') });
-    check('keyboard: the focused button shows a focus ring', ring === 'solid', ring);
+    check('keyboard (light): the focused button shows a solid outline ring', ring.o === 'solid', ring);
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+    await page.waitForTimeout(200);   // the 120 ms box-shadow transition
+    const dRing = await ringOf();
+    await page.screenshot({ path: path.join(OUT, 'focus-dismiss-dark.png') });
+    check('keyboard (dark): the focused button shows the --lg-focus box-shadow ring, no outline',
+      dRing.o === 'none' && /rgba\(159, 180, 204, 0\.55\) 0px 0px 0px 3px/.test(dRing.sh), dRing);
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; });
     await page.keyboard.press('Shift+Tab');
     await page.keyboard.press('Enter');
     let c = await calls();
@@ -123,6 +145,25 @@ function gaming() {
     const priHov = await bg('#dismiss');
     await page.screenshot({ path: path.join(OUT, 'hover-dismiss.png') });
     check('hover: a quiet button and the primary both change on hover', rest !== hov && priHov !== rest && /inset/.test(priHov), [rest, hov, priHov]);
+    /* dark: Helm's buttons (HELM-SPEC rows 8/9): quiet hover = --lg-press + the strong hairline; the
+       primary's hover = --lg-acc-strong (#b7c8db) with no shadow. Colours ease over --lg-dur-ui (120 ms),
+       so each is read after 200 ms, not mid-transition. */
+    v = await open('');
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+    await page.mouse.move(2, 2);
+    await page.waitForTimeout(200);
+    const dRest = await bg('#restart');
+    const dPriRest = await bg('#dismiss');
+    await page.hover('#restart');
+    await page.waitForTimeout(200);
+    const dHov = await bg('#restart');
+    await page.hover('#dismiss');
+    await page.waitForTimeout(200);
+    const dPriHov = await bg('#dismiss');
+    await page.screenshot({ path: path.join(OUT, 'hover-dismiss-dark.png') });
+    check('hover (dark): the quiet button changes, the primary turns --lg-acc-strong (rgb(183, 200, 219)) with no shadow',
+      dRest !== dHov && dPriRest !== dPriHov && dPriHov.split('|')[0] === 'rgb(183, 200, 219)' && dPriHov.split('|')[1] === 'none', [dRest, dHov, dPriRest, dPriHov]);
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; });
 
     // 6. a refused action is said on the card (plain words), buttons come back, a second try goes out
     v = await open('fail=1');

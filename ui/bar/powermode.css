@@ -92,3 +92,40 @@
 }
 .pmplantoggle:hover { color: var(--lg-ink); text-decoration: underline; }
 .pmplantoggle:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: 2px; border-radius: 3px; }
+
+/* DARK = Helm's look (lane same-bars-mods, 2026-10-09; HELM-SPEC rows 3-24). Light above is untouched.
+   The mode switch is Helm's .seg: a --lg-field recess with a hairline, 12/500 ink-2 segments, the
+   current one surface-3 (--lg-press) with a hairline and the inner lip, NOT the accent block (no accent
+   on a selection). The plan list is the same recess; its current plan is the selected-row look. */
+:root[data-theme="dark"] .pmseg,
+:root[data-theme="dark"] .pmplans { background: var(--lg-field); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .pmbtn,
+:root[data-theme="dark"] .pmplan {
+  border-radius: calc(var(--lg-r-ctl) - 2px);
+  color: var(--lg-ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), color var(--lg-dur-ui) var(--lg-ease-ui), box-shadow var(--lg-dur-ui) var(--lg-ease-ui);
+}
+:root[data-theme="dark"] .pmplan { font-size: 13px; font-weight: 400; }
+:root[data-theme="dark"] .pmbtn:hover { background: transparent; color: var(--lg-ink); }
+:root[data-theme="dark"] .pmplan:hover { background: var(--lg-hover); color: var(--lg-ink); }
+:root[data-theme="dark"] .pmbtn:active,
+:root[data-theme="dark"] .pmplan:active { background: var(--lg-press); }
+:root[data-theme="dark"] .pmbtn:focus-visible,
+:root[data-theme="dark"] .pmplan:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .pmbtn.on, :root[data-theme="dark"] .pmbtn.on:hover,
+:root[data-theme="dark"] .pmplan.on, :root[data-theme="dark"] .pmplan.on:hover {
+  background: var(--lg-press);
+  color: var(--lg-ink);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out), inset 0 1px 0 var(--lg-edge-inner);
+}
+:root[data-theme="dark"] .pmbtn.on:focus-visible,
+:root[data-theme="dark"] .pmplan.on:focus-visible { box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .pmrow.dead .pmseg { background: var(--lg-field); }
+:root[data-theme="dark"] .pmrow.dead .pmbtn { color: var(--lg-ink-3); }
+:root[data-theme="dark"] .pmrow.dead .pmbtn:hover { background: transparent; color: var(--lg-ink-3); }
+:root[data-theme="dark"] .pmrow.dead .pmbtn.on { background: var(--lg-card); color: var(--lg-ink-2); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .pmplantoggle { transition: color var(--lg-dur-ui) var(--lg-ease-ui); }
+:root[data-theme="dark"] .pmplantoggle:focus-visible { outline: none; box-shadow: var(--lg-focus); border-radius: var(--lg-r-ctl); }
+@media (prefers-reduced-motion: reduce) { :root[data-theme="dark"] .pmbtn, :root[data-theme="dark"] .pmplan, :root[data-theme="dark"] .pmplantoggle { transition: none; } }

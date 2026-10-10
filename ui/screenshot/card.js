@@ -194,7 +194,8 @@
   });
 
   if (!bridge) return;
-  bridge.on('screenshot.card', show);
+  // dark: one picture of what is behind the card per show; main waits for it to leave its parking spot
+  bridge.on('screenshot.card', function (p) { show(p); if (window.MantleHudBackdrop) window.MantleHudBackdrop.request('shown', { hold: true }); });
   bridge.on('screenshot.cardClear', clear);
   send('cardLoaded');
 }());

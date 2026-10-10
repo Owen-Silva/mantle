@@ -85,7 +85,13 @@ async function pingTestChecks(browser, check, PAGE, OUT) {
     const theme = dark ? 'dark' : 'light';
     const page = await browser.newPage({ viewport: { width: 1536, height: 38 }, screen: { width: 1536, height: 864 }, deviceScaleFactor: 1.25 });
     const cdp = await page.context().newCDPSession(page);
-    const setWin = (h) => cdp.send('Emulation.setDeviceMetricsOverride', { width: 1536, height: h, deviceScaleFactor: 1.25, mobile: false, screenWidth: 1536, screenHeight: 864 });
+    // the full chrome.exe build (chromium-1228) stops painting after the override (no resize event, no
+    // animation frame), so the dropdown waiting for the window (.wait) stayed hidden: one capture forces
+    // a frame and it paints on its own again (shoot.js setWindowHeight says more)
+    const setWin = async (h) => {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1536, height: h, deviceScaleFactor: 1.25, mobile: false, screenWidth: 1536, screenHeight: 864 });
+      await cdp.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: 8, height: 8, scale: 1 } }).catch(() => {});
+    };
     const grow = async () => {   // play main: the window grows to the height the page asks for
       let m = await page.evaluate(measure);
       for (let k = 0; k < 4 && m.asked && m.ih !== Math.min(m.asked, 864); k++) { await setWin(Math.min(m.asked, 864)); await page.waitForTimeout(40); m = await page.evaluate(measure); }

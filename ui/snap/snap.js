@@ -322,6 +322,9 @@
     else if (p.mode === 'assist') buildAssist(p);
     else buildNotice(p);
     painted();
+    // dark: one picture of what is behind the panel per show; main takes it once the window has moved
+    // in from its parking spot (ui/shared/hud-backdrop.js, main.js hudBackdrop)
+    if (window.MantleHudBackdrop) window.MantleHudBackdrop.request('shown', { hold: true });
   });
 
   M.on('snap.hide', function (p) {

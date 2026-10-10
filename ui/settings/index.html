@@ -9,6 +9,7 @@
 <!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="settings.css">
+<link rel="stylesheet" href="../shared/wall-bdrop.css">
 </head>
 <body>
 <!-- Mantle Settings (lib/features/settings.js, Win+I): Mantle's own face for the Windows Settings it
@@ -51,6 +52,8 @@
 </div>
 <script src="model.js"></script>
 <script src="mock-mantle.js"></script>
+<!-- dark: the wallpaper under the tint, as Helm does (lane helm-wall-apps) -->
+<script src="../shared/wall-bdrop.js" data-event="settings.wall" data-pos="settings.wallpos"></script>
 <!-- the section modules' registry and kit (SECTIONS.md); modules load after it, from settings.sections -->
 <script src="kit.js"></script>
 <script src="settings.js"></script>
