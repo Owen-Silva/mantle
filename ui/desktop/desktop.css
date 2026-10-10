@@ -362,6 +362,10 @@ dd {
   display: flex;
   flex-direction: column;
 }
+/* Nothing to report = no pane at all. The display:flex above beats the UA's [hidden] rule, so
+   without this an empty strip still drew as an empty pane (and held the cluster's 16px gap).
+   Not drawn = a zero rect, which widgethide skips (lib/features/widgethide.js). */
+.strip[hidden] { display: none; }
 
 .strip::after { border-color: var(--lg-warn-soft); }
 .strip .tile-head { color: var(--lg-warn); }

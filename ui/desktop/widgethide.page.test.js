@@ -86,6 +86,7 @@ async function run(browser, theme) {
   check(`${theme}: the clock is reported at its CSS position (left 44, top 38, 420 wide)`, P.clock && P.clock.x === 44 && P.clock.y === 38 && P.clock.w === 420 && P.clock.h > 40, JSON.stringify(P.clock));
   const stripBox = await p.evaluate(() => { const r = document.getElementById("strip").getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; });
   check(`${theme}: the strip is reported at the size it is drawn`, P.strip && P.strip.w === stripBox.w && P.strip.h === stripBox.h, JSON.stringify([P.strip, stripBox]));
+  check(`${theme}: nothing to report on load = the strip is not drawn and reported at zero size (widgethide skips it)`, P.strip && P.strip.w === 0 && P.strip.h === 0 && stripBox.w === 0, JSON.stringify(P.strip));
 
   await sleep(400);
   check(`${theme}: no second report while nothing moved`, (await reports(p)).length === 1, (await reports(p)).length);
@@ -131,20 +132,55 @@ async function run(browser, theme) {
   L = byKey(await look(p));
   check(`${theme}: an empty answer shows every widget (fail open)`, Object.values(L).every((x) => !x.covered));
 
-  // ---- the strip hides -> zero size; appears -> its real size
+  // ---- the "Needs attention" strip, through the page's real path (a 'state' push -> renderState):
+  // nothing to report = not drawn, no space, zero rect; one problem = drawn at its real size; back
+  // to nothing = gone again. (Before 2026-10-10 the strip's display:flex beat [hidden] and an empty
+  // strip still drew as an empty pane.)
   const addRow = () => p.evaluate(() => { const li = document.createElement('li'); li.textContent = 'A problem'; document.getElementById('strip-list').appendChild(li); });
-  const lastStrip = async () => { const r = await reports(p); return { n: r.length, s: r.length ? byKey(r[r.length - 1].panes).strip : null }; };
-  // (the strip's own display:flex beats [hidden], so a "hidden" strip still draws as a pane today;
-  //  a pane that is really not drawn is simulated with display:none)
-  await p.evaluate(() => { document.getElementById('strip').style.display = 'none'; });
+  const lastStrip = async () => { const r = await reports(p); return { n: r.length, s: r.length ? byKey(r[r.length - 1].panes).strip : null, panes: r.length ? r[r.length - 1].panes : [] }; };
+  const stripLook = () => p.evaluate(() => {
+    const st = document.getElementById('strip'), cl = document.querySelector('.cluster');
+    const panes = Array.from(cl.children).filter((el) => el !== st && getComputedStyle(el).display !== 'none');
+    const r = st.getBoundingClientRect(), c = cl.getBoundingClientRect();
+    return { hidden: st.hidden, display: getComputedStyle(st).display, w: Math.round(r.width), h: Math.round(r.height),
+      rows: st.querySelectorAll('.strip-list li').length, clusterBottom: Math.round(c.bottom),
+      lastOtherBottom: Math.round(Math.max.apply(null, panes.map((el) => el.getBoundingClientRect().bottom))) };
+  });
+  const NONE = { mode: 'live', features: {} };
+  const ONE = { mode: 'live', features: { demo: { on: true, ok: false, label: 'Demo feature', reason: 'not working for a test' } } };
+  await p.evaluate((s) => window.__emit('state', s), NONE);
   await sleep(400);
+  let e0 = await stripLook();
+  check(`${theme}: strip: empty state = hidden and not drawn`, e0.hidden && e0.display === 'none' && e0.w === 0 && e0.h === 0, JSON.stringify(e0));
+  check(`${theme}: strip: empty takes no space (the cluster ends at the last other pane, no trailing gap)`, e0.clusterBottom === e0.lastOtherBottom, JSON.stringify(e0));
   let s1 = await lastStrip();
-  check(`${theme}: a pane that is not drawn is reported at zero size`, s1.s && s1.s.w === 0 && s1.s.h === 0, JSON.stringify(s1));
-  await p.evaluate(() => { document.getElementById('strip').style.display = ''; });
-  await addRow();
+  check(`${theme}: strip: empty reports a zero rect (skipped by widgethide)`, s1.s && s1.s.w === 0 && s1.s.h === 0, JSON.stringify(s1.s));
+  await p.evaluate((s) => window.__emit('state', s), ONE);
   await sleep(400);
+  const e1 = await stripLook();
+  check(`${theme}: strip: one problem = shown with one row`, !e1.hidden && e1.display === 'flex' && e1.rows === 1 && e1.w === 420 && e1.h > 20, JSON.stringify(e1));
+  check(`${theme}: strip: shown takes its place below the other panes`, e1.clusterBottom > e0.clusterBottom, JSON.stringify([e0.clusterBottom, e1.clusterBottom]));
   let s2 = await lastStrip();
-  check(`${theme}: the strip coming back is reported with its real size`, s2.n === s1.n + 1 && s2.s.w === 420 && s2.s.h > 20, JSON.stringify(s2));
+  check(`${theme}: strip: appearing is reported once with its real size`, s2.n === s1.n + 1 && s2.s.w === 420 && s2.s.h === e1.h, JSON.stringify([s1.n, s2.n, s2.s]));
+  check(`${theme}: strip: the other panes are still reported with real sizes`, ['clock', 'stats', 'mc'].every((k) => { const x = byKey(s2.panes)[k]; return x && x.w > 0 && x.h > 0; }), JSON.stringify(s2.panes));
+  await p.evaluate((s) => window.__emit('state', s), NONE);
+  await sleep(400);
+  const e2 = await stripLook();
+  const s1b = await lastStrip();
+  check(`${theme}: strip: back to empty = hidden again, no space`, e2.hidden && e2.display === 'none' && e2.rows === 0 && e2.clusterBottom === e2.lastOtherBottom, JSON.stringify(e2));
+  check(`${theme}: strip: hiding is reported once, strip zero, the others still real`, s1b.n === s2.n + 1 && s1b.s.w === 0 && s1b.s.h === 0 && ['clock', 'stats', 'mc'].every((k) => byKey(s1b.panes)[k].w > 0), JSON.stringify(s1b.panes));
+  // a cover answer while the strip is hidden still applies to the others
+  await p.evaluate(() => window.__emit('widgethide.cover', { on: true, covered: { clock: true, strip: false }, by: {}, reason: null }));
+  await sleep(450);
+  L = byKey(await look(p));
+  check(`${theme}: strip hidden: covering still works for the other panes`, L.clock.covered && L.clock.opacity === 0 && !L.stats.covered && L.stats.opacity === 1, JSON.stringify([L.clock, L.stats]));
+  await p.evaluate(() => window.__emit('widgethide.cover', { on: true, covered: {}, by: {}, reason: null }));
+  await sleep(700);
+  // and up again for the rest of this run (later checks grow it row by row)
+  await p.evaluate((s) => window.__emit('state', s), ONE);
+  await sleep(400);
+  s2 = await lastStrip();
+  check(`${theme}: strip: shown again with its real size`, s2.n === s1b.n + 1 && s2.s.w === 420 && s2.s.h > 20, JSON.stringify(s2.s));
 
   // ---- a window resize that moves the widgets (the cluster's small-screen rule) is reported
   await p.setViewportSize({ width: 1200, height: 760 });
