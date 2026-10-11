@@ -170,8 +170,13 @@
      photo (top bar over cloud-peaks or sand-ripples: .76, was .80). */
   --lg-guard-bar:   4.2;
   --lg-fill-strong: var(--lg-fill);
-  --lg-fill-fb:     rgba(19,20,21,.86);   /* only when the picture failed */
-  --lg-fill-pop:    rgba(19,20,21,.88);   /* the guard's CEILING and the no-picture face: .05 over --lg-fill so faint text over a bright window can thicken just enough (Helm's ink-2 measured 4.3-4.4:1 at exactly .83 over a white page) */
+  /* The no-picture faces and the guard's CEILING = Helm's panel (lane mantle-seethru-popups, 2026-10-10; Owen chose
+     "Match Helm's panels" for every dark glass part). They were .86 / .88, darker than any Helm panel. Every
+     surface's picture is the WALLPAPER now (lib/wall-still.js), never a bright window, and at .83 over pure
+     white --lg-ink-2 still reads 4.74:1 (--lg-ink 9.35:1; the guard's need is 4.7), so a ceiling over
+     --lg-fill bought nothing: with ceiling = fill the guards keep the token tint (glass-adapt.js guardTokens). */
+  --lg-fill-fb:     var(--lg-fill);       /* only when the picture failed (was .86) */
+  --lg-fill-pop:    var(--lg-fill);       /* the guard's CEILING and the no-picture face (was .88) */
   --lg-fill-0:      rgba(19,20,21,0);
 
   --lg-card:  rgba(40,41,43,.62);         /* Helm surface-2: cards inside a panel, row hover */

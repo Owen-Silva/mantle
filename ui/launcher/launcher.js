@@ -150,6 +150,7 @@
       return;
     }
     if (backdropNote) { backdropNote = ''; renderFooter(); }
+    lastRect = { rect: p.rect || null, at: p.at || null, win: p.win || null };   // dark: where main cut it (paintDark below)
     els.backdrop.src = p.png;                    // the ONLY per-frame work: a src swap
     if (!haveBackdrop) {
       haveBackdrop = true;
@@ -178,7 +179,7 @@
     var T = GA ? GA.guardTokens(getComputedStyle(document.documentElement)) : null;
     if (T && !(T.ceil > T.fill.a + 1e-9)) { window.__launcherGlass = { alpha: T.fill.a, engaged: false, why: 'ceiling = fill' }; adaptSaid = ''; return; }
     var px = T ? GA.pixelsOf(img) : null;
-    var r = px ? GA.guard(px, { tokens: T, picPerCss: img.naturalWidth / (img.clientWidth || img.naturalWidth) }) : null;
+    var r = px ? GA.guard(px, { tokens: T, picPerCss: img.naturalWidth / windowCut(lastRect).w }) : null;   // dark hides the <img>: the picture's CSS size is the cut's
     if (r) {
       window.__launcherGlass = { alpha: r.alpha, ratio: r.ratio, engaged: r.engaged };
       if (r.engaged) panelEl.style.setProperty('--pane-tint', r.tint);
@@ -191,9 +192,80 @@
   if (els.backdrop) els.backdrop.addEventListener('load', adaptBackdrop);
   window.addEventListener('mantle-theme', adaptBackdrop);
 
+  /* DARK ONLY: THE PICTURE LINED UP AND BAKED (lane mantle-seethru-popups, 2026-10-10; Owen: "this needs
+     to be see through the same as everything else"). Main cuts the wallpaper to the WINDOW's rectangle
+     (main.js launcherBackdrop, wall: true), but the <img> stretched it over the panel plus 14px a side
+     while the panel sits 10px inside the window: 1.2% too big, up to 3.8 DIP off at the edges (max 10.6
+     levels from the still at .83, the HUDs and the switcher 1.5-2.7), and blurred by a CSS filter at paint
+     time. In dark the picture is drawn ONCE onto a canvas with the --lg-blur token (scaled to canvas px,
+     the edges clamped out first so the blur never pulls transparency in) exactly where main cut it: the
+     window's rectangle, in the panel's coordinates. The switcher's and wall-bdrop.js's method. Light keeps
+     the <img> and never builds the canvas. window.__launcherWall is a read-only view. */
+  var bcan = null, lastRect = null;
+  /* the picture's rectangle in window CSS px: main's `at` (fractions of `win`, the bar's convention) when it
+     sends one; else its physical `rect`, which is the whole window unless the display's edge clipped it */
+  function windowCut(s) {
+    var W = window.innerWidth, H = window.innerHeight, d = window.devicePixelRatio || 1;
+    if (s && s.at && s.at.w > 0 && s.at.h > 0) {
+      var ww = s.win && s.win.w > 0 ? s.win.w : W, wh = s.win && s.win.h > 0 ? s.win.h : H;
+      return { x: s.at.x * ww, y: s.at.y * wh, w: s.at.w * ww, h: s.at.h * wh };
+    }
+    var rect = s && s.rect;
+    if (!rect || !(rect.w > 0) || !(rect.h > 0)) return { x: 0, y: 0, w: W, h: H };
+    if (Math.abs(rect.w - W * d) <= 2 && Math.abs(rect.h - H * d) <= 2) return { x: 0, y: 0, w: W, h: H };
+    return { x: rect.x / d - window.screenX, y: rect.y / d - window.screenY, w: rect.w / d, h: rect.h / d };
+  }
+  function paintDark() {
+    var img = els.backdrop;
+    if (document.documentElement.getAttribute('data-theme') !== 'dark') { dropDark(); return; }
+    if (!haveBackdrop || !img || !img.naturalWidth || !els.bdrop) return;
+    try {
+      var at = windowCut(lastRect);
+      var iw = img.naturalWidth, ih = img.naturalHeight, k = iw / at.w, px = 0;
+      var tok = getComputedStyle(document.documentElement).getPropertyValue('--lg-blur').trim();
+      var f = tok && tok !== 'none' ? tok.replace(/blur\(\s*([\d.]+)px\s*\)/, function (_m, n) { px = parseFloat(n) * k; return 'blur(' + px.toFixed(2) + 'px)'; }) : 'none';
+      var m = Math.ceil(px * 3);
+      var src = document.createElement('canvas');
+      src.width = iw + 2 * m; src.height = ih + 2 * m;
+      var g = src.getContext('2d');
+      g.drawImage(img, m, m);
+      if (m) {                                   // the edge pixels stretched out into the margin
+        g.drawImage(img, 0, 0, iw, 1, m, 0, iw, m);
+        g.drawImage(img, 0, ih - 1, iw, 1, m, m + ih, iw, m);
+        g.drawImage(img, 0, 0, 1, ih, 0, m, m, ih);
+        g.drawImage(img, iw - 1, 0, 1, ih, m + iw, m, m, ih);
+        g.drawImage(img, 0, 0, 1, 1, 0, 0, m, m);
+        g.drawImage(img, iw - 1, 0, 1, 1, m + iw, 0, m, m);
+        g.drawImage(img, 0, ih - 1, 1, 1, 0, m + ih, m, m);
+        g.drawImage(img, iw - 1, ih - 1, 1, 1, m + iw, m + ih, m, m);
+      }
+      if (!bcan) { bcan = document.createElement('canvas'); bcan.className = 'bdrop-pic'; els.bdrop.appendChild(bcan); }
+      bcan.width = iw; bcan.height = ih;
+      var o = bcan.getContext('2d');
+      o.filter = f; o.drawImage(src, -m, -m); o.filter = 'none';
+      src.width = 0; src.height = 0;
+      // the .bdrop's place in the window, untransformed (the panel scales a little while it opens)
+      var x = 0, y = 0;
+      for (var e = els.bdrop; e; e = e.offsetParent) { x += e.offsetLeft + (e !== els.bdrop ? e.clientLeft : 0); y += e.offsetTop + (e !== els.bdrop ? e.clientTop : 0); }
+      bcan.style.left = (at.x - x) + 'px'; bcan.style.top = (at.y - y) + 'px';
+      bcan.style.width = at.w + 'px'; bcan.style.height = at.h + 'px';
+      window.__launcherWall = { at: at, offset: { x: at.x - x, y: at.y - y }, blur: f, bakes: (window.__launcherWall ? window.__launcherWall.bakes : 0) + 1 };
+    } catch (err) {
+      clearBackdrop();
+      noBlur('the picture behind the launcher could not be blurred: ' + (err && err.message));
+    }
+  }
+  function dropDark() {
+    if (bcan) { bcan.width = 0; bcan.height = 0; }
+    window.__launcherWall = null;
+  }
+  if (els.backdrop) els.backdrop.addEventListener('load', paintDark);
+  window.addEventListener('mantle-theme', paintDark);
+
   function clearBackdrop() {
     if (!els.bdrop || !els.backdrop) return;     // already reported by bdropNodes()
     haveBackdrop = false;
+    dropDark();
     els.bdrop.classList.remove('on');
     /* removeAttribute, never src='': an empty src re-requests the PAGE in some engines. With no
        src at all the <img> draws nothing, which is what a hidden launcher should hold. */

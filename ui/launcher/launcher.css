@@ -231,6 +231,13 @@ body.no-backdrop .panel::after {
   transform: translateZ(0);
 }
 
+/* DARK, LINED UP (lane mantle-seethru-popups, 2026-10-10): launcher.js paintDark() draws the picture,
+   blurred ONCE with --lg-blur, onto canvas.bdrop-pic exactly where main cut it (the window's rectangle,
+   so the panel's own 10px inset lines up); the <img> and its paint-time CSS blur are light's alone. */
+.bdrop-pic { display: none; }
+:root[data-theme="dark"] .bdrop img { display: none; }
+:root[data-theme="dark"] .bdrop .bdrop-pic { position: absolute; display: block; }
+
 /* the content sits above both layers */
 .slot, .results, .foot, .notice { position: relative; z-index: 2; }
 

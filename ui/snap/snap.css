@@ -34,7 +34,7 @@
    blurred behind it, so the screen behind shows through about 2.5x as much (share ~.18, was ~.07 at .58, ~.12 at .50).
    Light is untouched. */
 :root[data-theme="dark"] {
-  --hud-face: var(--lg-fill-pop);   /* the no-picture face: the token for it (.88), raised over --lg-fill so faint text stays readable over a bright window (lane helm-wall) */
+  --hud-face: var(--lg-fill-pop);   /* the no-picture face: the token for it, = --lg-fill (.83, Helm's panel) since lane mantle-seethru-popups (was .88) */
   --hud-ground: var(--hud-face);   /* assist: the face alone, no --lg-sunk stacked on it (lane same-huds-css) */
 }
 
