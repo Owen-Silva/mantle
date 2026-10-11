@@ -96,6 +96,7 @@
     // through the CSSOM: the page's CSP (style-src file:) drops inline style="" attributes
     const app = f.appW != null && leftEl.querySelector('.t.bold');
     if (app) app.style.maxWidth = f.appW + 'px';
+    underRendered();   // the colour under: the new items take their inks (dark only, lane mantle-topbar-under)
   }
 
   function renderStats(fromBar) {
@@ -114,6 +115,7 @@
     // the key too, so the 1 s samples also catch a resize whose event never came.
     const key = Math.round(rightEl.getBoundingClientRect().width) + '/' + visibleWidth() + '/' + window.innerWidth;
     if (key !== S.rightKey) { S.rightKey = key; if (!fromBar) { sizeBar(); layoutLeft(); } }
+    underRendered();   // the colour under: the new items take their inks (dark only, lane mantle-topbar-under)
   }
 
   /* ---- the two small tools (lane tbtools, 2026-09-27) ---------------------------------------
@@ -872,6 +874,153 @@
     if (!S.open) return;
     if (!isDark()) menuGlassEnd();
     renderMenus();
+  });
+
+  /* ---- THE COLOUR UNDER, dark only (lane mantle-topbar-under, 2026-10-11) ----------------------
+     Owen: "can we make it so that the top bar changes based on what color is on below it?" Main
+     (lib/topbar-under.js) sends 'topbar.under' {cols, cover, n, blocked, why}: the row of the screen right
+     under the bar as n columns, and how much of each a window covers; or {off, why, failure, blocked}.
+     ui/topbar/under.js plans the paint (the exact colour on the bottom row, the text band pulled only
+     where an ink could not read 4.5:1) and each item's ink (light, or the light theme's dark ink over a
+     bright window, with hysteresis). The paint is a canvas of n columns under the strip's words (#under,
+     inside #bar at z-index -1, so over the glass's tint and under the words); where no window is under
+     the bar it is clear and today's glass shows. THE FADE (0.15 s, compositor opacity, no JS per frame):
+     a new frame is drawn into the TOP canvas, which fades in over the bottom one holding the last frame;
+     160 ms later the bottom one takes the same pixels and the top one goes off in the same frame (an
+     invisible swap). A frame arriving meanwhile waits for the swap. Light: never mounted, nothing runs. */
+  const UND = window.TopbarUnder;
+  const US = { on: false, n: 0, cols: null, cover: null, plan: null, prev: { items: {}, cols: [] }, why: null, failure: false,
+    fadeAt: -1e9, wait: null, swap: null, rm: null, frames: 0, painted: 0, tok: null, lastNote: null, sig: null };
+  window.__topbarUnder = US;   // read-only for the --test harness; US.apply(payload) drives the page like main does
+  let underEl = null, underCv = null;
+  function underMount() {
+    if (underEl) return;
+    underEl = document.createElement('div');
+    underEl.id = 'under';
+    underEl.setAttribute('aria-hidden', 'true');
+    underCv = [document.createElement('canvas'), document.createElement('canvas')];
+    for (const c of underCv) { c.height = UND.ROWS; underEl.appendChild(c); }
+    barEl.insertBefore(underEl, barEl.firstChild);
+    document.body.classList.add('under');
+  }
+  function underUnmount() {
+    if (underEl) { underEl.remove(); underEl = null; underCv = null; }
+    document.body.classList.remove('under');
+  }
+  function underTokens() {
+    if (US.tok) return US.tok;
+    const cs = getComputedStyle(document.documentElement);
+    const pc = (name) => { const c = GM.parseColor(cs.getPropertyValue(name).trim()); return c ? [c.r, c.g, c.b] : null; };
+    const t = { light: [pc('--lg-ink'), pc('--lg-ink-2')], dark: [pc('--lg-ink-on-light'), pc('--lg-ink-2-on-light')],
+      warnL: pc('--lg-warn'), warnD: pc('--lg-warn-on-light'), scrimL: pc('--lg-fill-bar'), scrimD: pc('--lg-lift') };
+    const all = [...t.light, ...t.dark, t.warnL, t.warnD, t.scrimL, t.scrimD];
+    if (all.some((c) => !c)) return null;
+    US.tok = t;
+    return t;
+  }
+  const underKey = (el) => el.dataset.k ? 'k:' + el.dataset.k : el.dataset.tool ? 't:' + el.dataset.tool
+    : el.dataset.i != null ? 'i:' + el.dataset.i + ':' + (el.textContent || '').slice(0, 40) : 'c:' + el.className.split(' ')[0];
+  const underEls = () => [...leftEl.children, ...rightEl.children];
+  // the items' inks as last decided, put on BEFORE anything is measured, so a re-rendered item never
+  // starts on the wrong ink and transitions to the right one (renderStats rebuilds the stats every second)
+  function underInkPrev() {
+    for (const el of underEls()) el.classList.toggle('ink-dk', US.on && US.prev.items[underKey(el)] === 'dark');
+  }
+  function underInkClear() { for (const el of underEls()) el.classList.remove('ink-dk'); }
+  function underPlan() {
+    const T = underTokens();
+    if (!T) return { why: 'the top bar\'s ink tokens did not load' };
+    underInkPrev();
+    const b = barEl.getBoundingClientRect();
+    const items = [];
+    const els = [];
+    for (const el of underEls()) {
+      const r = el.getBoundingClientRect();
+      if (!(r.width > 0)) continue;
+      const hi = el.classList.contains('hi') || el.classList.contains('bad');   // words in warn ink (a high ping, a failed notes save)
+      items.push({ key: underKey(el), x0: r.left - b.left, x1: r.right - b.left, light: hi ? T.light.concat([T.warnL]) : T.light, dark: hi ? T.dark.concat([T.warnD]) : T.dark });
+      els.push(el);
+    }
+    const pl = UND.plan({ cols: US.cols, cover: US.cover, n: US.n, width: b.width || barEl.clientWidth, items,
+      gap: { light: T.light, dark: T.dark }, scrim: { light: T.scrimL, dark: T.scrimD }, prev: US.prev });
+    US.prev = pl.prev;
+    US.plan = pl;
+    for (let i = 0; i < els.length; i++) els[i].classList.toggle('ink-dk', pl.items[i].ink === 'dark');
+    return { pl };
+  }
+  const underSig = (pl) => pl.top.map((c) => c.map(Math.round).join(',')).join(';') + '|' + pl.alpha.join(',') + '|' + pl.base.map((c) => c.join(',')).join(';');
+  function underPaint(pl) {
+    const sig = underSig(pl);
+    if (sig === US.sig) return;   // the same pixels: nothing to fade
+    const since = performance.now() - US.fadeAt;
+    if (since < 160) { if (!US.wait) US.wait = setTimeout(() => { US.wait = null; if (US.on && US.plan) underPaint(US.plan); }, 165 - since); return; }
+    US.sig = sig;
+    const data = UND.paint(pl, UND.ROWS);
+    const [bot, top] = underCv;
+    top.width = pl.n; top.height = UND.ROWS;
+    top.getContext('2d').putImageData(new ImageData(data, pl.n, UND.ROWS), 0, 0);
+    top.classList.add('on');   // fades in (topbar.css, 0.15 s) over the last frame or the glass
+    US.fadeAt = performance.now();
+    US.painted++;
+    clearTimeout(US.swap);
+    US.swap = setTimeout(() => {
+      US.swap = null;
+      if (!underEl || !US.on) return;
+      // the invisible swap: the bottom canvas takes the same pixels, the top one goes off, in one frame
+      bot.width = pl.n; bot.height = UND.ROWS;
+      bot.getContext('2d').putImageData(new ImageData(data, pl.n, UND.ROWS), 0, 0);
+      underEl.classList.add('snap');
+      bot.classList.add('on'); top.classList.remove('on');
+      void underEl.offsetWidth;   // apply both with no transition, then let the next frame fade again
+      underEl.classList.remove('snap');
+    }, 160);
+  }
+  function underDraw() {
+    if (!US.on || !isDark() || !US.cols) return;
+    underMount();
+    const r = underPlan();
+    if (r.why) { underOff(r.why, true); return; }
+    US.frames++;
+    underPaint(r.pl);
+  }
+  function underOff(why, failure, blocked) {
+    const said = failure || blocked ? why || null : null;
+    UND.underMenu(M.MANTLE_MENU, said, !!failure);
+    if (failure && why && why !== US.lastNote) setNote('Top bar colour: ' + why);
+    US.lastNote = failure ? why : null;
+    US.on = false; US.why = why || null; US.failure = !!failure;
+    US.plan = null; US.cols = null; US.cover = null; US.sig = null;
+    clearTimeout(US.wait); US.wait = null; clearTimeout(US.swap); US.swap = null;
+    underInkClear();
+    if (!underEl) return;
+    for (const c of underCv) c.classList.remove('on');   // fades out to today's glass (0.15 s)
+    clearTimeout(US.rm);
+    US.rm = setTimeout(() => { US.rm = null; if (!US.on) underUnmount(); }, 200);
+  }
+  function setUnder(p) {
+    if (!isDark()) { if (underEl || US.on) underOff(null, false); return; }
+    if (p && p.off && p.keep) { US.why = p.why || null; return; }   // paused (a menu open, the screen off): the paint stays as it is
+    if (!p || p.off) { underOff(p && p.why, p && p.failure, p && p.blocked); return; }
+    const v = UND.check(p);
+    if (!v.ok) { underOff(v.why, true); return; }
+    clearTimeout(US.rm); US.rm = null;
+    if (US.failure) US.lastNote = null;
+    US.on = true; US.failure = false; US.why = p.why || null;
+    US.cols = v.cols; US.cover = v.cover; US.n = v.n;
+    UND.underMenu(M.MANTLE_MENU, p.why || null, false);   // a window that blocks capture under part of the bar: said, not a fault
+    underDraw();
+  }
+  US.apply = setUnder;
+  mantle.on('topbar.under', setUnder);
+  // the strip re-rendered (the stats every second, the menus on a focus change): same colours, new items
+  function underRendered() {
+    if (!window.__topbarUnder || !US.on || !US.cols) return;
+    underDraw();
+  }
+  window.addEventListener('mantle-theme', () => {
+    US.tok = null;
+    if (!isDark()) { if (underEl || US.on) underOff(null, false); return; }
+    if (US.on) underDraw();
   });
 
   /* ---- THE DROPDOWNS' GLASS, dark only (lane same-bars, 2026-10-09) ---------------------------

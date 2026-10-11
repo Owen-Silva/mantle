@@ -65,6 +65,30 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
   background-color: var(--tb-tint, var(--lg-fill-bar));
   -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur);
 }
+/* THE COLOUR UNDER, DARK ONLY (lane mantle-topbar-under, 2026-10-11; ui/topbar/under.js, main:
+ * lib/topbar-under.js). Owen: "can we make it so that the top bar changes based on what color is on below
+ * it?" Where a window is right under the bar, #under (topbar.js mounts it in dark only, as #bar's first
+ * child) paints that window's colour: its bottom row is the window's top row, column by column. It sits
+ * at z-index -1 inside #bar, which isolates while it is mounted: over #bar's tint and blurred picture,
+ * under the words. Where no window is under the bar its pixels are clear and the glass shows as before.
+ * The 0.15 s fade is the canvases' opacity (compositor only); .snap swaps them with no transition. No new
+ * line: #bar keeps no box-shadow in dark, the strip runs flush. An item over a bright window takes
+ * .ink-dk: the light theme's inks (--lg-*-on-light), its colour fading with the fill. */
+:root[data-theme="dark"] body.under #bar { isolation: isolate; }
+:root[data-theme="dark"] #under { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+:root[data-theme="dark"] #under canvas {
+  position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block;
+  opacity: 0; transition: opacity .15s linear;
+}
+:root[data-theme="dark"] #under canvas.on { opacity: 1; }
+:root[data-theme="dark"] #under.snap canvas { transition: none; }
+:root[data-theme="dark"] #bar .ink-dk {
+  --lg-ink: var(--lg-ink-on-light); --lg-ink-2: var(--lg-ink-2-on-light); --lg-ink-3: var(--lg-ink-3-on-light);
+  --lg-hover: var(--lg-hover-on-light); --lg-press: var(--lg-press-on-light);
+  --lg-warn: var(--lg-warn-on-light); --lg-acc: var(--lg-acc-on-light);
+}
+:root[data-theme="dark"] body.under #left > *, :root[data-theme="dark"] body.under #right > *,
+:root[data-theme="dark"] body.under #left > * *, :root[data-theme="dark"] body.under #right > * * { transition: color .15s linear; }
 /* FIT (2026-09-25, Owen: the stats were cut at "CPU 82%" at the screen's right edge). The stats
  * never shrink and always end one inset (8px, the same as the Mantle glyph's) from the right edge
  * of the SCREEN: topbar.js sets #bar's `right` when the window is wider than its display, which is

@@ -207,6 +207,17 @@
   --lg-ink-2: #a9aaa7;
   --lg-ink-3: #75767a;
   --lg-ink-0: rgba(169,170,167,0);
+  /* THE TOP BAR OVER A BRIGHT WINDOW (lane mantle-topbar-under, 2026-10-11; ui/topbar/under.js). An item
+     on the strip over a light window takes the LIGHT theme's inks, copied here from the light :root block
+     (which stays as it is). --lg-lift is the pull toward light under that ink on a mid-tone window. */
+  --lg-ink-on-light:   #0B0E1A;
+  --lg-ink-2-on-light: #333A4E;
+  --lg-ink-3-on-light: #5B6478;
+  --lg-hover-on-light: rgba(11,14,26,.06);
+  --lg-press-on-light: rgba(11,14,26,.10);
+  --lg-warn-on-light:  #8A4B00;
+  --lg-acc-on-light:   #4436E8;
+  --lg-lift:           #FFFFFF;
 
   --lg-acc:        #9fb4cc;               /* Helm steel blue; state only, never on a row */
   --lg-acc-strong: #b7c8db;
