@@ -972,6 +972,7 @@ const themeHost = {
  */
 let lookHost = null;
 let lookDesktop = null;
+let lastDeskRec = null;               // the desktop record (rev|id) the wallpaper glass last heard of
 function getLook() {
   if (lookHost) return lookHost;
   const core = getTheme();
@@ -1059,7 +1060,12 @@ function startLookDesktop() {
         if (t.unref) t.unref();
       },
       test: !!flags.test,
-      onChange: (st) => look.setDesktop(st),
+      onChange: (st) => {
+        look.setDesktop(st);
+        // a new record (a new still) is the dark glass's source 2 (lib/wall-still.js): look again
+        const rv = st && st.desktop ? `${st.desktop.rev}|${st.desktop.id}` : null;
+        if (rv !== lastDeskRec) { lastDeskRec = rv; wallStill.invalidate('the shared desktop still changed'); }
+      },
       log: (line) => process.stdout.write(`mantle: look: ${line}\n`),
       // the shared top-band darkening (lib/look-guard.js; CONTRACT.md desktop.guard): worked out on a worker
       // thread from each still, for the shared dark glass and the primary monitor (DIP)
@@ -1686,12 +1692,17 @@ async function revealByPage(geo, why, visible) {
       // gamequiet: no pre-reveal picture while a game runs; the page keeps its flat tint.
       // dark (lane helm-wall): the wallpaper under the pill, cut from the still; v1's screen shot only
       // where there is no still (a web wallpaper) -- and in light, as before
-      const wall = backdropQuiet('the bar') || getTheme().get().theme !== 'dark' ? null : await wallStill.rect(shotRect);
+      // lane mantle-seethru-bar-desktop: cut BAR_WALL_GROW_DIP past the pill and placed by `at` against the
+      // window's resting rectangle (it lands there next); the landing's own frame re-places it on the real one
+      const grown = geo.pill && geo.win && geo.win.phys ? growRect(geo.pill.phys, BAR_WALL_GROW_DIP) : null;
+      const wall = backdropQuiet('the bar') || getTheme().get().theme !== 'dark' ? null
+        : grown ? await wallStill.rect(grown, { pad: true }) : await wallStill.rect(shotRect);
       const skip = !!wall && (wall.ok || !wall.capture);   // the wallpaper answered, or there is nothing to capture instead
       const shot = skip ? null : backdropQuiet('the bar') ? null
         : await sidecar.call('backdrop', { x: shotRect.x, y: shotRect.y, w: shotRect.w, h: shotRect.h, scale: BACKDROP_SCALE }, 2000);
       if (wall && wall.ok) {
-        broadcast('bar.backdrop', { png: wall.png, w: wall.w, h: wall.h, rect: { x: wall.rect.x, y: wall.rect.y, w: wall.rect.w, h: wall.rect.h }, ms: wall.ms, source: wall.source });
+        const place = (grown && WallStill.placeAt(wall.rect, geo.win.phys, geo.win.dip)) || {};
+        broadcast('bar.backdrop', Object.assign({ png: wall.png, w: wall.w, h: wall.h, rect: { x: wall.rect.x, y: wall.rect.y, w: wall.rect.w, h: wall.rect.h }, ms: wall.ms, source: wall.source }, place));
       } else if (shot && shot.png) {
         broadcast('bar.backdrop', { png: shot.png, w: shot.w, h: shot.h, rect: { x: shotRect.x, y: shotRect.y, w: shotRect.w, h: shotRect.h }, ms: Number(shot.ms) || 0 });
       }
@@ -2029,6 +2040,9 @@ function scheduleHoverTick() {
  */
 const BACKDROP_MS = 250;              // 4 fps: it is a wallpaper, not a video
 const BACKDROP_SCALE = 4;             // downscale; the page blurs it anyway
+// dark: the bar's wallpaper cut reaches this far past the pill on every side (3.2 sigma of the 5px blur,
+// so the rim takes < 0.1% of the picture's transparent edge); the page places it by `at`
+const BAR_WALL_GROW_DIP = 16;
 const BACKDROP_SETTLE_MS = 25;        // for the exclusion to take effect before the shot
 const BACKDROP_MAX_FAILS = 3;
 const WALL_WAIT_MS = 400;             // dark: a shown bar/launcher whose wallpaper is still loading looks again this often
@@ -2102,13 +2116,28 @@ async function captureBackdrop(win, rect, scale, protect, onProtectError) {
  * capture, with `note` saying so. No wallpaper picture at all: {ok:false, err} and the page keeps its
  * fallback face with the reason, as before. Light: captureBackdrop, untouched.
  */
-async function backdropPicture(win, rect, scale, protect, onProtectError) {
+async function backdropPicture(win, rect, scale, protect, onProtectError, wallAsk) {
   if (getTheme().get().theme !== 'dark') return captureBackdrop(win, rect, scale, protect, onProtectError);
-  const w = await wallStill.rect(rect);
+  // wallAsk (the bar, lane mantle-seethru-bar-desktop): the wallpaper is cut to THIS rectangle instead,
+  // unclipped (edge pixels repeat past the display), so it covers the page's whole overscanned picture
+  const w = wallAsk ? await wallStill.rect(wallAsk, { pad: true }) : await wallStill.rect(rect);
   if (w.ok) return { ok: true, png: w.png, w: w.w, h: w.h, ms: w.ms, rect: w.rect, source: w.source };
   if (!w.capture) return { ok: false, err: new Error(w.reason), wall: true, transient: !!w.transient };
   const r = await captureBackdrop(win, rect, scale, protect, onProtectError);
   return Object.assign(r, { source: 'screen', note: `a capture of the screen behind, not the wallpaper: ${w.reason}` });
+}
+/** A picture that came from the wallpaper (lib/wall-still.js sources), not from a screen capture. */
+function isWallSource(s) { return s === 'mantle' || s === 'windows' || s === 'look'; }
+function wallWords(s) { return s === 'windows' ? 'Windows wallpaper' : s === 'look' ? 'desktop wallpaper (its shared still)' : 'desktop wallpaper'; }
+/** A PHYSICAL rectangle grown by `dip` DIP on every side (the primary display's scale; lib/wall-still.js). */
+function growRect(r, dip) { return WallStill.growRect(r, dip, screen.getPrimaryDisplay().scaleFactor || 1); }
+/*
+ * Where a picture of the PHYSICAL rectangle `got` sits in `win` (lib/wall-still.js placeAt): `at` as fractions
+ * of the window's content rectangle, `win` its content size in DIP. The window's REAL position is used
+ * (getContentBounds), not the one the geometry asked for. {} if the window cannot say.
+ */
+function placeInWindow(win, got) {
+  try { const cb = win.getContentBounds(); return WallStill.placeAt(got, toPhys(cb), cb) || {}; } catch (_) { return {}; }
 }
 
 /**
@@ -2128,6 +2157,12 @@ async function backdropPicture(win, rect, scale, protect, onProtectError) {
  *   opts.ms      the loop's period, or 0 for one-shot only
  *   opts.scale   downscale factor (the page blurs it, so small is free)
  *   opts.label   what to call this window in a sentence
+ *   opts.grow    DIP, dark wallpaper only (the bar): the cut is opts.rect() grown this much on every
+ *                side, and the shot says where it sits in the window (`at`, `win`; placeInWindow), so
+ *                the page lays the picture exactly over the screen it came from (lane
+ *                mantle-seethru-bar-desktop: the bar's cut was the pill, stretched over a box 14 DIP
+ *                bigger on every side, so it was magnified 1.58x tall and the wallpaper slid under it)
+ *   opts.present OPTIONAL (shot, send): replaces the broadcast of a good frame (the desktop layer)
  */
 function makeBackdrop(opts) {
   let timer = null;
@@ -2165,7 +2200,8 @@ function makeBackdrop(opts) {
     const fit = clampToDisplay(asked);
     const rect = fit.rect;
     const trimmed = fit.changed ? ` (${fit.note})` : '';
-    const r = opts.wall ? await backdropPicture(win, rect, opts.scale, protect, onProtectError)
+    const wallAsk = opts.wall && opts.grow > 0 && getTheme().get().theme === 'dark' ? growRect(asked, opts.grow) : null;
+    const r = opts.wall ? await backdropPicture(win, rect, opts.scale, protect, onProtectError, wallAsk)
       : await captureBackdrop(win, rect, opts.scale, protect, onProtectError);
     if (r.ok) {
       fails = 0;
@@ -2173,10 +2209,13 @@ function makeBackdrop(opts) {
       source = r.source || 'screen';
       const got = r.rect || rect;
       const shot = { png: r.png, w: r.w, h: r.h, rect: { x: got.x, y: got.y, w: got.w, h: got.h }, ms: r.ms, source };
-      broadcast(opts.event, shot);
+      // the grown wallpaper cut says where it sits; anything else (light, a screen capture) keeps v1's shape
+      if (wallAsk && isWallSource(source)) Object.assign(shot, placeInWindow(win, got));
+      if (opts.present) opts.present(shot, (s) => broadcast(opts.event, s));
+      else broadcast(opts.event, shot);
       if (opts.onFrame) { try { opts.onFrame(shot); } catch (_) { /* a keeper of the last frame never stops the loop */ } }
-      if (source === 'mantle' || source === 'windows') {
-        set({ on: false, ok: true, ms: r.ms, source, reason: `${opts.label} shows the ${source === 'mantle' ? 'desktop' : 'Windows'} wallpaper under it, blurred (Helm's method): no capture, no loop${trimmed}` });
+      if (isWallSource(source)) {
+        set({ on: false, ok: true, ms: r.ms, source, reason: `${opts.label} shows the ${wallWords(source)} under it, blurred (Helm's method): no capture, no loop${trimmed}` });
       } else {
         set(trimmed || r.note
           ? { ok: true, ms: r.ms, source, reason: `${opts.label} is blurring a live picture of what is behind it${trimmed}${r.note ? ` (${r.note})` : ''}` }
@@ -2214,12 +2253,12 @@ function makeBackdrop(opts) {
         return;
       }
     } else if (frames === 1) {
-      process.stdout.write(source === 'mantle' || source === 'windows'
+      process.stdout.write(isWallSource(source)
         ? `mantle: ${opts.key} backdrop: the ${source} wallpaper, cut in ${state.get().backdrop[opts.key].ms} ms (no loop)\n`
         : `mantle: ${opts.key} backdrop capture on: ${fps} fps, first frame ${state.get().backdrop[opts.key].ms} ms\n`);
     }
     // the wallpaper does not move: no loop (a failure without a picture waits for refresh() too)
-    if (opts.wall && (source === 'mantle' || source === 'windows') && ok) return;
+    if (opts.wall && isWallSource(source) && ok) return;
     if (!ok && wallMiss) {
       // the wallpaper is still loading ('wait'): look again a few times while the window is SHOWN (the
       // State change when it draws also refreshes; this covers a draw that changes no State). Never while
@@ -2246,8 +2285,8 @@ function makeBackdrop(opts) {
       // A failure has already written its own reason (which names this window);
       // leave it alone rather than paper over it with a cheerful one.
       if (ok) {
-        set({ on: !!timer, ok: true, reason: source === 'mantle' || source === 'windows'
-          ? `${opts.label} shows the ${source === 'mantle' ? 'desktop' : 'Windows'} wallpaper under it, blurred (Helm's method) (${why})`
+        set({ on: !!timer, ok: true, reason: isWallSource(source)
+          ? `${opts.label} shows the ${wallWords(source)} under it, blurred (Helm's method) (${why})`
           : `${opts.label} has a fresh picture of what is behind it (${why})` });
       }
       return ok;
@@ -2306,6 +2345,9 @@ const barBackdrop = makeBackdrop({
   // window also covers the transparent strip under it (17 px of wrong scenery).
   rect: () => barGeometry().pill.phys,
   wall: true,                         // dark: the wallpaper under the pill, one cut per landing (lane helm-wall)
+  // dark: cut BAR_WALL_GROW_DIP past the pill on every side and placed by `at`: the page's picture
+  // overscans its clip (so the blur pulls no transparency in at the rim) and is no longer stretched
+  grow: BAR_WALL_GROW_DIP,
 });
 
 /*
@@ -2478,14 +2520,56 @@ const desktopBackdrop = makeBackdrop({
   scale: DESKTOP_BACKDROP_SCALE,
   win: () => desktopWin,
   rect: () => windowPhysRect(desktopWin),
+  // the panes' picture: in dark the wallpaper still (presentDesktop), in light this capture, as before
+  present: (shot, send) => presentDesktop('the desktop layer was photographed', shot, send),
   // kept for the top bar (lib/topbar-strip.js): where the desktop page draws no wallpaper, this
   // picture of Windows' own wallpaper is what is under the bar
   onFrame: (shot) => { desktopStill = shot; if (shot && shot.png) wallStill.invalidate('Windows\' wallpaper was photographed again'); },
 });
 let desktopStill = null;
+/*
+ * THE DESKTOP PANES' PICTURE, DARK (lane mantle-seethru-bar-desktop, 2026-10-10). Owen: "this needs to
+ * be see through the same as everything else". While Mantle draws the wallpaper the panes frost it live
+ * (desktop.css body.has-wall); when it is paused off or unloaded they fall back to 'desktop.backdrop',
+ * which was the capture above at 1/8 scale (blurry, and only re-shot on a display change, so a new
+ * wallpaper left the old one behind the panes). In dark that picture is now the wallpaper still for the
+ * whole display (lib/wall-still.js: the desktop's own drawing of it, else the look-sync record's still
+ * cover-fit like Helm, else Windows' wallpaper), sharp and lined up, sent again whenever that still
+ * changes. Light: the capture, exactly as before (a flip back to light re-sends it). `shot`/`send`: a
+ * fresh capture from desktopBackdrop, sent as-is in light or when there is no still.
+ */
+let deskShown = null;                 // what the desktop page holds from here: 'wall' | 'capture' | null
+let deskSeq = 0;
+let deskFresh = null;                 // a capture not sent yet: a newer present (it supersedes) still carries it
+function presentDesktop(why, shot, send) {
+  const seq = ++deskSeq;
+  if (shot) deskFresh = shot;
+  const out = (s) => { if (send) send(s); else broadcast('desktop.backdrop', s); };
+  const apply = (wall) => {
+    const pick = WallStill.deskPick({ dark: !!wall, wall, fresh: deskFresh, last: desktopStill, shown: deskShown });
+    if (!pick.send) return;
+    deskFresh = null;
+    deskShown = pick.shown;
+    if (pick.shown === 'wall') {
+      broadcast('desktop.backdrop', pick.send);
+      setBackdropPiece('desktop', { ok: true, source: pick.source, reason: `the desktop's panes show the ${wallWords(pick.source)}, sharp and lined up, wherever Mantle is not drawing it (${why})` });
+    } else {
+      out(pick.send);
+      if (wall) setBackdropPiece('desktop', { ok: true, source: 'screen', reason: `the desktop's panes show a 1/8-scale photo of Windows' wallpaper: ${wall.reason || 'there is no wallpaper still'}` });
+    }
+  };
+  // light: the capture, exactly as before (no still is looked at)
+  if (getTheme().get().theme !== 'dark') { apply(null); return; }
+  let disp;
+  try { disp = toPhys(screen.getPrimaryDisplay().bounds); } catch (_) { disp = null; }
+  (disp ? wallStill.rect(disp) : Promise.resolve({ ok: false, reason: 'the display has no size' })).then(
+    (w) => { if (seq === deskSeq) apply(w || { ok: false, reason: 'no answer' }); },
+    () => { if (seq === deskSeq) apply({ ok: false, reason: 'the wallpaper still failed' }); });
+}
 // THE WALLPAPER PICTURE (lane helm-wall, 2026-10-09; lib/wall-still.js): what every dark glass surface
 // shows under its tint -- the desktop's wallpaper at that surface's rectangle, as Helm shows its photo.
-const wallStill = require('./lib/wall-still').makeWallStill({
+const WallStill = require('./lib/wall-still');
+const wallStill = WallStill.makeWallStill({
   desktopWin: () => desktopWin,
   windowsStill: () => desktopStill,
   wallpaper: () => state.get().wallpaper || null,
@@ -2493,10 +2577,19 @@ const wallStill = require('./lib/wall-still').makeWallStill({
   nativeImage: require('electron').nativeImage,
   dark: () => getTheme().get().theme === 'dark',
   log: (line) => process.stdout.write(`mantle: wallpaper glass: ${line}\n`),
+  // source 2: the look-sync desktop record's still (lib/look-desktop.js), when the desktop draws none
+  lookStill: () => {
+    const d = lookHost && lookHost.sync ? lookHost.sync.desktop() : null;
+    const rec = d && d.record;
+    return rec && rec.ok && rec.still ? { file: rec.still, id: rec.id } : null;
+  },
 });
-wallStill.onChange((why) => { barBackdrop.refresh(why); launcherBackdrop.refresh(why); });
+wallStill.onChange((why) => { barBackdrop.refresh(why); launcherBackdrop.refresh(why); if (desktopWin) presentDesktop(why); });
 // a theme flip with the bar or launcher up: dark cuts the wallpaper, light restarts v1's capture loop
-themeFollowers.add((t) => { barBackdrop.refresh(`the theme is now ${t}`); launcherBackdrop.refresh(`the theme is now ${t}`); });
+themeFollowers.add((t) => {
+  barBackdrop.refresh(`the theme is now ${t}`); launcherBackdrop.refresh(`the theme is now ${t}`);
+  if (desktopWin) presentDesktop(`the theme is now ${t}`);
+});
 /** What features and lib/switcher.js get (ctx.host.wall / ctx.wall). Dark only; light answers {ok:false}. */
 const wallHost = {
   full: () => wallStill.full(),

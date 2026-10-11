@@ -336,6 +336,39 @@
      wrong; showing it again on the next reveal would flash a stale photograph of the desktop). */
   var haveBackdrop = false;
 
+  /* WHERE THE PICTURE LIES (lane mantle-seethru-bar-desktop, 2026-10-10; Owen: "this needs to be see
+     through the same as everything else"). Dark's wallpaper cut arrives with `at`: where it sits in the
+     window, as fractions of the window it was taken from (`win`, DIP), the same shape as a pop-up's. It
+     is cut 16 DIP past the pill on every side, so laid exactly over the screen it came from it overscans
+     the clip by that much and the blur pulls no transparency in at the rim. Before, the cut was the pill
+     alone and the CSS rule below stretched it over a box 14px bigger on every side (1.58x tall), so the
+     wallpaper under the glass was magnified and slid against the desktop round it. Without `at` (light,
+     a screen capture) nothing is set and the CSS rule's 14px overscan stands, as before. The bar's box
+     is read from layout with its own slide (a translate) taken off, and placed again whenever the box
+     settles (the reveal's transitionend) or the window changes size. */
+  var bdAt = null;     // {at, win} from the last picture, or null
+  var bdPlace = null;  // {x, y, w, h}: the picture in CSS px relative to .bdrop's box, or null (the CSS rule)
+  function placeBdrop() {
+    var s = el.backdrop.style;
+    if (!bdAt) {
+      if (bdPlace) { bdPlace = null; ['left', 'top', 'width', 'height'].forEach(function (k) { s.removeProperty(k); }); }
+      return;
+    }
+    var W = window.innerWidth, H = window.innerHeight;
+    var ww = bdAt.win && bdAt.win.w > 0 ? bdAt.win.w : W, wh = bdAt.win && bdAt.win.h > 0 ? bdAt.win.h : H;
+    var ax = bdAt.at.x * ww, ay = bdAt.at.y * wh, aw = bdAt.at.w * ww, ah = bdAt.at.h * wh;
+    if (el.body.getAttribute('data-edge') !== 'top') ay = H - (wh - ay);   // the page is pinned to the bottom edge
+    var r = el.bdrop.getBoundingClientRect(), tx = 0, ty = 0;
+    try {
+      var m = new DOMMatrixReadOnly(getComputedStyle(el.bar).transform);
+      if (m.is2D && Math.abs(m.a - 1) < 1e-6 && Math.abs(m.d - 1) < 1e-6 && !m.b && !m.c) { tx = m.e; ty = m.f; }
+    } catch (_) { /* no transform to take off */ }
+    bdPlace = { x: ax - (r.left - tx), y: ay - (r.top - ty), w: aw, h: ah };
+    s.left = bdPlace.x + 'px'; s.top = bdPlace.y + 'px'; s.width = aw + 'px'; s.height = ah + 'px';
+  }
+  el.bar.addEventListener('transitionend', function (ev) { if (ev.target === el.bar && bdAt) placeBdrop(); });
+  window.addEventListener('resize', function () { if (bdAt) placeBdrop(); });
+
   function setBackdrop(p) {
     if (!p || typeof p.png !== 'string' || p.png.slice(0, 5) !== 'data:') {
       fail('backdrop', 'Glass not blurred', 'Mantle did not get a picture of the screen behind the bar, so it cannot' +
@@ -344,6 +377,8 @@
       return;
     }
     clearFail('backdrop');
+    bdAt = p.at && p.at.w > 0 && p.at.h > 0 ? { at: p.at, win: p.win || null } : null;
+    placeBdrop();
     el.backdrop.src = p.png;                 // the ONLY per-frame work: a src swap
     if (!haveBackdrop) {
       haveBackdrop = true;
@@ -379,11 +414,11 @@
     var px = G && isDark() && el.backdrop.naturalWidth ? G.pixelsOf(el.backdrop) : null;
     var T = px ? guardTokens(true) : null;
     if (!px || !T) { resetBarTint(); return; }
-    // the img overscans its clip by 14px a side and the picture is stretched over all of it
-    var shownW = el.bdrop.clientWidth + 28, shownH = el.bdrop.clientHeight + 28;
-    var sx = px.width / Math.max(1, shownW), sy = px.height / Math.max(1, shownH);
+    // the img overscans its clip: placed by `at` (bdPlace), else 14px a side with the picture stretched over all of it
+    var P = bdPlace || { x: -14, y: -14, w: el.bdrop.clientWidth + 28, h: el.bdrop.clientHeight + 28 };
+    var sx = px.width / Math.max(1, P.w), sy = px.height / Math.max(1, P.h);
     var r = G.guard(px, { tokens: T, picPerCss: sx,
-      rect: { x: 14 * sx, y: 14 * sy, w: el.bdrop.clientWidth * sx, h: el.bdrop.clientHeight * sy } });
+      rect: { x: -P.x * sx, y: -P.y * sy, w: el.bdrop.clientWidth * sx, h: el.bdrop.clientHeight * sy } });
     if (!r) { resetBarTint(); return; }
     barGlass.solve = r;
     barGlass.settle = G.glassSettle(barGlass.settle, r.alpha, G.GUARD.hold);

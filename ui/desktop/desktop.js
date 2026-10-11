@@ -24,7 +24,11 @@
 
   THE BACKDROP. Main sends 'desktop.backdrop' {png, w, h, rect, ms} ONCE at start
   and again after a display change: one capture of the whole screen, wallpaper
-  only, downscaled 8x. Because it is a single picture of the whole screen, this
+  only, downscaled 8x. In DARK it is the wallpaper still for the whole display
+  instead (main.js presentDesktop, lib/wall-still.js: sharp, lined up, sent again
+  whenever the still changes; lane mantle-seethru-bar-desktop, 2026-10-10), which
+  is what the panes show whenever the wallpaper itself is not drawing here (paused
+  off, unloaded). Because it is a single picture of the whole screen, this
   file does not hand a picture to each pane -- it parks the PNG on <html> as the
   --desktop-backdrop custom property and desktop.css paints that one image in
   every .bdrop at 100vw x 100vh with background-attachment: fixed, so each pane

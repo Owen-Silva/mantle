@@ -804,6 +804,129 @@ async function run() {
       t.check('drag: no page errors (running)', p6.errors.length === 0, p6.errors);
       await p6.close();
     }
+
+    /* ---------------------------------------------------------------- the picture lies where it came from
+       (lane mantle-seethru-bar-desktop, 2026-10-10; Owen: "this needs to be see through the same as
+       everything else"). Dark's glass must equal Helm's formula: the wallpaper exactly under the glass,
+       blurred --lg-blur, under the tint. A sharp synthetic wallpaper is painted on <html>; main's dark
+       shot is emitted as main.js now sends it (cut 16 DIP past the pill at the still's 2-css-px pitch,
+       with `at`/`win`), and as it used to (the pill alone, no `at`: the CSS stretch). The rendered page
+       (a real screenshot at 1.25) is compared, pixel by pixel inside the glass, with the formula worked
+       out in the same page from the full-resolution wallpaper. The same for a pop-up's picture. */
+    if (t.want('place')) {
+      const pg = await open(PILL + '&strip=dark', W);
+      await pg.eval(() => {
+        document.documentElement.dataset.theme = 'dark';
+        window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: 'dark' } }));
+        // the content off (the glass only), and a sharp wallpaper on <html> at device resolution
+        const st = document.createElement('style');
+        st.textContent = '.bar > :not(.bdrop):not(#pop) { opacity: 0 !important; } #pop > * { opacity: 0 !important; } * { transition: none !important; }';
+        document.head.appendChild(st);
+        const dpr = devicePixelRatio, Wd = Math.round(innerWidth * dpr), Hd = Math.round(innerHeight * dpr);
+        const c = document.createElement('canvas'); c.width = Wd; c.height = Hd;
+        const g = c.getContext('2d');
+        const grad = g.createLinearGradient(0, 0, Wd, Hd); grad.addColorStop(0, '#0c1a20'); grad.addColorStop(0.5, '#1d3440'); grad.addColorStop(1, '#101418');
+        g.fillStyle = grad; g.fillRect(0, 0, Wd, Hd);
+        for (let x = 0, i = 0; x < Wd; x += 47 * dpr, i++) { g.fillStyle = ['#2a3f4a', '#0a0d10', '#3a2f28', '#14303a'][i % 4]; g.fillRect(x, 0, 19 * dpr, Hd); }
+        g.fillStyle = '#4a5560'; g.fillRect(0, Hd - 52 * dpr, Wd, 9 * dpr);      // a hard line across the pill
+        g.fillStyle = '#050607'; g.fillRect(0, Hd - 40 * dpr, Wd, 6 * dpr);
+        window.__scene = c;
+        // the same wallpaper with its edge pixels repeated 40 css px out: main's cut past the display's edge (wall-still {pad})
+        const M = Math.round(40 * dpr), pc = document.createElement('canvas'); pc.width = Wd + 2 * M; pc.height = Hd + 2 * M;
+        const pg2 = pc.getContext('2d'); pg2.imageSmoothingEnabled = false;
+        pg2.drawImage(c, 0, 0, Wd, Hd, M, M, Wd, Hd);
+        pg2.drawImage(c, 0, 0, 1, Hd, 0, M, M, Hd); pg2.drawImage(c, Wd - 1, 0, 1, Hd, M + Wd, M, M, Hd);
+        pg2.drawImage(pc, 0, M, Wd + 2 * M, 1, 0, 0, Wd + 2 * M, M); pg2.drawImage(pc, 0, M + Hd - 1, Wd + 2 * M, 1, 0, M + Hd, Wd + 2 * M, M);
+        window.__scenePad = { c: pc, m: 40 };
+        document.documentElement.style.background = 'url("' + c.toDataURL('image/png') + '") 0 0 / 100% 100% no-repeat';
+      });
+      await pg.wait(2600);   // the mock's own strips are over (300 + 560 ms, then six at 250 ms)
+      // main's shot: `grow` css px past the glass box at a 2-css-px pitch; with `at` (now) or without (before)
+      const emitBar = (placed) => pg.eval((pl) => {
+        const r = document.querySelector('.bdrop').getBoundingClientRect(), dpr = devicePixelRatio, k = pl ? 16 : 0;
+        const x = r.left - k, y = r.top - k, x1 = r.right + k, y1 = r.bottom + k, sp = window.__scenePad;
+        const c = document.createElement('canvas'); c.width = Math.round((x1 - x) / 2); c.height = Math.round((y1 - y) / 2);
+        const g = c.getContext('2d'); g.imageSmoothingQuality = 'high';
+        g.drawImage(sp.c, (x + sp.m) * dpr, (y + sp.m) * dpr, (x1 - x) * dpr, (y1 - y) * dpr, 0, 0, c.width, c.height);
+        const p = { png: c.toDataURL('image/png'), w: c.width, h: c.height, ms: 1, source: 'mantle' };
+        if (pl) { p.at = { x: x / innerWidth, y: y / innerHeight, w: (x1 - x) / innerWidth, h: (y1 - y) / innerHeight }; p.win = { w: innerWidth, h: innerHeight }; }
+        window.__mockMain.emit('bar.backdrop', p);
+      }, placed);
+      const SHOT = require('path').join(require('os').tmpdir(), 'mantle-place-' + process.pid + '.png');
+      // the rendered glass vs the formula, inside `sel` (3 css px in from its edge, off its rounded ends)
+      const measure = async (sel, fillVar, inset) => {
+        await pg.shot(SHOT);
+        const b64 = require('fs').readFileSync(SHOT).toString('base64');
+        return pg.eval(async ([b, s, fv, ins]) => {
+          const img = new Image(); img.src = 'data:image/png;base64,' + b; await img.decode();
+          const dpr = devicePixelRatio, Wd = img.naturalWidth, Hd = img.naturalHeight;
+          const cv = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+          const shot = cv(Wd, Hd).getContext('2d'); shot.drawImage(img, 0, 0);
+          // the formula: the wallpaper, edge pixels repeated out (no transparency pulled in), blurred
+          // --lg-blur in device px, then the tint over it
+          const P = 60, pad = cv(Wd + 2 * P, Hd + 2 * P), pg2 = pad.getContext('2d'), sc = window.__scene;
+          pg2.drawImage(sc, P, P);
+          pg2.drawImage(sc, 0, 0, 1, Hd, 0, P, P, Hd); pg2.drawImage(sc, Wd - 1, 0, 1, Hd, P + Wd, P, P, Hd);
+          pg2.drawImage(sc, 0, 0, Wd, 1, P, 0, Wd, P); pg2.drawImage(sc, 0, Hd - 1, Wd, 1, P, P + Hd, Wd, P);
+          const blurPx = parseFloat((getComputedStyle(document.documentElement).getPropertyValue('--lg-blur').match(/blur\(\s*([\d.]+)px/) || [0, 0])[1]);
+          const ex = cv(Wd, Hd).getContext('2d');
+          ex.filter = 'blur(' + (blurPx * dpr) + 'px)'; ex.drawImage(pad, -P, -P); ex.filter = 'none';
+          const probe = document.createElement('i'); document.body.appendChild(probe);
+          probe.style.backgroundColor = 'var(' + fv + ')'; const tint = getComputedStyle(probe).backgroundColor; probe.remove();
+          ex.fillStyle = tint; ex.fillRect(0, 0, Wd, Hd);
+          const r = document.querySelector(s).getBoundingClientRect();
+          // in from the edge: the bar 3 css px top and bottom and half its height at the ends; a pop-up its corner radius + 3
+          const ix = ins === 'bar' ? r.height / 2 : 19, iy = ins === 'bar' ? 3 : 19;
+          const x0 = Math.round((r.left + ix) * dpr), x1 = Math.round((r.right - ix) * dpr), y0 = Math.round((r.top + iy) * dpr), y1 = Math.round((r.bottom - iy) * dpr);
+          const A = shot.getImageData(x0, y0, x1 - x0, y1 - y0).data, B = ex.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+          let max = 0, sum = 0, n = 0, at = null;
+          for (let i = 0; i < A.length; i += 4) {
+            const e = Math.max(Math.abs(A[i] - B[i]), Math.abs(A[i + 1] - B[i + 1]), Math.abs(A[i + 2] - B[i + 2]));
+            if (e > max) { max = e; at = [x0 + (i / 4) % (x1 - x0), y0 + Math.floor(i / 4 / (x1 - x0))]; } sum += e; n++;
+          }
+          return { max, at, mean: +(sum / Math.max(1, n)).toFixed(2), n, tint, blurPx, box: [x0, y0, x1, y1] };
+        }, [b64, sel, fillVar, inset]);
+      };
+      await emitBar(false); await pg.wait(250);
+      const before = await measure('.bdrop', '--lg-fill-bar', 'bar');
+      const placedBefore = await pg.eval(() => document.querySelector('.bdrop img').style.left);
+      await emitBar(true); await pg.wait(250);
+      const after = await measure('.bdrop', '--lg-fill-bar', 'bar');
+      const pl = await pg.eval(() => { const i = document.querySelector('.bdrop img'), r = i.getBoundingClientRect(), b = document.querySelector('.bdrop').getBoundingClientRect();
+        return { left: i.style.left, top: i.style.top, dx: r.left - b.left, dy: r.top - b.top, dw: r.width - b.width, dh: r.height - b.height, tint: document.querySelector('.bar').style.getPropertyValue('--bar-tint') }; });
+      console.log('    bar glass vs formula: before max ' + before.max + ' mean ' + before.mean + ', after max ' + after.max + ' mean ' + after.mean + ' (' + after.n + ' px)');
+      t.check('place: (old shape, no `at`) the CSS 14px overscan stands, nothing inline', placedBefore === '', placedBefore);
+      t.check('place: the bar\'s picture is laid 16 css px past the glass on every side, where `at` says', Math.abs(pl.dx + 16) < 0.6 && Math.abs(pl.dy + 16) < 0.6 && Math.abs(pl.dw - 32) < 0.6 && Math.abs(pl.dh - 32) < 0.6, pl);
+      t.check('place: the guard stays out over the dark wallpaper (the tint is --lg-fill-bar)', !pl.tint, pl.tint);
+      t.check('place: the bar\'s glass equals the formula (wallpaper under it, --lg-blur, tint): mean <= 1, max <= 4', after.mean <= 1 && after.max <= 4, { before, after });
+      t.check('place: ...and is closer to it than the old stretched picture was', after.mean < before.mean && after.max < before.max, { before, after });
+      // light: the same shot shape as before (no `at`), nothing placed inline
+      await pg.eval(() => { delete document.documentElement.dataset.theme; window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: 'light' } })); });
+      await emitBar(false); await pg.wait(100);
+      const lightInline = await pg.eval(() => document.querySelector('.bdrop img').getAttribute('style'));
+      t.check('place: (light) a shot without `at` takes the inline placement off again (the CSS rule stands)', !lightInline, lightInline);
+      await pg.eval(() => { document.documentElement.dataset.theme = 'dark'; window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: 'dark' } })); });
+
+      // a pop-up: main's picture of the whole window at the still's pitch, `at` the whole of it
+      await pg.reset();
+      await pg.eval(() => { document.querySelector('#clock').click(); });
+      await pg.wait(300);
+      const asked = (await pg.calls('bar.popover')).filter((c) => c.p && c.p.open && c.p.backdrop === true);
+      const key = asked.length ? asked[asked.length - 1].p.key : null;
+      await pg.eval((k) => {
+        const dpr = devicePixelRatio, c = document.createElement('canvas'); c.width = Math.round(innerWidth / 2); c.height = Math.round(innerHeight / 2);
+        const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(window.__scene, 0, 0, innerWidth * dpr, innerHeight * dpr, 0, 0, c.width, c.height);
+        window.__mockMain.emit('bar.popbackdrop', { key: k, png: c.toDataURL('image/png'), at: { x: 0, y: 0, w: 1, h: 1 }, win: { w: innerWidth, h: innerHeight }, ms: 1, source: 'mantle' });
+      }, key);
+      await pg.wait(300);
+      const popOk = await pg.eval(() => /\bbd\b/.test(document.getElementById('pop').className) && !document.getElementById('pop').hidden);
+      const pop = popOk ? await measure('#pop', '--lg-fill', 'pop') : null;
+      if (pop) console.log('    pop-up glass vs formula: max ' + pop.max + ' mean ' + pop.mean + ' (' + pop.n + ' px)');
+      t.check('place: a pop-up\'s glass equals the formula too (its picture, --lg-blur, --lg-fill): mean <= 1, max <= 4', !!pop && pop.mean <= 1 && pop.max <= 4, { popOk, pop, key });
+      t.check('place: no page errors', pg.errors.length === 0, pg.errors);
+      try { require('fs').unlinkSync(SHOT); } catch (_) { /* a temp file */ }
+      await pg.close();
+    }
   });
 }
 
