@@ -124,7 +124,9 @@ body.no-backdrop .panel { --pane-fill: var(--hud-ground-bare); }
 :root[data-theme="dark"] .cap { background: transparent; }
 :root[data-theme="dark"] .ico.letter { border-radius: var(--lg-r-ctl); }
 
-/* the tint and the hairlines, drawn once on top of the blurred backdrop (the launcher's recipe) */
+/* the tint and the hairlines, drawn once on top of the blurred backdrop (the launcher's recipe):
+   the fill runs under the hairline, so no ring of untinted picture shows at the edge (lane mantle-rim,
+   2026-10-10; the why is at ui/bar/bar.css .bar::after) */
 .panel::after {
   content: "";
   position: absolute;
@@ -134,7 +136,7 @@ body.no-backdrop .panel { --pane-fill: var(--hud-ground-bare); }
   border: 1px solid var(--lg-edge-out);
   border-radius: inherit;
   background: var(--pane-fill);
-  background-clip: padding-box;
+  background-clip: border-box;
 }
 
 /* ---- the backdrop: 14px of overscan on every side so the blur's pale fringe falls outside the
