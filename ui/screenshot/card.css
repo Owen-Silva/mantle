@@ -113,14 +113,16 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 /* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
    Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
    literal Helm). The face is ONE layer of --lg-fill (root block above). The card wears the pop-ups'
-   edge: its --lg-edge-out hairline plus the --lg-lip-up lip over --lg-shadow. HELM-SPEC rows applied:
+   edge: its --lg-edge-out hairline plus the --lg-lip-up lip, and NO outer shadow: the window keeps 12
+   DIP round the card (lib/features/screenshot.js CARD_MARGIN), so --lg-shadow was cut into a hard dark
+   edge (lane clipped-shadow, 2026-10-10). HELM-SPEC rows applied:
    16 (the actions are Helm's small button: --lg-card in its hairline with the inner lip, 12/500,
    padding 0 9; hover --lg-press + the strong hairline, pressed --lg-card; the close is an icon button:
    hover --lg-press, pressed --lg-card), 19 focus (the picture's too), 23 disabled, 24 motion (in as
    Helm's toast: 160 ms on Helm's curve; no exit slide: card.js parks the window on its own OUT_MS
    timer, it does not wait on a transition event). Type is already on Helm's scale. Light is untouched. */
 :root[data-theme="dark"] #card {
-  box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out);
   transition: transform 160ms var(--lg-ease-ui), opacity 160ms var(--lg-ease-ui);
 }
 :root[data-theme="dark"] #card.out { transition: none; }

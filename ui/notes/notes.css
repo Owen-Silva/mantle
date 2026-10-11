@@ -208,7 +208,9 @@ body.mock .pad { top: 30px; }
 /* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
    Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
    literal Helm). The pad is ONE layer of --lg-fill at the pop-up radius, ONE outer hairline (it had a
-   border AND a ring) and the --lg-lip-up lip over --lg-shadow. HELM-SPEC rows applied: 3 (the sheet
+   border AND a ring) and the --lg-lip-up lip, NO outer shadow (the window keeps 0-24 DIP round the pad,
+   lib/features/notes.js SIDE/BOTTOM, so --lg-shadow was cut into a hard dark edge; lane clipped-shadow,
+   2026-10-10). HELM-SPEC rows applied: 3 (the sheet
    and the find box are --lg-field), 10 radii, 12 type (12.5 -> 13, 11.5 -> 12), 14 (the chosen tab
    and a toggled icon = --lg-press + one hairline; hover --lg-hover), 16 (Undo is a ghost button:
    --lg-ink-2, hover --lg-press + ink, 500; inputs hairline, strong on hover, the accent line on
@@ -223,7 +225,7 @@ body.mock .pad { top: 30px; }
   background: var(--lg-fill);
   border-radius: var(--lg-r-pop);
   border-color: var(--lg-edge-out);
-  box-shadow: var(--lg-lip-up), var(--lg-shadow);
+  box-shadow: var(--lg-lip-up);
 }
 :root[data-theme="dark"] .pad.anim { animation: none; }
 :root[data-theme="dark"] .tab,

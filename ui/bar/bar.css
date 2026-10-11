@@ -205,6 +205,15 @@ body.pill .bar::after { border-width: 1px; }
 /* docked at the top instead: the lip and the shadow flip, nothing else changes */
 body[data-edge="top"] .bar { --pane-lip: var(--lg-lip-dn-0); --pane-drop: var(--lg-drop-dn-0); }
 body[data-edge="top"].up .bar { --pane-lip: var(--lg-lip-dn); --pane-drop: var(--lg-drop-dn); }
+/* DARK: NO DROP SHADOW ON THE BAR (lane clipped-shadow, 2026-10-10; Owen: "fix this black sharp stuff
+   around the outside"). The window ends 1 DIP past the pill (lib/bar-shape.js shapeRect) and at the
+   pill's own ends, so the dark drop (--lg-drop-up, .30 + .32 black) was cut there: a 3 px near-black
+   band with a hard edge and square corners behind the rounded ends (his crops: 9-10,15-17,17-19 over a
+   14,24,27 desktop; 20 over a 31 grey window). There is no room for it, so dark ends on the hairline
+   and lip. The -0 twin keeps the reveal's box-shadow transition the same shape, so nothing snaps.
+   Light is held as it was. */
+:root[data-theme="dark"] body.up .bar { --pane-drop: var(--lg-drop-up-0); }
+:root[data-theme="dark"] body[data-edge="top"].up .bar { --pane-drop: var(--lg-drop-dn-0); }
 body[data-edge="top"].edge .bar { border-radius: 0 0 var(--lg-r) var(--lg-r); }
 body[data-edge="top"].edge .bar::after { border-width: 0 1px 1px; }
 
@@ -1233,8 +1242,10 @@ body.pill .chips { display: none; }
    and its pop-ups, DARK ONLY (light is frozen this round, so every rule here is scoped to dark). The
    surfaces themselves (one tint over one blurred picture, their edges and radii) are above; this is
    what sits on them. Rows not applied here, and why, are in the lane's report. */
-/* row 4: the pop-up's edge is Helm's panel edge, the white hairline + the lip (base rule's box-shadow) */
-:root[data-theme="dark"] .pop { border-color: var(--lg-edge-out); }
+/* row 4: the pop-up's edge is Helm's panel edge, the white hairline + the lip. No outer shadow in dark:
+   the bar window's shape ends 10 DIP above a pop-up and at its sides, so --lg-shadow was cut into a
+   hard dark edge there (lane clipped-shadow, 2026-10-10; the why is at body.up .bar above). */
+:root[data-theme="dark"] .pop { border-color: var(--lg-edge-out); box-shadow: var(--lg-lip-up); }
 /* row 24: "menus and popovers: no open animation; no exit animations" */
 :root[data-theme="dark"] .pop,
 :root[data-theme="dark"] body[data-edge="top"] .pop { animation: none; }

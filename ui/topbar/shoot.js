@@ -618,11 +618,11 @@ async function glassChecks(browser, check) {
     const s = await p.evaluate(() => { const dd = document.querySelector('#menus > .dd'), cs = getComputedStyle(dd), root = getComputedStyle(document.documentElement), v = (n) => root.getPropertyValue(n).trim();
       const probe = (val, prop) => { const e = document.createElement('div'); e.style.setProperty(prop, val); document.body.appendChild(e); const o = getComputedStyle(e).getPropertyValue(prop); e.remove(); return o; };
       const sep = document.querySelector('.dd .sep'), row = document.querySelector('.dd .r');
-      return { border: cs.borderTopColor, wantBorder: probe(v('--lg-edge-out'), 'color'), radius: cs.borderTopLeftRadius, wantRadius: v('--lg-r'), shadow: cs.boxShadow, wantShadow: probe(v('--lg-lip-up') + ', ' + v('--lg-shadow'), 'box-shadow'),
+      return { border: cs.borderTopColor, wantBorder: probe(v('--lg-edge-out'), 'color'), radius: cs.borderTopLeftRadius, wantRadius: v('--lg-r'), shadow: cs.boxShadow, wantShadow: probe(v('--lg-lip-up'), 'box-shadow'),
         anim: cs.animationName, sep: sep && getComputedStyle(sep).backgroundColor, wantSep: probe(v('--lg-divider'), 'color'), rowR: row && getComputedStyle(row).borderTopLeftRadius, wantRowR: v('--lg-r-ctl'),
         rowH: row && row.getBoundingClientRect().height, pad: cs.paddingTop, font: row && getComputedStyle(row).fontSize, backdrop: cs.backdropFilter || cs.webkitBackdropFilter || 'none' }; });
     check('glass style: the dropdown rim is Helm\'s panel hairline (--lg-edge-out, white .09)', s.border === s.wantBorder, JSON.stringify([s.border, s.wantBorder]));
-    check('glass style: radius --lg-r (Helm menu 10), shadow = --lg-lip-up + --lg-shadow, rows --lg-r-ctl', s.radius === s.wantRadius && s.shadow === s.wantShadow && s.rowR === s.wantRowR, JSON.stringify(s));
+    check('glass style: radius --lg-r (Helm menu 10), shadow = --lg-lip-up only (no outer shadow the window would cut), rows --lg-r-ctl', s.radius === s.wantRadius && s.shadow === s.wantShadow && s.rowR === s.wantRowR, JSON.stringify(s));
     check('glass style: Helm menu metrics: padding 4, rows >= 30 tall, text 13 px', s.pad === '4px' && s.rowH >= 30 && s.font === '13px', JSON.stringify([s.pad, s.rowH, s.font]));
     check('glass style: no open animation (Helm menus have none); no backdrop-filter on the dropdowns', s.anim === 'none' && s.backdrop === 'none', JSON.stringify([s.anim, s.backdrop]));
     check('glass style: separators are --lg-divider', s.sep === s.wantSep, JSON.stringify([s.sep, s.wantSep]));

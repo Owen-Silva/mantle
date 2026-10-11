@@ -165,7 +165,11 @@ body.no-backdrop .panel::after {
    not accent); colour changes ease over Helm's 120ms instead of a two-step switch. The open is Helm's
    palette: 120ms, opacity + 4px drop + .985 scale, on Helm's curve; no exit animation. */
 :root[data-theme="dark"] { --in: var(--lg-dur-ui); }
+/* NO outer shadow in dark: the window is 680x460 with the panel inset 10 (lib/windows.js, .panel
+   above), so --lg-shadow was cut into a hard dark edge on every side (lane clipped-shadow, 2026-10-10).
+   The lip and hairlines on ::after stay. */
 :root[data-theme="dark"] .panel {
+  box-shadow: none;
   transform: translateY(-4px) scale(.985);
   transition:
     opacity    var(--in) var(--lg-ease-ui),

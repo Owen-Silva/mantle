@@ -139,7 +139,9 @@ body[data-below] { align-items: flex-start; }
 /* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
    Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
    literal Helm). The face is ONE layer of --lg-fill (root block above). The toast wears the pop-ups'
-   edge: its --lg-edge-out hairline plus the --lg-lip-up lip over --lg-shadow. HELM-SPEC rows applied:
+   edge: its --lg-edge-out hairline plus the --lg-lip-up lip, and NO outer shadow: the window keeps only
+   18 DIP round it (lib/features/layouts.js MARGIN), so --lg-shadow was cut into a hard dark edge
+   (lane clipped-shadow, 2026-10-10). HELM-SPEC rows applied:
    12 type (12.5 -> 13, 11.5 -> 12), 16 (Undo is a Helm button: --lg-card in its hairline with the inner
    lip, --lg-ink, 13/500; hover --lg-press + the strong hairline, pressed --lg-card), 19 focus,
    23 disabled, 24 motion (hover 120 ms on Helm's curve, it was the 560 ms window reveal; no exit fade:
@@ -147,7 +149,7 @@ body[data-below] { align-items: flex-start; }
    is sized by main from the page, and 2 px are not worth a layout change here. Light is untouched. */
 :root[data-theme="dark"], :root[data-theme="dark"] body { font-size: 13px; }
 :root[data-theme="dark"] .line { font-size: 12px; }
-:root[data-theme="dark"] .toast { box-shadow: var(--lg-lip-up), var(--lg-shadow); transition: none; }
+:root[data-theme="dark"] .toast { box-shadow: var(--lg-lip-up); transition: none; }
 :root[data-theme="dark"] .undo {
   font-size: 13px;
   font-weight: 500;

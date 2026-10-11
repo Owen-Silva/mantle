@@ -286,13 +286,15 @@ body[data-below] .osd.open .more svg { transform: none; }
 /* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
    Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
    literal Helm). The face is ONE layer of --lg-fill (root block above). The pill wears the pop-ups'
-   edge: its --lg-edge-out hairline plus the --lg-lip-up lip over --lg-shadow. HELM-SPEC rows applied:
+   edge: its --lg-edge-out hairline plus the --lg-lip-up lip, and NO outer shadow: the window keeps only
+   18 DIP round the pill (lib/features/osd.js MARGIN), so --lg-shadow was cut into a hard dark edge
+   there (lane clipped-shadow, 2026-10-10). HELM-SPEC rows applied:
    12 type (12.5 -> 13), 16 icon buttons (transparent, --lg-ink-2, hover --lg-press, pressed --lg-card,
    "on" = --lg-press + hairline instead of an accent block; the retry button is a Helm button),
    18 dividers, 19 focus, 23 disabled, 24 motion (hover 120 ms on Helm's curve; no exit fade: osd.js
    times the hide itself, fadeMs, it does not wait on a transition event). Light is untouched. */
 :root[data-theme="dark"], :root[data-theme="dark"] body { font-size: 13px; }
-:root[data-theme="dark"] .osd { box-shadow: var(--lg-lip-up), var(--lg-shadow); transition: none; }
+:root[data-theme="dark"] .osd { box-shadow: var(--lg-lip-up); transition: none; }
 :root[data-theme="dark"] .osd.open .pill { border-top-color: var(--lg-divider); }
 :root[data-theme="dark"] body[data-below] .osd.open .pill { border-bottom-color: var(--lg-divider); }
 :root[data-theme="dark"] .app + .app { border-top-color: var(--lg-divider); }

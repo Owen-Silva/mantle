@@ -188,7 +188,8 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
  * picture is ready or 250 ms pass, so it never flashes from the fallback to glass. No picture: ONE layer
  * of --lg-fill-pop (the same .83), and the strip says why.
  * Helm's menu (HELM-SPEC rows 4-24): its panel edge (the white --lg-edge-out hairline + the lip), menu
- * radius --lg-r (10), shadow s3 (--lg-shadow), padding 4, min-width 180, items >= 30 tall, padding
+ * radius --lg-r (10), NO outer shadow (the window ends 8 DIP under the lowest dropdown, so Helm's s3
+ * --lg-shadow was cut into a hard dark edge there; lane clipped-shadow, 2026-10-10), padding 4, min-width 180, items >= 30 tall, padding
  * 5 10, gap 10, radius --lg-r-ctl; hover --lg-hover, pressed / the row whose submenu is open --lg-press
  * + an inset hairline, never the accent; dividers --lg-divider 4px 6px; the type scale 11/12/13 (menu
  * text 13, group header 12/600 28 tall); disabled --lg-disabled; focus --lg-focus. Menus have NO open
@@ -198,7 +199,7 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
   background: var(--lg-fill-pop);
   border-color: var(--lg-edge-out);
   border-radius: var(--lg-r);
-  box-shadow: var(--lg-lip-up), var(--lg-shadow);
+  box-shadow: var(--lg-lip-up);
 }
 :root[data-theme="dark"] .dd.glass {
   background:

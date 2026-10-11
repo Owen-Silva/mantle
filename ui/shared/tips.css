@@ -77,9 +77,10 @@
 
 /* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
    Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
-   literal Helm). ONE layer of --lg-fill, its --lg-edge-out hairline, the --lg-lip-up lip over
-   --lg-shadow, the row radius. HELM-SPEC row 12 type (12.5 -> 13, 11.5 -> 12). Its 100 ms stepped
+   literal Helm). ONE layer of --lg-fill, its --lg-edge-out hairline, the --lg-lip-up lip, the row
+   radius. No outer shadow: a tip lives in the bar window, whose shape ends just past it, so --lg-shadow
+   was cut into a hard dark edge (lane clipped-shadow, 2026-10-10; ui/bar/bar.css body.up .bar). HELM-SPEC row 12 type (12.5 -> 13, 11.5 -> 12). Its 100 ms stepped
    fade is a tooltip's show/hide, not a pop-up's open: kept (tips.js and its CPU note depend on it).
    Light is untouched. */
-:root[data-theme="dark"] .mtip { background-image: linear-gradient(var(--lg-fill), var(--lg-fill)); box-shadow: var(--lg-lip-up), var(--lg-shadow); font-size: 13px; }
+:root[data-theme="dark"] .mtip { background-image: linear-gradient(var(--lg-fill), var(--lg-fill)); box-shadow: var(--lg-lip-up); font-size: 13px; }
 :root[data-theme="dark"] .mtip .mtip-note { font-size: 12px; }

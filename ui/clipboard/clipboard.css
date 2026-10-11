@@ -311,8 +311,9 @@ body.noting .note { display: block; }
 
 /* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
    Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
-   literal Helm). The pane is ONE layer of --lg-fill with its --lg-edge-out hairline, the --lg-lip-up
-   lip and --lg-shadow, at Helm's big-pane radius (--lg-r-xl). HELM-SPEC rows applied: 3 (the filter
+   literal Helm). The pane is ONE layer of --lg-fill with its --lg-edge-out hairline and the --lg-lip-up
+   lip, at Helm's big-pane radius (--lg-r-xl). NO outer shadow: the window keeps 18 DIP round the pane
+   (model.js MARGIN), so --lg-shadow was cut into a hard dark edge (lane clipped-shadow, 2026-10-10). HELM-SPEC rows applied: 3 (the filter
    is a --lg-field, the banner a --lg-card), 10 radii, 12 type (12.5 -> 13, 13.5 -> 14, 11.5 -> 12),
    14 + 15 rows (nothing at rest, --lg-hover, chosen = --lg-press + one hairline, NO accent tick, Helm's
    list-row padding 6 6 6 12 and 36 px floor), 16 chip (24 px pill, --lg-card, hairline, 12/500; hover
@@ -329,7 +330,7 @@ body.noting .note { display: block; }
 :root[data-theme="dark"] .note-x { font-size: 13px; }
 :root[data-theme="dark"] .meta,
 :root[data-theme="dark"] .foot { font-size: 12px; }
-:root[data-theme="dark"] .panel { background: var(--lg-fill); box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow); }
+:root[data-theme="dark"] .panel { background: var(--lg-fill); box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out); }
 :root[data-theme="dark"] .chip {
   height: 24px;
   padding: 0 9px;

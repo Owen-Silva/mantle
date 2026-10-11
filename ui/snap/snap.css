@@ -223,7 +223,9 @@ body.is-empty .tiles { display: none; }
    Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
    literal Helm). The face is ONE layer of --lg-fill (root block above; the assist ground is the face
    alone). The panel is Helm's big pane (--lg-r-xl) with its --lg-edge-out hairline plus the
-   --lg-lip-up lip over --lg-shadow. HELM-SPEC rows applied: 3 (a layout card is a --lg-field well,
+   --lg-lip-up lip, and NO outer shadow: the window keeps 16 DIP round it (10 in assist; lib/features/
+   snap.js PICKER), so --lg-shadow was cut into a hard dark edge (lane clipped-shadow, 2026-10-10).
+   HELM-SPEC rows applied: 3 (a layout card is a --lg-field well,
    its zones --lg-card cells), 10 radii (layout card = row radius, zone and letter tile = control
    radius), 12 type (12.5 -> 13, 11.5 -> 12, 10 -> 11, 15 -> 16), 14 (window tiles: hover --lg-hover,
    chosen = --lg-press + one hairline, NO accent ring; pressed --lg-press; the preview well lays no
@@ -234,7 +236,7 @@ body.is-empty .tiles { display: none; }
 :root[data-theme="dark"] .foot { font-size: 12px; }
 :root[data-theme="dark"] .letter { font-size: 11px; }
 :root[data-theme="dark"] .pv .letter { font-size: 16px; }
-:root[data-theme="dark"] .panel { box-shadow: var(--lg-lip-up), var(--lg-shadow); }
+:root[data-theme="dark"] .panel { box-shadow: var(--lg-lip-up); }
 :root[data-theme="dark"] .layout { border-radius: var(--lg-r); background: var(--lg-field); }
 :root[data-theme="dark"] .zone { border-radius: var(--lg-r-ctl); background: var(--lg-card); }
 :root[data-theme="dark"] .zone:hover { box-shadow: inset 0 0 0 1px var(--lg-acc-line); }

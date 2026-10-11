@@ -107,6 +107,9 @@ body.no-backdrop .panel { --pane-fill: var(--hud-ground-bare); }
    tile is Helm's selected wash, --lg-press (the accent ring goes in dark: see FINAL below). */
 :root[data-theme="dark"] { --tile-r: var(--lg-r); }
 :root[data-theme="dark"] .panel { --panel-r: var(--lg-r-xl); }
+/* NO outer shadow in dark: the window keeps 18 DIP round the pane (--m), so --lg-shadow was cut into
+   a hard dark edge there (lane clipped-shadow, 2026-10-10). The lip and hairlines on ::after stay. */
+:root[data-theme="dark"] .panel { box-shadow: none; }
 :root[data-theme="dark"] .tile:hover { background: var(--lg-hover); }
 :root[data-theme="dark"] .tile.is-sel { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
 /* FINAL (Owen chose Helm's real look; HELM-SPEC.md rows 11, 12, 14, 17, 24): no accent on a picked

@@ -155,7 +155,9 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 /* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
    Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
    literal Helm). The face is ONE layer of --lg-fill (root block above); the card is a pop-up: the
-   pop-up radius, its --lg-edge-out hairline plus the --lg-lip-up lip over --lg-shadow. HELM-SPEC rows
+   pop-up radius, its --lg-edge-out hairline plus the --lg-lip-up lip; NO outer shadow, because the
+   window keeps only 6-18 DIP round the card (lib/features/timer.js PAD) and --lg-shadow was cut into a
+   hard dark edge there (lane clipped-shadow, 2026-10-10). HELM-SPEC rows
    applied: 10 radii, 12 type (12.5 -> 13, 11.5 -> 12), 16 buttons (--lg-card, hairline + inner lip,
    500; hover --lg-press + the strong hairline, pressed --lg-card; the primary is the accent, hover
    --lg-acc-strong), 19 focus, 23 disabled, 24 motion (it comes in as Helm's toast, 160 ms on Helm's
@@ -166,7 +168,7 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 :root[data-theme="dark"] .sub { font-size: 12px; }
 :root[data-theme="dark"] .card {
   border-radius: var(--lg-r-pop);
-  box-shadow: var(--lg-lip-up), var(--lg-shadow);
+  box-shadow: var(--lg-lip-up);
   animation-timing-function: var(--lg-ease-ui);
 }
 :root[data-theme="dark"] .b {
