@@ -1032,6 +1032,21 @@ function startLookDesktop() {
           return { ok: true };
         },
       },
+      // the lock screen shows the same picture (Owen, 2026-10-10): the sidecar's WinRT LockScreen route
+      // (sidecar/SysPersoLock.cs). A sidecar built without it answers "Read only: ..." and that reason
+      // is the status Settings shows. The publisher never calls this in a test run.
+      lock: {
+        get: async () => {
+          const r = await sidecar.call('perso.lock', {}, 8000);
+          if (!r || r.canSet === false) return { ok: false, reason: (r && r.pictureWhy) || 'Windows did not say' };
+          return { ok: true, picture: r.picture || null };
+        },
+        set: async (file) => {
+          const r = await sidecar.call('perso.lockPicture', { path: file, dryRun: false }, 30000);
+          if (!r || r.ok === false) return { ok: false, reason: (r && (r.reason || r.error)) || 'Windows did not say' };
+          return { ok: true };
+        },
+      },
       afterWindows: (why) => {
         // Explorer redraws its wallpaper: make sure the desktop layer is still in front of it (the same
         // check DESKTOP_RECHECK_MS runs), once, a moment after
@@ -1073,7 +1088,8 @@ function startLookDesktop() {
   } catch (err) {
     process.stderr.write(`mantle: the desktop wallpaper publisher could not start: ${err && err.stack ? err.stack : err}\n`);
     if (lookHost) lookHost.setDesktop({ desktop: { ok: false, text: 'Not shared: the publisher did not start', reason: err && err.message ? err.message : String(err), rev: null, id: null, title: null, type: null },
-      windows: { ok: false, text: 'Windows\' wallpaper was not changed', reason: 'the publisher did not start' } });
+      windows: { ok: false, text: 'Windows\' wallpaper was not changed', reason: 'the publisher did not start' },
+      lock: { ok: false, text: 'The lock screen was not changed', reason: 'the publisher did not start' } });
   }
 }
 

@@ -500,12 +500,16 @@
       // under the line, or why it is not shared (the apps then work out their own)
       const gd = v.guard && typeof v.guard === 'object' ? v.guard : {};
       const gWhy = gd.ok === false ? said(gd.reason) || 'Mantle did not say why' : null;
-      status.set({ value: syText, tone: st === 'ok' && !gWhy ? 'ok' : warn || gWhy ? 'warn' : null, help: gd.ok === true ? said(gd.text) : null, info: null,
-        reason: [syWhy && syText.indexOf(syWhy) < 0 ? syWhy : null, gWhy ? 'Top-band darkening not shared: ' + gWhy : null].filter(Boolean).join('. ') || null });
+      // the lock screen follows the wallpaper (lib/look-desktop.js matchLock): a failure is on this line, with its reason
+      const lk = v.lock && typeof v.lock === 'object' ? v.lock : {};
+      const lWhy = lk.ok === false ? said(lk.reason) || 'Windows did not say why' : null;
+      status.set({ value: syText, tone: st === 'ok' && !gWhy && !lWhy ? 'ok' : warn || gWhy || lWhy ? 'warn' : null, help: gd.ok === true ? said(gd.text) : null, info: null,
+        reason: [syWhy && syText.indexOf(syWhy) < 0 ? syWhy : null, gWhy ? 'Top-band darkening not shared: ' + gWhy : null,
+          lWhy ? 'Lock screen not changed: ' + lWhy : null].filter(Boolean).join('. ') || null });
       const d = v.desktop || {}, w = v.windows || {};
       const dWhy = d.ok === false ? said(d.reason) || 'Mantle did not say why' : null;
       const wWhy = w.ok === false ? said(w.reason) || 'Windows did not say why' : null;
-      desk.set({ value: said(d.text) || 'Not shared', tone: d.ok === false ? 'warn' : null, help: said(w.text),
+      desk.set({ value: said(d.text) || 'Not shared', tone: d.ok === false ? 'warn' : null, help: [said(w.text), said(lk.text)].filter(Boolean).join('. ') || null,
         reason: [dWhy, wWhy && 'Windows\' wallpaper: ' + wWhy].filter(Boolean).join('. ') || null, info: null });
       const ro = st === 'newer' ? 'Read only here: ' + (syWhy || 'a newer Helm or Quartz wrote the shared look') : null;
       const light = v.theme === 'light' ? 'These shape the dark look; light keeps its own frost' : null;
