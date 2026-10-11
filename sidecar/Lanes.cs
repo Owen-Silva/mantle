@@ -197,7 +197,7 @@ namespace Mantle {
     //            200+ under load (measured 2026-09-22), too slow for ui, and a
     //            dragged slider must not queue behind an icon load
     static readonly Dictionary<string, string> _laneOf = new Dictionary<string, string>(StringComparer.Ordinal) {
-      { "backdrop", Capture },
+      { "backdrop", Capture }, { "underrow", Capture },
       { "icon", Slow }, { "lnk", Slow }, { "app", Slow }, { "pins", Slow }, { "launch", Slow },
       // Tray.cs reads explorer's toolbar with cross-process SendMessage, and
       // may grow a UI Automation fallback: both are slow and thread-agnostic.
@@ -310,6 +310,11 @@ namespace Mantle {
         return "backdrop:" + Json.GetInt(req, "x", 0) + "," + Json.GetInt(req, "y", 0) + "," +
                Json.GetInt(req, "w", 0) + "," + Json.GetInt(req, "h", 0) + "," +
                Json.GetInt(req, "scale", Backdrop.DefaultScale);
+      }
+      if (cmd == "underrow") {
+        anywhere = true;
+        return "underrow:" + Json.GetInt(req, "x", 0) + "," + Json.GetInt(req, "y", 0) + "," +
+               Json.GetInt(req, "w", 0) + "," + Json.GetInt(req, "n", 0);
       }
       // The newest level is the only one that matters to a dragged slider.
       if (cmd == "brightness" && Json.HasKey(req, "level")) return "brightness.set";

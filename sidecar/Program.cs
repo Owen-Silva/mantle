@@ -111,7 +111,7 @@ namespace Mantle {
       "ping", "windows", "foreground", "focus", "minimize", "close", "toggle",
       "taskbar", "appbar", "traywatch", "edgeclip", "tbhide", "hittest", "raise",
       "glass", "corners", "place", "morph", "region",
-      "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop",
+      "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop", "underrow",
       "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power", "battery",
       "wlan", "audio", "btdevices", "volwatch", "net", "qswatch",
       "tray", "trayClick", "media", "notifications", "search", "session", "sleep", "quit"
@@ -936,6 +936,19 @@ namespace Mantle {
           var cres = Json.Obj("ok", true, "used", usedCorner, "mode", usedCorner, "border", usedBorder);
           if (borderWhy != null) cres["borderReason"] = borderWhy;
           result = cres;
+          return null;
+        }
+
+        case "underrow": {
+          // Read-only like `backdrop` (runs in passive too): ONE physical row averaged into n columns,
+          // answered as base64 r,g,b bytes, no PNG (UnderRow.cs; the top bar's colour under it).
+          string ucols;
+          double ums;
+          int un = Json.GetInt(req, "n", 0);
+          string uerr = UnderRow.Read(Json.GetInt(req, "x", 0), Json.GetInt(req, "y", 0), Json.GetInt(req, "w", 0), un,
+                                      out ucols, out ums);
+          if (uerr != null) return uerr;
+          result = Json.Obj("ok", true, "cols", ucols, "n", un, "ms", Math.Round(ums, 2));
           return null;
         }
 

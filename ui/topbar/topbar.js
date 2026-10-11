@@ -884,13 +884,13 @@
      where an ink could not read 4.5:1) and each item's ink (light, or the light theme's dark ink over a
      bright window, with hysteresis). The paint is a canvas of n columns under the strip's words (#under,
      inside #bar at z-index -1, so over the glass's tint and under the words); where no window is under
-     the bar it is clear and today's glass shows. THE FADE (0.15 s, compositor opacity, no JS per frame):
-     a new frame is drawn into the TOP canvas, which fades in over the bottom one holding the last frame;
-     160 ms later the bottom one takes the same pixels and the top one goes off in the same frame (an
-     invisible swap). A frame arriving meanwhile waits for the swap. Light: never mounted, nothing runs. */
+     the bar it is clear and today's glass shows. NO FADE (Owen, 2026-10-11: "can we make it so that it
+     changes colors faster like imediatly? so theres no delay?"): each new frame is put into the one
+     canvas in place (a putImageData: whole, never torn) and the inks flip in the same frame; the desktop
+     coming back unmounts it at once. Light: never mounted, nothing runs. */
   const UND = window.TopbarUnder;
   const US = { on: false, n: 0, cols: null, cover: null, plan: null, prev: { items: {}, cols: [] }, why: null, failure: false,
-    fadeAt: -1e9, wait: null, swap: null, rm: null, frames: 0, painted: 0, tok: null, lastNote: null, sig: null };
+    frames: 0, painted: 0, tok: null, lastNote: null, sig: null, readAt: 0, lags: [] };
   window.__topbarUnder = US;   // read-only for the --test harness; US.apply(payload) drives the page like main does
   let underEl = null, underCv = null;
   function underMount() {
@@ -898,8 +898,9 @@
     underEl = document.createElement('div');
     underEl.id = 'under';
     underEl.setAttribute('aria-hidden', 'true');
-    underCv = [document.createElement('canvas'), document.createElement('canvas')];
-    for (const c of underCv) { c.height = UND.ROWS; underEl.appendChild(c); }
+    underCv = document.createElement('canvas');
+    underCv.height = UND.ROWS;
+    underEl.appendChild(underCv);
     barEl.insertBefore(underEl, barEl.firstChild);
     document.body.classList.add('under');
   }
@@ -951,29 +952,14 @@
   const underSig = (pl) => pl.top.map((c) => c.map(Math.round).join(',')).join(';') + '|' + pl.alpha.join(',') + '|' + pl.base.map((c) => c.join(',')).join(';');
   function underPaint(pl) {
     const sig = underSig(pl);
-    if (sig === US.sig) return;   // the same pixels: nothing to fade
-    const since = performance.now() - US.fadeAt;
-    if (since < 160) { if (!US.wait) US.wait = setTimeout(() => { US.wait = null; if (US.on && US.plan) underPaint(US.plan); }, 165 - since); return; }
+    if (sig === US.sig) return;   // the same pixels: nothing to put
     US.sig = sig;
-    const data = UND.paint(pl, UND.ROWS);
-    const [bot, top] = underCv;
-    top.width = pl.n; top.height = UND.ROWS;
-    top.getContext('2d').putImageData(new ImageData(data, pl.n, UND.ROWS), 0, 0);
-    top.classList.add('on');   // fades in (topbar.css, 0.15 s) over the last frame or the glass
-    US.fadeAt = performance.now();
+    if (underCv.width !== pl.n) underCv.width = pl.n;   // (a new width clears it; the put below fills it)
+    underCv.getContext('2d').putImageData(new ImageData(UND.paint(pl, UND.ROWS), pl.n, UND.ROWS), 0, 0);
+    underCv.classList.add('on');
     US.painted++;
-    clearTimeout(US.swap);
-    US.swap = setTimeout(() => {
-      US.swap = null;
-      if (!underEl || !US.on) return;
-      // the invisible swap: the bottom canvas takes the same pixels, the top one goes off, in one frame
-      bot.width = pl.n; bot.height = UND.ROWS;
-      bot.getContext('2d').putImageData(new ImageData(data, pl.n, UND.ROWS), 0, 0);
-      underEl.classList.add('snap');
-      bot.classList.add('on'); top.classList.remove('on');
-      void underEl.offsetWidth;   // apply both with no transition, then let the next frame fade again
-      underEl.classList.remove('snap');
-    }, 160);
+    // read -> painted, for topbar.status and the latency measure: main stamps each push with its read's start
+    if (US.readAt) { US.lags.push(Date.now() - US.readAt); if (US.lags.length > 50) US.lags.shift(); US.readAt = 0; }
   }
   function underDraw() {
     if (!US.on || !isDark() || !US.cols) return;
@@ -990,12 +976,8 @@
     US.lastNote = failure ? why : null;
     US.on = false; US.why = why || null; US.failure = !!failure;
     US.plan = null; US.cols = null; US.cover = null; US.sig = null;
-    clearTimeout(US.wait); US.wait = null; clearTimeout(US.swap); US.swap = null;
     underInkClear();
-    if (!underEl) return;
-    for (const c of underCv) c.classList.remove('on');   // fades out to today's glass (0.15 s)
-    clearTimeout(US.rm);
-    US.rm = setTimeout(() => { US.rm = null; if (!US.on) underUnmount(); }, 200);
+    underUnmount();   // today's glass, at once
   }
   function setUnder(p) {
     if (!isDark()) { if (underEl || US.on) underOff(null, false); return; }
@@ -1003,8 +985,8 @@
     if (!p || p.off) { underOff(p && p.why, p && p.failure, p && p.blocked); return; }
     const v = UND.check(p);
     if (!v.ok) { underOff(v.why, true); return; }
-    clearTimeout(US.rm); US.rm = null;
     if (US.failure) US.lastNote = null;
+    US.readAt = p.t || 0;
     US.on = true; US.failure = false; US.why = p.why || null;
     US.cols = v.cols; US.cover = v.cover; US.n = v.n;
     UND.underMenu(M.MANTLE_MENU, p.why || null, false);   // a window that blocks capture under part of the bar: said, not a fault
