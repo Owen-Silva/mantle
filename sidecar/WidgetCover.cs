@@ -180,6 +180,9 @@ namespace Mantle {
 
     // ------------------------------------------------------------------ reading
 
+    /// The same list for UnderPaint.cs (the top bar's colour layer: which windows are under its row).
+    public static List<Win> LiveList() { return Live(); }
+
     /// Every top-level window, top of the z-order first, up to and including the desktop.
     static List<Win> Live() {
       var list = new List<Win>();

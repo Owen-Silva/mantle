@@ -2746,6 +2746,17 @@ function startFeatures() {
         // lane helm-wall: the wallpaper picture for the app windows (Files, Task Manager, Settings, Task
         // view): full() the whole primary display's still, rect(phys) a cut, onChange(fn) -> off()
         wall: wallHost,
+        // lane mantle-topbar-zero: what a Quartz / Helm "wash" top-row hint sits on (lib/toprow-hints.js
+        // washRowFor): the look-sync desktop still and the shared glass blur -> {still, id, blurPx} | {still: null, why}
+        toprowWash: () => {
+          try {
+            const d = lookHost && lookHost.sync ? lookHost.sync.desktop() : null;
+            const rec = d && d.record;
+            const g = getLook().guardGlass();
+            if (!(rec && rec.ok && rec.still)) return { still: null, why: 'the look-sync desktop has no still yet' };
+            return { still: rec.still, id: rec.id, blurPx: g && g.blurPx };
+          } catch (err) { return { still: null, why: `the desktop still could not be read (${err && err.message ? err.message : err})` }; }
+        },
         // lane guard-mantle: the SHARED top-band darkening for the top bar (lib/look-guard.js use):
         // get() -> {use, alpha, ...} | {use:false, why, failure}; onChange(fn) after a look or theme change -> off()
         lookGuard: {

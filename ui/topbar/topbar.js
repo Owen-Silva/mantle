@@ -69,7 +69,7 @@
     const vis = visibleWidth();
     S.vis = vis;
     barEl.style.right = Math.max(0, (window.innerWidth || vis) - vis) + 'px';
-    const bd = document.getElementById('bdrop');   // the glass's picture ends where the strip does
+    const bd = document.getElementById('bglass');   // the glass (its picture, and native's tint) ends where the strip does
     if (bd) bd.style.right = barEl.style.right;
     return vis;
   }
@@ -784,9 +784,15 @@
      under the bar are the design, not a fault, and only put the bar on its fallback tint. */
   const GM = window.TopbarGlass;   // ui/topbar/glass.js: the pure parts
   const bdropEl = document.getElementById('bdrop');
+  const bglassEl = document.getElementById('bglass');   // #bdrop's holder; NATIVE masks it (THE COLOUR UNDER below)
   const GS = { png: null, under: null, seq: 0, settle: null, why: null, failure: false, tint: null, solve: null };
   window.__topbarGlass = GS;   // read-only, for the shots / the --test harness
   const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  // --tb-tint lives on #bar (today's glass) and on #bglass (NATIVE's #btint, which is not #bar's child)
+  function setTint(v) {
+    if (v == null) { barEl.style.removeProperty('--tb-tint'); bglassEl.style.removeProperty('--tb-tint'); return; }
+    barEl.style.setProperty('--tb-tint', v); bglassEl.style.setProperty('--tb-tint', v);
+  }
   function glassOff(why, failure, keep) {
     const was = GS.failure ? GS.why : null;
     GS.why = why || null; GS.failure = !!failure;
@@ -796,7 +802,7 @@
     GS.png = null; GS.under = null; GS.settle = null; GS.seq++;
     document.body.classList.remove('glass');
     bdropEl.style.backgroundImage = '';
-    barEl.style.removeProperty('--tb-tint');
+    setTint(null);
   }
   function setBackdrop(p) {
     if (!p || p.off) { glassOff(p && p.why, p && p.failure, p && p.keep); return; }
@@ -818,7 +824,7 @@
     return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('the picture did not decode')); im.src = src; });
   }
   async function solveTint(seq) {
-    if (!GS.settle) barEl.style.setProperty('--tb-tint', cssVar('--lg-fill-fb') || 'rgba(30,31,34,.56)');
+    if (!GS.settle) setTint(cssVar('--lg-fill-fb') || 'rgba(30,31,34,.56)');
     let im, un = null;
     try { im = await loadImg(GS.png); if (GS.under) un = await loadImg(GS.under); } catch (e) {
       if (seq === GS.seq) glassOff('the picture of the desktop under the bar did not decode', true, false);
@@ -849,7 +855,7 @@
     const b = GM.barAlpha(isDark() ? GS.lookGuard : null, r.alpha, GS.settle);
     GS.settle = b.settle; GS.source = b.source;
     GS.tint = b.alpha;
-    barEl.style.setProperty('--tb-tint', 'rgba(' + fill.r + ',' + fill.g + ',' + fill.b + ',' + GS.tint + ')');
+    setTint('rgba(' + fill.r + ',' + fill.g + ',' + fill.b + ',' + GS.tint + ')');
   }
   mantle.on('topbar.backdrop', setBackdrop);
   /* THE SHARED TOP-BAND DARKENING (lane guard-mantle, 2026-10-10; main: lib/features/_topbar-glass.js
@@ -887,10 +893,18 @@
      the bar it is clear and today's glass shows. NO FADE (Owen, 2026-10-11: "can we make it so that it
      changes colors faster like imediatly? so theres no delay?"): each new frame is put into the one
      canvas in place (a putImageData: whole, never torn) and the inks flip in the same frame; the desktop
-     coming back unmounts it at once. Light: never mounted, nothing runs. */
+     coming back unmounts it at once. Light: never mounted, nothing runs.
+     NATIVE (lane zero-page, 2026-10-11): a push with native: true means the sidecar's own layer is up
+     behind this window, following the bar and painting the exact colours. While it says so the canvas
+     holds only the text band's scrim (UND.paintOverlay; nothing is put at all while that stays 0) and
+     #bglass (the glass) is masked by 1 - cover (UND.glassMask, written only when the cover changes), so
+     the layer shows through where a window is under the bar (topbar.css NATIVE). A push without it
+     paints today's canvas and takes the mask off in the same task: never a frame with neither. The inks
+     are decided exactly as before. US.native / US.mask: read-only, for the tests. */
   const UND = window.TopbarUnder;
   const US = { on: false, n: 0, cols: null, cover: null, plan: null, prev: { items: {}, cols: [] }, why: null, failure: false,
-    frames: 0, painted: 0, tok: null, lastNote: null, readAt: 0, lags: [], frameLags: [], items: null, els: null, img: null, last: null };
+    frames: 0, painted: 0, tok: null, lastNote: null, readAt: 0, lags: [], frameLags: [], items: null, els: null, img: null, last: null,
+    want: false, native: false, mask: '', maskPlan: null, masks: 0 };
   window.__topbarUnder = US;   // read-only for the --test harness; US.apply(payload) drives the page like main does
   let underEl = null, underCv = null;
   function underMount() {
@@ -961,9 +975,9 @@
   /* The frame goes into ONE reused n x ROWS ImageData (no allocation per frame), and is put only when its
      pixels differ from the last frame's (a byte compare, no string signature). */
   const wallNow = () => performance.timeOrigin + performance.now();
-  function underPaint(pl) {
+  function underPaint(pl, native) {
     if (!US.img || US.img.width !== pl.n) { US.img = new ImageData(pl.n, UND.ROWS); US.last = null; }
-    const data = UND.paint(pl, UND.ROWS, US.img.data);
+    const data = native ? UND.paintOverlay(pl, UND.ROWS, US.img.data) : UND.paint(pl, UND.ROWS, US.img.data);
     if (US.last && US.last.length === data.length && underCv.width === pl.n && underCv.classList.contains('on')) {
       let same = true;
       for (let i = 0; i < data.length; i++) if (data[i] !== US.last[i]) { same = false; break; }
@@ -990,7 +1004,24 @@
     const r = underPlan();
     if (r.why) { underOff(r.why, true); return; }
     US.frames++;
-    underPaint(r.pl);
+    underPaint(r.pl, US.want);
+    underNative(US.want);   // (the same task as the put: the mask and the canvas change in one frame)
+  }
+  // the glass's mask while native is on; off: no mask, no body.native (today's look)
+  function underNative(on) {
+    if (on) {
+      const mp = UND.glassMask(US.cover, US.n, US.maskPlan, UND.MASK_PAD);   // (topbar.css: #bglass overhangs by the same 4 px)
+      if (mp !== US.maskPlan) {
+        US.maskPlan = mp;
+        if (mp.mask !== US.mask) { bglassEl.style.setProperty('--tb-mask', mp.mask); US.mask = mp.mask; US.masks++; }
+      }
+      if (!US.native) { document.body.classList.add('native'); US.native = true; }
+      return;
+    }
+    if (!US.native && !US.mask) return;
+    document.body.classList.remove('native');
+    bglassEl.style.removeProperty('--tb-mask');
+    US.native = false; US.mask = ''; US.maskPlan = null;
   }
   function underOff(why, failure, blocked) {
     const said = failure || blocked ? why || null : null;
@@ -998,8 +1029,9 @@
     if (failure && why && why !== US.lastNote) setNote('Top bar colour: ' + why);
     US.lastNote = failure ? why : null;
     US.on = false; US.why = why || null; US.failure = !!failure;
-    US.plan = null; US.cols = null; US.cover = null; US.last = null;
+    US.plan = null; US.cols = null; US.cover = null; US.last = null; US.want = false;
     underInkClear();
+    underNative(false);
     underUnmount();   // today's glass, at once
   }
   function setUnder(p) {
@@ -1011,7 +1043,7 @@
     if (US.failure) US.lastNote = null;
     US.readAt = p.t || 0;
     US.on = true; US.failure = false; US.why = p.why || null;
-    US.cols = v.cols; US.cover = v.cover; US.n = v.n;
+    US.cols = v.cols; US.cover = v.cover; US.n = v.n; US.want = p.native === true;
     UND.underMenu(M.MANTLE_MENU, p.why || null, false);   // a window that blocks capture under part of the bar: said, not a fault
     underDraw();
   }

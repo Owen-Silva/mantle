@@ -111,7 +111,7 @@ namespace Mantle {
       "ping", "windows", "foreground", "focus", "minimize", "close", "toggle",
       "taskbar", "appbar", "traywatch", "edgeclip", "tbhide", "hittest", "raise",
       "glass", "corners", "place", "morph", "region",
-      "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop", "underrow", "underwatch",
+      "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop", "underrow", "underwatch", "underpaint", "underhint", "winproc",
       "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power", "battery",
       "wlan", "audio", "btdevices", "volwatch", "net", "qswatch",
       "tray", "trayClick", "media", "notifications", "search", "session", "sleep", "quit"
@@ -951,6 +951,18 @@ namespace Mantle {
           result = Json.Obj("ok", true, "cols", ucols, "n", un, "ms", Math.Round(ums, 2));
           return null;
         }
+
+        case "underpaint":
+          // The top bar's colour layer (UnderPaint.cs, lane mantle-topbar-zero): a click-through, never-focused
+          // native window right under the bar, painted on the frame the row changes. A --test (passive) sidecar
+          // makes it fully transparent unless MANTLE_UNDERPAINT_VISIBLE=1 (the on-screen latency harness).
+          return UnderPaint.Cmd(req, ref result);
+        case "underhint":
+          // Quartz's and Helm's top-row hints, checked and normalised by main (lib/toprow-hints.js).
+          return UnderPaint.Hint(req, ref result);
+        case "winproc":
+          // Read-only: whose process a window is (main checks a hint's sender with it).
+          return UnderPaint.WinProc(req, ref result);
 
         case "underwatch":
           // Read-only too (passive runs it): the same row, pushed on the frame it changes (UnderDup.cs,

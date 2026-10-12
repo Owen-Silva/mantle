@@ -17,8 +17,11 @@
        about my computer like ram cpu gpu etc."). The bottom bar already has Wi-Fi, volume,
        battery, the clock and the bell, so none of those are repeated here. -->
   <!-- DARK ONLY: the desktop's strip under the bar (main sends it, lib/features/_topbar-glass.js);
-       #bar blurs it with its backdrop-filter and lays its tint over it. Never shown in light. -->
-  <div id="bdrop" aria-hidden="true"></div>
+       #bar blurs it with its backdrop-filter and lays its tint over it. Never shown in light.
+       #bglass holds it and, only while the sidecar's own colour layer is up behind the bar (NATIVE,
+       lane zero-page), #btint: the tint and its blur move off #bar into #btint so the glass can be
+       masked per column (topbar.css) while the words stay whole. -->
+  <div id="bglass" aria-hidden="true"><div id="bdrop" aria-hidden="true"></div><div id="btint"></div></div>
   <header id="bar" role="menubar" aria-label="Menu bar">
     <nav id="left"></nav>
     <div id="right"></div>

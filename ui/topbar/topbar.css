@@ -80,6 +80,34 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
   position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; opacity: 0;
 }
 :root[data-theme="dark"] #under canvas.on { opacity: 1; }
+/* NATIVE, DARK ONLY (lane zero-page, 2026-10-11). While main says so ('topbar.under' native: true), the
+ * sidecar paints the exact colours in its own window directly BEHIND this one, on the frame the screen
+ * changes, and this page stops painting them: #under carries only the text band's scrim (under.js
+ * paintOverlay) and the glass goes clear where a window covers the row, so that layer shows through.
+ * The glass is #bglass: #bdrop (the picture) and #btint, which takes #bar's tint and its blur (or, with
+ * no picture, #bar's --lg-fill-pop face) while native is on, #bar going clear; #bglass is masked by
+ * 1 - cover (--tb-mask: one linear-gradient, stops only where the cover changes, rebuilt only when it
+ * does). The mask makes #bglass the blur's backdrop root, so the blur reads the whole picture and an
+ * uncovered column is today's glass to the pixel. The words and the scrim are never masked.
+ * A mask's own edge pixels come out part clear (measured at 125%: the strip's top and bottom physical
+ * rows and its first and last columns went 9-20 levels toward what is behind the window), so while
+ * masked #bglass overhangs the bar by 4 px on every side (under.js MASK_PAD, which the stops allow for)
+ * and #bdrop / #btint sit 4 px in: the mask's edges fall outside the strip, on nothing.
+ * #bglass is positioned (in dark only) where #bdrop was, so #bdrop fills it; native off, #btint is not
+ * drawn and #bar carries the glass exactly as above. Light: none of this. */
+#btint { display: none; }
+:root[data-theme="dark"] #bglass { position: absolute; left: 0; right: 0; top: 0; height: var(--tb-h); pointer-events: none; }
+:root[data-theme="dark"] body.native #bglass {
+  margin: -4px; height: calc(var(--tb-h) + 8px);
+  -webkit-mask-image: var(--tb-mask, none); mask-image: var(--tb-mask, none);
+}
+:root[data-theme="dark"] body.native.glass #bdrop { left: 4px; right: 4px; top: 4px; height: var(--tb-h); }
+:root[data-theme="dark"] body.native #btint { display: block; position: absolute; left: 4px; right: 4px; top: 4px; height: var(--tb-h); background-color: var(--lg-fill-pop); }
+:root[data-theme="dark"] body.native.glass #btint {
+  background-color: var(--tb-tint, var(--lg-fill-bar));
+  -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur);
+}
+:root[data-theme="dark"] body.native #bar { background-color: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
 :root[data-theme="dark"] #bar .ink-dk {
   --lg-ink: var(--lg-ink-on-light); --lg-ink-2: var(--lg-ink-2-on-light); --lg-ink-3: var(--lg-ink-3-on-light);
   --lg-hover: var(--lg-hover-on-light); --lg-press: var(--lg-press-on-light);

@@ -219,6 +219,13 @@ namespace Mantle {
             _last = null; pending = false; motionFromQ = 0; lastHitQ = 0;
             SetMode("frames", null);
           }
+          // the native layer just started (or its row moved) on a still row: hand it the row read last (the
+          // staging texture still holds it), or it stays hidden until something changes under the bar
+          if (_last != null && UnderPaint.NeedsRow) {
+            string nerr = ReadRow(n);
+            if (nerr != null) { Drop(); SetMode("poll", nerr); nextTry = unchecked(Environment.TickCount + RetryMs); continue; }
+            UnderPaint.Row(_fresh, Q());
+          }
           // wait for the next frame, or (a push waiting) until it may go
           long nowQ = Q();
           int wait = WaitMs;
@@ -257,7 +264,7 @@ namespace Mantle {
                 try {
                   int qh = Marshal.QueryInterface(res, ref IID_Tex2D, out tex);
                   if (qh != S_OK) ferr = "the desktop frame is not a texture (" + Hr(qh) + ")";
-                  else ferr = CopyRow(tex, x - _dx, y - _dy, w);
+                  else { ferr = CopyRow(tex, x - _dx, y - _dy, w); _freshNow = false; }
                 } finally { Rel(ref tex); }
               }
             }
@@ -272,6 +279,13 @@ namespace Mantle {
           lock (_gate) { _hits++; _copies++; }
           // the change's own time: when DWM presented the frame (QPC)
           long presentQ = fi.LastPresentTime;
+          // THE NATIVE LAYER (UnderPaint.cs, lane mantle-topbar-zero): while it runs, EVERY frame that crosses the
+          // row is read back now and painted by the sidecar itself on this frame; only main's pushes are spaced.
+          if (UnderPaint.Active) {
+            string rerr = ReadRow(n);
+            if (rerr != null) { Drop(); SetMode("poll", rerr); nextTry = unchecked(Environment.TickCount + RetryMs); continue; }
+            UnderPaint.Row(_fresh, presentQ != 0 ? presentQ : nowQ);
+          }
           if (motionFromQ == 0 || Ms(nowQ - lastHitQ) > 200) motionFromQ = nowQ;
           lastHitQ = nowQ;
           int gap = _last == null ? 0 : GapMs(nowQ, motionFromQ, minMs, busyMs, sustainMs);
@@ -302,13 +316,30 @@ namespace Mantle {
     static double WallMs() { long ft; GetSystemTimePreciseAsFileTime(out ft); return (ft - 116444736000000000L) / 10000.0; }
 
     /// Map the staging row, average it, push it when it differs from the last push. -> pushed
-    static bool Push(int n, long presentQ, long nowQ) {
-      var sw = Stopwatch.StartNew();
+    /// The staging row, mapped and averaged into _fresh. -> null | why it could not be read
+    static byte[] _fresh;
+    static bool _freshNow;   // _fresh is the staging row as last copied (false from each copy until it is read)
+    static string ReadRow(int n) {
       MAPPED m;
       int hr = _mapD(_ctx, _stage, 0, 1 /* READ */, 0, out m);
-      if (hr != S_OK) { SetMode("poll", "the row could not be read back (" + Hr(hr) + ")"); Drop(); return false; }
+      if (hr != S_OK) return "the row could not be read back (" + Hr(hr) + ")";
       try { Marshal.Copy(m.Data, _row, 0, _sw * 4); } finally { _unmapD(_ctx, _stage, 0); }
-      byte[] outb = Average(_row, _sw, n);
+      _fresh = Average(_row, _sw, n);
+      _freshNow = true;
+      return null;
+    }
+
+    static bool Push(int n, long presentQ, long nowQ) {
+      var sw = Stopwatch.StartNew();
+      byte[] outb;
+      // read since the last copy already (the native layer reads every crossing frame). Was "UnderPaint.Active":
+      // a push still pending from a frame copied BEFORE the layer started sent the older row read before it.
+      if (_freshNow && _fresh != null && _fresh.Length == n * 3) outb = _fresh;
+      else {
+        string rerr = ReadRow(n);
+        if (rerr != null) { SetMode("poll", rerr); Drop(); return false; }
+        outb = _fresh;
+      }
       if (_last != null && Same(_last, outb)) return false;
       _last = outb;
       long q = Q();
@@ -395,6 +426,7 @@ namespace Mantle {
       var box = new BOX();
       box.Left = (uint)rx; box.Top = (uint)ry; box.Front = 0; box.Right = (uint)(rx + rw); box.Bottom = (uint)(ry + 1); box.Back = 1;
       _copyD(_ctx, _stage, 0, 0, 0, 0, tex, 0, ref box);
+      _fresh = null;
       return null;
     }
 
@@ -450,7 +482,7 @@ namespace Mantle {
       Rel(ref _stage); _sw = 0;
       Rel(ref _dup);
       Rel(ref _out1);
-      _last = null;
+      _last = null; _freshNow = false;
     }
     static void FreeDevice() {
       if (_ctx != IntPtr.Zero) Rel(ref _ctx);

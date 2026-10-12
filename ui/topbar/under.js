@@ -95,7 +95,8 @@
    * p = {cols: [r,g,b,...] (n*3), cover: [0..1] (n), n, width (CSS px of the bar),
    *      items: [{key, x0, x1, light: [inks], dark: [inks]}], gap: {light: [inks], dark: [inks]},
    *      scrim: {light: rgb (pull for light ink), dark: rgb (pull for dark ink)}, prev: {items, cols}, need}
-   * -> {n, base: [rgb] (the exact colours), top: [rgb] (the text band), alpha: [0..1], colInk: [...],
+   * -> {n, base: [rgb] (the exact colours), top: [rgb] (the text band), alpha: [0..1], pull: [0..1] (how far
+   *     top is pulled), scrim: [rgb] (toward which: the column's ink's scrim; top = mix(base, scrim, pull)), colInk: [...],
    *     items: [{key, ink, c0, c1, covered, nl, nd, ratio}], prev (for the next call)}
    */
   function plan(p) {
@@ -144,8 +145,12 @@
       for (k = Math.max(0, c - SMOOTH); k <= Math.min(n - 1, c + SMOOTH); k++) if (colInk[k] === colInk[c]) { sum += dil[k]; cnt++; }
       pull[c] = Math.max(colNeed[c], cnt ? sum / cnt : 0);
     }
-    var top = [];
-    for (c = 0; c < n; c++) top.push(pull[c] > 0 ? mix(base[c], colInk[c] === 'dark' ? p.scrim.dark : p.scrim.light, pull[c]) : base[c].slice());
+    // scrim[c]: the colour column c's text band is pulled toward (its ink's scrim); top = base pulled toward it
+    var top = [], scrim = new Array(n);
+    for (c = 0; c < n; c++) {
+      scrim[c] = colInk[c] === 'dark' ? p.scrim.dark : p.scrim.light;
+      top.push(pull[c] > 0 ? mix(base[c], scrim[c], pull[c]) : base[c].slice());
+    }
     // what each item's words read at, worst column (the proof the page test checks)
     for (i = 0; i < items.length; i++) {
       var o = items[i];
@@ -156,8 +161,11 @@
     }
     var nextItems = {};
     for (i = 0; i < items.length; i++) nextItems[items[i].key] = items[i].ink;
-    return { n: n, base: base, top: top, alpha: alpha, pull: pull, colInk: colInk, items: items, prev: { items: nextItems, cols: colInk.slice() } };
+    return { n: n, base: base, top: top, alpha: alpha, pull: pull, scrim: scrim, colInk: colInk, items: items, prev: { items: nextItems, cols: colInk.slice() } };
   }
+
+  /* the row of rows: 0 over the text band, then a straight run to 1, the last row exactly 1 */
+  function rowT(y, H, from) { return y < from ? 0 : (y - from + 1) / (H - from); }
 
   /* the canvas pixels for a plan: n x ROWS RGBA (Uint8ClampedArray). Rows 0..BLEND_FROM-1 the text band,
      then a straight run to the exact colour, the last row exactly it. Alpha = the cover. */
@@ -165,7 +173,7 @@
     var H = rows || ROWS, n = pl.n, from = Math.min(BLEND_FROM, H - 1);
     var data = out && out.length === n * H * 4 ? out : new Uint8ClampedArray(n * H * 4);
     for (var y = 0; y < H; y++) {
-      var t = y < from ? 0 : (y - from + 1) / (H - from);
+      var t = rowT(y, H, from);
       for (var c = 0; c < n; c++) {
         var a = pl.top[c], b = pl.base[c], i = (y * n + c) * 4;
         data[i] = Math.round(a[0] + (b[0] - a[0]) * t);
@@ -175,6 +183,77 @@
       }
     }
     return data;
+  }
+
+  /* NATIVE (lane zero-page, 2026-10-11): while main says the sidecar's own layer is up behind the bar and
+     painting the exact colours (pl.base, every row, linearly between column centres like this canvas's
+     bilinear scaling), the canvas carries only what the text band adds on top of them: the scrim, at
+     alpha pull * (1 - t) * cover. Since top = base + (scrim - base) * pull, lerp(top, base, t) is
+     base + (scrim - base) * pull * (1 - t): "the scrim at pull * (1 - t) over base". So over the native
+     base the composite is paint()'s for cover 1 (within 1 level: the alpha is 8 bit). A fractional-cover
+     column is off by at most pull * (1 - t) * cover * (1 - cover) * |base - glass| (the glass under it is
+     not known here). Where there is no pull every byte is 0, so a dark window under light ink (or a bright
+     one under dark ink) puts nothing at all frame after frame (the page byte-compares). */
+  function paintOverlay(pl, rows, out) {
+    var H = rows || ROWS, n = pl.n, from = Math.min(BLEND_FROM, H - 1);
+    var data = out && out.length === n * H * 4 ? out : new Uint8ClampedArray(n * H * 4);
+    for (var y = 0; y < H; y++) {
+      var k = 1 - rowT(y, H, from);
+      for (var c = 0; c < n; c++) {
+        var i = (y * n + c) * 4, a = Math.round((pl.pull[c] || 0) * k * pl.alpha[c] * 255);
+        if (a > 0) { var s = pl.scrim[c]; data[i] = s[0]; data[i + 1] = s[1]; data[i + 2] = s[2]; data[i + 3] = a; }
+        else { data[i] = 0; data[i + 1] = 0; data[i + 2] = 0; data[i + 3] = 0; }
+      }
+    }
+    return data;
+  }
+
+  /* NATIVE: the glass (the picture, the tint and its blur, or the no-picture face) is masked by 1 - cover,
+     so the native layer shows where a window is under the bar and the glass stays where none is (a
+     capture-blocking window: main has already set its cover to 0, so it keeps the glass). One CSS
+     linear-gradient across the bar's width: a stop at the first and the last column centre of each run
+     of equal cover (the 8-bit cover the canvas's alpha would have), so between runs it runs linearly
+     from centre to centre exactly as the canvas's bilinear alpha did, and outside the first / last centre
+     it holds, as the canvas's edge clamp did. `pad`: CSS px the masked box overhangs the bar on every
+     side (the page's #bglass does, by MASK_PAD: a mask's own edge pixels come out part clear at 125%,
+     measured, so its edges are kept off the bar); a stop at fraction f of the bar is then at
+     calc(f * 100% + pad * (1 - 2f) px) of the box, which is f of the bar whatever its width.
+     -> {n, pad, q, mask, full, none, stops}; `prev` comes back AS IS (the same object) when the cover
+     (and pad) is the same, so the page writes no style. mask 'none' = no window anywhere (the glass whole). */
+  var MASK_PAD = 4;
+  function num(v) { return String(+v.toFixed(4)); }
+  function stopAt(f, pad) {
+    if (!pad) return num(f * 100) + '%';
+    var px = pad * (1 - 2 * f);
+    return 'calc(' + num(f * 100) + '% ' + (px < 0 ? '- ' : '+ ') + num(Math.abs(px)) + 'px)';
+  }
+  function glassMask(cover, n, prev, pad) {
+    n = n | 0; pad = +pad || 0;
+    var q = new Array(n), same = !!(prev && prev.n === n && prev.pad === pad && prev.q), c;
+    for (c = 0; c < n; c++) {
+      q[c] = Math.round(Math.max(0, Math.min(1, +cover[c] || 0)) * 255);
+      if (same && prev.q[c] !== q[c]) same = false;
+    }
+    if (same) return prev;
+    var full = n > 0, none = true;
+    for (c = 0; c < n; c++) { if (q[c] !== 255) full = false; if (q[c] !== 0) none = false; }
+    var mask, stops = 0;
+    if (none) mask = 'none';
+    else if (full) { mask = 'linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0))'; stops = 2; }
+    else {
+      var parts = [];
+      for (var a = 0; a < n;) {
+        var b = a;
+        while (b + 1 < n && q[b + 1] === q[a]) b++;
+        var col = 'rgba(0,0,0,' + num((255 - q[a]) / 255) + ')';
+        parts.push(col + ' ' + stopAt((a + 0.5) / n, pad));
+        if (b > a) parts.push(col + ' ' + stopAt((b + 0.5) / n, pad));
+        a = b + 1;
+      }
+      stops = parts.length;
+      mask = 'linear-gradient(to right, ' + parts.join(', ') + ')';
+    }
+    return { n: n, pad: pad, q: q, mask: mask, full: full, none: none, stops: stops };
   }
 
   /* main's payload checked: -> {ok, cols, cover, n} | {ok: false, why} */
@@ -202,5 +281,6 @@
   }
 
   return { NEED: NEED, HYST: HYST, ROWS: ROWS, BLEND_FROM: BLEND_FROM, DILATE: DILATE, SMOOTH: SMOOTH,
-    needAlpha: needAlpha, needAlphaRaw: needAlphaRaw, side: side, minRatio: minRatio, mix: mix, plan: plan, paint: paint, check: check, underMenu: underMenu };
+    needAlpha: needAlpha, needAlphaRaw: needAlphaRaw, side: side, minRatio: minRatio, mix: mix, plan: plan, paint: paint,
+    paintOverlay: paintOverlay, glassMask: glassMask, MASK_PAD: MASK_PAD, check: check, underMenu: underMenu };
 }));

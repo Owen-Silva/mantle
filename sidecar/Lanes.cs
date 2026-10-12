@@ -197,7 +197,7 @@ namespace Mantle {
     //            200+ under load (measured 2026-09-22), too slow for ui, and a
     //            dragged slider must not queue behind an icon load
     static readonly Dictionary<string, string> _laneOf = new Dictionary<string, string>(StringComparer.Ordinal) {
-      { "backdrop", Capture }, { "underrow", Capture }, { "underwatch", Capture },
+      { "backdrop", Capture }, { "underrow", Capture }, { "underwatch", Capture }, { "underpaint", Capture }, { "underhint", Capture }, { "winproc", Capture },
       { "icon", Slow }, { "lnk", Slow }, { "app", Slow }, { "pins", Slow }, { "launch", Slow },
       // Tray.cs reads explorer's toolbar with cross-process SendMessage, and
       // may grow a UI Automation fallback: both are slow and thread-agnostic.
