@@ -234,7 +234,7 @@ namespace Mantle {
           nowQ = Q();
           if (hr == WAIT_TIMEOUT) {
             if (pending && Ms(nowQ - lastPushQ) >= GapMs(nowQ, motionFromQ, minMs, busyMs, sustainMs)) {
-              if (Push(n, pendingQ, nowQ)) lastPushQ = nowQ;
+              Push(n, pendingQ, nowQ); lastPushQ = nowQ;   // a read back spaces the next one, pushed or not (a protected video: black every frame)
               pending = false;
             }
             if (lastHitQ != 0 && Ms(nowQ - lastHitQ) > 200) motionFromQ = 0;   // the row went still
@@ -276,7 +276,7 @@ namespace Mantle {
           lastHitQ = nowQ;
           int gap = _last == null ? 0 : GapMs(nowQ, motionFromQ, minMs, busyMs, sustainMs);
           if (Ms(nowQ - lastPushQ) >= gap) {
-            if (Push(n, presentQ, nowQ)) lastPushQ = nowQ;
+            Push(n, presentQ, nowQ); lastPushQ = nowQ;
             pending = false;
           } else {
             pending = true;
