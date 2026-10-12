@@ -41,8 +41,28 @@
 
   function L(c) { return GA.lum(c[0], c[1], c[2]); }
   function mix(c, s, a) { return [c[0] + (s[0] - c[0]) * a, c[1] + (s[1] - c[1]) * a, c[2] + (s[2] - c[2]) * a]; }
-  /* the smallest pull a (0..1) toward scrim s at which every ink reads `need` on c; 1 when none does */
+  /* MEMO (lane mantle-topbar-instant): the same colour asks the same question every frame (a window's
+     top row is mostly a few colours), so each answer is kept per (inks, scrim) list, keyed by the colour.
+     The page builds its ink lists once per strip render, so the lists are the same objects frame to frame. */
+  var MEMO_MAX = 4096;
+  var memoOf = typeof WeakMap === 'function' ? new WeakMap() : null;
   function needAlpha(c, inks, s, need) {
+    if (!memoOf || !inks || !s || typeof inks !== 'object' || typeof s !== 'object') return needAlphaRaw(c, inks, s, need);
+    var byS = memoOf.get(inks);
+    if (!byS) { byS = new WeakMap(); memoOf.set(inks, byS); }
+    var m = byS.get(s);
+    if (!m) { m = new Map(); byS.set(s, m); }
+    var key = (need || NEED) + ':' + c[0] + ',' + c[1] + ',' + c[2];
+    var v = m.get(key);
+    if (v === undefined) {
+      if (m.size >= MEMO_MAX) m.clear();
+      v = needAlphaRaw(c, inks, s, need);
+      m.set(key, v);
+    }
+    return v;
+  }
+  /* the smallest pull a (0..1) toward scrim s at which every ink reads `need` on c; 1 when none does */
+  function needAlphaRaw(c, inks, s, need) {
     var nd = need || NEED, il = [];
     for (var k = 0; k < inks.length; k++) il.push(L(inks[k]));
     function ok(step) {
@@ -141,8 +161,9 @@
 
   /* the canvas pixels for a plan: n x ROWS RGBA (Uint8ClampedArray). Rows 0..BLEND_FROM-1 the text band,
      then a straight run to the exact colour, the last row exactly it. Alpha = the cover. */
-  function paint(pl, rows) {
-    var H = rows || ROWS, n = pl.n, data = new Uint8ClampedArray(n * H * 4), from = Math.min(BLEND_FROM, H - 1);
+  function paint(pl, rows, out) {
+    var H = rows || ROWS, n = pl.n, from = Math.min(BLEND_FROM, H - 1);
+    var data = out && out.length === n * H * 4 ? out : new Uint8ClampedArray(n * H * 4);
     for (var y = 0; y < H; y++) {
       var t = y < from ? 0 : (y - from + 1) / (H - from);
       for (var c = 0; c < n; c++) {
@@ -181,5 +202,5 @@
   }
 
   return { NEED: NEED, HYST: HYST, ROWS: ROWS, BLEND_FROM: BLEND_FROM, DILATE: DILATE, SMOOTH: SMOOTH,
-    needAlpha: needAlpha, side: side, minRatio: minRatio, mix: mix, plan: plan, paint: paint, check: check, underMenu: underMenu };
+    needAlpha: needAlpha, needAlphaRaw: needAlphaRaw, side: side, minRatio: minRatio, mix: mix, plan: plan, paint: paint, check: check, underMenu: underMenu };
 }));

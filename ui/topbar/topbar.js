@@ -890,7 +890,7 @@
      coming back unmounts it at once. Light: never mounted, nothing runs. */
   const UND = window.TopbarUnder;
   const US = { on: false, n: 0, cols: null, cover: null, plan: null, prev: { items: {}, cols: [] }, why: null, failure: false,
-    frames: 0, painted: 0, tok: null, lastNote: null, sig: null, readAt: 0, lags: [] };
+    frames: 0, painted: 0, tok: null, lastNote: null, readAt: 0, lags: [], frameLags: [], items: null, els: null, img: null, last: null };
   window.__topbarUnder = US;   // read-only for the --test harness; US.apply(payload) drives the page like main does
   let underEl = null, underCv = null;
   function underMount() {
@@ -928,38 +928,61 @@
     for (const el of underEls()) el.classList.toggle('ink-dk', US.on && US.prev.items[underKey(el)] === 'dark');
   }
   function underInkClear() { for (const el of underEls()) el.classList.remove('ink-dk'); }
-  function underPlan() {
-    const T = underTokens();
-    if (!T) return { why: 'the top bar\'s ink tokens did not load' };
+  /* THE ITEMS, measured once per strip render (lane mantle-topbar-instant): a frame of new colours moves no
+     word, so the rects (and the ink lists, which the plan's memo keys on) are kept until the strip
+     re-renders, the window resizes or the theme changes. No forced layout per frame. */
+  function underItems(T) {
+    if (US.items && US.itemsW === barEl.clientWidth) return;
     underInkPrev();
     const b = barEl.getBoundingClientRect();
-    const items = [];
-    const els = [];
+    const items = [], els = [];
+    const hiL = T.light.concat([T.warnL]), hiD = T.dark.concat([T.warnD]);
     for (const el of underEls()) {
       const r = el.getBoundingClientRect();
       if (!(r.width > 0)) continue;
       const hi = el.classList.contains('hi') || el.classList.contains('bad');   // words in warn ink (a high ping, a failed notes save)
-      items.push({ key: underKey(el), x0: r.left - b.left, x1: r.right - b.left, light: hi ? T.light.concat([T.warnL]) : T.light, dark: hi ? T.dark.concat([T.warnD]) : T.dark });
+      items.push({ key: underKey(el), x0: r.left - b.left, x1: r.right - b.left, light: hi ? hiL : T.light, dark: hi ? hiD : T.dark });
       els.push(el);
     }
-    const pl = UND.plan({ cols: US.cols, cover: US.cover, n: US.n, width: b.width || barEl.clientWidth, items,
+    US.items = items; US.els = els; US.itemsW = barEl.clientWidth; US.barW = b.width || barEl.clientWidth;
+  }
+  function underPlan() {
+    const T = underTokens();
+    if (!T) return { why: 'the top bar\'s ink tokens did not load' };
+    underItems(T);
+    const els = US.els;
+    const pl = UND.plan({ cols: US.cols, cover: US.cover, n: US.n, width: US.barW, items: US.items,
       gap: { light: T.light, dark: T.dark }, scrim: { light: T.scrimL, dark: T.scrimD }, prev: US.prev });
     US.prev = pl.prev;
     US.plan = pl;
-    for (let i = 0; i < els.length; i++) els[i].classList.toggle('ink-dk', pl.items[i].ink === 'dark');
+    for (let i = 0; i < els.length; i++) { const dk = pl.items[i].ink === 'dark'; if (els[i].classList.contains('ink-dk') !== dk) els[i].classList.toggle('ink-dk', dk); }
     return { pl };
   }
-  const underSig = (pl) => pl.top.map((c) => c.map(Math.round).join(',')).join(';') + '|' + pl.alpha.join(',') + '|' + pl.base.map((c) => c.join(',')).join(';');
+  /* The frame goes into ONE reused n x ROWS ImageData (no allocation per frame), and is put only when its
+     pixels differ from the last frame's (a byte compare, no string signature). */
+  const wallNow = () => performance.timeOrigin + performance.now();
   function underPaint(pl) {
-    const sig = underSig(pl);
-    if (sig === US.sig) return;   // the same pixels: nothing to put
-    US.sig = sig;
+    if (!US.img || US.img.width !== pl.n) { US.img = new ImageData(pl.n, UND.ROWS); US.last = null; }
+    const data = UND.paint(pl, UND.ROWS, US.img.data);
+    if (US.last && US.last.length === data.length && underCv.width === pl.n && underCv.classList.contains('on')) {
+      let same = true;
+      for (let i = 0; i < data.length; i++) if (data[i] !== US.last[i]) { same = false; break; }
+      if (same) { US.readAt = 0; return; }   // the same pixels: nothing to put
+    }
+    if (!US.last || US.last.length !== data.length) US.last = new Uint8ClampedArray(data.length);
+    US.last.set(data);
     if (underCv.width !== pl.n) underCv.width = pl.n;   // (a new width clears it; the put below fills it)
-    underCv.getContext('2d').putImageData(new ImageData(UND.paint(pl, UND.ROWS), pl.n, UND.ROWS), 0, 0);
+    underCv.getContext('2d').putImageData(US.img, 0, 0);
     underCv.classList.add('on');
     US.painted++;
-    // read -> painted, for topbar.status and the latency measure: main stamps each push with its read's start
-    if (US.readAt) { US.lags.push(Date.now() - US.readAt); if (US.lags.length > 50) US.lags.shift(); US.readAt = 0; }
+    // the latency measure (topbar.status): main stamps each push with when its pixels were taken (a pushed
+    // frame: when Windows presented it); lags = to the put, frameLags = to the page's next frame
+    if (US.readAt) {
+      const at = US.readAt;
+      US.readAt = 0;
+      US.lags.push(Math.round((wallNow() - at) * 10) / 10); if (US.lags.length > 50) US.lags.shift();
+      requestAnimationFrame(() => { US.frameLags.push(Math.round((wallNow() - at) * 10) / 10); if (US.frameLags.length > 200) US.frameLags.shift(); });
+    }
   }
   function underDraw() {
     if (!US.on || !isDark() || !US.cols) return;
@@ -975,7 +998,7 @@
     if (failure && why && why !== US.lastNote) setNote('Top bar colour: ' + why);
     US.lastNote = failure ? why : null;
     US.on = false; US.why = why || null; US.failure = !!failure;
-    US.plan = null; US.cols = null; US.cover = null; US.sig = null;
+    US.plan = null; US.cols = null; US.cover = null; US.last = null;
     underInkClear();
     underUnmount();   // today's glass, at once
   }
@@ -996,11 +1019,14 @@
   mantle.on('topbar.under', setUnder);
   // the strip re-rendered (the stats every second, the menus on a focus change): same colours, new items
   function underRendered() {
-    if (!window.__topbarUnder || !US.on || !US.cols) return;
+    if (!window.__topbarUnder) return;   // (called before US exists, during the first render)
+    US.items = null;   // new items (or new widths): measure them again
+    if (!US.on || !US.cols) return;
     underDraw();
   }
+  window.addEventListener('resize', () => { US.items = null; });
   window.addEventListener('mantle-theme', () => {
-    US.tok = null;
+    US.tok = null; US.items = null;
     if (!isDark()) { if (underEl || US.on) underOff(null, false); return; }
     if (US.on) underDraw();
   });

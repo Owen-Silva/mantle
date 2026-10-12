@@ -111,7 +111,7 @@ namespace Mantle {
       "ping", "windows", "foreground", "focus", "minimize", "close", "toggle",
       "taskbar", "appbar", "traywatch", "edgeclip", "tbhide", "hittest", "raise",
       "glass", "corners", "place", "morph", "region",
-      "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop", "underrow",
+      "workarea", "desktop", "hotkey", "keys", "volume", "icon", "lnk", "backdrop", "underrow", "underwatch",
       "app", "pins", "launch", "wifi", "bluetooth", "brightness", "nightlight", "power", "battery",
       "wlan", "audio", "btdevices", "volwatch", "net", "qswatch",
       "tray", "trayClick", "media", "notifications", "search", "session", "sleep", "quit"
@@ -951,6 +951,11 @@ namespace Mantle {
           result = Json.Obj("ok", true, "cols", ucols, "n", un, "ms", Math.Round(ums, 2));
           return null;
         }
+
+        case "underwatch":
+          // Read-only too (passive runs it): the same row, pushed on the frame it changes (UnderDup.cs,
+          // DXGI Desktop Duplication). {on, x, y, w, n, minMs, busyMs, sustainMs} -> its state.
+          return UnderDup.Cmd(req, ref result);
 
         case "backdrop": {
           // Read-only: it BitBlts out of the screen DC and changes nothing, so
