@@ -183,7 +183,8 @@
         const opts = Array.isArray(o.options) ? o.options : [];
         const seg = o.style ? o.style === 'segmented' : opts.length <= 4 && opts.every((x) => String(x.label).length <= 14);
         const box = seg ? h('div', { class: 'seg', role: 'radiogroup', 'aria-label': o.label || null }) : h('select', { 'aria-label': o.label || null });
-        const r = base(o, box, 'choice');
+        // a dropdown sits in .selwrap like every other <select> in Settings: its ::after is the chevron
+        const r = base(o, seg ? box : h('span', { class: 'selwrap' }, box), 'choice');
         const draw = () => {
           const list = Array.isArray(r.o.options) ? r.o.options : [];
           box.replaceChildren(...list.map((x) => (seg ? h('button', { type: 'button', role: 'radio', 'data-v': String(x.value) }, x.label) : h('option', { value: String(x.value) }, x.label))));
