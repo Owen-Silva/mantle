@@ -1,0 +1,42 @@
+/* ---- App counts on the bar (lane badge, 2026-10-09; wired in by lane mn-helmbadge, 2026-10-12) --------
+ * The number disc on an app's icon (ui/bar/helmbadge.js; first user Helm: chats waiting on Owen + chats
+ * stopped on an error he has not opened): macOS's dock badge. Top-right of the cell, over the icon's
+ * corner, clear of the running line. Accent = only waiting; warn = at least one error. Text is
+ * --lg-acc-on on both (light: white on #4436E8 7.2:1, on #8A4B00 ~6.6:1; dark: #11161c on the steel blue
+ * --lg-acc / the amber --lg-warn). A hairline of the bar's own fill keeps the disc crisp over any icon
+ * colour (the same ring as ontop.js's pin badge). Colour ONLY through --lg-* tokens, so it is right in
+ * both themes. Hidden at 0 (the element is removed). */
+.hb-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--lg-acc);
+  color: var(--lg-acc-on);
+  box-shadow: 0 0 0 1.5px var(--lg-fill-strong);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+.hb-badge.wide { padding: 0 4px; }
+.hb-badge.warn { background: var(--lg-warn); }
+
+/* An app with both a count and a window kept on top: the count keeps the top-right corner, the pin
+   badge (ui/bar/jumplist.css .ontop-badge) moves to the top-left. */
+.cell.hb-on .ontop-badge { right: auto; left: 3px; }
+
+/* "+N" carries the sum of the counts behind it (the disc needs a positioned box to sit in). */
+.dmore { position: relative; }
+
+/* A tile in the "+N" panel: the disc on its icon's corner. */
+.ovf-app .hb-wrap { position: relative; display: block; line-height: 0; }
+.ovf-app .hb-wrap .hb-badge { top: -5px; right: -7px; }

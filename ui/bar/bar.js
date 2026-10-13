@@ -704,6 +704,9 @@
       }
     }
     paintInd(b, wins);
+    /* The app's count (Helm: chats that need you; ui/bar/helmbadge.js). BEFORE ontop.js: the count line
+       goes into b._tip, and ontop.js writes b._tip + its own line. */
+    if (window.MantleBadges) MantleBadges.paint(b, it);
     if (window.MantleOnTop) MantleOnTop.paint(b, wins);   // the "kept on top" pin badge (ui/bar/ontop.js)
   }
 
@@ -988,6 +991,7 @@
     if (ovfBtn.textContent !== label) ovfBtn.textContent = label;
     var tip = hidden + (hidden === 1 ? ' more app' : ' more apps') + ' that do not fit';
     if (ovfBtn.title !== tip) { ovfBtn.title = tip; ovfBtn.setAttribute('aria-label', tip); }
+    if (window.MantleBadges) MantleBadges.paintMore(ovfBtn);   // the counts of the apps behind it
     if (!hidden && popKey === 'ovf') closePop();
     /* An open panel is rebuilt only when what it lists changed: layoutDock runs on every render,
        and a rebuild each time would also re-ask main for the panel's room. */
@@ -1639,6 +1643,7 @@
     var nm = document.createElement('span'); nm.className = 'ovf-name'; nm.textContent = name;
     var ind = document.createElement('span'); ind.className = 'ind';
     t.appendChild(ico); t.appendChild(nm); t.appendChild(ind);
+    if (window.MantleBadges) MantleBadges.paintTile(t, b);   // its count, as on the strip
     t.addEventListener('click', function () {
       closePop();
       act('bar.open', { id: b.dataset.id }, 'open').then(function (r) {
