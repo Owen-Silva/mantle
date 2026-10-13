@@ -2771,9 +2771,12 @@ const launcherGate = surfaceGate.createGate({
   // rather than a flat tint that pops a quarter of a second later. A close meanwhile wins (the gate).
   // Hidden: wait for the picture at most LAUNCHER_PICTURE_WAIT_MS (lane mn-speed: a slow capture must
   // not hold the Win key for seconds), then open on the flat tint (launcherFirstPicture). Up: as before.
+  // A hidden launcher is centred on the main display AS IT IS NOW first (lane mn-display: after a
+  // resolution or scale change it opened where the old display's centre was), so the first picture
+  // is of what is behind it where it opens.
   prepare: () => (!launcherAlive() ? null
     : launcherWin.isVisible() ? launcherBackdrop.once('the launcher is opening')
-      : new Promise((resolve) => launcherFirstPicture(launcherWin, resolve))),
+      : (launcherRecentre('the launcher is opening'), new Promise((resolve) => launcherFirstPicture(launcherWin, resolve)))),
   reveal: ({ again }) => {
     if (!launcherAlive()) throw new Error('there is no launcher window');
     const wasVisible = launcherWin.isVisible();
@@ -2859,6 +2862,17 @@ function showLauncher(from) { return launcherAlive() ? launcherGate.open(from ||
 function hideLauncher(why) { stopLauncherKbWatch(); return launcherAlive() ? launcherGate.close(why || 'hide') : { closed: false, was: 'hidden' }; }
 /** The Win tap, the Start button and Alt+Space: the same key closes it, like Spotlight / Raycast. */
 function toggleLauncher(from) { return launcherAlive() ? launcherGate.toggle(from || 'toggle') : Promise.resolve(NO_LAUNCHER); }
+/** Centre the launcher on the main display as it is now (lib/display-fit.js recentre). Never throws. */
+function launcherRecentre(why) {
+  try {
+    const r = require('./lib/display-fit').recentre(launcherWin, screen, 'the launcher');
+    if (r.moved || !r.rect) process.stdout.write(`mantle: launcher: ${r.reason} (${why})\n`);
+    return r;
+  } catch (err) {
+    process.stdout.write(`mantle: launcher: it could not be centred on the main display (${why}): ${err.message}\n`);
+    return { moved: false, rect: null, reason: err.message };
+  }
+}
 // </mainrel:launcher>
 
 /** The volume pop-up down now, if it is up (a bar popover is opening where it would cover it). Never throws. */
@@ -6552,6 +6566,26 @@ function makeBurst(run, o) {
 // </mainrel:burst>
 
 /*
+ * THE DESKTOP LAYER FOLLOWS THE DISPLAY (lane mn-display, 2026-10-12). It was sized once, from the
+ * display Mantle started on; a resolution change left it at the old size. Each display burst sizes
+ * it to the main display through the sidecar (physical px, mapped into the window it is a child of)
+ * BEFORE the picture is retaken, and a layer held hidden on its way under the icons is sized when
+ * it gets there, before it is shown (attachDesktop). Never shown from here. lib/display-fit.js.
+ */
+const desktopFit = require('./lib/display-fit').makeDesktopFit({
+  win: () => desktopWin,
+  held: (w) => desktopHeld(w),
+  test: () => !!flags.test,
+  paused: () => !!shellPaused,
+  hwndOf,
+  sidecar,
+  screen,
+  page: (w) => w.webContents.executeJavaScript('({ w: innerWidth, h: innerHeight, dpr: devicePixelRatio })', true),
+  log: (t) => process.stdout.write(`mantle: desktop layer: ${t}\n`),
+  setState: (p) => state.set('desktop', p),
+});
+
+/*
  * THE FIRST PING, ASKED AGAIN (the shell-unset item; lane mn-wake, 2026-10-12). One slow answer right
  * after the sidecar starts (a loaded logon) came back from protocolAge() as current:false, which
  * applyLive read as "the exe is too old": the taskbar, the Win key and the desktop layer stayed
@@ -6830,6 +6864,9 @@ async function attachDesktop() {
         : `the desktop layer is under the wallpaper (${mode || 'mode not reported'})`,
     });
     armDesktopRecheck(mode);
+    // A display change while it was held hidden: sized now that it is under the icons and BEFORE it
+    // is shown, so it is never seen at the old size (lib/display-fit.js; nothing to do otherwise).
+    if (desktopFit.pending()) await desktopFit.afterAttach().catch(() => {});
     showDesktopWhenReady(win);   // a layer made again waits hidden for this (makeDesktopWindow holdShow)
     return { ok: true, mode };
   } catch (err) {
@@ -8796,9 +8833,12 @@ app.whenReady().then(() => {
   // times: the first runs at once, the rest become one run when the burst is over (makeBurst).
   const displayBurst = makeBurst((why) => {
     if (rePlaceBar) rePlaceBar(why);
-    // The desktop layer's picture is the wallpaper, which a resolution or scale
-    // change reflows. It is a still, so this is the only thing that redates it.
-    reshootDesktopBackdrop(why).catch(() => {});
+    // The desktop layer is sized to the main display first (lane mn-display), THEN its picture --
+    // the wallpaper, which a resolution change reflows -- is retaken at the new size. The picture
+    // is a still, so this is the only thing that redates it.
+    desktopFit.run(why).catch(() => {}).then(() => reshootDesktopBackdrop(why)).catch(() => {});
+    // a launcher that is up while the display changes is centred on it again (a hidden one is on its next open)
+    if (launcherAlive() && launcherWin.isVisible()) launcherRecentre(why);
     // the shared top-band darkening is worked out for the primary monitor's size (lib/look-desktop.js)
     if (lookDesktop) lookDesktop.check(why);
   }, { quietMs: 400, setTimeout, clearTimeout });
