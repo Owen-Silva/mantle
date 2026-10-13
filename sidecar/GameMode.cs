@@ -72,7 +72,7 @@ namespace Mantle {
     static readonly Guid EnergySaverAtSetting = new Guid("e69653ca-cf7f-4f05-aa73-cb833fa90ad4");   // ESBATTTHRESHOLD
 
     public static void Register(FeatureTable t) {
-      t.Add("gamemode.scan", Lanes.Slow, Scan);       // foreground + game verdict [+ the process list]
+      t.Add("gamemode.scan", Lanes.Scan, Scan);       // foreground + game verdict [+ the process list]: its own lane (Lanes.cs)
       t.Add("gamemode.apply", Lanes.Slow, Apply);     // EcoQoS / priority on background processes (and back)
       t.Add("gamemode.power", Lanes.Qs, Power);       // the power mode for ONE named source
       t.Add("gamemode.saver", Lanes.Qs, Saver);       // Energy saver's "turn on at" level (opt-in)

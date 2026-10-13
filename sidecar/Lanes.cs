@@ -160,6 +160,9 @@ namespace Mantle {
         _busyCmd = r.Cmd;
         try { _exec(r); } catch (Exception) { /* Execute answers every error itself */ }
         _busyCmd = null;
+        int behind;
+        lock (_lock) behind = _queue.Count;
+        Lanes.NoteHeld(Name, r.Cmd, Lanes.MsSince(_busySinceTs), behind);
       }
     }
 
@@ -173,7 +176,7 @@ namespace Mantle {
   }
 
   static class Lanes {
-    public const string Ui = "ui", Capture = "capture", Slow = "slow", Audio = "audio", Qs = "qs", Focus = "focus";
+    public const string Ui = "ui", Capture = "capture", Slow = "slow", Audio = "audio", Qs = "qs", Focus = "focus", Scan = "scan";
 
     // ============================================================ THE REGISTRY
     //
@@ -236,6 +239,27 @@ namespace Mantle {
       { "wifi", "on" }, { "bluetooth", "on" }, { "brightness", "level" }, { "nightlight", "on" },
     };
 
+    /// A LANE HELD LONG (lane mn-speed, 2026-10-12). The live log showed callers timing out behind a
+    /// busy lane (gamemode.scan behind the slow lane, foreground/place shed on ui) but never WHICH
+    /// command held it. One log line when a single command keeps its lane past HeldLogMs: the lane,
+    /// the command NAME (never its arguments: no paths, titles or names) and how many waited behind
+    /// it. At most one line per lane per HeldLogEveryMs; the ones in between are counted in the next.
+    public const long HeldLogMs = 1500, HeldLogEveryMs = 10000;
+    static readonly Dictionary<string, long[]> _held = new Dictionary<string, long[]>(StringComparer.Ordinal);   // lane -> {last log ts, skipped}
+    public static void NoteHeld(string lane, string cmd, long ms, int behind) {
+      if (ms < HeldLogMs) return;   // (the test-only sleep counts too: that is how the harness proves this line)
+      long now = Stopwatch.GetTimestamp();
+      long skipped;
+      lock (_held) {
+        long[] h;
+        if (!_held.TryGetValue(lane, out h)) { h = new long[] { 0, 0 }; _held[lane] = h; }
+        if (h[0] != 0 && (now - h[0]) * 1000 / Stopwatch.Frequency < HeldLogEveryMs) { h[1]++; return; }
+        skipped = h[1]; h[0] = now; h[1] = 0;
+      }
+      Program.EmitLog("warn", "the " + lane + " lane was held " + ms + " ms by \"" + cmd + "\" (" + behind + " request(s) waiting behind it)" +
+                               (skipped > 0 ? "; " + skipped + " more like it in the last " + (HeldLogEveryMs / 1000) + " s" : ""));
+    }
+
     /// For a command added at run time rather than in the table above.
     public static void Register(string cmd, string lane) {
       lock (_laneOf) _laneOf[cmd] = lane;
@@ -271,6 +295,12 @@ namespace Mantle {
       // MTA: no COM here, only user32 calls on other processes' windows. AboveNormal: a click
       // on the bar is waiting for it.
       _workers[Focus] = new Lane(Focus, exec, ApartmentState.MTA, ThreadPriority.AboveNormal);
+      // The game checks (gamemode.scan: the window in front + one process-list read, 3-8 ms) on their
+      // own lane since 2026-10-12 (lane mn-speed). On slow they waited behind icon loads, tray reads and
+      // launches: 132 timeouts and 22 late answers in the live log over two weeks, ~10-23 a day, while
+      // their own work took a few ms; a hot corner (1.5 s budget) and the top bar's game-start check (3 s)
+      // then gave up. STA like slow, where they ran until now; AboveNormal: a corner is waiting.
+      _workers[Scan] = new Lane(Scan, exec, ApartmentState.STA, ThreadPriority.AboveNormal);
     }
 
     /// The worker for a lane name, or null for ui (the message loop).
@@ -289,7 +319,7 @@ namespace Mantle {
         // Test-only (passive only, see Program): lets the harness park a
         // chosen lane and prove the others still answer.
         string l = Json.GetString(req, "lane");
-        return l == Ui || l == Capture || l == Audio || l == Qs || l == Focus ? l : Slow;
+        return l == Ui || l == Capture || l == Audio || l == Qs || l == Focus || l == Scan ? l : Slow;
       }
       string arg;
       if (_switchArg.TryGetValue(cmd, out arg)) return Json.HasKey(req, arg) ? Qs : Ui;
@@ -383,7 +413,7 @@ namespace Mantle {
       var lanes = new List<object>();
       lanes.Add(Json.Obj("name", Ui, "queued", Thread.VolatileRead(ref UiQueued), "busy", busy,
                          "busyMs", busy == null ? (object)null : (object)MsSince(UiBusySinceTs)));
-      foreach (string name in new string[] { Capture, Slow, Audio, Qs, Focus }) {
+      foreach (string name in new string[] { Capture, Slow, Audio, Qs, Focus, Scan }) {
         Lane w = Worker(name);
         if (w != null) lanes.Add(w.Snapshot());
       }

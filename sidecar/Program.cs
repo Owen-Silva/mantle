@@ -634,7 +634,10 @@ namespace Mantle {
       try {
         ExecuteCore(r);
       } finally {
-        if (onUi) Lanes.UiBusyCmd = null;
+        if (onUi) {
+          Lanes.UiBusyCmd = null;
+          Lanes.NoteHeld(Lanes.Ui, r.Cmd, Lanes.MsSince(Lanes.UiBusySinceTs), Thread.VolatileRead(ref Lanes.UiQueued));
+        }
       }
     }
 

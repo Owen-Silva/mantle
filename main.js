@@ -2505,6 +2505,43 @@ const launcherBackdrop = makeBackdrop({
   wall: true,                         // dark: the wallpaper under the launcher, one cut per show (lane helm-wall)
 });
 
+// <mainrel:launcherwait> (lib/launcher-wait.test.js runs this region with a fake window and backdrop)
+/*
+ * THE LAUNCHER NEVER WAITS LONG FOR ITS PICTURE (lane mn-speed, 2026-10-12). showLauncher takes the
+ * first backdrop frame while the window is still hidden, then shows it. That shot rides the sidecar's
+ * capture lane with a 4 s limit, and when the lane was busy (the top bar's colour reads share it) the Win
+ * key showed nothing for the whole wait: 2424 ms median with the lane held 2.5 s, against 27 ms
+ * normally (C:\Users\user\mantle-notes\speed.md, launcherStall). Past LAUNCHER_PICTURE_WAIT_MS the
+ * launcher opens on its flat tint, says so in State, and the picture lands when it comes. That late shot
+ * was asked for UNPROTECTED (the window was hidden then), so the launcher is excluded from capture until
+ * it lands, on the same per-window count the protected shots use (captureBackdrop), or the shot could
+ * photograph the launcher itself.
+ */
+const LAUNCHER_PICTURE_WAIT_MS = 150;   // the first frame normally takes 20-64 ms (live log, 2026-10)
+function launcherFirstPicture(win, show) {
+  const COUNT = Symbol.for('mantle.protectedCaptures');
+  let opened = false, held = false;
+  const open = () => { if (opened) return; opened = true; show(); };
+  const late = setTimeout(() => {
+    if (opened || !win || win.isDestroyed()) return;
+    try { win[COUNT] = (win[COUNT] || 0) + 1; win.setContentProtection(true); held = true; } catch (_) { /* it opens either way */ }
+    setBackdropPiece('launcher', { ok: true, reason: `the launcher opened on its flat tint: its picture was not back after ${LAUNCHER_PICTURE_WAIT_MS} ms (the sidecar's capture lane is busy); it fills in when the picture lands` });
+    process.stdout.write(`mantle: launcher: opened without waiting for its picture (not back after ${LAUNCHER_PICTURE_WAIT_MS} ms)\n`);
+    open();
+  }, LAUNCHER_PICTURE_WAIT_MS);
+  const settle = () => {
+    clearTimeout(late);
+    if (held && !win.isDestroyed()) {
+      const left = Math.max(0, (win[COUNT] || 1) - 1);
+      win[COUNT] = left;
+      if (!left) { try { win.setContentProtection(false); } catch (_) { /* the loop's own shots set it again */ } }
+    }
+    open();
+  };
+  launcherBackdrop.once('the launcher is opening').then(settle, settle);
+}
+// </mainrel:launcherwait>
+
 /*
  * The desktop layer: ONE shot, no loop, no protection.
  *
@@ -2683,7 +2720,11 @@ const launcherGate = surfaceGate.createGate({
   // The FIRST frame is captured while the window is still hidden -- no content protection needed,
   // and nothing to photograph itself -- so the launcher's frost is real on the frame it appears in
   // rather than a flat tint that pops a quarter of a second later. A close meanwhile wins (the gate).
-  prepare: () => (launcherAlive() ? launcherBackdrop.once('the launcher is opening') : null),
+  // Hidden: wait for the picture at most LAUNCHER_PICTURE_WAIT_MS (lane mn-speed: a slow capture must
+  // not hold the Win key for seconds), then open on the flat tint (launcherFirstPicture). Up: as before.
+  prepare: () => (!launcherAlive() ? null
+    : launcherWin.isVisible() ? launcherBackdrop.once('the launcher is opening')
+      : new Promise((resolve) => launcherFirstPicture(launcherWin, resolve))),
   reveal: ({ again }) => {
     if (!launcherAlive()) throw new Error('there is no launcher window');
     const wasVisible = launcherWin.isVisible();
