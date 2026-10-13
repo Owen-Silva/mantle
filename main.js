@@ -1196,7 +1196,7 @@ let lastProblemLine = null;
 
 state.on('change', (snapshot) => {
   broadcast('state', snapshot);
-  updateTray();
+  requestTray();   // batched: at most one rebuild per 250 ms, none when the menu's inputs did not move
   // The terminal's copy of the desktop layer's "needs attention" strip. The
   // strip is what Owen reads; this is what whoever started Mantle from a shell
   // reads, and it is the only way to see the state when the desktop window is
@@ -7999,7 +7999,29 @@ function trayFeatureItems() {
   }
   return out;
 }
-function updateTray() {
+/*
+ * The tray menu is rebuilt in batches (lane mn-state, 2026-10-12; lib/tray-batch.js says why): a State
+ * change only asks, and the menu is rebuilt at most once per 250 ms, and only when what it shows moved.
+ * trayInputKey is that "what it shows": State pieces by identity (lib/state.js keeps an unchanged piece
+ * the same object), the problem list's words, and the few inputs that live outside State. Everything
+ * else calls updateTray(), which rebuilds at once.
+ */
+var trayBatch = null;   // var, not const: a State change can ask before this line has run
+function trayInputKey() {
+  const st = state.get();
+  return [st.features, st.switcher, st.shortcuts, JSON.stringify(state.problems()), shellPaused, recoveryNote,
+    sidecar.status, !!sidecar.gaveUp, typeof COMMANDS['settings.open'] === 'function', features ? features.size : 0];
+}
+function trayBatcher() {
+  if (!trayBatch) {
+    trayBatch = require('./lib/tray-batch').createTrayBatch({ ms: 250, key: trayInputKey, run: updateTrayNow,
+      onError: (err, where) => process.stderr.write(`mantle: the tray menu ${where === 'key' ? 'inputs could not be read' : 'could not be rebuilt'}: ${err && err.message}\n`) });
+  }
+  return trayBatch;
+}
+function requestTray() { trayBatcher().request(); }
+function updateTray() { trayBatcher().force(); }
+function updateTrayNow() {
   if (!tray || tray.isDestroyed()) return;
   const st = state.get();
   const o = {
