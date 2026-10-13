@@ -568,8 +568,15 @@ namespace Mantle {
 
     public static bool Tracking { get { return _fgHook != IntPtr.Zero; } }
 
+    /// The hook thread's id, set here because StartTracking runs on it (Hotkey.ThreadMain), so
+    /// switcher.lab can post to the real thing. 0 while there is no hook.
+    static volatile int _hookTid;
+    public static int HookTid { get { return _hookTid; } }
+
     /// On the hook thread (its message loop delivers the callbacks).
     public static void StartTracking() {
+      _hookTid = Win32.GetCurrentThreadId();
+      SwitchRunner.Start();     // once, at install: a commit never starts a thread on this one
       if (_fgHook != IntPtr.Zero) return;
       _fgProc = OnForeground;
       _fgHook = Win32.SetWinEventHook(KeysNative.EVENT_SYSTEM_FOREGROUND, KeysNative.EVENT_SYSTEM_FOREGROUND,
@@ -582,6 +589,7 @@ namespace Mantle {
     }
 
     public static void StopTracking() {
+      _hookTid = 0;
       try { if (_fgHook != IntPtr.Zero) Win32.UnhookWinEvent(_fgHook); } catch (Exception) { }
       _fgHook = IntPtr.Zero;
       _fgProc = null;
@@ -618,14 +626,16 @@ namespace Mantle {
           if (Win32.GetWindow(hwnd, Win32.GW_OWNER) != IntPtr.Zero) return true;
           long ex = Win32.GetWindowLongPtr(hwnd, Win32.GWL_EXSTYLE).ToInt64();
           if ((ex & Win32.WS_EX_TOOLWINDOW) != 0) return true;
+          // Our own windows go BEFORE the title is read: for a window of this process GetWindowText
+          // SENDS WM_GETTEXT to the thread that owns it and waits, and this runs on the hook thread.
+          int pid;
+          Win32.GetWindowThreadProcessId(hwnd, out pid);
+          if (pid == ownPid) return true;
           string title = Win32.GetWindowText(hwnd);
           if (title.Length == 0) return true;
           string cls = Win32.GetClassName(hwnd);
           if (SkipClasses.Contains(cls)) return true;
           if (Win32.IsCloaked(hwnd)) return true;
-          int pid;
-          Win32.GetWindowThreadProcessId(hwnd, out pid);
-          if (pid == ownPid) return true;
           if (parentPid > 0 && pid == parentPid && !IsMantleApp(cls, title)) return true;
           if (cls == "Chrome_WidgetWin_1" && MantleTitles.Contains(title.Trim())) return true;
           var it = new Item();
@@ -693,7 +703,35 @@ namespace Mantle {
             Close("Mantle's Alt+Tab was turned off while it was open");
           break;
         case KeysNative.WM_TIMER: OnWatch(); break;
+        case MSG_LAB_PING: SwitchLab.Pong(lp.ToInt32()); break;
+        case MSG_LAB_COMMIT: LabCommit(lp, wp.ToInt32()); break;
       }
+    }
+
+    // switcher.lab (AltTabLive.cs, tests only): clear of Hotkey's 0x8000+21..28.
+    public const uint MSG_LAB_PING = 0x8000 + 31;     // lParam = ping number: answered at once
+    public const uint MSG_LAB_COMMIT = 0x8000 + 32;   // lParam = the window, wParam = the test delay in ms
+
+    /// A one-tile session on the window the lab names, committed through the SAME Commit an
+    /// Alt-up runs, with the lab's test-only ladder delay; the time Commit kept this thread is
+    /// what the lab reports as the hook thread's block. Refused while a real Alt+Tab is open.
+    static void LabCommit(IntPtr hwnd, int delayMs) {
+      if (_items != null || Hotkey.Machine.Active) {
+        SwitchLab.Refused("an Alt+Tab is open on the hook thread, so the lab did not commit");
+        return;
+      }
+      _seq++;
+      var it = new Item();
+      it.Hwnd = hwnd;
+      it.Title = Win32.IsWindow(hwnd) ? Win32.GetWindowText(hwnd) : "";
+      _items = new List<Item>();
+      _items.Add(it);
+      _sel = 0;
+      _fgRoot = RootOf(Win32.GetForegroundWindow());
+      SwitchLab.Began(_seq);
+      long t0 = Stopwatch.GetTimestamp();
+      Commit("lab", delayMs);
+      SwitchLab.CommitTook(Stopwatch.GetTimestamp() - t0);
     }
 
     static void OnKey(int ev, int arg) {
@@ -781,7 +819,10 @@ namespace Mantle {
       d["work"] = new object[] { mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom };
     }
 
-    static void Commit(string via) {
+    static void Commit(string via) { Commit(via, 0); }
+
+    /// `labDelayMs` is 0 on every real road; only switcher.lab sets it (a deliberately slow ladder).
+    static void Commit(string via, int labDelayMs) {
       KillWatch();
       _live.End();
       if (_items == null) return;
@@ -802,10 +843,8 @@ namespace Mantle {
         return;
       }
       long ts = _commitTs;
-      var t = new Thread(delegate () { Activate(seq, target, title, via, ts); });
-      t.IsBackground = true;
-      t.Name = "mantle-switch";
-      t.Start();
+      // Handed over, never run or started here: see SwitchRunner.
+      SwitchRunner.Post(delegate () { Activate(seq, target, title, via, ts, labDelayMs); });
     }
 
     static void Close(string why) {
@@ -896,9 +935,11 @@ namespace Mantle {
     // `cause` is for the notice's plain sentence, `err` for the log and the notice's small print:
     // "closed" (gone before the switch), "hung" (Windows reports it not responding and would not
     // bring it forward), "refused" (Windows kept another window in front), "error" (this threw).
-    static void Activate(int seq, IntPtr hwnd, string title, string via, long commitTs) {
+    static void Activate(int seq, IntPtr hwnd, string title, string via, long commitTs, int labDelayMs) {
       string how = null, err = null, cause = null;
       try {
+        if (labDelayMs > 0) Thread.Sleep(labDelayMs);     // switcher.lab only: a ladder this slow
+
         if (!Win32.IsWindow(hwnd)) {
           err = "the window closed before Mantle could switch to it";
           cause = "closed";
@@ -940,6 +981,7 @@ namespace Mantle {
                        "title", title, "via", via, "ok", ok, "how", how, "ms", ms);
       if (!ok) { d["reason"] = err; d["cause"] = cause ?? "error"; }
       KeyEvents.Enqueue(d);
+      SwitchLab.Activated(seq, d);
     }
 
     // ------------------------------------------------------------ test forms
@@ -1065,6 +1107,87 @@ namespace Mantle {
       result = Json.Obj("steps", steps, "active", m.Active, "altHeld", m.AltHeld,
                         "committed", committed == -2 ? (object)null : committed);
       return null;
+    }
+  }
+
+  /// THE SWITCH, OFF THE HOOK THREAD (lane mn-althread, 2026-10-12). Every keystroke on the desktop
+  /// waits for the hook thread to pump, and the switch can take a second (the focus ladder's
+  /// bounded waits are 800 ms each, then a 150 ms landing wait and the Alt nudge), so the hook
+  /// thread only hands a commit over: a lock, a queue, a pulse. It does not even start a thread:
+  /// Thread.Start waits until the new thread has actually run, and that wait is the scheduler's
+  /// to give under load (0.2-0.3 ms idle, measured; more with every core busy). A warm runner
+  /// takes the job at once. If every runner is still inside an earlier switch, the SPAWNER (not
+  /// the hook thread) starts one more, so a second Alt+Tab never waits behind a first one stuck
+  /// on a hung window - as when each commit had a thread of its own. Extra runners leave after
+  /// IdleMs with nothing to do; one always stays. Order is arrival order: one queue.
+  static class SwitchRunner {
+    const int IdleMs = 30000;
+    static readonly object _gate = new object();
+    static readonly Queue<ThreadStart> _jobs = new Queue<ThreadStart>();
+    static int _idle, _starting, _runners;      // under _gate
+    static Thread _spawner;
+
+    public static int Runners { get { lock (_gate) return _runners; } }
+
+    /// Once: Switcher.StartTracking (the hook thread, at install), or Post's fallback.
+    public static void Start() {
+      Thread t;
+      lock (_gate) {
+        if (_spawner != null) return;
+        t = _spawner = new Thread(SpawnLoop);
+      }
+      t.IsBackground = true;
+      t.Name = "mantle-switch-spawner";
+      t.Start();
+    }
+
+    /// On the hook thread. Nothing here waits on anything but an uncontended lock.
+    public static void Post(ThreadStart job) {
+      bool unstarted;
+      lock (_gate) {
+        _jobs.Enqueue(job);
+        Monitor.PulseAll(_gate);
+        unstarted = _spawner == null;
+      }
+      // Only if StartTracking never ran (switcher.lab's passive stand-in): start it from the pool,
+      // which queues and returns, never from here.
+      if (unstarted) ThreadPool.UnsafeQueueUserWorkItem(delegate (object o) { Start(); }, null);
+    }
+
+    static void SpawnLoop() {
+      while (true) {
+        lock (_gate) {
+          // A warm runner from the start, and one more whenever jobs outnumber the runners free to take them.
+          while (!(_runners + _starting == 0 || _jobs.Count > _idle + _starting)) Monitor.Wait(_gate);
+          _starting++;
+        }
+        try {
+          var t = new Thread(RunLoop);
+          t.IsBackground = true;
+          t.Name = "mantle-switch";
+          t.Start();
+        } catch (Exception) {
+          lock (_gate) _starting--;
+          Thread.Sleep(100);       // out of threads: the queued switch waits for a runner instead
+        }
+      }
+    }
+
+    static void RunLoop() {
+      bool first = true;
+      while (true) {
+        ThreadStart job;
+        lock (_gate) {
+          if (first) { _starting--; _runners++; first = false; }
+          _idle++;
+          while (_jobs.Count == 0) {
+            if (!Monitor.Wait(_gate, IdleMs) && _jobs.Count == 0 && _runners > 1) { _idle--; _runners--; return; }
+          }
+          _idle--;
+          job = _jobs.Dequeue();
+        }
+        try { job(); } catch (Exception) { }      // Activate catches its own; this is the backstop
+      }
     }
   }
 
