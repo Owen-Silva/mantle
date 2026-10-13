@@ -109,6 +109,35 @@
     return finish(small, n, fit);
   }
 
+  /**
+   * The layout for a list that CHANGED while the switcher is up (lane mn-alttab, 2026-10-12): the
+   * tiles keep the size and the column count they opened with, so a window that comes or goes
+   * fills or empties a slot and the panel only grows or loses rows; its width changes only when a
+   * single row gets shorter or longer than it was, or when the old grid would no longer fit the
+   * screen (then it is a fresh layout(), as at open). n = 0 is the empty panel.
+   */
+  function reflow(n, workW, workH, prev) {
+    n = Math.max(0, Math.floor(Number(n) || 0));
+    if (!prev || !(prev.cols > 0) || !(prev.tileW > 0) || n === 0) return layout(n, workW, workH);
+    workW = Number(workW) > 0 ? Number(workW) : 1280;
+    workH = Number(workH) > 0 ? Number(workH) : 720;
+    var availW = workW * L.maxW - 2 * L.margin;
+    var availH = workH * L.maxH - 2 * L.margin;
+    var t = tileOf(prev.tileW);
+    var cols = Math.min(n, prev.cols);
+    var rows = Math.ceil(n / cols);
+    t.cols = cols;
+    t.rows = rows;
+    t.gridW = cols * t.tileW + (cols - 1) * L.gap;
+    t.gridH = rows * t.tileH + (rows - 1) * L.gap;
+    if (2 * L.pad + t.gridW > availW) return layout(n, workW, workH);
+    if (2 * L.pad + t.gridH <= availH) return finish(t, n, rows);
+    // Too tall at this tile size: a grid that already scrolled keeps scrolling by whole rows;
+    // one that did not starts over, exactly as a fresh Alt+Tab would lay it out.
+    if (!prev.scroll) return layout(n, workW, workH);
+    return finish(t, n, Math.max(1, Math.floor((availH - 2 * L.pad + L.gap) / (t.tileH + L.gap))));
+  }
+
   /** The notice panel's window size, DIP. */
   function notice() {
     return { panelW: L.noticeW, panelH: L.noticeH, margin: L.margin, w: L.noticeW + 2 * L.margin, h: L.noticeH + 2 * L.margin };
@@ -127,5 +156,5 @@
     return first;
   }
 
-  return { layout: layout, notice: notice, firstRow: firstRow, L: L };
+  return { layout: layout, reflow: reflow, notice: notice, firstRow: firstRow, L: L };
 }));

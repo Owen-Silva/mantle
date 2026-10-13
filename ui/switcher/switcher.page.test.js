@@ -240,6 +240,150 @@ async function run(p) {
   check('notice: a click on it dismisses it', (await calls(p, 'switcher.dismiss')).length === 1);
   await p.evaluate(() => window.__emit('switcher.notice.end', { id: 5, why: 'clicked' }));
   check('notice: gone at its end', !(await p.evaluate(() => document.body.classList.contains('noting'))));
+
+  await liveList(p);
+}
+
+/* -- THE LIVE LIST (lane mn-alttab, 2026-10-12): windows open and close while the switcher is up ---
+   main sends 'switcher.windows' exactly as lib/switcher.js onReflow does: the sidecar's merged list,
+   Layout.reflow's geometry, the window's own size (never smaller than at open). */
+async function liveList(p) {
+  const W = 1920;
+  const H = 1040;
+  const L = Lay.L;
+  // Windows' own "Animation effects" setting reaches Chromium as prefers-reduced-motion; the motion
+  // is checked with it off here, and with it on at the end (no animation at all then).
+  await p.emulateMedia({ reducedMotion: 'no-preference' });
+  let list = Array.from({ length: 9 }, (_, i) => win(10 + i));
+  const lay0 = await session(p, list, { seq: 7, sel: 1 });
+  let lay = lay0;
+  let winSz = { w: lay0.w, h: lay0.h };
+  // a real backdrop, so pinning and fading it can be seen (a 4x4 grey PNG made on the page)
+  await p.evaluate(() => {
+    const c = document.createElement('canvas'); c.width = 4; c.height = 4;
+    const g = c.getContext('2d'); g.fillStyle = '#777'; g.fillRect(0, 0, 4, 4);
+    window.__emit('switcher.backdrop', { seq: 7, png: c.toDataURL('image/png'), w: 4, h: 4, shown: false });
+  });
+  await p.waitForTimeout(150);
+  check('live: the backdrop is on before anything changes', await p.evaluate(() => document.getElementById('bdrop').classList.contains('on')));
+  await p.evaluate(() => { [...document.querySelectorAll('.tile')].forEach((t, i) => { t.__born = 'open-' + i; }); });
+  const panelBox = () => p.evaluate(() => { const r = document.getElementById('panel').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+  const tilesNow = () => p.evaluate(() => [...document.querySelectorAll('.tile')].map((t) => ({ hwnd: t.dataset.hwnd, born: t.__born || null, i: Number(t.dataset.i), sel: t.classList.contains('is-sel'), aria: t.getAttribute('aria-selected'), isNew: t.classList.contains('is-new'), anim: getComputedStyle(t).animationName, dur: getComputedStyle(t).animationDuration, ttl: t.querySelector('.ttl').textContent, chip: (t.querySelector('.chip') || {}).textContent || null })));
+  const reflow = async (next, sel, o) => {
+    const opt = o || {};
+    lay = Lay.reflow(next.length, W, H, lay);
+    let grew = false;
+    if (lay.w > winSz.w + 0.5 || lay.h > winSz.h + 0.5) {
+      grew = true;
+      winSz = { w: Math.max(winSz.w, lay.w), h: Math.max(winSz.h, lay.h) };
+      await p.setViewportSize({ width: Math.round(winSz.w), height: Math.round(winSz.h) });
+      await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    }
+    await clearCalls(p);
+    list = next;
+    await p.evaluate((a) => window.__emit('switcher.windows', a), { seq: opt.seq || 7, sel, current: 0, list: next, lay, win: winSz, grew, added: 0, removed: 0 });
+    await p.waitForTimeout(opt.wait || 120);
+    return grew;
+  };
+  const w0 = await panelBox();
+  check('live: 9 windows open in 5 + 4 (the layout this test builds on)', lay0.cols === 5 && lay0.rows === 2, JSON.stringify({ cols: lay0.cols, rows: lay0.rows }));
+
+  // 1. a window opens: in place, the others are the SAME elements, the selection stays on its window
+  const fresh = win(40, { title: 'Just opened' });
+  await reflow([...list.slice(0, 3), fresh, ...list.slice(3)], 1);
+  let t = await tilesNow();
+  check('live open: one more tile, in the merged order', t.length === 10 && t.map((x) => x.hwnd).join() === list.map((x) => x.hwnd).join(), t.map((x) => x.hwnd).join());
+  check('live open: every tile that was there is the same element (re-rendered in place, no rebuild)', t.filter((x) => x.hwnd !== fresh.hwnd).every((x) => x.born && x.born.startsWith('open-')), JSON.stringify(t.map((x) => x.born)));
+  check('live open: the new tile fades in on the UI motion token (tile-in, --lg-dur-ui-slow)', t[3].isNew && t[3].anim === 'tile-in' && (t[3].dur === '0.2s' || t[3].dur === '0.13s') && !t[3].born, JSON.stringify(t[3]));
+  check('live open: no other tile animates', t.filter((x, i) => i !== 3).every((x) => x.anim === 'none' || !x.isNew));
+  check('live open: the selection stays on the same window', t[1].sel && t[1].aria === 'true' && t.filter((x) => x.sel).length === 1);
+  check('live open: indexes follow the new order (a click is the right tile)', t.every((x, i) => x.i === i));
+  let w1 = await panelBox();
+  check('live open: no width jump (5 columns kept, the 10th fills the empty slot)', Math.abs(w1.w - w0.w) < 0.5 && Math.abs(w1.x - w0.x) < 0.5 && Math.abs(w1.h - w0.h) < 0.5, JSON.stringify({ w0, w1 }));
+  let rep = await calls(p, 'switcher.painted');
+  check('live open: the page reports the new boxes once (previews follow)', rep.length === 1 && rep[0].why === 'reflow' && rep[0].boxes.length === 10 && rep[0].boxes[3].hwnd === fresh.hwnd, JSON.stringify(rep.map((r) => [r.why, r.boxes && r.boxes.length])));
+  check('live open: ...for the window size main has', rep[0] && Math.abs(rep[0].vw - winSz.w) <= 1 && Math.abs(rep[0].vh - winSz.h) <= 1);
+  await p.screenshot({ path: path.join(OUT, 'page-06-live-open.png') });
+
+  // 2. the SELECTED window closes: the sidecar moved the selection to the neighbour (same index)
+  const goneHwnd = list[1].hwnd;
+  const nb = list[2].hwnd;
+  await reflow(list.filter((x) => x.hwnd !== goneHwnd), 1);
+  t = await tilesNow();
+  check('live close: the closed window\'s tile is gone', t.length === 9 && !t.some((x) => x.hwnd === goneHwnd));
+  check('live close: the selection is on the neighbour that slid into its place', t[1].hwnd === nb && t[1].sel);
+  check('live close: the rest are still the same elements', t.filter((x) => x.hwnd !== fresh.hwnd).every((x) => x.born));
+  w1 = await panelBox();
+  check('live close: no width jump', Math.abs(w1.w - w0.w) < 0.5 && Math.abs(w1.x - w0.x) < 0.5);
+
+  // 3. a minimise and a rename: in place, the chip and the caption follow
+  const renamed = list.map((x, i) => (i === 4 ? Object.assign({}, x, { title: 'Renamed window', minimized: true }) : x));
+  await reflow(renamed, 1);
+  t = await tilesNow();
+  check('live update: the caption follows a rename, on the same element', t[4].ttl === 'Renamed window' && !!t[4].born, JSON.stringify(t[4]));
+  check('live update: a minimised window gets its chip', t[4].chip === 'Minimized');
+  await reflow(list.map((x, i) => (i === 4 ? Object.assign({}, x, { minimized: false }) : x)), 1);
+  t = await tilesNow();
+  check('live update: ...and loses it when restored', t[4].chip === null);
+
+  // 4. down to one row: the panel loses a row and glides; its width and centre stay
+  await reflow(list.slice(0, 5), 1);
+  t = await tilesNow();
+  w1 = await panelBox();
+  const glide = await p.evaluate(() => ({ live: document.body.classList.contains('is-live'), tp: getComputedStyle(document.getElementById('panel')).transitionProperty, td: getComputedStyle(document.getElementById('panel')).transitionDuration }));
+  check('live shrink: 5 tiles, one row', t.length === 5 && lay.rows === 1);
+  check('live shrink: the panel loses its row by gliding (height, --lg-dur-ui-slow)', glide.live && /height/.test(glide.tp) && /^0.(2|13)s$/.test(glide.td), JSON.stringify(glide));
+  await p.waitForTimeout(260);
+  w1 = await panelBox();
+  check('live shrink: same width, same centre, same top; only the height changed', Math.abs(w1.w - w0.w) < 0.5 && Math.abs(w1.x - w0.x) < 0.5 && Math.abs(w1.y - w0.y) < 0.5 && w1.h < w0.h - 50, JSON.stringify({ w0, w1 }));
+  const vw = await p.evaluate(() => window.innerWidth);
+  check('live shrink: the window did not shrink (main never shrinks it mid-session)', Math.abs(vw - winSz.w) <= 1);
+
+  // 5. a single row gets shorter: narrower, still centred; the backdrop stays where it was taken
+  await reflow(list.slice(0, 3), 0);
+  w1 = await panelBox();
+  check('live narrow: the single row is narrower and stays centred in the window', w1.w < w0.w - 100 && Math.abs((w1.x + w1.w / 2) - vw / 2) < 0.6, JSON.stringify({ w1, vw }));
+  const bc = await p.evaluate(() => { const c = document.getElementById('backdrop').getBoundingClientRect(); return { x: c.left, y: c.top, w: c.width, h: c.height, on: document.getElementById('bdrop').classList.contains('on') }; });
+  check('live narrow: the backdrop picture is pinned where it was taken, not stretched', bc.on && Math.abs(bc.x - (L.margin - 14)) < 0.6 && Math.abs(bc.y - (L.margin - 14)) < 0.6 && Math.abs(bc.w - (lay0.panelW + 28)) < 0.6, JSON.stringify(bc));
+  check('live narrow: the selection is where main says', (await selIndex(p)) === 0);
+
+  // 6. a stale update (another Alt+Tab's) changes nothing
+  const before = (await tilesNow()).map((x) => x.hwnd).join();
+  await p.evaluate((a) => window.__emit('switcher.windows', a), { seq: 6, sel: 0, current: 0, list: [win(90)], lay: Lay.layout(1, W, H), win: winSz, grew: false });
+  await p.waitForTimeout(60);
+  check('live: an update for another Alt+Tab is ignored', (await tilesNow()).map((x) => x.hwnd).join() === before);
+
+  // 7. a click after the list changed carries its window, so main can route it right
+  await clearCalls(p);
+  await p.click('.tile[data-i="2"]');
+  await p.waitForTimeout(60);
+  const pk = await calls(p, 'switcher.pick');
+  check('live click: switcher.pick carries the tile\'s window as well as its index', pk.length === 1 && pk[0].index === 2 && pk[0].hwnd === list[2].hwnd, JSON.stringify(pk));
+
+  // 8. the window must grow (3 columns kept, 9 windows = 3 rows): the backdrop fades out, and says so
+  const more = [...list, ...Array.from({ length: 6 }, (_, i) => win(60 + i))];
+  const grew = await reflow(more, 0, { wait: 260 });
+  const g = await p.evaluate(() => ({ on: document.getElementById('bdrop').classList.contains('on'), bare: document.body.classList.contains('no-backdrop'), foot: document.getElementById('foot').textContent, n: document.querySelectorAll('.tile').length }));
+  check('live grow: the window had to grow for 3 rows', grew && lay.rows === 3 && lay.cols === 3, JSON.stringify({ grew, rows: lay.rows, cols: lay.cols }));
+  check('live grow: the backdrop it no longer covers fades out to the plain pane, and the foot says so', !g.on && g.bare && /No background blur/.test(g.foot) && g.n === 9, JSON.stringify(g));
+  rep = await calls(p, 'switcher.painted');
+  check('live grow: the report is for the grown window', rep.length >= 1 && rep.every((r) => Math.abs(r.vw - winSz.w) <= 1 && Math.abs(r.vh - winSz.h) <= 1), JSON.stringify(rep.map((r) => [r.vw, r.vh])));
+  await noJargon(p, 'live list');
+  await p.screenshot({ path: path.join(OUT, 'page-07-live-grown.png') });
+
+  // 9. everything closes, then one opens: the empty panel, then a selected tile
+  await reflow([], -1);
+  const empty = await p.evaluate(() => ({ e: document.body.classList.contains('is-empty'), n: document.querySelectorAll('.tile').length }));
+  check('live empty: every window closed shows the empty panel', empty.e && empty.n === 0, JSON.stringify(empty));
+  await reflow([win(70)], 0);
+  t = await tilesNow();
+  check('live empty: a window opening then is a selected tile', t.length === 1 && t[0].sel && !(await p.evaluate(() => document.body.classList.contains('is-empty'))));
+  await p.emulateMedia({ reducedMotion: 'reduce' });
+  await reflow([win(70), win(71)], 0);
+  t = await tilesNow();
+  check('live, reduced motion: a new tile just appears (no animation)', t.length === 2 && t[1].isNew && t[1].anim === 'none', JSON.stringify(t[1] && { anim: t[1].anim }));
+  await p.emulateMedia({ reducedMotion: null });
+  await p.evaluate(() => window.__emit('switcher.end', { seq: 7, why: 'x' }));
 }
 
 (async () => {

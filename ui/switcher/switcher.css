@@ -75,7 +75,8 @@ html, body {
 
 .panel {
   position: absolute;
-  left: var(--m);
+  /* --pl: centred across a window a live list made wider than the panel (switcher.js setGeometry) */
+  left: var(--pl, var(--m));
   top: var(--m);
   width: var(--pw);
   height: var(--ph);
@@ -163,10 +164,12 @@ body.snap .bdrop, body.snap .panel::after { transition: none; }
    than the whole stretched layer under a CSS filter whenever it is drawn. */
 .bdrop canvas {
   position: absolute;
-  left: -14px;
-  top: -14px;
-  width: calc(100% + 28px);
-  height: calc(100% + 28px);
+  /* --bc*: pinned where the picture was taken once the list changes under it (switcher.js
+     pinBackdrop), so a panel that loses a row or a column never stretches the desktop behind it */
+  left: var(--bcx, -14px);
+  top: var(--bcy, -14px);
+  width: var(--bcw, calc(100% + 28px));
+  height: var(--bch, calc(100% + 28px));
   display: block;
   transform: translateZ(0);
 }
@@ -205,6 +208,19 @@ body.snap .bdrop, body.snap .panel::after { transition: none; }
    is no :focus-visible here; the selection ring IS the keyboard's focus) */
 .tile:active { background: var(--lg-press); }
 @media (prefers-reduced-motion: reduce) { .tile { transition: none; } }
+
+/* THE LIVE LIST (lane mn-alttab, 2026-10-12): a window that opens while the switcher is up fades in
+   on Helm's UI curve; a panel that loses a row glides up (body.is-live, set only for a shrink: a
+   growing one snaps, since a DWM preview in the new row cannot be clipped by a panel still growing). */
+/* dark has Helm's UI motion tokens; light has only the bar's, so it takes the tile ring's own (half of --lg-dur-out) */
+.tile.is-new { animation: tile-in var(--lg-dur-ui-slow, calc(var(--lg-dur-out) / 2)) var(--lg-ease-ui, var(--lg-ease)) both; }
+/* opacity ONLY: a scaled tile would be measured scaled (report), and its preview registered too small */
+@keyframes tile-in { from { opacity: 0; } }
+body.is-live .panel { transition: height var(--lg-dur-ui-slow, calc(var(--lg-dur-out) / 2)) var(--lg-ease-ui, var(--lg-ease)); }
+@media (prefers-reduced-motion: reduce) {
+  .tile.is-new { animation: none; }
+  body.is-live .panel { transition: none; }
+}
 .tile.is-sel {
   background: var(--lg-hover);
   box-shadow: inset 0 0 0 2px var(--lg-acc);
