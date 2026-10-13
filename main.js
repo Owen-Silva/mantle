@@ -652,6 +652,12 @@ const sidecar = new Sidecar({
   passive: flags.test,
   cwd: ROOT,
   stateFile: STATE_FILE,
+  // The liveness check's timing (lib/sidecar.js: a ping every 15 s, 3 s limit, 3 misses). A --test run
+  // may shorten it (MANTLE_TEST_SIDECAR_HEALTH=ms,limitMs,misses) so a frozen-helper test is quick.
+  ...(() => {
+    const t = flags.test && /^(\d+),(\d+),(\d+)$/.exec(process.env.MANTLE_TEST_SIDECAR_HEALTH || '');
+    return t ? { healthMs: Number(t[1]), healthTimeoutMs: Number(t[2]), healthMisses: Number(t[3]) } : {};
+  })(),
 });
 
 /**
@@ -998,7 +1004,82 @@ function getLook() {
     if (e.varsChanged) broadcast('theme', themePayload(getTheme().get()));
     broadcast('look', e.view);
   });
+  if (lookHost.sync && typeof lookHost.sync.on === 'function') {
+    lookHost.sync.on('status', lookFallbackSaid);
+    if (typeof lookHost.sync.status === 'function') lookFallbackSaid(lookHost.sync.status());
+  }
   return lookHost;
+}
+
+/*
+ * A FALLBACK LOOK IS NEVER SILENT (lane mn-recover, 2026-10-12, from mn-looksync). When sync is on but
+ * the shared look cannot be used as it is (the file was damaged and reset, is from a newer version, or
+ * cannot be read), the look changes or stops following with no word outside Settings. Its reason is shown ONCE in a toast,
+ * the same pop-up page the keep-on-top shortcut uses (ui/ontop); the same failure is not said again
+ * until the shared look has been fine in between. Never in front of Owen in a --test run (the page
+ * still draws, so a test can read it). The log names the state only: the reason can hold a path.
+ */
+let lookToastSaid = null;    // the fallback state last shown (cleared by an ok)
+let lookToastWin = null;
+let lookToastTimer = null;
+function lookFallbackSaid(s) {
+  if (!s || typeof s !== 'object') return;
+  if (s.state === 'ok') { lookToastSaid = null; return; }
+  if (s.state !== 'corrupt' && s.state !== 'newer' && s.state !== 'error') return;
+  if (lookHost && lookHost.sync && lookHost.sync.enabled === false) return;   // sync off: Mantle's own look is the choice
+  // Once per state until an ok: 'error' repeats while lib/look-sync.js retries, each time with a new delay.
+  if (s.state === lookToastSaid) return;
+  lookToastSaid = s.state;
+  // corrupt: lib/look-sync.js moved the damaged file aside and wrote Mantle's look in its place;
+  // newer: another app's newer version wrote it, so Mantle only reads; error: it cannot be read at all.
+  const text = s.state === 'corrupt' ? 'The shared look was reset' : s.state === 'newer' ? 'Look sync is read-only' : 'Look sync cannot reach the shared look';
+  process.stdout.write(`mantle: look sync: the shared look is ${s.state}; a pop-up says why\n`);
+  lookToastShow({ text, reason: s.reason || 'the shared look cannot be used, and no reason was given', tone: 'warn', did: 'failed' });
+}
+
+function lookToastShow(payload) {
+  if (!app.isReady()) { app.whenReady().then(() => lookToastShow(payload)); return; }
+  const W = 360 + 36, H = 44 + 36;   // the ontop pop-up's own size (lib/features/ontop.js, MARGIN 18)
+  try {
+    if (!lookToastWin || lookToastWin.isDestroyed()) {
+      lookToastWin = new BrowserWindow({
+        show: false, frame: false, transparent: true, skipTaskbar: true, hasShadow: false, focusable: false,
+        resizable: false, movable: false, minimizable: false, maximizable: false, alwaysOnTop: true,
+        width: W, height: H, x: -32000, y: -32000,
+        webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false },
+      });
+      lookToastWin.setAlwaysOnTop(true, 'screen-saver');
+      lookToastWin.setIgnoreMouseEvents(true);
+      const lw = lookToastWin;
+      lw.webContents.on('will-navigate', (e) => e.preventDefault());
+      lw.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      lw.webContents.on('render-process-gone', (_e, d) => {
+        process.stdout.write(`mantle: look sync: the pop-up page crashed (${d && d.reason}); the reason is still in Settings\n`);
+        if (lookToastWin === lw) lookToastWin = null;
+        try { lw.destroy(); } catch (_) { /* gone */ }
+      });
+      lw.loadFile(path.join(ROOT, 'ui', 'ontop', 'index.html'));
+    }
+    const w = lookToastWin;
+    const wa = screen.getPrimaryDisplay().workArea;
+    w.setBounds({ x: Math.round(wa.x + (wa.width - W) / 2), y: Math.round(wa.y + wa.height - H - 8), width: W, height: H });
+    const send = () => { if (!w.isDestroyed()) w.webContents.send('mantle:event', { name: 'ontop.toast', payload: Object.assign({ hint: '', below: false }, payload) }); };
+    if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
+    if (!flags.test) {
+      w.showInactive();
+      raiseWin.up(w, { what: 'the look sync pop-up', log: (line) => process.stdout.write(`mantle: ${line}\n`), wanted: () => lookToastWin === w && !w.isDestroyed() && w.isVisible() });
+      if (w.isVisible()) process.stdout.write('mantle: look sync: the pop-up is shown\n');
+    }
+    clearTimeout(lookToastTimer);
+    lookToastTimer = setTimeout(() => {
+      lookToastTimer = null;
+      if (lookToastWin && !lookToastWin.isDestroyed()) lookToastWin.destroy();
+      lookToastWin = null;
+    }, flags.test ? 30000 : 9000);   // a --test run keeps the page a while so a test can read it
+    if (lookToastTimer.unref) lookToastTimer.unref();
+  } catch (err) {
+    process.stdout.write(`mantle: look sync: the pop-up could not show (${err && err.message}); the reason is still in Settings\n`);
+  }
 }
 /**
  * The desktop wallpaper's publisher (lib/look-desktop.js): after lib/wallpaper.js has started. Runs with
@@ -4196,15 +4277,20 @@ function sidecarNext(event, ms) {
 }
 
 // Armed on EVERY sidecar start: a restarted sidecar has forgotten its watches.
+// A failed arm is tried again (watchArmer, below): one timeout used to freeze the glyph until the next restart.
 sidecar.on('ready', () => {
-  sidecar.call('volwatch', { on: true }, 4000).then((r) => {
-    if (r && r.ok === false) process.stdout.write(`mantle: volume watch: ${r.reason || 'refused without a reason'}\n`);
+  armWatch('volume', () => sidecar.call('volwatch', { on: true }, 4000).then((r) => {
+    if (r && r.ok === false) return r.reason || 'refused without a reason';
+    return null;
   }, (err) => {
-    process.stdout.write(`mantle: volume watch not armed (${Sidecar.isOldExeError(err) ? 'the sidecar exe has no volwatch yet, run npm run build:sidecar' : err.message}); the glyph updates when the panel opens\n`);
-  });
-  sidecar.call('net', { op: 'watch', on: true, fast: qsWatching }, 4000).then(null, (err) => {
+    if (!Sidecar.isOldExeError(err)) return err.message;
+    process.stdout.write('mantle: volume watch not armed (the sidecar exe has no volwatch yet, run npm run build:sidecar); the glyph updates when the panel opens\n');
+    return { final: true };
+  }));
+  armWatch('network', () => sidecar.call('net', { op: 'watch', on: true, fast: qsWatching }, 4000).then(() => null, (err) => {
     netPush(netFailure(err, 'the network readout is not being watched'), 'the watch could not be armed');
-  });
+    return Sidecar.isOldExeError(err) ? { final: true } : err.message;
+  }));
   if (qsWatching) qsLease('the sidecar restarted while the panel was open');
   // The first open of the panel should find a whole picture: the sidecar's own start-up read
   // (QuickSettings.WarmUp) lands at +1.5 s.
@@ -4586,14 +4672,17 @@ function mediaPollArm(payload) {
 
 // Armed on EVERY sidecar start: a restarted sidecar has forgotten the watch.
 sidecar.on('ready', () => {
-  sidecar.call('media', { op: 'watch', on: true }).then((r) => {
+  armWatch('media', () => sidecar.call('media', { op: 'watch', on: true }).then((r) => {
+    // A refusal is the sidecar's own verdict (no media API here) and the poll covers it: not retried.
     if (r && r.ok === false) process.stdout.write(`mantle: media watch: ${r.reason || 'refused without a reason'}; the bar polls instead\n`);
     mediaPush('the sidecar is ready');
+    return null;
   }, (err) => {
     // The old exe has no media command: say so once in the log; the payload carries it to the bar.
-    process.stdout.write(`mantle: media watch not armed: ${err.message}\n`);
+    if (Sidecar.isOldExeError(err)) process.stdout.write(`mantle: media watch not armed: ${err.message}\n`);
     mediaPush('the sidecar is ready (no media watch)');
-  });
+    return Sidecar.isOldExeError(err) ? { final: true } : err.message;
+  }));
 });
 
 sidecar.on('media', (ev) => {
@@ -4661,9 +4750,10 @@ async function batteryLatest() {
 
 // Armed on EVERY sidecar start: a restarted sidecar has forgotten the watch.
 sidecar.on('ready', () => {
-  sidecar.call('battery', { watch: true }, 4000).then((r) => {
+  armWatch('battery', () => sidecar.call('battery', { watch: true }, 4000).then((r) => {
     if (r && r.watchReason) process.stdout.write(`mantle: battery watch: ${r.watchReason}\n`);
     batteryPush(r, 'the sidecar is ready');
+    return null;
   }, (err) => {
     batteryPush({
       ok: false,
@@ -4671,7 +4761,8 @@ sidecar.on('ready', () => {
         ? 'the battery cannot be read: the sidecar exe has no "battery" command yet, so run npm run build:sidecar'
         : `the battery watch could not start: ${err.message}`,
     }, 'the watch could not be armed');
-  });
+    return Sidecar.isOldExeError(err) ? { final: true } : err.message;
+  }));
 });
 
 sidecar.on('battery', (ev) => {
@@ -4693,6 +4784,146 @@ sidecar.on('battery', (ev) => {
 sidecar.on('status', ({ status, reason }) => {
   if (status !== 'down' || !lastBattery || lastBattery.ok === false || lastBattery.present === false) return;
   batteryPush({ ok: false, present: lastBattery.present, reason: `the battery is not being read: ${reason}` }, 'the sidecar is down');
+});
+
+/*
+ * SELF-HEALING READOUTS (lane mn-recover, 2026-10-12; audit #10). A real OS re-reads its state after
+ * any gap. Three gaps used to leave the speaker, network and battery glyphs, the media chip and the
+ * window list on old values with no reason shown:
+ *   - an arm that failed once (a timeout on a busy start) was never tried again. makeWatchArmer re-runs
+ *     it at 2, 5, 15 and 60 s, then stops and says so; every new sidecar process starts it over;
+ *   - a wake or an unlock re-read nothing from the sidecar. Now every watch is armed again (each arm is
+ *     idempotent in the sidecar: VolumeWatch.Set answers started:false when it already runs) and every
+ *     readout is read again, 3 s after (devices are still coming back) and once more 20 s after;
+ *   - a restarted sidecar (a crash, or lib/sidecar.js's liveness check ending a frozen one) was trusted
+ *     to push everything anew. Now the same re-read runs 2.5 s after its ready line.
+ * While the sidecar is down the speaker glyph and the media chip say so (network and battery already did).
+ */
+// <mainrel:rearm> (lib/main-recover.test.js runs this region with a fake clock)
+function makeWatchArmer(o) {
+  const watches = new Map();   // name -> { arm, tries, timer, run }
+  // arm() resolves null (armed), { final: true } (this exe can never do it: the arm said why), or a
+  // reason to try again. A throw or a rejection is a reason too.
+  function attempt(name, w, run) {
+    let p;
+    try { p = Promise.resolve(w.arm()); } catch (e) { p = Promise.reject(e); }
+    return p.then((res) => res, (e) => (e && e.message) || String(e)).then((res) => {
+      if (w.run !== run) return 'stale';           // armed again since (a new sidecar, a wake): that run decides
+      if (res === null || res === undefined || res === true) {
+        if (w.tries) o.say(`mantle: the ${name} watch is armed (it took ${w.tries + 1} tries)\n`);
+        w.tries = 0;
+        return 'armed';
+      }
+      if (typeof res === 'object' && res.final) { w.tries = 0; return 'final'; }
+      const why = typeof res === 'string' && res ? res : 'it did not say why';
+      if (o.blocked()) { w.tries = 0; return 'blocked'; }   // down or quitting: the next ready arms it again
+      if (w.tries >= o.delays.length) {
+        o.say(`mantle: the ${name} watch could not be armed after ${w.tries + 1} tries (${why}); it is tried again when the sidecar restarts or the PC wakes\n`);
+        w.tries = 0;
+        return 'gave-up';
+      }
+      const delay = o.delays[w.tries];
+      w.tries += 1;
+      o.say(`mantle: the ${name} watch did not arm (${why}); trying again in ${Math.round(delay / 1000)} s (retry ${w.tries} of ${o.delays.length})\n`);
+      w.timer = o.later(() => { w.timer = null; if (w.run === run) attempt(name, w, run); }, delay);
+      return 'retry';
+    });
+  }
+  const api = {
+    /** (Re)start one watch with a fresh ladder; a retry still waiting from an older start is dropped. */
+    arm(name, fn) {
+      let w = watches.get(name);
+      if (!w) { w = { arm: fn, tries: 0, timer: null, run: 0 }; watches.set(name, w); }
+      if (typeof fn === 'function') w.arm = fn;
+      if (w.timer) { o.cancel(w.timer); w.timer = null; }
+      w.tries = 0;
+      w.run += 1;
+      return attempt(name, w, w.run);
+    },
+    /** Every watch armed so far, again (a wake, an unlock). */
+    rearmAll() { return Promise.all([...watches.keys()].map((n) => api.arm(n))); },
+    /** The watches waiting for a retry: [{ name, tries }]. */
+    pending() { return [...watches].filter(([, w]) => w.timer).map(([name, w]) => ({ name, tries: w.tries })); },
+  };
+  return api;
+}
+
+/* When to re-read after a gap: one schedule for wakes, unlocks and sidecar restarts. A burst (resume
+ * and unlock arrive together) is one schedule: a new gap restarts it, so it runs at `delays` after
+ * the LAST trigger. */
+function makeGapRereader(o) {
+  let timers = [];
+  let whys = [];
+  return {
+    gap(why) {
+      for (const t of timers) o.cancel(t);
+      if (!whys.includes(why)) whys.push(why);
+      const said = whys.join(' and ');
+      timers = o.delays.map((ms, i) => o.later(() => {
+        if (i === o.delays.length - 1) { timers = []; whys = []; }
+        o.reread(i === 0 ? said : `${said}, ${Math.round(ms / 1000)} s on`, i);
+      }, ms));
+    },
+    waiting() { return timers.length; },
+  };
+}
+// </mainrel:rearm>
+
+const watchArmer = makeWatchArmer({
+  delays: [2000, 5000, 15000, 60000],
+  later: (fn, ms) => { const t = setTimeout(fn, ms); if (t.unref) t.unref(); return t; },
+  cancel: (t) => clearTimeout(t),
+  say: (line) => process.stdout.write(line),
+  blocked: () => (shuttingDown ? 'Mantle is quitting' : sidecar.status !== 'ok' ? `the sidecar is ${sidecar.status}` : null),
+});
+function armWatch(name, fn) { return watchArmer.arm(name, fn); }
+
+/** Read every readout the bar shows from the sidecar again. Each part says its own failure. */
+function rereadReadouts(why) {
+  if (shuttingDown || sidecar.status !== 'ok') return false;   // the next ready line re-reads it all
+  process.stdout.write(`mantle: reading the bar's readouts again: ${why}\n`);
+  qsRead().catch(() => { /* each part says why */ });          // the speaker glyph and every panel part
+  sidecar.call('net', { op: 'get' }, 4000).then((r) => netPush(r, why),
+    (err) => netPush(netFailure(err, 'the network state cannot be read'), why));
+  batteryRead().then((r) => batteryPush(r, why));
+  mediaPush(why);
+  // The same whole list the sidecar pushes (WindowList.Build for both), through the same handlers.
+  sidecar.call('windows', {}, 4000).then((list) => { if (Array.isArray(list)) sidecar.emit('windows', { ev: 'windows', list }); },
+    (err) => process.stdout.write(`mantle: the window list could not be read again (${err.message}); the sidecar's next push brings it\n`));
+  if (trayTimer) startTrayPoll();                                // live only: one tick now, then its 5 s rhythm
+  return true;
+}
+
+const gapRereader = makeGapRereader({
+  delays: [3000, 20000],
+  later: (fn, ms) => { const t = setTimeout(fn, ms); if (t.unref) t.unref(); return t; },
+  cancel: (t) => clearTimeout(t),
+  reread: (why, i) => {
+    if (shuttingDown || sidecar.status !== 'ok') return;
+    if (i === 0) watchArmer.rearmAll().catch(() => { /* each arm says why */ });   // the second pass only reads
+    rereadReadouts(why);
+  },
+});
+
+let sidecarReadies = 0;
+sidecar.on('ready', () => {
+  // The first ready is the start: each watch's arm and the qs prime read it all already.
+  if (sidecarReadies++ === 0) return;
+  const t = setTimeout(() => rereadReadouts('the sidecar started again'), 2500);
+  if (t.unref) t.unref();
+});
+
+// A sidecar that is down reads nothing: the speaker glyph and the media chip must not keep a value
+// nobody is vouching for (the network and battery handlers above do the same for theirs).
+sidecar.on('status', ({ status, reason }) => {
+  if (status !== 'down' || shuttingDown) return;
+  if (lastVolume && lastVolume.ok) volumeStore({ ok: false, reason: `the volume is not being read: ${reason}` }, 'the sidecar is down');
+  if (lastMedia && lastMedia.ok !== false) mediaPush('the sidecar is down');
+});
+
+app.whenReady().then(() => {
+  powerMonitor.on('resume', () => gapRereader.gap('the PC woke up'));
+  powerMonitor.on('unlock-screen', () => gapRereader.gap('the screen was unlocked'));
 });
 
 
@@ -8602,6 +8833,12 @@ function makePageReviver(o) {
 // </mainrel:revive>
 
 const PAGE_KEYS = { 'The bar': 'page.bar', 'The launcher': 'page.launcher', 'The desktop layer': 'page.desktop' };
+// watchPage's recovery (mn-recover, audit #12): a failed load is tried again at these delays (at most this
+// many in PAGE_LOAD_RETRY_SPAN_MS), and a page still hung PAGE_HANG_MS after 'unresponsive' is restarted.
+// MANTLE_TEST_PAGE_HANG_MS shortens the hang wait in a --test run only.
+const PAGE_LOAD_RETRY_MS = [1000, 5000, 30000];
+const PAGE_LOAD_RETRY_SPAN_MS = 10 * 60 * 1000;
+const PAGE_HANG_MS = (flags.test && Number(process.env.MANTLE_TEST_PAGE_HANG_MS) > 0) ? Number(process.env.MANTLE_TEST_PAGE_HANG_MS) : 10000;
 const pageReviver = makePageReviver({
   tries: 3, windowMs: 2 * 60 * 1000, delays: [1000, 5000, 15000],
   now: () => Date.now(),
@@ -8656,12 +8893,27 @@ function watchPage(win, label) {
   const pageKey = PAGE_KEYS[label] || `page.${label}`;
   win.on('query-session-end', (e) => onSessionEnd('query', e));
   win.on('session-end', (e) => onSessionEnd('end', e));
-  wc.on('did-finish-load', () => pageReviver.loaded(pageKey, label));
-  // A page that will not load must say so on screen, not leave a blank window.
+  let hangTimer = null;        // a hung page's last chance to answer (the 'unresponsive' handler below)
+  let stoppedShown = false;    // past the reload cap: the window shows ui/shared/page-stopped.html
+  // The "stopped" page (pageStopped, below) is not the page coming back: it must not clear the death record.
+  wc.on('did-finish-load', () => { if (!stoppedShown) pageReviver.loaded(pageKey, label); });
+  // A page that will not load must say so on screen, not leave a blank window. A failed load is tried
+  // again at 1, 5 and 30 s first (mn-recover, audit #12): one failure used to swap in the error page
+  // for good, so a load that lost a race (a file being replaced, a busy disk at logon) killed the bar.
   let swapped = false;
+  let loadFails = 0, loadFailAt = 0;
   wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
     if (!isMainFrame || swapped) return;
     if (code === -3) return;   // ERR_ABORTED: a load we replaced ourselves
+    if (Date.now() - loadFailAt > PAGE_LOAD_RETRY_SPAN_MS) loadFails = 0;   // at most 3 retries in 10 min
+    loadFailAt = Date.now();
+    if (loadFails < PAGE_LOAD_RETRY_MS.length && !shuttingDown && !stoppedShown) {
+      const delay = PAGE_LOAD_RETRY_MS[loadFails++];
+      process.stderr.write(`mantle: ${label} did not load its page (${description}, ${code}); loading it again in ${delay / 1000} s (try ${loadFails} of ${PAGE_LOAD_RETRY_MS.length})\n`);
+      const t = setTimeout(() => { if (!win.isDestroyed() && !wc.isDestroyed() && !shuttingDown && !swapped) win.loadURL(url); }, delay);
+      if (t.unref) t.unref();
+      return;
+    }
     swapped = true;
     process.stderr.write(`mantle: ${label} failed to load ${url}: ${description} (${code})\n`);
     win.loadURL(placeholderUrl({
@@ -8676,13 +8928,49 @@ function watchPage(win, label) {
     process.stderr.write(`mantle: ${label}'s renderer died: ${reason}\n`);
     // The flyout that asked for the previews is gone, and nothing will ever ask to remove them.
     if (win === barWin) clearThumbs(`the bar page died (${reason})`);
+    if (hangTimer) { clearTimeout(hangTimer); hangTimer = null; }
+    if (stoppedShown) return;   // the stopped page itself died: nothing more to try until a restart
     // Reload the PAGE, never the window: the bar stays parked where it is (no hide/show).
-    pageReviver.died(pageKey, label, reason, () => {
+    const verdict = pageReviver.died(pageKey, label, reason, () => {
       if (win.isDestroyed() || wc.isDestroyed()) return false;   // closed since (an idle unload): nothing left to reload
       wc.reload();
       return null;
     });
+    // Past the reload cap the window is never left dead and blank: a plain page says what stopped and why.
+    if (verdict === 'gave-up') pageStopped(win, label, `its page crashed again and again (the last: ${reason})`);
   });
+  // A HUNG page (mn-recover, audit #12): Electron says 'unresponsive' when the page has not answered
+  // input for a while, and nothing listened, so a frozen bar stayed frozen until a restart. Still hung
+  // PAGE_HANG_MS later, its renderer is ended on purpose and the death above reloads it (and counts
+  // it, so a page that hangs every time it loads stops at the same cap).
+  wc.on('unresponsive', () => {
+    if (hangTimer || shuttingDown || stoppedShown) return;
+    process.stdout.write(`mantle: ${label} stopped responding; its page is restarted if it is still stuck in ${PAGE_HANG_MS / 1000} s\n`);
+    hangTimer = setTimeout(() => {
+      hangTimer = null;
+      if (win.isDestroyed() || wc.isDestroyed() || shuttingDown) return;
+      process.stdout.write(`mantle: ${label} did not respond for ${PAGE_HANG_MS / 1000} s, so its page is restarted\n`);
+      try { wc.forcefullyCrashRenderer(); } catch (err) {
+        process.stderr.write(`mantle: ${label}'s stuck page could not be ended (${err && err.message}); reloading it instead\n`);
+        try { wc.reload(); } catch (_) { /* the death handler or a restart is all that is left */ }
+      }
+    }, PAGE_HANG_MS);
+    if (hangTimer.unref) hangTimer.unref();
+  });
+  wc.on('responsive', () => {
+    if (!hangTimer) return;
+    clearTimeout(hangTimer);
+    hangTimer = null;
+    process.stdout.write(`mantle: ${label} is responding again\n`);
+  });
+  function pageStopped(w, what, why) {
+    if (stoppedShown || w.isDestroyed()) return;
+    stoppedShown = true;
+    process.stdout.write(`mantle: ${what} shows a "stopped" page instead of a blank window: ${why}\n`);
+    try {
+      w.loadFile(path.join(ROOT, 'ui', 'shared', 'page-stopped.html'), { query: { what, why, compact: w === barWin ? '1' : '' } });
+    } catch (err) { process.stderr.write(`mantle: ${what}'s "stopped" page could not load (${err && err.message})\n`); }
+  }
   if (win === barWin) {
     // Same for a reload: the new page starts with no flyout open, over whatever the old one drew.
     wc.on('did-start-navigation', (e, ...legacy) => {
