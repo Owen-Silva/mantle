@@ -578,8 +578,12 @@ if (flags.live) {
   process.stdout.write('mantle: starting LIVE. Windows will be put back on quit, on crash, and on kill.\n');
   process.stdout.write(`mantle: if anything goes wrong, run this and Windows comes back:\n    ${RECOVERY_CMD}\n`);
   process.stdout.write(`mantle: the original shell state is recorded in ${STATE_FILE}\n`);
-  process.stdout.write('mantle: starting in 3 seconds. Ctrl+C now if that was not what you meant.\n');
-  sleepSync(3000);
+  // The pause is for a person at a console. The logon task, the `mantle` command and every go-live
+  // start Mantle through Task Scheduler, with no console to read or press Ctrl+C in, and the 3 s
+  // was 3 s of Windows' own taskbar at every logon (lib/start-wake.js countdownVerdict).
+  const countdown = require('./lib/start-wake').countdownVerdict({ live: true, tty: process.stdout.isTTY === true });
+  process.stdout.write(`mantle: ${countdown.line}\n`);
+  if (countdown.pause) sleepSync(countdown.pause);
 }
 
 /**
@@ -2659,21 +2663,66 @@ function windowPhysRect(win) {
 /**
  * Re-shoot the desktop layer's wallpaper picture with the window HIDDEN, then put
  * it back. It covers the whole screen, so leaving it up would photograph itself.
+ *
+ * ONLY WHEN THE PICTURE CHANGED (lane mn-wake, 2026-10-12; audit #9). Hidden is the only way: inside
+ * Explorer's desktop the layer is a child window, which Windows will not leave out of a capture
+ * (SetWindowDisplayAffinity: error 87). So each re-shoot blinks the wallpaper and the widgets, and it
+ * ran on every wake and every work-area change, ~17 times a day. Now it runs when the main display's
+ * physical size (or the main display) changed since the last good picture, and nothing else
+ * (lib/start-wake.js desktopReshootVerdict); everything else keeps the picture and says why.
  */
+const StartWake = require('./lib/start-wake');
+let deskShotDisplay = null;   // {id, w, h}: the main display at the last good desktop picture
+function mainDisplayPhys() {
+  try {
+    const d = screen.getPrimaryDisplay();
+    const p = toPhys(d.bounds);
+    return { id: d.id, w: p.w, h: p.h };
+  } catch (_) { return null; }
+}
 async function reshootDesktopBackdrop(why) {
   if (!desktopWin || desktopWin.isDestroyed()) return;
   // gamequiet: a game switching its resolution fires this; nothing is hidden, shot or shown for it.
   const quiet = backdropQuiet('the desktop layer');
   if (quiet) { setBackdropPiece('desktop', { reason: `not re-shot (${why}): ${quiet}` }); return; }
+  const now = mainDisplayPhys();
+  const v = StartWake.desktopReshootVerdict({ last: deskShotDisplay, now });
+  if (!v.reshoot) {
+    process.stdout.write(`mantle: desktop layer: picture kept (${why}): ${v.reason}\n`);
+    return;
+  }
+  process.stdout.write(`mantle: desktop layer: picture taken again (${why}): ${v.reason}\n`);
   const wasVisible = desktopWin.isVisible();
   try { if (wasVisible) desktopWin.hide(); } catch (_) { /* carry on: the shot is worth more than the hide */ }
   await wait(60);
-  await desktopBackdrop.once(why);
+  if (await desktopBackdrop.once(why)) deskShotDisplay = now;
   if (wasVisible) {
     try { desktopWin.showInactive(); } catch (err) {
       process.stderr.write(`mantle: the desktop layer was hidden for a backdrop capture and would not come back: ${err.message}\n`);
     }
   }
+}
+
+/*
+ * THE HOVER WATCH WAITS FOR THE BAR'S FIRST PLACE (start-up polish; lane mn-wake, 2026-10-12). A live
+ * start used to watch the bottom edge before the sidecar had said whether its rectangles are physical
+ * pixels (sidecarDpiAware still null), so a reveal in the first seconds landed too high and then
+ * jumped down. Live, the watch now starts once applyLive has placed the bar, or after
+ * HOVER_START_FALLBACK_MS if that never comes (an old exe, a paused shell, a sidecar that will not
+ * start), saying so. A test run and --dock start as before.
+ */
+const HOVER_START_FALLBACK_MS = 8000;
+const hoverStart = { started: false, timer: null };
+function startHoverWatchOnce(why) {
+  if (hoverStart.started) return;
+  hoverStart.started = true;
+  if (hoverStart.timer) { clearTimeout(hoverStart.timer); hoverStart.timer = null; }
+  process.stdout.write(`mantle: the bar's hover watch started: ${why}\n`);
+  startHoverWatch();
+}
+function armHoverWatchStart() {
+  setBar({ ok: true, revealed: false, reason: barReason('waiting for its first place on screen before it answers the bottom edge') });
+  hoverStart.timer = setTimeout(() => startHoverWatchOnce(`the link to Windows had not placed the bar after ${HOVER_START_FALLBACK_MS / 1000} s, so it answers the edge anyway (a reveal can land a little off until it is placed)`), HOVER_START_FALLBACK_MS);
 }
 
 // Names the rest of this file already uses, kept so the bar's call sites read the
@@ -5601,9 +5650,10 @@ function sidecarUnavailable(reason) {
   state.set('desktop', {
     attached: false,
     mode: null,
-    reason: desktopWin
-      ? `the desktop layer is floating instead of sitting under the wallpaper: ${reason}`
-      : '--no-desktop: the desktop layer was not created',
+    // held hidden until it is under the icons (or not made yet: the sidecar starts first), so not floating
+    reason: !flags.desktop ? '--no-desktop: the desktop layer was not created'
+      : !desktopWin || desktopHeld(desktopWin) ? `the desktop layer is waiting, hidden, to go under the icons: ${reason}`
+        : `the desktop layer is floating instead of sitting under the wallpaper: ${reason}`,
   });
   state.set('hotkey', { winTap: false, reason: `the Win key still opens the Windows Start menu: ${reason}` });
   if (state.get().edgeclip.on) {
@@ -5883,9 +5933,13 @@ async function applyMode() {
     return;
   }
 
-  await applyLive();
-  await applyGlass();
-  startTrayPoll();
+  // A throw part-way through applyLive used to cost the glass and the tray poll as well (the
+  // shell-unset item, lane mn-wake 2026-10-12): they still run, and the error still reaches the
+  // 'ready' handler, which says so.
+  let liveErr = null;
+  try { await applyLive(); } catch (err) { liveErr = err; }
+  try { await applyGlass(); } finally { startTrayPoll(); }
+  if (liveErr) throw liveErr;
 }
 
 /*
@@ -6497,6 +6551,37 @@ function makeBurst(run, o) {
 }
 // </mainrel:burst>
 
+/*
+ * THE FIRST PING, ASKED AGAIN (the shell-unset item; lane mn-wake, 2026-10-12). One slow answer right
+ * after the sidecar starts (a loaded logon) came back from protocolAge() as current:false, which
+ * applyLive read as "the exe is too old": the taskbar, the Win key and the desktop layer stayed
+ * Windows' for the whole session. Only an exe that ANSWERED too old is final; no answer is asked
+ * again at 2, 5 and 15 s (lib/start-wake.js pingVerdict), with nothing of Windows' touched meanwhile
+ * and the state strip saying so. -> the age to act on, or null if this ask was superseded.
+ */
+let protocolAskGen = 0;
+async function askProtocolAge() {
+  const gen = ++protocolAskGen;
+  const stale = () => gen !== protocolAskGen || shuttingDown || !!shellPaused;
+  for (let n = 0; ; n++) {
+    const age = await sidecar.protocolAge();
+    if (stale()) return null;
+    const v = StartWake.pingVerdict(age, n);
+    if (v.next === 'go' || v.next === 'old') {
+      if (n > 0) process.stdout.write(`mantle: the sidecar answered its ping on ask ${n + 1}: ${age.reason}\n`);
+      return age;
+    }
+    if (v.next === 'give-up') return Object.assign({}, age, { reason: v.reason });
+    process.stdout.write(`mantle: ${v.reason}\n`);
+    const fix = `waiting: ${v.reason}`;
+    state.set('taskbar', { autohide: false, wasAutohide: null, reason: fix });
+    state.set('desktop', { attached: false, mode: null, reason: desktopHeld(desktopWin) ? `the desktop layer is waiting, hidden: ${v.reason}` : fix });
+    state.set('hotkey', { winTap: false, reason: fix });
+    await wait(v.waitMs);
+    if (stale()) return null;
+  }
+}
+
 async function applyLive() {
   // PAUSED ("Put Windows back (keep Mantle open)"): Windows stays Windows' until a restart, even
   // when the link to Windows comes back on its own. Before this, a sidecar that died and restarted
@@ -6508,12 +6593,32 @@ async function applyLive() {
   // 0. Is the exe even new enough to be trusted with the shell? The old one
   //    answers `taskbar` by looking for a `show` key, and what it does without
   //    one is not something to discover on Owen's live desktop.
-  const age = await sidecar.protocolAge();
+  //    A ping that got NO answer is asked again (askProtocolAge), never read as an old exe.
+  const age = await askProtocolAge();
+  if (!age) return;   // a newer sidecar start, a quit or "Put Windows back" came while it asked again
   sidecarDpiAware = age.dpiAware === true ? true : (age.dpiAware === false ? false : null);
   if (!age.current) {
     oldExeBaseline(age.reason);
     return;
   }
+
+  // 0b. The desktop layer goes under the icons FIRST (lane mn-wake, 2026-10-12; audit #3). It is
+  //     made HIDDEN and is shown only once it is there (makeDesktopWindow holdShow), so until this
+  //     lands Owen sees Windows' own wallpaper, never a full-screen layer over his apps. It used to
+  //     be shown as soon as its first picture landed and go under the icons only after the taskbar,
+  //     the bar, the edge clip and the taskbar hiding: ~3 s over every open app at every start.
+  //     Explorer's desktop can still be getting ready at logon, so a held layer that could not go
+  //     under is tried again on the Explorer-restart back-off, and closed (never shown) if it never can.
+  if (!flags.desktop) {
+    state.set('desktop', { attached: false, mode: null, reason: '--no-desktop: the desktop layer was not created' });
+  } else if (desktopWin && !desktopWin.isDestroyed()) {
+    const held = desktopHeld(desktopWin);
+    const r = await attachDesktop();
+    if (r.ok) { if (desktopRemake.timer) { clearTimeout(desktopRemake.timer); desktopRemake.timer = null; } }
+    else if (held && desktopHeld(desktopWin)) scheduleDesktopAttach(0, false, 'at start');
+  }
+  // (else: Explorer took the layer down with it and desktopGone is making a new one, which
+  // attaches itself; its state line already says so)
 
   // 1. The Windows taskbar goes to AUTO-HIDE. Not hidden -- auto-hide. This is
   //    the whole lesson of 2026-09-21: auto-hide is a flag the OS owns and can
@@ -6559,6 +6664,7 @@ async function applyLive() {
       reason: 'hover mode: the bar reserves no screen space on purpose -- it is hidden until the cursor touches the bottom edge, and maximised windows get the whole display because the Windows taskbar is on auto-hide. Run with --dock for the old permanent strip.',
     });
     const placed = await placeBottomStrip('startup', age.dpiAware);
+    startHoverWatchOnce(`the bar has its first place on screen (${placed.how})`);   // no reveal before its units are known
     setBar({ ok: true, reason: barReason(`hidden until the cursor touches the ${flags.barEdge} edge (${placed.how})`) });
     // Re-place UNCONDITIONALLY on three ticks. Not "only if something changed":
     // the failure this guards against is a move that silently did not take, and
@@ -6640,14 +6746,7 @@ async function applyLive() {
     }
   }
 
-  // 3. Put the desktop layer under the wallpaper.
-  if (!flags.desktop) {
-    state.set('desktop', { attached: false, mode: null, reason: '--no-desktop: the desktop layer was not created' });
-  } else if (desktopWin && !desktopWin.isDestroyed()) {
-    await attachDesktop();
-  }
-  // (else: Explorer took the layer down with it and desktopGone is making a new one, which
-  // attaches itself; its state line already says so)
+  // 3. (the desktop layer went under the icons first, above)
 
   // 4. The solo-Win-tap hook that opens the launcher (not while Mantle rests for a game: the
   // launcher window is closed then, and the Win key is Windows' Start until the game exits).
@@ -6794,9 +6893,12 @@ function desktopGiveUp(d) {
   try { d.releaseWallpaper(); } catch (_) { /* the wallpaper keeps a dead window: it checks before sending */ }
   let closed = false;
   try { if (d.win && !d.win.isDestroyed()) { d.win.destroy(); closed = true; } } catch (_) { /* already gone */ }
-  const reason = `the desktop layer could not go back under the icons after Explorer restarted (${d.tries} tries: ${d.why || 'no reason given'}), so Windows' own wallpaper shows; restart Mantle to bring it back`;
+  // d.when: 'at start' for the layer made at start-up, held hidden until it is in place (lane mn-wake)
+  const reason = d.when
+    ? `the desktop layer could not go under the icons ${d.when} (${d.tries} tries: ${d.why || 'no reason given'}), so Windows' own wallpaper shows; restart Mantle to bring it back`
+    : `the desktop layer could not go back under the icons after Explorer restarted (${d.tries} tries: ${d.why || 'no reason given'}), so Windows' own wallpaper shows; restart Mantle to bring it back`;
   d.setState({ attached: false, mode: null, reason });
-  d.log(`desktop layer: made again but could not go under the icons after ${d.tries} tries, so it was closed (never shown over the apps): ${d.why || 'no reason given'}`);
+  d.log(`desktop layer: ${d.when ? `could not go under the icons ${d.when}` : 'made again but could not go under the icons'} after ${d.tries} tries, so it was closed (never shown over the apps): ${d.why || 'no reason given'}`);
   return { closed, reason };
 }
 // </mainrel:desktopremake>
@@ -6824,9 +6926,23 @@ function showDesktopGated() {
   const g = desktopShowGate;
   if (!g || !g.ready || !g.cleared) return;
   desktopShowGate = null;
+  const display = mainDisplayPhys();
   desktopBackdrop.once(g.why)
-    .catch(() => {})
-    .then(() => { if (desktopWin === g.win && !g.win.isDestroyed()) g.win.showInactive(); });
+    .catch(() => false)
+    .then((ok) => {
+      if (ok) deskShotDisplay = display;   // what a later display change is compared with (reshootDesktopBackdrop)
+      if (desktopWin !== g.win || g.win.isDestroyed()) return;
+      g.win.showInactive();
+      // said only after looking (the start-up order is the proof that it never floated over the apps)
+      const d = state.get().desktop || {};
+      const where = d.attached ? `under the icons (${d.mode || 'mode not reported'})`
+        : flags.test ? 'as an ordinary window (a test run never puts it under the icons)' : 'NOT under the icons';
+      process.stdout.write(`mantle: desktop layer: ${g.win.isVisible() ? `shown ${where}` : `asked to show ${where}, and it is still not visible`} (${g.why})\n`);
+    });
+}
+/** Is this layer made but held hidden until it is under the icons (makeDesktopWindow holdShow)? */
+function desktopHeld(win) {
+  return !!(win && desktopShowGate && desktopShowGate.win === win && !desktopShowGate.cleared);
 }
 function showDesktopWhenReady(win) {
   if (desktopShowGate && desktopShowGate.win === win) { desktopShowGate.cleared = true; showDesktopGated(); }
@@ -6846,14 +6962,15 @@ function desktopGone(win) {
 }
 
 /** Attempt `n`: make the window (first attempt only) and try to put it under the icons. */
-function scheduleDesktopAttach(n, make) {
+/** when: null after an Explorer restart, 'at start' for the start-up layer held hidden (applyLive 0b). */
+function scheduleDesktopAttach(n, make, when) {
   if (desktopRemake.timer) clearTimeout(desktopRemake.timer);
   desktopRemake.timer = setTimeout(() => {
     desktopRemake.timer = null;
-    remakeDesktop(n, make).catch((err) => process.stderr.write(`mantle: desktop layer: making it again failed: ${err.message}\n`));
+    remakeDesktop(n, make, when || null).catch((err) => process.stderr.write(`mantle: desktop layer: making it again failed: ${err.message}\n`));
   }, DESKTOP_ATTACH_BACKOFF_MS[Math.min(n, DESKTOP_ATTACH_BACKOFF_MS.length - 1)]);
 }
-async function remakeDesktop(n, make) {
+async function remakeDesktop(n, make, when) {
   if (shuttingDown || shellPaused) return;
   if (make || !desktopWin || desktopWin.isDestroyed()) {
     const win = makeDesktopWindow('Explorer restarted: a new desktop layer', !flags.test);
@@ -6869,10 +6986,12 @@ async function remakeDesktop(n, make) {
   const r = await attachDesktop();
   const next = desktopAttachNext(r.ok, n);
   if (next === 'done') {
-    process.stdout.write(`mantle: desktop layer: made again and back under the icons (${r.mode || 'mode not reported'}) on attempt ${n + 1}\n`);
+    process.stdout.write(when
+      ? `mantle: desktop layer: under the icons (${r.mode || 'mode not reported'}) on retry ${n + 1} ${when} (Explorer's desktop was not ready the first time)\n`
+      : `mantle: desktop layer: made again and back under the icons (${r.mode || 'mode not reported'}) on attempt ${n + 1}\n`);
     return;
   }
-  if (next === 'retry') { scheduleDesktopAttach(n + 1, false); return; }
+  if (next === 'retry') { scheduleDesktopAttach(n + 1, false, when); return; }
   // Out of tries: closed, NEVER shown over the apps (desktopGiveUp says why).
   const win = desktopWin;
   desktopGiveUp({
@@ -6884,6 +7003,7 @@ async function remakeDesktop(n, make) {
     log: (line) => process.stderr.write(`mantle: ${line}\n`),
     tries: n + 1,
     why: r.reason,
+    when,
   });
 }
 
@@ -8546,6 +8666,13 @@ async function logMemory(tag) {
 }
 
 app.whenReady().then(() => {
+  // THE SIDECAR STARTS FIRST (lane mn-wake, 2026-10-12; audit #4). It used to be the last line here,
+  // after every window and feature was made, so its own start-up (~1 s here, longer at a loaded
+  // logon) was added to that time instead of running beside it. Safe this early: everything below
+  // runs in this same tick, so every 'ready' listener is in place long before its ready line can be
+  // read, and calls made meanwhile wait for that line (lib/sidecar.js _callWhenReady). The
+  // shell-state.json baseline is the sidecar's own first act (Program.cs), before any request.
+  sidecar.start();
   // Mantle's appearance first: every window below asks for it before its first paint. Match Windows
   // follows Windows live: nativeTheme 'updated' fires when AppsUseLightTheme changes (and on other
   // theme news, which windowsChanged() ignores unless the mode actually moved).
@@ -8609,7 +8736,19 @@ app.whenReady().then(() => {
   }
 
   if (flags.desktop) {
-    makeDesktopWindow('the desktop layer is starting');
+    // HELD HIDDEN until it is under the icons (audit #3), as a layer made after an Explorer restart
+    // always was: shown before that it is a full-screen window over every open app. A test run
+    // never attaches it, so it shows as before (and stays invisible: lib/test-quiet.js).
+    // TEST ONLY: --test-desktop-hold holds it in a test run too, and says 3 s after its page is ready
+    // whether anything showed it (nothing attaches it in a test run, so it must still be hidden).
+    const holdTest = flags.test && ARGV.includes('--test-desktop-hold');
+    const deskWin = makeDesktopWindow('the desktop layer is starting', !flags.test || holdTest);
+    if (holdTest) {
+      deskWin.once('ready-to-show', () => setTimeout(() => process.stdout.write(`mantle: --test-desktop-hold: 3 s after its page was ready the held layer is ${deskWin.isDestroyed() ? 'gone' : deskWin.isVisible() ? 'VISIBLE, which it must not be before it is under the icons' : 'still hidden, waiting to go under the icons'}\n`), 3000));
+    }
+    if (!flags.test) {
+      state.set('desktop', { attached: false, mode: null, reason: 'the desktop layer is waiting, hidden, to go under the icons; Windows\' own wallpaper shows until it is there' });
+    }
     armDesktopGoneTest();
   } else {
     state.set('desktop', { attached: false, mode: null, reason: '--no-desktop: the desktop layer was not created' });
@@ -8669,7 +8808,12 @@ app.whenReady().then(() => {
   let sleptAt = 0;
   powerMonitor.on('suspend', () => { sleptAt = Date.now(); process.stdout.write('mantle: the PC is going to sleep\n'); });
   powerMonitor.on('resume', () => {
-    process.stdout.write(`mantle: the PC woke up${sleptAt ? ` after ${Math.round((Date.now() - sleptAt) / 60000)} min asleep` : ''}; the bar is put back in 1.5 s\n`);
+    // On this PC Windows often sends its sleep notice only AT wake (43 of 88 wakes logged "0 min
+    // asleep", audit 2026-10-12), so a notice seconds old says nothing about how long it slept.
+    const slept = sleptAt ? Date.now() - sleptAt : 0;
+    const asleep = !sleptAt ? '' : slept < 15000 ? ' (Windows sent its sleep notice only now, so how long it slept is not known)'
+      : ` after ${Math.round(slept / 60000)} min asleep`;
+    process.stdout.write(`mantle: the PC woke up${asleep}; the bar is put back in 1.5 s, and the desktop picture is kept unless the display changed\n`);
     sleptAt = 0;
     const t = setTimeout(() => displayBurst('the PC woke from sleep'), 1500);
     if (t.unref) t.unref();
@@ -8685,13 +8829,15 @@ app.whenReady().then(() => {
       barRevealed = true;
       setBar({ ok: true, revealed: true, reason: '--dock: the bar is permanently on screen and reserves its strip' });
     });
-  } else {
+  } else if (flags.test) {
     startHoverWatch();
+  } else {
+    armHoverWatchStart();   // live: once the bar has its first place (applyLive), so a reveal never lands off
   }
   startPinWatch();
   schedulePinnedPush('Mantle started');
 
-  sidecar.start();
+  // (the sidecar was started first thing above, so its start-up runs beside all of this)
 
   // --flyout owns --screenshot when both are given: it photographs the flyout, not the three windows
   if (flags.flyout !== null) runFlyoutTest(flags.flyout, flags.screenshot ? path.resolve(flags.screenshot) : null);
