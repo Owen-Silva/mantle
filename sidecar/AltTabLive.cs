@@ -372,4 +372,248 @@ namespace Mantle {
       return null;
     }
   }
+
+  /// `switcher.lab`: how long an Alt+Tab commit keeps the HOOK THREAD, measured (lane mn-althread,
+  /// 2026-10-12; sidecar/test-alttab-thread.js). Tests only. Every keystroke on the desktop waits
+  /// for that thread to pump: past LowLevelHooksTimeout (~1 s) keys leak to Windows and Windows may
+  /// drop the hook. The switch itself (SetForegroundWindow, the focus ladder, its 800 ms bounded
+  /// waits, the Alt nudge) belongs on a switch thread, and this proves it is there.
+  ///   {op:'commit', hwnd, delayMs, onScreen}
+  ///       a one-tile session on `hwnd`, committed on the hook thread by the SAME Commit an Alt-up
+  ///       runs, with a test-only delay of `delayMs` before the switch (a ladder that slow); the
+  ///       hook thread is pinged every 5 ms until the switch has answered. Answers {thread,
+  ///       commitMs (the time Commit kept the hook thread), pings, unanswered, pingMaxMs,
+  ///       pingMedianMs, finished, refused, activated (the very `activated` event)}.
+  ///       hwnd 'closed' = a window this command makes and destroys first, so nothing is switched
+  ///       (the answer is the "closed" refusal); a live window only if it is a focus-lab window
+  ///       (sidecar/focus-lab.js) AND onScreen:true, i.e. inside the visible slot.
+  ///   {op:'ping', count}  the hook thread's round trip `count` times with nothing else running
+  /// THE THREAD is the real hook thread whenever a hook is installed (a live sidecar with any
+  /// `hotkey` feature; `observe:['VolumeUp']` swallows nothing). A passive sidecar has no hook, so
+  /// a stand-in thread pumps exactly as the hook thread does and hands every thread message to the
+  /// same Switcher.OnThreadMessage.
+  [MantleFeature]
+  static class SwitchLab {
+    const string FixtureTitle = "Mantle focus fixture", FixtureExe = "mantle-focus-fixture.exe";
+    static readonly object _gate = new object();
+    static bool _busy;
+    // One lab run's books, under _books. _armed keeps a real commit's Activated to one read.
+    static readonly object _books = new object();
+    static volatile bool _armed;
+    static readonly List<int> _seqs = new List<int>();                 // lab sessions begun, in order
+    static readonly Dictionary<int, object> _acts = new Dictionary<int, object>();
+    static int _expect, _timed;
+    static long _commitTicksMax;
+    static string _refused;
+    static readonly ManualResetEvent _done = new ManualResetEvent(false);
+    static readonly AutoResetEvent _pong = new AutoResetEvent(false);
+    static volatile int _pongN;
+    static int _pingN;
+    static volatile int _standTid;
+
+    public static void Register(FeatureTable t) {
+      t.Add("switcher.lab", Lanes.Slow, Run);
+    }
+
+    // ---- called on the hook thread (or the stand-in), and the switch thread
+
+    public static void Pong(int n) { _pongN = n; _pong.Set(); }
+    public static void Refused(string why) { lock (_books) { _refused = why; } _done.Set(); }
+    public static void Began(int seq) { lock (_books) _seqs.Add(seq); }
+    public static void CommitTook(long ticks) {
+      lock (_books) { if (ticks > _commitTicksMax) _commitTicksMax = ticks; _timed++; }
+    }
+    public static void Activated(int seq, object d) {
+      if (!_armed) return;
+      lock (_books) {
+        if (!_seqs.Contains(seq)) return;
+        _acts[seq] = d;
+        if (_acts.Count >= _expect) _done.Set();
+      }
+    }
+
+    // ---- the command (the slow lane)
+
+    static string Run(Dictionary<string, object> req, ref object result) {
+      string op = Json.GetString(req, "op") ?? "";
+      string where, err;
+      if (op == "ping") {
+        int count = Json.GetInt(req, "count", 20);
+        if (count < 1 || count > 1000) return "switcher.lab ping count is 1..1000";
+        int tid = Owner(out where, out err);
+        if (tid == 0) return err;
+        var rts = new List<double>();
+        int lost = 0;
+        for (int i = 0; i < count; i++) {
+          double rt = PingOnce(tid, 1000);
+          if (rt < 0) lost++; else rts.Add(rt);
+          Thread.Sleep(2);
+        }
+        rts.Sort();
+        result = Json.Obj("thread", where, "pings", rts.Count, "unanswered", lost,
+                          "pingMaxMs", rts.Count == 0 ? (object)null : Math.Round(rts[rts.Count - 1], 3),
+                          "pingMedianMs", rts.Count == 0 ? (object)null : Math.Round(rts[rts.Count / 2], 3));
+        return null;
+      }
+      if (op != "commit") return "switcher.lab: unknown op '" + op + "' (commit, ping)";
+
+      IntPtr h;
+      if (Json.GetString(req, "hwnd") == "closed") {
+        h = ClosedWindow();
+        if (h == IntPtr.Zero || Win32.IsWindow(h)) return "switcher.lab could not make a closed window's handle";
+      } else {
+        h = Json.GetHwnd(req, "hwnd");
+        if (h == IntPtr.Zero) return "switcher.lab commit needs hwnd: 'closed', or a focus-lab window's handle";
+        if (Win32.IsWindow(h)) {
+          if (!IsFixture(h))
+            return "switcher.lab only switches to a focus-lab window (\"" + FixtureTitle + "\", " + FixtureExe + " under %TEMP%)";
+          if (!Json.GetBool(req, "onScreen", false))
+            return "switcher.lab brings that window forward, which is on screen: it wants onScreen:true (the visible slot only)";
+        }
+      }
+      int delay = Json.GetInt(req, "delayMs", 0);
+      // thenDelayMs: a SECOND commit (same window) 50 ms later, while the first is still switching.
+      int then = Json.GetInt(req, "thenDelayMs", -1);
+      if (delay < 0 || delay > 5000 || then < -1 || then > 5000) return "switcher.lab delayMs and thenDelayMs are 0..5000";
+      int owner = Owner(out where, out err);
+      if (owner == 0) return err;
+      lock (_gate) {
+        if (_busy) return "a switcher.lab commit is already running";
+        _busy = true;
+      }
+      try {
+        lock (_books) {
+          _seqs.Clear(); _acts.Clear();
+          _expect = then >= 0 ? 2 : 1;
+          _timed = 0; _commitTicksMax = 0; _refused = null;
+          _done.Reset();
+          _armed = true;
+        }
+        var sw = Stopwatch.StartNew();
+        if (!KeysNative.PostThreadMessageW(owner, Switcher.MSG_LAB_COMMIT, new IntPtr(delay), h))
+          return "the " + where + " thread did not take the commit";
+        var rts = new List<double>();
+        int lost = 0;
+        bool finished = false, second = then < 0;
+        long limit = delay + Math.Max(then, 0) + 4000;
+        while (sw.ElapsedMilliseconds < limit) {
+          if (!second && sw.ElapsedMilliseconds >= 50) {
+            second = true;
+            if (!KeysNative.PostThreadMessageW(owner, Switcher.MSG_LAB_COMMIT, new IntPtr(then), h))
+              return "the " + where + " thread did not take the second commit";
+          }
+          double rt = PingOnce(owner, 1000);
+          if (rt < 0) lost++; else rts.Add(rt);
+          if (second && _done.WaitOne(0)) { finished = true; break; }
+          Thread.Sleep(5);
+        }
+        // CommitTook lands just after Commit returns (an "already" or "none" answers inside it).
+        var cw = Stopwatch.StartNew();
+        while (cw.ElapsedMilliseconds < 1000) {
+          lock (_books) { if (_timed >= _expect || _refused != null) break; }
+          Thread.Sleep(1);
+        }
+        rts.Sort();
+        lock (_books) {
+          _armed = false;
+          object first = _seqs.Count > 0 && _acts.ContainsKey(_seqs[0]) ? _acts[_seqs[0]] : null;
+          object next = _seqs.Count > 1 && _acts.ContainsKey(_seqs[1]) ? _acts[_seqs[1]] : null;
+          result = Json.Obj("thread", where, "delayMs", delay,
+                            "commitMs", _timed == 0 ? (object)null : Math.Round(_commitTicksMax * 1000.0 / Stopwatch.Frequency, 3),
+                            "commits", _timed,
+                            "pings", rts.Count, "unanswered", lost,
+                            "pingMaxMs", rts.Count == 0 ? (object)null : Math.Round(rts[rts.Count - 1], 3),
+                            "pingMedianMs", rts.Count == 0 ? (object)null : Math.Round(rts[rts.Count / 2], 3),
+                            "finished", finished, "ms", sw.ElapsedMilliseconds,
+                            "refused", _refused, "activated", first, "then", next,
+                            "runners", SwitchRunner.Runners);
+        }
+        return null;
+      } finally {
+        _armed = false;
+        lock (_gate) _busy = false;
+      }
+    }
+
+    /// One round trip to the owner thread: post, it answers in Switcher.OnThreadMessage. -1 = no
+    /// answer within timeoutMs.
+    static double PingOnce(int tid, int timeoutMs) {
+      int n = Interlocked.Increment(ref _pingN);
+      _pong.Reset();
+      long t0 = Stopwatch.GetTimestamp();
+      if (!KeysNative.PostThreadMessageW(tid, Switcher.MSG_LAB_PING, IntPtr.Zero, new IntPtr(n))) return -1;
+      var sw = Stopwatch.StartNew();
+      while (true) {
+        int left = timeoutMs - (int)sw.ElapsedMilliseconds;
+        if (left <= 0 || !_pong.WaitOne(left)) return -1;
+        if (_pongN == n) return (Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency;
+      }
+    }
+
+    /// The real hook thread if a hook is installed, else (passive only) the stand-in.
+    static int Owner(out string where, out string err) {
+      err = null;
+      if (Hotkey.Installed) {
+        where = "hook";
+        int t = Switcher.HookTid;
+        if (t == 0) err = "the keyboard hook is installed but its thread has not started tracking yet";
+        return t;
+      }
+      where = "stand-in";
+      if (!Program.Passive) {
+        err = "switcher.lab in a live sidecar measures the real hook thread: install it first " +
+              "(hotkey {observe:['VolumeUp']} swallows nothing); only a passive sidecar uses the stand-in";
+        return 0;
+      }
+      return StandIn(out err);
+    }
+
+    /// The hook thread's loop, minus the hook: thread messages to Switcher.OnThreadMessage.
+    static int StandIn(out string err) {
+      err = null;
+      lock (_gate) {
+        if (_standTid != 0) return _standTid;
+        var ready = new ManualResetEvent(false);
+        var t = new Thread(delegate () {
+          KeysNative.MSG msg;
+          KeysNative.PeekMessageW(out msg, IntPtr.Zero, 0, 0, 0);    // make this thread's message queue
+          _standTid = Win32.GetCurrentThreadId();
+          ready.Set();
+          while (KeysNative.GetMessageW(out msg, IntPtr.Zero, 0, 0) > 0) {
+            if (msg.hwnd != IntPtr.Zero) { KeysNative.TranslateMessage(ref msg); KeysNative.DispatchMessageW(ref msg); continue; }
+            try { Switcher.OnThreadMessage(msg.message, msg.wParam, msg.lParam); }
+            catch (Exception ex) { KeyEvents.Log("error", "switcher.lab stand-in threw " + ex.GetType().Name + ": " + ex.Message); }
+          }
+        });
+        t.IsBackground = true;
+        t.Name = "mantle-switch-lab";
+        t.Priority = ThreadPriority.Highest;     // as the hook thread
+        t.Start();
+        if (!ready.WaitOne(3000)) { err = "the stand-in thread did not start within 3 s"; return 0; }
+        return _standTid;
+      }
+    }
+
+    /// A window made and destroyed here: its handle is a closed window's.
+    static IntPtr ClosedWindow() {
+      var nw = new System.Windows.Forms.NativeWindow();
+      nw.CreateHandle(new System.Windows.Forms.CreateParams());
+      IntPtr h = nw.Handle;
+      nw.DestroyHandle();
+      return h;
+    }
+
+    /// WindowList.IsFixture (Windows.cs), here so the lab stays in this file: title, exe name
+    /// AND an exe under %TEMP%.
+    static bool IsFixture(IntPtr hwnd) {
+      if (!Win32.GetWindowText(hwnd).StartsWith(FixtureTitle, StringComparison.Ordinal)) return false;
+      int pid;
+      Win32.GetWindowThreadProcessId(hwnd, out pid);
+      string exe = Win32.GetProcessPath(pid) ?? "";
+      string temp;
+      try { temp = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath()); } catch (Exception) { return false; }
+      return string.Equals(System.IO.Path.GetFileName(exe), FixtureExe, StringComparison.OrdinalIgnoreCase) &&
+             exe.StartsWith(temp, StringComparison.OrdinalIgnoreCase);
+    }
+  }
 }
