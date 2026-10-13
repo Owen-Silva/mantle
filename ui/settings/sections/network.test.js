@@ -15,7 +15,6 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
 
-const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
 const FAKE = path.join(__dirname, '_devnet-fake.js');
 const OUT = process.env.MANTLE_SHOOT_OUT ||

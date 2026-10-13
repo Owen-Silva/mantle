@@ -28,21 +28,8 @@ const { execFileSync, spawn } = require('child_process');
 const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
 const G = require('./geometry.js');
 
-// the newest installed Playwright Chromium (the pinned chromium-1234 build was removed 2026-10-05;
-// lane same-finish, 2026-10-09, same recipe as ui/desktop/wall-player.test.js)
-const CHROME = (() => {
-  const fsx = require('fs');
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
-  try {
-    for (const d of fsx.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
-      const p = base + '/' + d + '/chrome-win64/chrome.exe';
-      if (fsx.existsSync(p)) return p;
-    }
-  } catch (_) { /* reported below as "no chromium at" */ }
-  return base + '/chromium-*/chrome-win64/chrome.exe';
-})();
-const PAGE = 'file:///C:/Users/user/mantle/ui/screenshot/index.html';
-const CARD = 'file:///C:/Users/user/mantle/ui/screenshot/card.html';
+const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');   // this checkout's pages
+const CARD = 'file:///' + path.join(__dirname, 'card.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/screenshot/shots';
 const EXE = process.env.MANTLE_SIDECAR_EXE || '';
@@ -425,7 +412,7 @@ async function frameFormat(browser) {
     const m = reply.result.monitors[0];
     const ctx = await browser.newContext({ viewport: { width: 400, height: 300 } });
     const page = await ctx.newPage();
-    await page.goto('file:///C:/Users/user/mantle/ui/screenshot/card.html?life=0');
+    await page.goto(CARD + '?life=0');
     const r = await page.evaluate(async (src) => {
       const img = new Image();
       const t0 = performance.now();
@@ -487,7 +474,7 @@ function themeEvery(browser) {
   const games = gamesRunning();
   if (games) { console.log(`NOT RUN: ${games} game process(es) are running; screenshots wait.`); process.exit(2); }
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ timeout: 0, executablePath: fs.existsSync(CHROME) ? CHROME : undefined, headless: true, args: ['--allow-file-access-from-files'] });
+  const browser = await require('../settings/test-browser.js').launch(chromium, { timeout: 0, headless: true, args: ['--allow-file-access-from-files'] });
   themeEvery(browser);   // MANTLE_THEME=dark|light: <html data-theme> + the mantle-theme event, as dm-core's plumbing does
   try {
     await dpiCase(browser, 1, 0, true);

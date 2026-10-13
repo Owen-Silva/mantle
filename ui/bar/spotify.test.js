@@ -22,17 +22,6 @@ const os = require('os');
 const { execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-/* the newest ms-playwright chromium on this machine (shoot.js findChrome): a pinned build number
-   (chromium-1234 until 2026-10-08) failed this test the day that build was removed */
-const CHROME = (() => {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
-  for (const d of fs.readdirSync(base).filter((n) => n.startsWith('chromium-')).sort().reverse())
-    for (const sub of ['chrome-win64/chrome.exe', 'chrome-win/chrome.exe']) {
-      const p = path.join(base, d, sub);
-      if (fs.existsSync(p)) return p;
-    }
-  return path.join(base, 'chromium-NONE/chrome-win64/chrome.exe');   // the test's own check names it
-})();
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/7e5085b9-5bec-43fe-aecd-5fe5701b290a/scratchpad/lanes/media/shots';
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
@@ -202,7 +191,6 @@ function pageHtml() {
 /* ================================================================ PART 2: the page */
 async function pageTests() {
   if (gaming()) { console.log('a game is running: the page part is skipped'); failures.push('page part skipped (a game is running)'); return; }
-  if (!fs.existsSync(CHROME)) { failures.push('no chromium at ' + CHROME); return; }
   const dir = path.join(os.tmpdir(), 'mantle-spotify-card-test');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'index.html');
@@ -210,7 +198,7 @@ async function pageTests() {
   const URL = 'file:///' + file.replace(/\\/g, '/');
   if (SHOTS) fs.mkdirSync(OUT, { recursive: true });
   const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true });
   const errors = [];
   try {
     const ctx = await browser.newContext({ viewport: { width: 380, height: 760 }, deviceScaleFactor: 1, colorScheme: 'light' });

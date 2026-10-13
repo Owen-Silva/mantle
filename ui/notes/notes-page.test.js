@@ -13,19 +13,6 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
-// the newest installed Playwright Chromium (the pinned chromium-1234 build was removed 2026-10-05;
-// lane same-finish, 2026-10-09, same recipe as ui/desktop/wall-player.test.js)
-const CHROME = (() => {
-  const fsx = require('fs');
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
-  try {
-    for (const d of fsx.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
-      const p = base + '/' + d + '/chrome-win64/chrome.exe';
-      if (fsx.existsSync(p)) return p;
-    }
-  } catch (_) { /* reported below as "no chromium at" */ }
-  return base + '/chromium-*/chrome-win64/chrome.exe';
-})();
 const PAGE = 'file:///' + path.resolve(__dirname, 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT || path.join(require('os').tmpdir(), 'mantle-notes-shots');
 let passed = 0;
@@ -39,7 +26,7 @@ function gaming() {
 
 async function run() {
   const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true });
   const ctx = await browser.newContext({ viewport: { width: 420, height: 380 }, deviceScaleFactor: 1.5, colorScheme: 'light' });
   const errors = [];
   async function open(mode, extra) {
@@ -452,7 +439,6 @@ async function run() {
 (async () => {
   const g = gaming();
   if (g > 0) { console.log('NOTES PAGE: skipped, a game is running'); process.exit(0); }
-  if (!fs.existsSync(CHROME)) failures.push('no chromium at ' + CHROME);
   else { try { await run(); } catch (e) { failures.push('threw: ' + (e && e.stack ? e.stack.split('\n').slice(0, 3).join(' ') : e)); } }
   for (const f of failures) console.log('FAIL ' + f);
   console.log(`NOTES PAGE: ${passed} passed, ${failures.length} failed`);

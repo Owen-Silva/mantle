@@ -237,6 +237,8 @@ async function runOne(e) {
   const env = Object.assign({}, process.env);
   delete env.MANTLE_TEST_VISIBLE;                      // never on Owen's screen from the suite
   env.MANTLE_SUITE = '1';
+  // page tests write their PNGs here, not to the dead session scratchpads some still default to
+  if (!process.env.MANTLE_SHOOT_OUT) env.MANTLE_SHOOT_OUT = path.join(OUT, 'shots', logName(e.id).replace(/\.log$/, ''));
   let args; let exe; let privTemp = null;
   if (e.kind === 'selftest') {
     exe = path.join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe');
