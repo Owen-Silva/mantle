@@ -41,6 +41,7 @@
     counts: document.getElementById('counts'),
     srcErrors: document.getElementById('srcErrors'),
     notice: document.getElementById('notice'),
+    kbd: document.getElementById('kbdNote'),
     hint: document.getElementById('hint'),
   };
 
@@ -87,6 +88,13 @@
   var view = { groups: [], flat: [] };
   var mode = 'apps';          // 'search' when Win+S opened the launcher (placeholder, empty state)
   var pendingOpen = null;     // a launcher.open {mode, query} waiting for the window to be shown
+  /* What you typed survives a close and reopen for KEEP_MS, like Raycast (its "pop to root" default
+     is 90 s) and Spotlight: the Win tap that closes the launcher must not wipe it (audit #5). It is
+     cleared after an action ran (you are done with it) and by Win+S, which brings its own query. */
+  var KEEP_MS = 90 * 1000;
+  var shownNow = false;       // main said launcher:visible true, and no false since
+  var closedAt = 0;           // when it last went hidden (0: never shown and closed yet)
+  var clearNext = false;      // the close was an action's: the next open starts clean
   var PLACEHOLDER = {
     apps: 'Apps, files, settings, commands, or a URL',
     search: 'Search apps, files, settings and the web',
@@ -837,6 +845,7 @@
     once(item, 'power', function () { return mantle.call('launcher.power', { action: item.path, confirmed: confirmed }).then(function (res) {
       if (res && res.ok) {
         if (res.dryRun || res.reason) { note = { id: item.id, text: res.reason, ok: true }; render(); }
+        if (!res.dryRun) clearNext = true;        // done with it: the next open starts clean
         return;                                   // for real: main has already hidden the launcher
       }
       note = { id: item.id, text: (res && res.reason) || item.name + ' did not happen, and no reason came back', ok: false };
@@ -855,7 +864,7 @@
         if (res.dryRun) { note = { id: item.id, text: res.reason, ok: true }; render(); return; }
         // launcher.openFile hides the window itself; search.openFile (a feature) cannot, so ask.
         // A second hide of a hidden launcher is a no-op in main.
-        mantle.call('launcher.hide');
+        hideAfterAction();
         return;
       }
       note = { id: item.id, text: (res && res.reason) || 'it did not open, and no reason came back', ok: false };
@@ -875,7 +884,7 @@
       if (res && res.ok) {
         note = { id: item.id, text: res.dryRun ? res.reason : 'Copied ' + (res.copied || item.copy), ok: true };
         render();
-        if (!res.dryRun) hideTimer = setTimeout(function () { mantle.call('launcher.hide'); }, 700);
+        if (!res.dryRun) hideTimer = setTimeout(function () { hideAfterAction(); }, 700);
         return;
       }
       note = { id: item.id, text: (res && res.reason) || 'nothing was copied, and no reason came back', ok: false };
@@ -895,7 +904,7 @@
     once(item, 'web', function () { return mantle.call('search.web', { q: typed }).then(function (res) {
       if (res && res.ok) {
         if (res.dryRun || res.reason) { note = { id: item.id, text: res.reason, ok: true }; render(); }
-        if (!res.dryRun) hideTimer = setTimeout(function () { mantle.call('launcher.hide'); }, res.reason ? 1400 : 0);
+        if (!res.dryRun) hideTimer = setTimeout(function () { hideAfterAction(); }, res.reason ? 1400 : 0);
         return;
       }
       note = { id: item.id, text: (res && res.reason) || 'the search did not open, and no reason came back', ok: false };
@@ -923,9 +932,9 @@
              before the window goes, so the surprise is explained. */
           note = { id: item.id, text: res.reason, ok: true };
           render();
-          hideTimer = setTimeout(function () { mantle.call('launcher.hide'); }, 1400);
+          hideTimer = setTimeout(function () { hideAfterAction(); }, 1400);
         } else {
-          mantle.call('launcher.hide');
+          hideAfterAction();
         }
         return;
       }
@@ -941,6 +950,7 @@
   /* ---- input ------------------------------------------------------------- */
 
   els.q.addEventListener('input', function () {
+    clearNext = false;
     disarm();                                     // typing is changing your mind
     queueSearch();
     queueFiles();
@@ -1006,12 +1016,15 @@
 
   if (typeof mantle.on === 'function') {
     mantle.on('launcher:visible', function (visible) {
-      if (!visible) { disarm(); panelDown(); return; }
-      // shown: a clean slate every time, so the Win tap always behaves the same
+      if (!visible) { if (shownNow) closedAt = Date.now(); shownNow = false; disarm(); panelDown(); keyboardNote(null); return; }
+      shownNow = true;
+      // shown: a clean slate, except what you typed if you closed it without acting a moment ago
       if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
-      els.q.value = '';
       if (pendingOpen && Date.now() - pendingOpen.at > 2000) pendingOpen = null;
-      applyMode(pendingOpen ? pendingOpen.mode : 'apps');
+      var kept = !pendingOpen && !clearNext && closedAt && Date.now() - closedAt < KEEP_MS ? els.q.value : '';
+      clearNext = false;
+      els.q.value = kept;
+      applyMode(pendingOpen ? pendingOpen.mode : (kept ? mode : 'apps'));
       if (pendingOpen && pendingOpen.query) els.q.value = pendingOpen.query;
       pendingOpen = null;
       note = null;
@@ -1032,19 +1045,31 @@
       runSearch();
       freshenSoon();            // an app installed since the last rebuild shows up now
       els.q.focus();
+      if (kept) els.q.select();     // typing replaces it; an arrow key keeps it
       els.results.scrollTop = 0;
       /* belt to visibilitychange's braces: this event is main saying the window IS on screen, and
          a panel that boots at opacity 0 may not depend on a single signal to become visible. */
       panelUp();
     });
-    /* Win+S: main sends 'launcher.open' {mode, query} just BEFORE showLauncher(), and showLauncher
-       ALWAYS broadcasts launcher:visible true - even when the window is already up (main.js,
-       showLauncher) - and that handler resets the launcher. So the mode only waits here, and the
-       reset above applies it. A stale one (the show never came) is dropped after 2 s so it cannot
-       leak into the next plain Win tap. */
+    /* Win+S: main sends 'launcher.open' {mode, query} just BEFORE showLauncher(). From a closed
+       launcher, the launcher:visible true that follows applies it (the reset above). Over an open
+       one, main sends no new launcher:visible (only a hidden -> shown change does, so a repeat
+       never wipes what you typed), and it is applied right here. A stale one (the show never
+       came) is dropped after 2 s so it cannot leak into the next plain Win tap. */
     mantle.on('launcher.open', function (p) {
       pendingOpen = { mode: (p && p.mode) || 'apps', query: (p && p.query) || '', at: Date.now() };
+      if (!shownNow) return;
+      // already up: main shows it again without a new launcher:visible, so the mode lands here
+      applyMode(pendingOpen.mode);
+      if (pendingOpen.query) { els.q.value = pendingOpen.query; queueFiles(); }
+      pendingOpen = null;
+      disarm();
+      runSearch();
+      els.q.focus();
     });
+    /* main could not give this window the keyboard (lib/surface-gate.js): say so, in its words,
+       until it has it (a click in it) or it closes. Never silent (audit #7). */
+    mantle.on('launcher.keyboard', function (p) { keyboardNote(p && !p.ok ? (p.text || 'No keyboard: click here to type.') : null); });
     mantle.on('state', applyState);
     /* the picture behind this window: ~4 a second while it is up, one frame just before it is
        shown. setBackdrop swaps the <img> src and nothing else. */
@@ -1054,6 +1079,15 @@
     els.notice.hidden = false;
     els.notice.textContent = 'live updates unavailable: this build of the bridge has no mantle.on(), ' +
       'so the launcher cannot tell when it is shown or when the sidecar changes.';
+  }
+
+  /** An action ran, so the launcher closes and the next open starts clean (Esc keeps the query). */
+  function hideAfterAction() { clearNext = true; mantle.call('launcher.hide'); }
+
+  function keyboardNote(text) {
+    if (!els.kbd) return;
+    els.kbd.hidden = !text;
+    els.kbd.textContent = text || '';
   }
 
   function applyMode(m) {

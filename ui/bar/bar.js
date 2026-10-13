@@ -3801,7 +3801,7 @@
 
   /* ================================================================= start */
 
-  el.start.addEventListener('click', function () { closePop(); act('launcher.show', null, 'launcher'); });
+  el.start.addEventListener('click', function () { closePop(); act('launcher.toggle', null, 'launcher'); });
 
   /* ================================================================= boot */
 

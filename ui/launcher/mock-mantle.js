@@ -399,6 +399,9 @@
 
   // a test can drive the visible event by hand
   window.__mockShow = function () { emit('launcher:visible', true); };
+  window.__mockHide = function () { emit('launcher:visible', false); };
+  // any event main sends (launcher.keyboard, a launcher.open over an open launcher)
+  window.__mockEmit = function (name, payload) { emit(name, payload); };
   // Win+S's path: main sends launcher.open {mode, query} and then shows the window
   window.__mockOpen = function (mode, query) {
     emit('launcher.open', { mode: mode || 'search', query: query || '', from: 'mock' });
