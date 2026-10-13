@@ -21,6 +21,9 @@ const { openRouted } = require('./lib/open-route');
 const spotifyLaunch = require('./lib/spotify-launch');
 const { probe } = require('./lib/net-probe');
 const { createCallLog, createSetLog } = require('./lib/call-log');
+// lane mn-plainwords: raw codes ("COMException (0x8024402C)", "access denied (5)") become words where a
+// reply, a push or a replay crosses to a page; the codes themselves go to the log, once each
+const { toPage } = require('./lib/plain-error');
 const { placeholderUrl } = require('./lib/placeholder');
 const { createTheme, windowsModeFrom } = require('./lib/theme');
 const { createBar, createLauncher, createDesktop, hwndOf, BAR_H } = require('./lib/windows');
@@ -910,7 +913,9 @@ const KEYS_ALLOWED = new Set(['win+a', 'win+n', 'win+d']);
  * log, one per state change. So a dead page is skipped, and said once per death, not per send.
  */
 const deadPagesSaid = new WeakSet();
+let pushWords = (name, payload) => payload;   // set after this region: raw codes become words (lib/plain-error.js)
 function broadcast(name, payload) {
+  payload = pushWords(name, payload);
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue;
     const wc = win.webContents;
@@ -932,6 +937,7 @@ function broadcast(name, payload) {
   }
 }
 // </mainrel:broadcast>
+pushWords = (name, payload) => toPage(`push ${name}`, payload);
 
 /*
  * MANTLE'S APPEARANCE: light, dark or Match Windows (lane dm-core, 2026-10-08; lib/theme.js).
@@ -5895,11 +5901,11 @@ ipcMain.handle('mantle:call', async (e, name, args) => {
   try {
     const result = await fn(a);
     callLog.result(name, a, logView(a, result));
-    return { ok: true, result };
+    return { ok: true, result: toPage(name, result) };
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
     callLog.threw(name, a, { message: logSafe(a, err && typeof err.logText === 'string' ? err.logText : msg) });
-    return { ok: false, error: msg };
+    return toPage(name, { ok: false, error: msg });
   }
 });
 
@@ -5932,7 +5938,8 @@ ipcMain.on('mantle:theme-now', (e, want) => {
 
 // mantle.on('state'|'windows'|...) replays the current value on subscribe, so a
 // page never renders an empty first frame while it waits for a push.
-ipcMain.handle('mantle:replay', async (e, name) => {
+ipcMain.handle('mantle:replay', async (e, name) => toPage(`replay ${String(name).slice(0, 40)}`, await replayAnswer(e, name)));
+async function replayAnswer(e, name) {
   const who = callerVerdict(e, UI_DIR);
   if (!who.ok) {
     refuseCaller(who, 'a replay');
@@ -5964,7 +5971,7 @@ ipcMain.handle('mantle:replay', async (e, name) => {
     // A feature's own standing events (ctx.replay) first, then lib/wallpaper.js answers for its own.
     default: return (features && features.replay(name)) || wallpaper.replay(name);
   }
-});
+}
 
 // ---------------------------------------------------------------------------
 // The sidecar's side of the conversation.
