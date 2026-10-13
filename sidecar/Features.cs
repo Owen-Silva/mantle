@@ -39,11 +39,11 @@ namespace Mantle {
     internal void BeginOwner(string owner) { _owner = owner; }
 
     /// `name` is "feature.verb" (a dot keeps feature commands apart from the built-in ones);
-    /// `lane` is one of Lanes.Ui / Capture / Slow / Audio / Qs.
+    /// `lane` is one of Lanes.Ui / Capture / Slow / Audio / Qs / Scan.
     public void Add(string name, string lane, FeatureCommand fn) {
       if (string.IsNullOrEmpty(name) || name.IndexOf('.') <= 0)
         throw new ArgumentException(_owner + ": feature command \"" + name + "\" must be named feature.verb");
-      if (lane != Lanes.Ui && lane != Lanes.Capture && lane != Lanes.Slow && lane != Lanes.Audio && lane != Lanes.Qs)
+      if (lane != Lanes.Ui && lane != Lanes.Capture && lane != Lanes.Slow && lane != Lanes.Audio && lane != Lanes.Qs && lane != Lanes.Scan)
         throw new ArgumentException(_owner + ": feature command \"" + name + "\" names an unknown lane \"" + lane + "\"");
       if (fn == null) throw new ArgumentException(_owner + ": feature command \"" + name + "\" has no handler");
       if (_cmds.ContainsKey(name))
