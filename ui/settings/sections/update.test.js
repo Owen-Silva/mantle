@@ -51,7 +51,11 @@ async function nodeTests() {
   check('main: every page command is exported', Object.keys(main.SIDECAR).every((k) => typeof main.commands[k] === 'function'));
   check('main: its administrator actions are real [Elevated] ones', main.ADMIN.every((a) => elevated.has(a)) && elevated.size === main.ADMIN.length, [...elevated].join(' '));
   check('sidecar: the admin words match the page', /PauseDoes = "pause or resume Windows Update for this PC"/.test(cs) && /HoursDoes = "change the active hours Windows Update keeps for this PC"/.test(cs));
-  check('sidecar: never installs, uninstalls, downloads or restarts', !/CreateUpdateInstaller|CreateUpdateDownloader|\.Install\(|Uninstall\(|ExitWindowsEx|InitiateSystemShutdown|shutdown\.exe|UsoClient/i.test(cs));
+  check('sidecar: never installs, uninstalls, downloads or restarts', !/CreateUpdateDownloader|\.Install\(|Uninstall\(|ExitWindowsEx|InitiateSystemShutdown|shutdown\.exe|UsoClient/i.test(cs) &&
+    !/\bM\([^;]*"(Begin)?(Install|Uninstall|Download|Commit|RunWizard)"/.test(cs));
+  check('sidecar: the one installer object is only asked IsBusy (a read)', (cs.match(/CreateUpdateInstaller/g) || []).length === 1 && /P\(M\(Session\(\), "CreateUpdateInstaller"\), "IsBusy"\)/.test(cs));
+  check('sidecar: an extension keeps the pause start (only the 3 end values are written)', /string\[\] ends = \{ "PauseUpdatesExpiryTime", "PauseFeatureUpdatesEndTime", "PauseQualityUpdatesEndTime" \}/.test(cs) && /from = start\.Value; until = start\.Value\.AddDays\(7 \* weeks\)/.test(cs));
+  check('sidecar: the check code is kept apart from its words', /"code", _code/.test(cs) && !/err = "Windows Update did not answer/.test(cs));
 
   const sent = [], elev = [];
   const mk = (test) => ({ id: 'update', test, log() {}, push() {}, elevate: async (a, x) => { elev.push([a, x]); return { ok: false, kind: 'cancelled' }; },
@@ -60,10 +64,13 @@ async function nodeTests() {
       if (a.dryRun) return { ok: true, result: { ok: true, dryRun: true, would: 'ask for administrator permission to pause or resume Windows Update for this PC, then pause updates for 1 week' } };
       if (c === 'update.pause') return { ok: true, result: { ok: false, needsAdmin: true, elevate: { action: 'update.pause', args: { weeks: a.weeks } }, reason: 'Windows will ask' } };
       if (c === 'update.activeHours') return { ok: true, result: { ok: false, needsAdmin: true, elevate: { action: 'update.activeHours', args: { start: a.start, end: a.end } }, reason: 'Windows will ask' } };
+      if (c === 'update.smartHours') return { ok: true, result: { ok: false, needsAdmin: true, elevate: { action: 'update.smartHours', args: { on: a.on } }, reason: 'Windows will ask' } };
+      if (c === 'update.status') return { ok: true, result: { ok: true, check: STATUS_CHECK } };
       return { ok: true, result: { ok: true, started: true, check: { running: true } } };
     } } });
+  let STATUS_CHECK = null;
   const T = mk(true), L = mk(false);
-  for (const [cmd, args] of [['check', {}], ['pause', { weeks: 2 }], ['pause', { weeks: 0 }], ['activeHours', { start: 8, end: 17 }]]) {
+  for (const [cmd, args] of [['check', {}], ['pause', { weeks: 2 }], ['pause', { weeks: 0 }], ['pause', { weeks: 3, extend: true }], ['activeHours', { start: 8, end: 17 }], ['smartHours', { on: true }], ['smartHours', { on: false }]]) {
     sent.length = 0; elev.length = 0;
     const r = await main.commands[cmd](args, T);
     check(`test run: ${cmd} ${JSON.stringify(args)} is a dry run`, r.ok && r.dryRun === true && sent.length === 1 && sent[0][1].dryRun === true && elev.length === 0 && /^Test run, nothing changed/.test(r.reason), JSON.stringify([r, sent]));
@@ -77,6 +84,25 @@ async function nodeTests() {
   elev.length = 0;
   await main.commands.activeHours({ start: 9, end: 2 }, L);
   check('live: active hours becomes ONE prompt for update.activeHours', elev.length === 1 && elev[0][0] === 'update.activeHours' && elev[0][1].start === 9 && elev[0][1].end === 2, JSON.stringify(elev));
+  elev.length = 0; sent.length = 0;
+  await main.commands.smartHours({ on: true }, L);
+  check('live: Automatically becomes ONE prompt for update.smartHours {on:true}', elev.length === 1 && elev[0][0] === 'update.smartHours' && elev[0][1].on === true, JSON.stringify(elev));
+  sent.length = 0;
+  await main.commands.pause({ weeks: 4, extend: true }, L);
+  check('live: an extension reaches the sidecar as {weeks, extend:true}', sent.length === 1 && sent[0][1].weeks === 4 && sent[0][1].extend === true, JSON.stringify(sent));
+  sent.length = 0;
+  for (const bad of [{ on: 'yes' }, {}]) check('smartHours refuses ' + JSON.stringify(bad) + ' before the sidecar', (await main.commands.smartHours(bad, L)).ok === false && sent.length === 0);
+  for (const bad of [{ weeks: 0, extend: true }, { weeks: 2, extend: 'yes' }]) check('pause refuses ' + JSON.stringify(bad) + ' before the sidecar', (await main.commands.pause(bad, L)).ok === false && sent.length === 0);
+  // busy: a check the update agent refused is words + busy:true; the code never reaches the page
+  for (const [code, busy] of [['0x80240009', true], ['0x8001010a', true], ['0x8024001E', true], ['0x8024402C', false], ['0x8024FFFF', false]]) {
+    STATUS_CHECK = { running: false, finished: 1, error: 'Windows Update stopped the check without saying why', code };
+    const s = await main.commands.status({}, L);
+    const c = s.check || {};
+    check(`status: check code ${code} -> busy=${busy}, words, no code`, c.busy === busy && !('code' in c) && !/0x[0-9a-f]{8}/i.test(JSON.stringify(s)) && typeof c.error === 'string' && c.error.length > 20, JSON.stringify(c));
+  }
+  STATUS_CHECK = { running: true, error: null, code: null };
+  check('status: a running check is not busy', (await main.commands.status({}, L)).check.busy === false);
+  check('BUSY: every busy line says to try again', Object.values(main.BUSY).every((w) => /Try again/.test(w)));
   // history: a code becomes words in main (the page shows `why`, never 0x...); an unknown code gets null
   const HI = { id: 'update', test: false, log() {}, push() {}, sidecar: { on: () => () => {}, send: async () => ({ ok: true, result: { total: 4, items: [
     { title: 'A', ok: false, result: 'Failed', code: '0x800F0922' }, { title: 'B', ok: false, result: 'Failed', code: '0x8024402c' },
@@ -122,14 +148,18 @@ function FAKE() {
     if (checking > 0) checking--;
     return { ok: true, build: { name: 'Windows 11 Home', version: '25H2', build: '26200.9550' }, lastCheck: now - 3 * 3600e3, lastInstall: now - 2 * 86400e3, wuaWhy: null,
       rebootRequired: SCN === 'restart', noAutoUpdate: null,
+      installing: SCN === 'installing',
       pause: SCN === 'paused' ? { paused: true, until: now + 10 * 86400e3, since: now - 4 * 86400e3, maxDays: 35, locked: null, admin: true, does: 'x' }
+        : SCN === 'paused-max' ? { paused: true, until: now + 5 * 86400e3, since: now - 30 * 86400e3, maxDays: 35, locked: null, admin: true, does: 'x' }
         : { paused: false, until: null, since: null, maxDays: 35, locked: SCN === 'policy' ? 'a policy on this PC removes Pause updates (WindowsUpdate SetDisablePauseUXAccess = 1)' : null, admin: true, does: 'x' },
-      hours: { start: 9, end: 2, set: true, auto: false, locked: SCN === 'policy' ? 'a policy on this PC sets the active hours (WindowsUpdate SetActiveHours = 1)' : null, admin: true },
+      hours: { start: 9, end: 2, set: true, auto: SCN === 'auto', locked: SCN === 'policy' ? 'a policy on this PC sets the active hours (WindowsUpdate SetActiveHours = 1)' : null, admin: true },
       flags: { latest: { on: true, set: true }, otherProducts: { on: false, set: false }, expedite: { on: true, set: true }, metered: { on: false, set: false }, restartNotify: { on: false, set: false },
         why: 'Mantle changes only pause and active hours so far (each through the administrator prompt)' },
       delivery: { mode: null, words: null, policy: false, why: 'Windows keeps it in the Delivery Optimization service\'s own profile (NETWORK SERVICE), which this account may not read (access denied (5))', readOnly: 'Windows keeps this in the Delivery Optimization service\'s own profile (NETWORK SERVICE), which only an administrator\'s tools change' },
       insider: { joined: false, channel: null, why: 'Joining or leaving the Windows Insider Program needs your Microsoft account and Microsoft\'s Insider service, which only Windows\' own Settings talks to' },
-      check: running ? { running: true, started: now - 20e3, finished: null, found: null, optional: null, error: null } : { running: false, started: null, finished: ran ? Date.now() : null, found: ran ? 4 : null, optional: null, error: null } };
+      check: running ? { running: true, started: now - 20e3, finished: null, found: null, optional: null, error: null } : SCN === 'busy' && !ran ? { running: false, started: now - 60e3, finished: now - 50e3, found: null, optional: null, busy: true,
+          error: 'Windows Update is busy with another check or an install, so it did not check now. Try again in a few minutes' }   // as main hands it over (BUSY)
+        : { running: false, started: null, finished: ran ? Date.now() : null, found: ran ? 4 : null, optional: null, error: null, busy: false } };
   }
   const U = (title, kb, kind, sizeB, down, optional) => ({ title, kb: kb ? [kb] : [], kind, size: sizeB, downloaded: down, optional, uid: 'uid-' + title.length + kb });
   function list() {
@@ -160,7 +190,7 @@ function FAKE() {
         const copy = args && typeof args === 'object' ? JSON.parse(JSON.stringify(args)) : {};
         if (name === 'settings.sections') return Promise.resolve({ ok: true, reason: null, sections: [{ id: 'update', file: 'sections/update.js', down: null, main: null }] });
         const mine = name === 'settings.update.status' ? later(30, status()) : name === 'settings.update.list' ? later(60, list()) : name === 'settings.update.history' ? later(40, history())
-          : /^settings\.update\.(check|pause|activeHours)$/.test(name) ? write(name, copy) : null;
+          : /^settings\.update\.(check|pause|activeHours|smartHours)$/.test(name) ? write(name, copy) : null;
         if (!mine) return m.call(name, args);
         (window.__mockCalls = window.__mockCalls || []).push({ name, args: copy });
         return mine;
@@ -208,9 +238,29 @@ const SHOTS = [
   ['upd-05-paused', PG('windows-update', '&wu=paused'), async (p) => {
     check('05: paused shows until when, with Resume as a choice', /Paused until/.test(await rowText(p, 'update.main.pause') || '') && await p.$eval(sel('update.main.pause') + ' select', (s) => [...s.options].some((o) => o.textContent === 'Resume updates')));
     check('05: the status line says paused', /Updates are paused until/.test(await rowText(p, 'update.main.status') || ''));
+    // paused 4 days ago until 10 days from now = 2 weeks from the start: only 3, 4 and 5 weeks FROM THE START extend it
+    const opts = await p.$eval(sel('update.main.pause') + ' select', (s) => [...s.options].map((o) => [o.value, o.textContent]));
+    const startDay = (w) => new Date(Date.now() - 4 * 864e5 + w * 7 * 864e5).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'long' });
+    check('05: extensions count from the day the pause began, never from now', JSON.stringify(opts.map((o) => o[0])) === '["paused","0","x3","x4","x5"]' && opts[2][1] === 'Extend to ' + startDay(3) && !opts.some((o) => /Pause until|Pause for/.test(o[1])), JSON.stringify(opts));
+    check('05: the row says the limit is counted from the start', /Windows allows 5 weeks in all, counted from that day/.test(await rowText(p, 'update.main.pause') || ''), await rowText(p, 'update.main.pause'));
+    await p.selectOption(sel('update.main.pause') + ' select', 'x3');
+    await p.waitForTimeout(400);
+    const c = await calls(p, 'settings.update.pause');
+    check('05: choosing one asks {weeks: 3, extend: true}', c.length === 1 && c[0].args.weeks === 3 && c[0].args.extend === true, JSON.stringify(c));
+    check('05: a declined prompt springs back to the current pause and says so', /You said no to the administrator prompt/.test(await rowText(p, 'update.main.pause') || '') && await p.$eval(sel('update.main.pause') + ' select', (s) => s.value) === 'paused');
+  }],
+  ['upd-05b-paused-max', PG('windows-update', '&wu=paused-max'), async (p) => {
+    const opts = await p.$eval(sel('update.main.pause') + ' select', (s) => [...s.options].map((o) => o.value));
+    check('05b: at the 5-week limit there is nothing to extend, and it says why', JSON.stringify(opts) === '["paused","0"]' && /already as long as Windows allows/.test(await rowText(p, 'update.main.pause') || ''), JSON.stringify(opts) + ' ' + await rowText(p, 'update.main.pause'));
+  }],
+  ['upd-05c-extend-testrun', PG('windows-update', '&wu=paused&test=1'), async (p) => {
+    await p.selectOption(sel('update.main.pause') + ' select', 'x4');
+    await p.waitForTimeout(300);
+    check('05c: a test-run extension is a dry run with its note, and springs back', /Test run, nothing changed/.test(await rowText(p, 'update.main.pause') || '') && await p.$eval(sel('update.main.pause') + ' select', (s) => s.value) === 'paused');
   }],
   ['upd-06-policy', PG('advanced', '&wu=policy'), async (p) => {
     check('06: active hours locked by the policy, WITH it', /Read only here: a policy on this PC sets the active hours/.test(await rowText(p, 'update.advanced.active-start') || '') && await p.$eval(sel('update.advanced.active-start') + ' select', (s) => s.disabled));
+    check('06: Automatically / Manually is locked by the same policy, WITH it', /Read only here: a policy on this PC sets the active hours/.test(await rowText(p, 'update.advanced.active-auto') || '') && await p.$eval(sel('update.advanced.active-auto') + ' [data-v="auto"]', (b) => b.disabled));
   }],
   ['upd-07-advanced', PG('advanced'), async (p) => {
     await p.waitForTimeout(250);
@@ -224,6 +274,41 @@ const SHOTS = [
     await p.waitForTimeout(350);
     const c = await calls(p, 'settings.update.activeHours');
     check('07: changing the end asks {start: 9, end: 5}', c.length === 1 && c[0].args.start === 9 && c[0].args.end === 5, JSON.stringify(c));
+    check('07: Adjust active hours reads Manually, with the administrator words', await p.$eval(sel('update.advanced.active-auto') + ' [data-v="manual"]', (b) => b.getAttribute('aria-checked')) === 'true' && /Windows will ask for administrator permission to change how Windows Update sets the active hours/.test(await rowText(p, 'update.advanced.active-auto') || ''));
+    await p.click(sel('update.advanced.active-auto') + ' [data-v="auto"]');
+    await p.waitForTimeout(400);
+    const s = await calls(p, 'settings.update.smartHours');
+    check('07: Automatically asks {on: true}', s.length === 1 && s[0].args.on === true, JSON.stringify(s));
+    check('07: a declined prompt springs back to Manually and says so', /You said no to the administrator prompt/.test(await rowText(p, 'update.advanced.active-auto') || '') && await p.$eval(sel('update.advanced.active-auto') + ' [data-v="manual"]', (b) => b.getAttribute('aria-checked')) === 'true');
+  }],
+  ['upd-07b-auto', PG('advanced', '&wu=auto'), async (p) => {
+    await p.waitForTimeout(250);
+    check('07b: Automatically: the hours say Windows sets them, and what Windows last stored', /Set by Windows/.test(await rowText(p, 'update.advanced.active-hours') || '') && /Windows last stored 09:00 – 02:00/.test(await rowText(p, 'update.advanced.active-hours') || ''), await rowText(p, 'update.advanced.active-hours'));
+    check('07b: ... the start and end are not editable then, and say why', await p.$eval(sel('update.advanced.active-start') + ' select', (s) => s.disabled) && /Windows sets this while Adjust active hours is Automatically/.test(await rowText(p, 'update.advanced.active-end') || ''));
+    await p.click(sel('update.advanced.active-auto') + ' [data-v="manual"]');
+    await p.waitForTimeout(400);
+    const s = await calls(p, 'settings.update.smartHours');
+    check('07b: Manually asks {on: false}', s.length === 1 && s[0].args.on === false, JSON.stringify(s));
+  }],
+  ['upd-07c-auto-testrun', PG('advanced', '&test=1'), async (p) => {
+    await p.click(sel('update.advanced.active-auto') + ' [data-v="auto"]');
+    await p.waitForTimeout(300);
+    check('07c: a test-run Automatically is a dry run with its note, and springs back', /Test run, nothing changed/.test(await rowText(p, 'update.advanced.active-auto') || '') && await p.$eval(sel('update.advanced.active-auto') + ' [data-v="manual"]', (b) => b.getAttribute('aria-checked')) === 'true');
+  }],
+  ['upd-12-busy', PG('windows-update', '&wu=busy'), async (p) => {
+    await p.waitForTimeout(250);
+    const st = await rowText(p, 'update.main.status') || '';
+    check('12: a refused check says Windows Update is busy, in words, with no code', /Windows Update is busy/.test(st) && /Try again in a few minutes/.test(st) && !/0x[0-9a-f]{4}/i.test(await p.textContent('#page')), st);
+    check('12: the button offers Try again', /Try again/.test(await p.textContent(sel('update.main.check') + ' button')));
+    await p.click(sel('update.main.check') + ' button');
+    await p.waitForTimeout(400);
+    check('12: Try again asks for the check again and says it is checking', (await calls(p, 'settings.update.check')).length === 1 && /Checking for updates…/.test(await rowText(p, 'update.main.status') || ''), await rowText(p, 'update.main.status'));
+    await p.waitForTimeout(4500);
+    check('12: when that check finishes the busy line is gone', /Checked just now: 4 found/.test(await rowText(p, 'update.main.status') || '') && !/busy/.test(await rowText(p, 'update.main.status') || ''), await rowText(p, 'update.main.status'));
+  }],
+  ['upd-13-installing', PG('windows-update', '&wu=installing'), async (p) => {
+    await p.waitForTimeout(250);
+    check('13: while Windows Update installs, the status says so (and that Mantle never installs)', /Installing updates…/.test(await rowText(p, 'update.main.status') || '') && /Mantle never installs or restarts/.test(await rowText(p, 'update.main.status') || ''), await rowText(p, 'update.main.status'));
   }],
   ['upd-08-history', PG('history'), async (p) => {
     check('08: 923 in the history', /923/.test(await rowText(p, 'update.history.count') || ''));

@@ -16,6 +16,17 @@
 //   update.pause {weeks 0-5, dryRun?}  pause (1-5 weeks) or resume (0). HKLM: the
 //                                      [Elevated("update.pause")] broker action, one UAC prompt.
 //   update.activeHours {start, end, dryRun?}  the same, [Elevated("update.activeHours")].
+//   update.smartHours {on, dryRun?}    "Adjust active hours: Automatically / Manually": HKLM UX Settings
+//                                      SmartActiveHoursState, 1 = Windows sets the active hours from use,
+//                                      2 = you set them (winaero.com "automatically adjust active hours";
+//                                      geekrewind.com says 0 for off: reads treat anything but 1 as manual).
+//                                      [Elevated("update.smartHours")], one UAC prompt.
+// update.pause {weeks, extend:true} while paused EXTENDS the pause from its ORIGINAL start: Windows'
+// limit (FlightSettingsMaxPauseDays, 35 days) counts from PauseUpdatesStartTime, so only the end values
+// move; a fresh pause while paused is refused (it would restart the count). Microsoft support, "Pause
+// updates": after the limit, updates must be installed before Windows can be paused again.
+// update.status carries "installing" (IUpdateInstaller.IsBusy, a read: no installer method is ever
+// called) and the last check's HRESULT as check.code (never shown: main turns it into words, e.g. "busy").
 // Installing, uninstalling, downloading and restarting are NEVER done here. Joining the Insider
 // Program, the Advanced switches and Delivery Optimization are READ-ONLY with their reasons.
 //
@@ -38,10 +49,12 @@ namespace Mantle {
       t.Add("update.check", Lanes.Slow, Check);
       t.Add("update.pause", Lanes.Slow, Pause);
       t.Add("update.activeHours", Lanes.Slow, ActiveHours);
+      t.Add("update.smartHours", Lanes.Slow, SmartHours);
     }
 
     public const string PauseDoes = "pause or resume Windows Update for this PC";
     public const string HoursDoes = "change the active hours Windows Update keeps for this PC";
+    public const string SmartDoes = "change how Windows Update sets the active hours for this PC";
     const string UX = @"SOFTWARE\Microsoft\WindowsUpdate\UX\Settings";
     const string POL = @"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate";
     static readonly string[] PAUSE_VALUES = { "PauseUpdatesExpiryTime", "PauseUpdatesStartTime", "PauseFeatureUpdatesStartTime",
@@ -112,9 +125,9 @@ namespace Mantle {
       long? s = pol ? Num("HKLM", POL, "ActiveHoursStart") : Num("HKLM", UX, "ActiveHoursStart");
       long? e = pol ? Num("HKLM", POL, "ActiveHoursEnd") : Num("HKLM", UX, "ActiveHoursEnd");
       long? smart = Num("HKLM", UX, "SmartActiveHoursState");
-      return Json.Obj("start", s ?? 8, "end", e ?? 17, "set", s != null && e != null, "auto", smart == 1,
+      return Json.Obj("start", s ?? 8, "end", e ?? 17, "set", s != null && e != null, "auto", !pol && smart == 1, "autoSet", smart != null,
                       "locked", pol ? "a policy on this PC sets the active hours (WindowsUpdate SetActiveHours = 1)" : null,
-                      "admin", !SysCommon.Elevated(), "does", HoursDoes);
+                      "admin", !SysCommon.Elevated(), "does", HoursDoes, "smartDoes", SmartDoes);
     }
 
     // The Advanced options switches: read-only (see the file head); [key, value name].
@@ -179,10 +192,13 @@ namespace Mantle {
         try { using (RegistryKey k = SysCommon.Hive("HKLM").OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired", false)) reboot = k != null; }
         catch (Exception) { reboot = null; }
       }
+      object installing = null;
+      try { installing = (bool)P(M(Session(), "CreateUpdateInstaller"), "IsBusy"); }   // a read: no installer method is called
+      catch (Exception) { installing = null; }
       string noAuto = Num("HKLM", POL + @"\AU", "NoAutoUpdate") == 1 ? "a policy on this PC turns automatic updates off (WindowsUpdate\\AU NoAutoUpdate = 1)" : null;
       result = Json.Obj("ok", true, "build", Build(), "lastCheck", lastCheck, "lastInstall", lastInstall, "rebootRequired", reboot, "wuaWhy", wuaWhy,
                         "pause", PauseState(), "hours", HoursState(), "flags", Flags(), "delivery", Delivery(), "insider", Insider(),
-                        "noAutoUpdate", noAuto, "check", CheckState(), "elevated", SysCommon.Elevated(), "reason", null);
+                        "noAutoUpdate", noAuto, "installing", installing, "check", CheckState(), "elevated", SysCommon.Elevated(), "reason", null);
       return null;
     }
 
@@ -235,9 +251,9 @@ namespace Mantle {
 
     // The one online check at a time. Guarded by CK.
     static readonly object CK = new object();
-    static bool _running; static object _started, _finished, _found, _optional; static string _error;
+    static bool _running; static object _started, _finished, _found, _optional; static string _error, _code;
     static IDictionary CheckState() {
-      lock (CK) return Json.Obj("running", _running, "started", _started, "finished", _finished, "found", _found, "optional", _optional, "error", _error);
+      lock (CK) return Json.Obj("running", _running, "started", _started, "finished", _finished, "found", _found, "optional", _optional, "error", _error, "code", _code);
     }
     static object Now() { return Ms(DateTime.UtcNow); }
 
@@ -250,13 +266,18 @@ namespace Mantle {
       if (Program.Passive) return FeatureTable.PassiveRefusal + ": update.check would " + would;
       lock (CK) {
         if (_running) { result = Json.Obj("ok", true, "started", false, "check", CheckState(), "note", "A check is already running"); return null; }
-        _running = true; _started = Now(); _finished = null; _error = null; _found = null; _optional = null;
+        _running = true; _started = Now(); _finished = null; _error = null; _code = null; _found = null; _optional = null;
       }
       var th = new Thread(() => {
-        List<object> p = null, o = null; string err = null;
+        List<object> p = null, o = null; string err = null, code = null;
         try { Search(true, out p, out o); }
-        catch (Exception ex) { err = "Windows Update did not answer: " + SysCommon.Why(ex.InnerException ?? ex); }
-        lock (CK) { _running = false; _finished = Now(); _error = err; _found = p == null ? null : (object)p.Count; _optional = o == null ? null : (object)o.Count; }
+        catch (Exception ex) {
+          Exception x = ex.InnerException ?? ex;
+          // words here, the code apart: main says what it means (busy, no network...), the page never shows it
+          err = "Windows Update stopped the check without saying why";
+          code = "0x" + System.Runtime.InteropServices.Marshal.GetHRForException(x).ToString("X8", CultureInfo.InvariantCulture);
+        }
+        lock (CK) { _running = false; _finished = Now(); _error = err; _code = code; _found = p == null ? null : (object)p.Count; _optional = o == null ? null : (object)o.Count; }
       });
       th.IsBackground = true; th.Name = "update.check";
       th.Start();
@@ -303,21 +324,29 @@ namespace Mantle {
 
     static string Pause(Dictionary<string, object> req, ref object result) {
       var a = new Dictionary<string, object>(StringComparer.Ordinal);
-      object w0;
+      object w0, x0;
       if (Json.TryGet(req, "weeks", out w0)) a["weeks"] = w0;
+      if (Json.TryGet(req, "extend", out x0)) a["extend"] = x0;
       string why = CheckPause(a);
       if (why != null) return "update.pause: " + why;
       long weeks = (long)(double)a["weeks"];
+      bool extend = a.ContainsKey("extend") && (bool)a["extend"];
       bool dry = Json.GetBool(req, "dryRun", false);
       IDictionary st = PauseState();
       if (st["locked"] != null) return "Read only: " + (string)st["locked"];
-      string would = weeks == 0 ? "ask for administrator permission to " + PauseDoes + ", then resume updates (removes the pause values in HKLM WindowsUpdate UX Settings)"
-                                : "ask for administrator permission to " + PauseDoes + ", then pause updates for " + weeks + " week" + (weeks == 1 ? "" : "s") +
-                                  " until " + DateTime.UtcNow.AddDays(7 * weeks).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + " (HKLM WindowsUpdate UX Settings PauseUpdatesExpiryTime and its 5 companions)";
-      if (dry) { result = Json.Obj("ok", true, "dryRun", true, "weeks", weeks, "from", st["paused"], "would", would, "needsAdmin", !SysCommon.Elevated(), "reason", null); return null; }
+      DateTime from = DateTime.UtcNow, until = from; DateTime? end = null;
+      if (weeks > 0) { string no = PausePlan(weeks, extend, out from, out until, out end); if (no != null) return no; }
+      string ask = "ask for administrator permission to " + PauseDoes + ", then ";
+      string would = weeks == 0 ? ask + "resume updates (removes the pause values in HKLM WindowsUpdate UX Settings)"
+                   : extend ? ask + "extend the pause to " + Ymd(until) + ", " + weeks + " week" + (weeks == 1 ? "" : "s") + " from the day it began (" + Ymd(from) +
+                              "; PauseUpdatesExpiryTime and the two other end values move, the start stays)"
+                   : ask + "pause updates for " + weeks + " week" + (weeks == 1 ? "" : "s") + " until " + Ymd(until) + " (HKLM WindowsUpdate UX Settings PauseUpdatesExpiryTime and its 5 companions)";
+      if (dry) { result = Json.Obj("ok", true, "dryRun", true, "weeks", weeks, "extend", extend, "until", weeks == 0 ? null : Ms(until), "since", weeks == 0 ? null : Ms(from),
+                                   "from", st["paused"], "would", would, "needsAdmin", !SysCommon.Elevated(), "reason", null); return null; }
       if (Program.Passive) return FeatureTable.PassiveRefusal + ": update.pause would " + would;
       var args = new Dictionary<string, object>(StringComparer.Ordinal);
       args["weeks"] = (double)weeks;
+      if (extend) args["extend"] = true;
       if (!SysCommon.Elevated()) return NeedsAdmin("update.pause", PauseDoes, args, would, ref result);
       return DoPause(args, ref result);
     }
@@ -340,13 +369,67 @@ namespace Mantle {
       return DoHours(a, ref result);
     }
 
-    static string CheckPause(Dictionary<string, object> args) {
-      string why = Elevate.OnlyKeys(args, "weeks");
+    static string SmartHours(Dictionary<string, object> req, ref object result) {
+      var a = new Dictionary<string, object>(StringComparer.Ordinal);
+      object v;
+      if (Json.TryGet(req, "on", out v)) a["on"] = v;
+      string why = CheckSmart(a);
+      if (why != null) return "update.smartHours: " + why;
+      bool on = (bool)a["on"];
+      bool dry = Json.GetBool(req, "dryRun", false);
+      IDictionary st = HoursState();
+      if (st["locked"] != null) return "Read only: " + (string)st["locked"];
+      string would = "ask for administrator permission to " + SmartDoes + ", then " + (on ? "let Windows set the active hours from when you use this PC" : "keep the active hours you set") +
+                     " (HKLM WindowsUpdate UX Settings SmartActiveHoursState = " + (on ? 1 : 2) + ")";
+      if (dry) { result = Json.Obj("ok", true, "dryRun", true, "from", st["auto"], "would", would, "needsAdmin", !SysCommon.Elevated(), "reason", null); return null; }
+      if (Program.Passive) return FeatureTable.PassiveRefusal + ": update.smartHours would " + would;
+      if (!SysCommon.Elevated()) return NeedsAdmin("update.smartHours", SmartDoes, Json.Obj("on", on), would, ref result);
+      return DoSmart(a, ref result);
+    }
+
+    static string CheckSmart(Dictionary<string, object> args) {
+      string why = Elevate.OnlyKeys(args, "on");
       if (why != null) return why;
       object v;
+      if (!args.TryGetValue("on", out v) || !(v is bool)) return "on must be true (Windows sets the active hours) or false (you set them)";
+      return null;
+    }
+
+    static string CheckPause(Dictionary<string, object> args) {
+      string why = Elevate.OnlyKeys(args, "weeks", "extend");
+      if (why != null) return why;
+      object v, x;
       if (!args.TryGetValue("weeks", out v) || !(v is double)) return "weeks must be a whole number from 0 (resume) to 5";
       double d = (double)v;
       if (d != Math.Floor(d) || d < 0 || d > 5) return "weeks must be a whole number from 0 (resume) to 5";
+      if (args.TryGetValue("extend", out x)) {
+        if (!(x is bool)) return "extend must be true or false";
+        if ((bool)x && d == 0) return "only a pause can be extended (weeks 1 to 5)";
+      }
+      return null;
+    }
+
+    static string Day(DateTime utc) { return utc.ToLocalTime().ToString("d MMMM", CultureInfo.CurrentCulture); }
+    static string Ymd(DateTime utc) { return utc.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture); }
+    static string Z(DateTime utc) { return utc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture); }
+
+    /// What a pause of `weeks` does NOW (the dry run and the elevated write both ask, so the broker decides
+    /// from the registry as it is when it runs). A new pause runs from now. An extension keeps the pause's
+    /// ORIGINAL start (PauseUpdatesStartTime) and moves only its end: Windows' limit counts from the day the
+    /// pause began, so extending from "now" would quietly stretch it. The refusal in words, or null.
+    static string PausePlan(long weeks, bool extend, out DateTime from, out DateTime until, out DateTime? end) {
+      DateTime now = DateTime.UtcNow;
+      end = Iso(ReadString("HKLM", UX, "PauseUpdatesExpiryTime"));
+      DateTime? start = Iso(ReadString("HKLM", UX, "PauseUpdatesStartTime"));
+      bool paused = end != null && end.Value > now;
+      long max = Num("HKLM", UX, "FlightSettingsMaxPauseDays") ?? 35;
+      from = now; until = now.AddDays(7 * weeks);
+      if (weeks * 7 > max) return "Windows allows a pause of up to " + max + " days in all";
+      if (!extend) return paused ? "Updates are already paused until " + Day(end.Value) + ": extend that pause instead (a new pause would restart Windows' count)" : null;
+      if (!paused) return "Updates are not paused any more, so there is no pause to extend; nothing changed";
+      if (start == null || start.Value > now) return "Windows did not record when this pause began, so Mantle cannot extend it; resume updates, then pause again";
+      from = start.Value; until = start.Value.AddDays(7 * weeks);
+      if (until <= end.Value) return "The pause already runs until " + Day(end.Value) + "; choose a later date to extend it";
       return null;
     }
     static string CheckHours(Dictionary<string, object> args) {
@@ -389,8 +472,21 @@ namespace Mantle {
         result = Json.Obj("paused", false, "value", "0", "note", "Updates resumed: Windows Update checks again on its own schedule");
         return null;
       }
-      DateTime now = DateTime.UtcNow, until = now.AddDays(7 * weeks);
-      string a = now.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture), z = until.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+      bool extend = args.ContainsKey("extend") && (bool)args["extend"];
+      DateTime from, until; DateTime? end;
+      string no = PausePlan(weeks, extend, out from, out until, out end);
+      if (no != null) return (extend ? "The pause was not extended: " : "Windows Update was not paused: ") + no;
+      if (extend) {
+        string[] ends = { "PauseUpdatesExpiryTime", "PauseFeatureUpdatesEndTime", "PauseQualityUpdatesEndTime" };
+        for (int i = 0; i < ends.Length; i++) {
+          string err = WriteSz(ends[i], Z(until));
+          if (err != null) return "The pause was not extended (" + err + (i > 0 ? ", after " + i + " of 3 values" : "") + ")";
+        }
+        result = Json.Obj("paused", true, "until", Ms(until), "since", Ms(from), "value", "paused",
+                          "note", "Updates paused until " + Day(until) + ", counted from " + Day(from));
+        return null;
+      }
+      string a = Z(from), z = Z(until);
       string[] vals = { z, a, a, z, a, z };
       for (int i = 0; i < PAUSE_VALUES.Length; i++) {
         string err = WriteSz(PAUSE_VALUES[i], vals[i]);
@@ -398,6 +494,17 @@ namespace Mantle {
       }
       result = Json.Obj("paused", true, "until", Ms(until), "value", weeks.ToString(CultureInfo.InvariantCulture),
                         "note", "Updates paused until " + until.ToLocalTime().ToString("d MMMM", CultureInfo.CurrentCulture));
+      return null;
+    }
+
+    [Elevated("update.smartHours", "CheckSmart", SmartDoes)]
+    static string DoSmart(Dictionary<string, object> args, ref object result) {
+      bool on = (bool)args["on"];
+      string err = SysCommon.WriteNumber("HKLM", UX, "SmartActiveHoursState", on ? 1 : 2, false);
+      if (err != null) return "Windows did not change how the active hours are set (" + err + ")";
+      if ((Num("HKLM", UX, "SmartActiveHoursState") == 1) != on) return "Windows kept the old setting: the value reads back differently";
+      result = Json.Obj("auto", on, "value", on ? "auto" : "manual",
+                        "note", on ? "Windows now sets the active hours from when you use this PC" : "Active hours are the ones you set");
       return null;
     }
 
