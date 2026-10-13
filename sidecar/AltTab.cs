@@ -586,6 +586,7 @@ namespace Mantle {
       _fgHook = IntPtr.Zero;
       _fgProc = null;
       _stamps.Clear();
+      _live.End();
     }
 
     static void OnForeground(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time) {
@@ -669,6 +670,7 @@ namespace Mantle {
     static IntPtr _fgRoot;
     static UIntPtr _watch = UIntPtr.Zero;
     static long _commitTs;
+    static readonly LiveList _live = new LiveList();
 
     public static int Seq { get { return _seq; } }
 
@@ -754,6 +756,8 @@ namespace Mantle {
       AddMonitor(open, fgRoot);
       KeyEvents.Enqueue(open);
       ArmWatch();
+      // AFTER the open is on its way: the hooks cost a few tenths of a ms, never the first paint's.
+      _live.Begin(_items);
     }
 
     public static IDictionary ItemJson(Item it) {
@@ -764,7 +768,7 @@ namespace Mantle {
 
     /// The monitor of the window being switched FROM, in physical px (this
     /// process is per-monitor DPI aware). The overlay is centred on it.
-    static void AddMonitor(IDictionary d, IntPtr near) {
+    public static void AddMonitor(IDictionary d, IntPtr near) {
       IntPtr mon = near != IntPtr.Zero ? Win32.MonitorFromWindow(near, Win32.MONITOR_DEFAULTTONEAREST) : IntPtr.Zero;
       if (mon == IntPtr.Zero) {
         var pt = new Win32.POINT();
@@ -779,6 +783,7 @@ namespace Mantle {
 
     static void Commit(string via) {
       KillWatch();
+      _live.End();
       if (_items == null) return;
       int seq = _seq, sel = _sel;
       IntPtr target = sel >= 0 && sel < _items.Count ? _items[sel].Hwnd : IntPtr.Zero;
@@ -805,6 +810,7 @@ namespace Mantle {
 
     static void Close(string why) {
       KillWatch();
+      _live.End();
       if (_items == null) return;
       _items = null;
       KeyEvents.Enqueue(Json.Obj("ev", "switcher", "op", "cancel", "seq", _seq, "why", why));
@@ -844,7 +850,11 @@ namespace Mantle {
 
     static void OnWatch() {
       var m = Hotkey.Machine;
-      if (!m.Active) { KillWatch(); return; }
+      if (!m.Active) { KillWatch(); _live.End(); return; }
+      // A window opened, closed, hid or was minimised while the switcher is up (LiveList): the
+      // list follows on this same 40 ms tick, so there is no second timer, and nothing at all runs
+      // while the switcher is down.
+      if (_items != null && _live.Due()) LiveList.Reflow(ref _items, ref _sel, _fgRoot, _seq, _live, false);
       if (KeysNative.KeyDown(KeyMachine.VK_MENU)) return;       // Alt still held: the normal case
       // Alt is up and the hook never said so.
       m.AltGoneUnseen();

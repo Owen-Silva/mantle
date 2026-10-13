@@ -7,7 +7,7 @@
  * only then moves the window on screen. If this page is slow, hung or gone, Alt+Tab still
  * switches: nothing here is on that road.
  *
- * Events from main:  switcher.session / .move / .end / .icons / .thumbs / .backdrop
+ * Events from main:  switcher.session / .move / .windows / .end / .icons / .thumbs / .backdrop
  *                    switcher.notice / .notice.end
  * Calls to main:     switcher.ready, switcher.painted, switcher.pick (a click), switcher.dismiss
  */
@@ -30,7 +30,9 @@
     seq: 0,
     open: false,
     list: [],
-    tiles: [],        // [{el, pv, why, ico}]
+    tiles: [],        // [{el, pv, why, ico, cap, ttl}]
+    win: null,        // the window's size in DIP: the panel's at open; a live list can grow it
+    cap: null,        // where the backdrop picture was taken, in window DIP (switcher.windows pins it)
     sel: -1,
     lay: null,
     first: 0,
@@ -53,6 +55,8 @@
    * machinery behind them (DWM error codes, capture failures, a sidecar that did not answer) is in
    * main's log, never here: BRIEF "no jargon on screen", and No Silent Failures still holds because
    * every degraded thing below still says so, in words. */
+  var BLEED = 14;      // the backdrop is taken this much past the panel on every side (lib/switcher.js captureBackdrop)
+
   var WORDS = {
     noPreviews: "Previews aren't available right now",
     offset: 'Previews may sit a little off their tiles',
@@ -73,9 +77,12 @@
 
   function px(v) { return (Math.round(Number(v) * 100) / 100) + 'px'; }
 
-  function setGeometry(lay) {
+  /** `win`: the window's DIP size, when it is bigger than the panel (a list that changed while the
+   *  switcher was up): the panel stays centred across it, at the same top. */
+  function setGeometry(lay, win) {
+    var pl = win && win.w > lay.panelW ? (win.w - lay.panelW) / 2 : lay.margin;
     var v = {
-      '--m': px(lay.margin), '--pw': px(lay.panelW), '--ph': px(lay.panelH),
+      '--m': px(lay.margin), '--pl': px(pl), '--pw': px(lay.panelW), '--ph': px(lay.panelH),
       '--pad': px(lay.pad), '--gap': px(lay.gap), '--cols': String(Math.max(1, lay.cols || 1)),
       '--tw': px(lay.tileW), '--th': px(lay.tileH), '--pvw': px(lay.previewW), '--pvh': px(lay.previewH),
       '--inset': px(lay.inset), '--caph': px(lay.capH), '--gw': px(lay.gridW), '--gh': px(lay.gridH),
@@ -149,6 +156,7 @@
     el.setAttribute('role', 'option');
     el.setAttribute('aria-selected', 'false');
     el.dataset.i = String(i);
+    el.dataset.hwnd = String(it.hwnd);
     el.title = it.title || '';
     var pv = document.createElement('div');
     pv.className = 'pv';
@@ -168,7 +176,22 @@
     else if (it.minimized) cap.appendChild(chip('Minimized', false));
     el.appendChild(pv);
     el.appendChild(cap);
-    return { el: el, pv: pv, why: why, ico: ico, cap: cap };
+    return { el: el, pv: pv, why: why, ico: ico, cap: cap, ttl: ttl };
+  }
+
+  /** A tile that stays through a list change: only what changed on it is touched. */
+  function refreshTile(t, was, it) {
+    if ((was.title || '') !== (it.title || '')) {
+      t.el.title = it.title || '';
+      t.ttl.textContent = it.title || 'Untitled window';
+      if (!it.icon && t.ico.classList.contains('letter')) t.ico.textContent = letterOf(it.title);
+    }
+    if (!!was.hung !== !!it.hung || !!was.minimized !== !!it.minimized) {
+      var old = t.cap.querySelector('.chip');
+      if (old) old.remove();
+      if (it.hung) t.cap.appendChild(chip('Not responding', true));
+      else if (it.minimized) t.cap.appendChild(chip('Minimized', false));
+    }
   }
 
   /** Move the ring. True if the visible rows changed (the previews must follow). */
@@ -292,15 +315,20 @@
     S.t0 = performance.now();
     S.seq = p.seq;
     S.open = true;
+    S.capLost = false;
     S.list = Array.isArray(p.list) ? p.list : [];
     S.lay = p.lay;
+    S.win = p.win || { w: p.lay.w, h: p.lay.h };
+    S.cap = { x: p.lay.margin - BLEED, y: p.lay.margin - BLEED, w: p.lay.panelW + 2 * BLEED, h: p.lay.panelH + 2 * BLEED };
     S.sel = -1;
     S.feet = {};
     foot.textContent = '';
     body.classList.remove('noting');
+    body.classList.remove('is-live');
+    ['--bcx', '--bcy', '--bcw', '--bch'].forEach(function (k) { root.style.removeProperty(k); });
     S.noteId = 0;
     clearBackdrop();
-    setGeometry(p.lay);
+    setGeometry(p.lay, S.win);
     setFirst(0);
     body.classList.toggle('is-empty', S.list.length === 0);
     var frag = document.createDocumentFragment();
@@ -320,6 +348,87 @@
     if (!p || p.seq !== S.seq || !S.open) return;
     if (select(p.sel)) report('scroll');
   });
+
+  /*
+   * THE LIST CHANGED WHILE IT IS UP (lib/switcher.js onReflow, lane mn-alttab, 2026-10-12): a
+   * window opened, closed, hid, was minimised or renamed. Re-rendered IN PLACE, the way macOS does it:
+   *   - a tile that stays is the SAME element (no rebuild, so nothing flashes); only its title or
+   *     its chip is touched if that changed;
+   *   - a new tile fades in (--lg-dur-ui-slow on --lg-ease-ui); a closed one leaves, and the ones
+   *     after it take its slot;
+   *   - the tiles keep their size and columns (Layout.reflow) and the panel keeps its centre and
+   *     top, so the width only changes when a single row gets shorter or longer;
+   *   - a panel losing a row glides up; one gaining a row snaps, because a DWM preview cannot be
+   *     clipped and would hang below a panel still growing;
+   *   - the backdrop picture stays where it was taken (pinned, never stretched); if the window had
+   *     to grow past it, it fades out to the plain pane and the foot says so.
+   * Nothing moves that did not change, and the previews follow from the new report.
+   */
+  M.on('switcher.windows', function (p) {
+    if (!p || p.seq !== S.seq || !S.open || !p.lay) return;
+    var list = Array.isArray(p.list) ? p.list : [];
+    var was = {};
+    S.list.forEach(function (it, i) { was[it.hwnd] = { it: it, t: S.tiles[i] }; });
+    var stays = {};
+    var tiles = list.map(function (it, i) {
+      var o = was[it.hwnd];
+      var t;
+      if (o) {
+        stays[it.hwnd] = true;
+        t = o.t;
+        if (!('icon' in it)) { it.icon = o.it.icon; it.iconReason = o.it.iconReason; }
+        refreshTile(t, o.it, it);
+      } else {
+        t = tileOf(it, i);
+        t.el.classList.add('is-new');
+      }
+      t.el.dataset.i = String(i);
+      t.el.classList.remove('is-sel');
+      t.el.setAttribute('aria-selected', 'false');
+      return t;
+    });
+    S.list.forEach(function (it, i) { if (!stays[it.hwnd]) S.tiles[i].el.remove(); });
+    // Insert only what is new: the merge keeps the order of the tiles that stay, so they are never moved.
+    var ref = rows.firstChild;
+    tiles.forEach(function (t) {
+      if (t.el === ref) { ref = ref.nextSibling; return; }
+      rows.insertBefore(t.el, ref);
+    });
+    var oldH = S.lay ? S.lay.panelH : 0;
+    body.classList.toggle('is-live', p.lay.panelH < oldH - 0.5);
+    S.list = list;
+    S.tiles = tiles;
+    S.lay = p.lay;
+    if (p.win) S.win = p.win;
+    setGeometry(p.lay, S.win);
+    pinBackdrop(!!p.grew);
+    body.classList.toggle('is-empty', list.length === 0);
+    S.sel = -1;
+    // the rows it starts at, clamped to the new grid (this also redoes "n more below")
+    setFirst(S.lay.scroll ? Math.max(0, Math.min(S.first, S.lay.rows - S.lay.visibleRows)) : 0);
+    select(typeof p.sel === 'number' && p.sel < list.length ? p.sel : -1);
+    report('reflow');
+  });
+
+  /** Keep the backdrop where it was taken; past it (the window grew), fade to the plain pane. */
+  function pinBackdrop(grew) {
+    if (!S.cap || !S.lay) return;
+    if (grew) {
+      S.capLost = true;
+      if (bdrop.classList.contains('on')) {
+        body.classList.remove('snap');
+        bdrop.classList.remove('on');
+        body.classList.add('no-backdrop');
+        setFoot('blur', WORDS.noBlur);
+      }
+      return;
+    }
+    var pl = S.win && S.win.w > S.lay.panelW ? (S.win.w - S.lay.panelW) / 2 : S.lay.margin;
+    root.style.setProperty('--bcx', px(S.cap.x - pl));
+    root.style.setProperty('--bcy', px(S.cap.y - S.lay.margin));
+    root.style.setProperty('--bcw', px(S.cap.w));
+    root.style.setProperty('--bch', px(S.cap.h));
+  }
 
   M.on('switcher.end', function (p) {
     if (!p || p.seq !== S.seq) return;
@@ -364,6 +473,7 @@
 
   M.on('switcher.backdrop', function (p) {
     if (!p || p.seq !== S.seq || !S.open) return;
+    if (S.capLost) { setFoot('blur', WORDS.noBlur); return; }    // taken for a smaller window than this one now is
     if (!p.png) {
       setFoot('blur', WORDS.noBlur);
       return;
@@ -422,7 +532,8 @@
     var t = e.target && e.target.closest ? e.target.closest('.tile') : null;
     if (!t || !S.open) return;
     var index = Number(t.dataset.i);
-    M.call('switcher.pick', { seq: S.seq, index: index }).then(function (r) {
+    // the window too: if the list changed under the click, main sends it to where that window is now
+    M.call('switcher.pick', { seq: S.seq, index: index, hwnd: t.dataset.hwnd }).then(function (r) {
       if (r && r.ok === false) setFoot('pick', WORDS.pick);
     }).catch(function () {
       setFoot('pick', WORDS.pick);
