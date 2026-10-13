@@ -30,6 +30,20 @@
 // than the hold (a few frames; a minimise / close animation longer) wins, the stale cache entry is dropped
 // and counted (`corrected`), and a hint that disagrees is reported to main (once per app; main says it).
 //
+// THE SWITCH FRAME (lane mn-underpaint, 2026-10-12, from the on-screen measurement in mantle-notes/toprow.md).
+// EVENT_SYSTEM_FOREGROUND reaches this thread 14-20 ms before the window's first frame, but BEFORE Windows has
+// moved the window up the z-order (1-3 ms later for a plain activation, 7-18 ms for an attached one). Reading
+// the z-order on the event found the old window still on top in 105 of 105 switches, so nothing was predicted
+// and the bar waited for the capture: one refresh late every time. Now the event's window is put where it is
+// about to be (RAISED: above every non-topmost window, with the windows it owns or is owned with) and the
+// cached colour is painted on the event, which lands on the switch frame. Windows also fires the event for a
+// REFUSED SetForegroundWindow (an app trying to steal focus), and that used to flash the wrong colour for
+// 67-83 ms, so a raised event is guarded: an HSHELL_FLASH for the same window just before it (the refusal's own
+// taskbar flash) means no prediction; a flash just after it, or a z-order / GetForegroundWindow check that
+// still disagrees RaiseCheckMs later, takes the prediction back at once (the cache entry is not stale, so it
+// stays). Until that check passes the cache records nothing, so a refused raise cannot file the old window's
+// pixels under the new one. Counted in raisePredicted / raiseConfirmed / raiseCorrected / raiseFlashSkipped.
+//
 // STOPS ITSELF: main asks with on:true every second; no ask for KeepAliveMs = the layer is destroyed.
 // on:false destroys it at once. Passive (a --test Mantle): the layer is made but stays fully transparent
 // unless MANTLE_UNDERPAINT_VISIBLE=1 is set for the sidecar (the on-screen latency harness).
@@ -79,6 +93,9 @@ namespace Mantle {
       [DllImport("gdi32.dll")] public static extern IntPtr CreateDIBSection(IntPtr dc, ref BMIH bi, uint usage, out IntPtr bits, IntPtr sec, uint off);
       [DllImport("user32.dll")] public static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr mod, Win32.WinEventProc cb, uint pid, uint tid, uint flags);
       [DllImport("user32.dll")] public static extern bool UnhookWinEvent(IntPtr h);
+      [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterShellHookWindow(IntPtr h);
+      [DllImport("user32.dll")] public static extern bool DeregisterShellHookWindow(IntPtr h);
+      [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern uint RegisterWindowMessageW(string name);
       [DllImport("winmm.dll")] public static extern uint timeBeginPeriod(uint p);
       [DllImport("winmm.dll")] public static extern uint timeEndPeriod(uint p);
       [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
@@ -107,6 +124,10 @@ namespace Mantle {
     const int CacheMax = 300;
     const int LearnN = 15;
     const double LeadMs = 6;         // a timed prediction is painted this long before the app's frame usually lands
+    const int RaiseCheckFrames = 3;  // a raised FOREGROUND must be on top in the real z-order by then (3 frames,
+    const double RaiseCheckMinMs = 30;   // ...but never under 30 ms: an attached activation moves up to 18 ms late)
+    const double FlashSkipMs = 60;   // HSHELL_FLASH for a window this close before its FOREGROUND = a refused activation
+    const long HSHELL_FLASH = 0x8006;    // HSHELL_REDRAW | HSHELL_HIGHBIT: a taskbar button flashes
     static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 
     // ------------------------------------------------------------------ main's side (under _gate)
@@ -128,6 +149,11 @@ namespace Mantle {
     static readonly Queue<object[]> _inbox = new Queue<object[]>();   // sim rows / windows / events, hints, flushes
     // stats (written by the thread, read under _gate)
     static long _paints, _capPaints, _predPaints, _held, _confirmed, _corrected, _cacheHits, _cacheMiss, _hintUsed, _records, _events, _ulwFails;
+    // the raised FOREGROUND path: events whose window was not on top yet, predictions painted on one, the check's
+    // verdicts, and refused activations skipped on their taskbar flash
+    static long _raiseMoved, _raisePred, _raiseOk, _raiseBad, _raiseFlashSkip, _flashSeen, _cacheDrop, _predSame;
+    static readonly Dictionary<string, long> _raiseBadBy = new Dictionary<string, long>(StringComparer.Ordinal);
+    static string _shellHook = "off";   // on | off | the reason it could not be registered
     static readonly Dictionary<string, long> _predBy = new Dictionary<string, long>(StringComparer.Ordinal);
     static readonly Dictionary<string, long> _corrBy = new Dictionary<string, long>(StringComparer.Ordinal);
     static readonly List<double> _predLags = new List<double>();    // event -> first agreeing capture (ms), last 50
@@ -142,12 +168,18 @@ namespace Mantle {
     // ------------------------------------------------------------------ commands
     public static string Cmd(Dictionary<string, object> req, ref object result) {
       object v;
-      if (req.TryGetValue("inject", out v) || req.TryGetValue("wins", out v) || req.TryGetValue("ev", out v)) {
+      if (req.TryGetValue("inject", out v) || req.TryGetValue("wins", out v) || req.TryGetValue("ev", out v) ||
+          req.TryGetValue("flash", out v) || req.TryGetValue("fg", out v)) {
         lock (_gate) {
-          if (!_sim) return "underpaint: inject / wins / ev need a running sim:true layer";
+          if (!_sim) return "underpaint: inject / wins / ev / flash / fg need a running sim:true layer";
           object x;
           // wins ALONE = the windows as they are now (coverage re-read, like Record's own check); wins WITH an
-          // ev in the same ask = the world that event made (the event re-reads it, so it can predict the change)
+          // ev in the same ask = the world when that event arrives (the event re-reads it, so it can predict the
+          // change; a foreground's window need not be on top yet: Windows moves it a few ms after the event)
+          // fg = what GetForegroundWindow says from now on (a foreground ev sets it to its window unless it has
+          // its own fg); flash = an HSHELL_FLASH for that window
+          if (req.TryGetValue("fg", out x)) _inbox.Enqueue(new object[] { "fg", Json.GetHwnd(req, "fg") });
+          if (req.TryGetValue("flash", out x)) _inbox.Enqueue(new object[] { "flash", Json.GetHwnd(req, "flash") });
           if (req.TryGetValue("wins", out x)) _inbox.Enqueue(new object[] { "wins", x, req.ContainsKey("ev") });
           if (req.TryGetValue("inject", out x)) _inbox.Enqueue(new object[] { "row", x, Json.GetBool(req, "old", false) });
           if (req.TryGetValue("ev", out x)) _inbox.Enqueue(new object[] { "ev", x });
@@ -262,6 +294,7 @@ namespace Mantle {
       lock (_gate) {
         var pb = Json.Obj(); foreach (var kv in _predBy) pb[kv.Key] = kv.Value;
         var cb = Json.Obj(); foreach (var kv in _corrBy) cb[kv.Key] = kv.Value;
+        var rb = Json.Obj(); foreach (var kv in _raiseBadBy) rb[kv.Key] = kv.Value;
         var lags = new List<double>(_predLags); lags.Sort();
         double med = lags.Count > 0 ? lags[lags.Count / 2] : -1, p95 = lags.Count > 0 ? lags[Math.Min(lags.Count - 1, (int)(lags.Count * 0.95))] : -1;
         long dec = _confirmed + _corrected;
@@ -271,7 +304,9 @@ namespace Mantle {
           "correctionRate", dec > 0 ? Math.Round((double)_corrected / dec, 3) : 0.0,
           "cacheHits", _cacheHits, "cacheMisses", _cacheMiss, "hintUsed", _hintUsed, "records", _records, "events", _events,
           "cache", _cacheCount, "hints", _hintCount, "ulwFails", _ulwFails,
-          "predLagMedianMs", Math.Round(med, 1), "predLagP95Ms", Math.Round(p95, 1));
+          "predLagMedianMs", Math.Round(med, 1), "predLagP95Ms", Math.Round(p95, 1),
+          "raiseMoved", _raiseMoved, "raisePredicted", _raisePred, "raiseConfirmed", _raiseOk, "raiseCorrected", _raiseBad,
+          "raiseCorrectedBy", rb, "raiseFlashSkipped", _raiseFlashSkip, "shellHook", _shellHook, "shellFlashes", _flashSeen, "cacheDropped", _cacheDrop, "predictedNoChange", _predSame);
       }
     }
     static int _cacheCount, _hintCount;
@@ -290,7 +325,17 @@ namespace Mantle {
       public byte[] Cols;                     // cols: k*3, the window's width left to right
       public long AtQ;
     }
-    sealed class Win { public IntPtr H; public string Title = ""; public int L, T, R, B, Pid; }
+    sealed class Win {
+      public IntPtr H; public string Title = ""; public int L, T, R, B, Pid;
+      public bool Top;                        // WS_EX_TOPMOST
+      public IntPtr Owner;                    // its root owner (itself when unowned); Zero = not read yet (OwnerOf)
+    }
+    /// A FOREGROUND prediction made with its window raised, waiting for the real z-order to agree.
+    sealed class Raise {
+      public IntPtr H;                        // the event's window
+      public long EvQ, CheckQ;                // CheckQ: the last moment it may still disagree
+      public Pred P;                          // the prediction it painted (null: none, only the coverage is raised)
+    }
     sealed class Entry {
       public string Key; public IntPtr H; public string Title; public int L, T, R, B;
       public byte[] Cols; public bool[] Mask; public LinkedListNode<Entry> Node;
@@ -336,6 +381,11 @@ namespace Mantle {
     static readonly Dictionary<IntPtr, long> _hintBadFromQ = new Dictionary<IntPtr, long>();
     static readonly Dictionary<string, List<double>> _learn = new Dictionary<string, List<double>>(StringComparer.Ordinal);
     static Pred _pred;
+    static Raise _raise;                       // a raised FOREGROUND not yet checked against the real z-order
+    static IntPtr _flashH; static long _flashQ;   // the last HSHELL_FLASH (a refused activation flashes its button)
+    static IntPtr _simFg;                      // sim: what GetForegroundWindow says
+    static byte[] _pendRec;                    // a frame that came before the settle time: Record at it (Timers)
+    static uint _shellMsg;                     // RegisterWindowMessage("SHELLHOOK"), 0 = no shell hook
     static bool _fine;                         // timeBeginPeriod(1) is on
 
     static long Q() { long v; N.QueryPerformanceCounter(out v); return v; }
@@ -417,7 +467,7 @@ namespace Mantle {
       _bar = bar; _lx = lx; _ly = ly; _lw = lw; _lh = lh; _rx = rx; _ry = ry; _rw = rw; _n = n; _visible = vis; _frameMs = 1000.0 / hz;
       _wash = wash;
       if (rowMoved) {
-        _cap = null; _painted = null; _shownCols = null; _pred = null; _owner = new IntPtr[n]; _cov.Clear();
+        _cap = null; _painted = null; _shownCols = null; _pred = null; _raise = null; _pendRec = null; _owner = new IntPtr[n]; _cov.Clear();
         FlushCache("the row under the bar moved");
       }
       if (_wnd == IntPtr.Zero) {
@@ -425,6 +475,7 @@ namespace Mantle {
         if (why != null) return why;
         Hook();
       }
+      ShellHook(sim);
       if (_bar != IntPtr.Zero && !N.IsWindow(_bar)) return "the top bar's window is gone";
       if (_bar != IntPtr.Zero) {
         Win32.RECT br;
@@ -463,7 +514,31 @@ namespace Mantle {
       const uint WM_MOUSEACTIVATE = 0x21, WM_NCHITTEST = 0x84;
       if (m == WM_MOUSEACTIVATE) return new IntPtr(3);      // MA_NOACTIVATE
       if (m == WM_NCHITTEST) return new IntPtr(-1);         // HTTRANSPARENT
+      if (m == _shellMsg && _shellMsg != 0) {
+        try { if (!_sim && w.ToInt64() == HSHELL_FLASH) Flash(Win32.GetAncestor(l, 2 /* GA_ROOT */), Q()); }
+        catch (Exception ex) { Program.EmitLog("warn", "underpaint: a shell message threw: " + ex.Message); }
+        return IntPtr.Zero;
+      }
       return N.DefWindowProcW(h, m, w, l);
+    }
+    /// HSHELL_FLASH reaches the layer's window: Windows fires EVENT_SYSTEM_FOREGROUND even for a refused
+    /// SetForegroundWindow, and flashes the window's taskbar button with it (102 of 102 refusals measured).
+    /// Every Apply: a layer can turn sim / live without being made again.
+    static void ShellHook(bool sim) {
+      if (sim) {
+        if (_shellMsg != 0) N.DeregisterShellHookWindow(_wnd);
+        _shellMsg = 0;
+        lock (_gate) _shellHook = "off (a sim layer takes only injected events)";
+        return;
+      }
+      if (_shellMsg != 0) return;
+      string state;
+      uint msg = N.RegisterWindowMessageW("SHELLHOOK");
+      if (msg == 0) state = "off: the SHELLHOOK message could not be registered (error " + Marshal.GetLastWin32Error() + ")";
+      else if (!N.RegisterShellHookWindow(_wnd)) state = "off: RegisterShellHookWindow failed (error " + Marshal.GetLastWin32Error() + ")";
+      else { state = "on"; _shellMsg = msg; }
+      if (state != "on") Program.EmitLog("warn", "underpaint: the shell hook is " + state + ", so a refused activation is caught only by the z-order check (the bar may show the wrong colour for " + RaiseCheckFrames + " frames)");
+      lock (_gate) _shellHook = state;
     }
 
     static bool EnsureDib() {
@@ -516,10 +591,14 @@ namespace Mantle {
     static void Teardown() {
       lock (_gate) _active = false;
       Unhook();
-      if (_wnd != IntPtr.Zero) { N.DestroyWindow(_wnd); _wnd = IntPtr.Zero; }
+      if (_wnd != IntPtr.Zero) {
+        if (_shellMsg != 0) N.DeregisterShellHookWindow(_wnd);
+        N.DestroyWindow(_wnd); _wnd = IntPtr.Zero;
+      }
+      _shellMsg = 0;
       FreeDib();
-      _shown = false; _painted = null; _shownCols = null; _cap = null; _pred = null; _bar = IntPtr.Zero;
-      lock (_gate) _layerInfo = null;
+      _shown = false; _painted = null; _shownCols = null; _cap = null; _pred = null; _raise = null; _pendRec = null; _flashH = IntPtr.Zero; _bar = IntPtr.Zero;
+      lock (_gate) { _layerInfo = null; _shellHook = "off"; }
     }
 
     // ------------------------------------------------------------------ painting
@@ -610,7 +689,14 @@ namespace Mantle {
       byte[] o = Compose();
       bool predShown = _pred != null && _pred.Painted;
       if (o != null && PaintNow(o, false)) { lock (_gate) { if (predShown) _predPaints++; else _capPaints++; } }   // (PaintNow skips a row it shows already, filled the same)
-      Record(cols, presentQ);
+      // a frame came: has the z-order caught up with a raised FOREGROUND? (after the paint: the frame's own paint
+      // must not wait for a z-order walk)
+      if (_raise != null) { long nq = Q(); RaiseCheck(nq, nq >= _raise.CheckQ); }
+      // a frame before the settle time (or before a raise is checked) is kept and recorded then, if no newer
+      // frame or event replaced it: a window that is still after its switch sends its only frame ~14 ms after
+      // the event, so it was never cached (and its next switch had nothing to predict from)
+      if (Settled(presentQ) && _raise == null) { _pendRec = null; Record(cols, presentQ); }
+      else { _pendRec = cols; }
       HintSteady(cols, presentQ);
     }
 
@@ -629,10 +715,51 @@ namespace Mantle {
     }
 
     // ------------------------------------------------------------------ the windows under the row
-    static void Cov(long nowQ) {
+    /// Re-read the windows under the row (a raised FOREGROUND still waiting for its check stays raised).
+    static void Cov(long nowQ) { bool moved; Cov(nowQ, _raise != null ? _raise.H : IntPtr.Zero, out moved); }
+    /// ...with `raised` (not Zero) where its activation is about to put it; moved = that changed the order.
+    static void Cov(long nowQ, IntPtr raised, out bool moved) {
+      List<Win> wins = _sim ? (_simWins ?? new List<Win>()) : Live();
+      moved = false;
+      if (raised != IntPtr.Zero) wins = Raised(wins, raised, out moved);
+      Cover(wins, out _owner, out _cov);
+      _covQ = nowQ;
+    }
+    /// The z-order an activation of h is about to make: h first among the non-topmost windows (a topmost h:
+    /// first of all), with the windows of its owner group right under it in their order (Windows raises the
+    /// owner and the windows it owns with it). Everything else keeps its order. h not in the list (minimised,
+    /// hidden, a tool window, Mantle's own): the list as it is.
+    static List<Win> Raised(List<Win> wins, IntPtr h, out bool moved) {
+      moved = false;
+      int at = -1;
+      for (int i = 0; i < wins.Count; i++) if (wins[i].H == h) { at = i; break; }
+      if (at < 0) return wins;
+      IntPtr root = OwnerOf(wins[at]);
+      var block = new List<Win>(); var rest = new List<Win>(wins.Count);
+      block.Add(wins[at]);
+      for (int i = 0; i < wins.Count; i++) {
+        if (i == at) continue;
+        if (OwnerOf(wins[i]) == root) block.Add(wins[i]); else rest.Add(wins[i]);
+      }
+      int ins = 0;
+      if (!wins[at].Top) while (ins < rest.Count && rest[ins].Top) ins++;
+      var o = new List<Win>(wins.Count);
+      for (int i = 0; i < ins; i++) o.Add(rest[i]);
+      o.AddRange(block);
+      for (int i = ins; i < rest.Count; i++) o.Add(rest[i]);
+      for (int i = 0; i < o.Count; i++) if (o[i].H != wins[i].H) { moved = true; break; }
+      return o;
+    }
+    static IntPtr OwnerOf(Win w) {
+      if (w.Owner == IntPtr.Zero) {
+        IntPtr r = _sim ? IntPtr.Zero : Win32.GetAncestor(w.H, Win32.GA_ROOTOWNER);
+        w.Owner = r != IntPtr.Zero ? r : w.H;
+      }
+      return w.Owner;
+    }
+    static void Cover(List<Win> wins, out IntPtr[] ownerOut, out Dictionary<IntPtr, Win> covOut) {
       var owner = new IntPtr[_n];
       var cov = new Dictionary<IntPtr, Win>();
-      List<Win> wins = _sim ? (_simWins ?? new List<Win>()) : Live();
       int left = _n;
       foreach (Win w in wins) {
         if (left == 0) break;
@@ -645,7 +772,7 @@ namespace Mantle {
         }
         if (any) cov[w.H] = w;
       }
-      _owner = owner; _cov = cov; _covQ = nowQ;
+      ownerOut = owner; covOut = cov;
     }
 
     /// Top of the z-order first, up to the desktop; only what WidgetCover counts as a window.
@@ -657,6 +784,7 @@ namespace Mantle {
         if (WidgetCover.Ignored(w, own, parent) != null) continue;
         long h; long.TryParse(w.Hwnd, NumberStyles.Integer, CultureInfo.InvariantCulture, out h);
         var x = new Win(); x.H = new IntPtr(h); x.Title = w.Title ?? ""; x.L = w.L; x.T = w.T; x.R = w.R; x.B = w.B; x.Pid = w.Pid;
+        x.Top = (w.ExStyle & WS_EX_TOPMOST) != 0;
         o.Add(x);
       }
       return o;
@@ -682,6 +810,9 @@ namespace Mantle {
     /// A row duplication read: remember each window's columns, when nothing just changed.
     static void Record(byte[] cols, long presentQ) {
       if (!Settled(presentQ) || _owner.Length != _n) return;
+      // a raised coverage is a guess until the z-order agrees: a refused raise would file the old window's
+      // pixels under the window that never came forward
+      if (_raise != null) return;
       // the windows the snapshot says are under the row: still there, same place, same title?
       foreach (Win w in _cov.Values) {
         Win now;
@@ -751,7 +882,7 @@ namespace Mantle {
       if (!_cache.TryGetValue(key, out e)) return false;
       int src = c;
       if (h != IntPtr.Zero) {
-        if (e.T != w.T || e.B != w.B || (e.R - e.L) != (w.R - w.L)) { _lru.Remove(e.Node); _cache.Remove(key); lock (_gate) _cacheCount = _cache.Count; return false; }
+        if (e.T != w.T || e.B != w.B || (e.R - e.L) != (w.R - w.L)) { _lru.Remove(e.Node); _cache.Remove(key); lock (_gate) { _cacheCount = _cache.Count; _cacheDrop++; } return false; }
         int dx = w.L - e.L;
         if (dx != 0) {
           double xc = _rx + (c + 0.5) * _rw / _n - dx;
@@ -914,6 +1045,7 @@ namespace Mantle {
         if (cur == null || Math.Abs(cur[i] - o[i]) > 3 || Math.Abs(cur[i + 1] - o[i + 1]) > 3 || Math.Abs(cur[i + 2] - o[i + 2]) > 3) differs = true;
       }
       lock (_gate) { if (any) { if (p.FromHint) _hintUsed++; if (p.FromCache) _cacheHits++; } else _cacheMiss++; }
+      if (any && !differs) { lock (_gate) _predSame++; }   // known, and already what the layer shows
       if (!any || !differs) return;
       // a newer event replaces an unconfirmed prediction (not a correction: nothing disagreed with it yet)
       p.Cols = o; p.Mask = m;
@@ -961,6 +1093,8 @@ namespace Mantle {
     static long NextWakeQ(long now) {
       long next = long.MaxValue;
       if (_pred != null) next = _pred.Painted ? _pred.HoldQ : _pred.DueQ;
+      if (_raise != null && _raise.CheckQ < next) next = _raise.CheckQ;
+      if (_pendRec != null && _raise == null && _settleQ < next) next = _settleQ;
       return next;
     }
     static long _zCheckQ;
@@ -970,6 +1104,8 @@ namespace Mantle {
         _zCheckQ = now;
         if (N.GetWindow(_bar, 2 /* GW_HWNDNEXT */) != _wnd) Place();
       }
+      if (_raise != null && now >= _raise.CheckQ) RaiseCheck(now, true);
+      if (_pendRec != null && _raise == null && now >= _settleQ) { byte[] c = _pendRec; _pendRec = null; if (c.Length == _n * 3) Record(c, now); }
       if (_pred == null) return;
       if (!_pred.Painted && now >= _pred.DueQ) Land();
       else if (_pred.Painted && now >= _pred.HoldQ) {
@@ -1021,7 +1157,12 @@ namespace Mantle {
           return;
         }
         if (ev == Win32.EVENT_OBJECT_SHOW && Win32.GetAncestor(hwnd, 2 /* GA_ROOT */) != hwnd) return;
-        string kind = ev == Win32.EVENT_SYSTEM_FOREGROUND || ev == 0x000B ? "switch" : "anim";
+        if (ev == Win32.EVENT_SYSTEM_FOREGROUND) {
+          IntPtr root = Win32.GetAncestor(hwnd, 2 /* GA_ROOT */);
+          Foreground(root != IntPtr.Zero ? root : hwnd, Q());
+          return;
+        }
+        string kind = ev == 0x000B ? "switch" : "anim";
         Switch(kind, Q());
         if (ev == Win32.EVENT_OBJECT_DESTROY) DropWindow(hwnd);
       } catch (Exception ex) {
@@ -1032,10 +1173,95 @@ namespace Mantle {
     /// Which window is under the row may have changed: re-read it and paint the new parts from what is known.
     static void Switch(string kind, long evQ) {
       lock (_gate) _events++;
+      _pendRec = null;   // a frame from before this event is not what it leaves on screen
       var prevOwner = _owner; var prevCov = _cov;
       Cov(evQ);
       _settleQ = Math.Max(_settleQ, evQ + Dq(kind == "anim" ? AnimHoldMs : SettleFrames * _frameMs));
       Predict(kind, evQ, prevOwner, prevCov, IntPtr.Zero, null);
+    }
+
+    /// EVENT_SYSTEM_FOREGROUND for h (a root window). It arrives 14-20 ms before h's first frame but before
+    /// Windows moves h up the z-order, so the coverage is read with h raised (Raised) and the cached colour is
+    /// painted now, on the switch frame. The real z-order then has to agree (RaiseCheck, Flash).
+    static void Foreground(IntPtr h, long evQ) {
+      if (h == IntPtr.Zero) { Switch("switch", evQ); return; }
+      lock (_gate) _events++;
+      _raise = null; _pendRec = null;   // a newer activation: the coverage is re-read below with this one raised instead
+      if (h == _flashH && evQ - _flashQ <= Dq(FlashSkipMs) && FgRoot() != h) {
+        // a refused SetForegroundWindow: its taskbar button flashed just now and it is not the foreground.
+        // Nothing is predicted (this used to flash its colour on the bar for 67-83 ms, the old window still there)
+        _flashH = IntPtr.Zero;
+        lock (_gate) _raiseFlashSkip++;
+        Cov(evQ);
+        _settleQ = Math.Max(_settleQ, evQ + Dq(SettleFrames * _frameMs));
+        return;
+      }
+      var prevOwner = _owner; var prevCov = _cov;
+      bool moved;
+      Cov(evQ, h, out moved);
+      _settleQ = Math.Max(_settleQ, evQ + Dq(SettleFrames * _frameMs));
+      Pred before = _pred;
+      Predict("switch", evQ, prevOwner, prevCov, IntPtr.Zero, null);
+      bool painted = _pred != null && _pred != before && _pred.Painted;
+      lock (_gate) { if (moved) _raiseMoved++; if (painted) _raisePred++; }
+      if (!moved && !painted) return;   // already on top and nothing painted: there is nothing to take back
+      var r = new Raise(); r.H = h; r.EvQ = evQ; r.P = painted ? _pred : null;
+      r.CheckQ = evQ + Dq(Math.Max(RaiseCheckFrames * _frameMs, RaiseCheckMinMs));
+      _raise = r;
+    }
+    /// Has the real z-order caught up with the raised FOREGROUND? Yes (h is the foreground window and the row's
+    /// windows are the ones the raise said): the real coverage takes over and the cache may record again. Still
+    /// not by the final check: Windows did not bring it forward (refused, cancelled, or the window went away),
+    /// so the prediction is taken back at once, keeping its cache entry (it was right for that window).
+    static void RaiseCheck(long now, bool final) {
+      Raise r = _raise;
+      if (r == null) return;
+      List<Win> real = _sim ? (_simWins ?? new List<Win>()) : Live();
+      IntPtr[] realOwner; Dictionary<IntPtr, Win> realCov;
+      Cover(real, out realOwner, out realCov);
+      bool ok = FgRoot() == r.H;
+      if (ok) {
+        bool moved;
+        List<Win> up = Raised(real, r.H, out moved);
+        if (moved) {
+          IntPtr[] upOwner; Dictionary<IntPtr, Win> upCov;
+          Cover(up, out upOwner, out upCov);
+          for (int c = 0; c < realOwner.Length && c < upOwner.Length; c++) if (upOwner[c] != realOwner[c]) { ok = false; break; }
+        }
+      }
+      if (!ok && !final) return;   // an attached activation moves up to ~18 ms after its event: wait
+      _raise = null;
+      _owner = realOwner; _cov = realCov; _covQ = now;
+      if (ok) { lock (_gate) _raiseOk++; return; }
+      RaiseFail(r, "zorder");
+    }
+    /// HSHELL_FLASH for h: a refused activation flashes the window's taskbar button. Just before its FOREGROUND
+    /// (the usual order) it makes Foreground skip; just after it, the raised prediction is taken back now.
+    static void Flash(IntPtr h, long q) {
+      if (h == IntPtr.Zero) return;
+      _flashH = h; _flashQ = q;
+      lock (_gate) _flashSeen++;
+      Raise r = _raise;
+      if (r == null || r.H != h || FgRoot() == h) return;
+      _flashH = IntPtr.Zero;
+      _raise = null;
+      Cov(q);   // no raise pending now: the real coverage
+      RaiseFail(r, "flash");
+    }
+    static void RaiseFail(Raise r, string why) {
+      lock (_gate) { _raiseBad++; Count(_raiseBadBy, why); }
+      if (r.P == null || _pred != r.P) return;   // nothing it painted is still showing
+      _pred = null;
+      byte[] o = Compose();
+      if (o != null) PaintNow(o, false);
+    }
+    /// What GetForegroundWindow says, as a root window (sim: what the test said).
+    static IntPtr FgRoot() {
+      if (_sim) return _simFg;
+      IntPtr f = Win32.GetForegroundWindow();
+      if (f == IntPtr.Zero) return IntPtr.Zero;
+      IntPtr r = Win32.GetAncestor(f, 2 /* GA_ROOT */);
+      return r != IntPtr.Zero ? r : f;
     }
     /// A title changed on a window under the row (a tab switch): its new look, at the time it usually lands.
     static void Title(IntPtr h, long evQ) {
@@ -1044,7 +1270,7 @@ namespace Mantle {
       if (!ReadWin(h, out w)) return;
       Win old;
       if (_cov.TryGetValue(h, out old) && old.Title == w.Title) return;
-      _cov[h] = w;
+      _cov[h] = w; _pendRec = null;
       _titleWaitH = h; _titleWaitUntilQ = evQ + Dq(TitleWaitMs); _titleWaitCols = _cap;
       HintRec hr;
       if (_hints.TryGetValue(h, out hr) && hr.Kind != "none" && !_distrust.Contains(hr.App)) return;   // the app's own hint says it
@@ -1059,7 +1285,9 @@ namespace Mantle {
         lock (_gate) { if (_inbox.Count == 0) return; it = _inbox.Dequeue(); }
         string k = (string)it[0];
         long now = Q();
-        if (k == "flush") { FlushCache((string)it[1]); _pred = null; continue; }
+        if (k == "flush") { FlushCache((string)it[1]); _pred = null; _pendRec = null; continue; }
+        if (k == "fg") { _simFg = (IntPtr)it[1]; continue; }
+        if (k == "flash") { Flash((IntPtr)it[1], now); continue; }
         if (k == "hintclear") { _hints.Clear(); _hintBadFromQ.Clear(); lock (_gate) _hintCount = 0; continue; }
         if (k == "hint") {
           IntPtr h = (IntPtr)it[1]; var rec = (HintRec)it[2];
@@ -1076,7 +1304,9 @@ namespace Mantle {
         if (k == "wins") {
           _simWins = SimWins(it[1]);
           // without an event the coverage must follow, or later rows record against the old windows (all "desktop")
-          if (!(bool)it[2]) { Cov(now); _settleQ = now; }
+          // (while a raised FOREGROUND waits for its check, wins alone is the z-order catching up: on screen that
+          // is no event, so the settle time stays the event's)
+          if (!(bool)it[2]) { Cov(now); if (_raise == null) _settleQ = now; }
           continue;
         }
         if (k == "row") {
@@ -1091,7 +1321,7 @@ namespace Mantle {
           string type = Json.GetString(e, "type") ?? "";
           IntPtr h = Json.GetHwnd(e, "hwnd");
           if (type == "title") Title(h, now);
-          else if (type == "foreground") Switch("switch", now);
+          else if (type == "foreground") { _simFg = e.ContainsKey("fg") ? Json.GetHwnd(e, "fg") : h; Foreground(h, now); }
           else if (type == "minimize" || type == "close") { Switch("anim", now); if (type == "close") DropWindow(h); }
           continue;
         }
@@ -1109,6 +1339,8 @@ namespace Mantle {
         if (rl == null || rl.Count != 4) continue;
         var w = new Win(); w.H = Json.GetHwnd(d, "hwnd"); w.Title = Json.GetString(d, "title") ?? "";
         w.L = (int)(double)rl[0]; w.T = (int)(double)rl[1]; w.R = (int)(double)rl[2]; w.B = (int)(double)rl[3];
+        w.Top = Json.GetBool(d, "topmost", false);
+        if (d.ContainsKey("owner")) w.Owner = Json.GetHwnd(d, "owner");
         o.Add(w);
       }
       return o;
@@ -1127,6 +1359,11 @@ namespace Mantle {
       v["painted"] = painted != null ? Convert.ToBase64String(painted) : null;
       v["shown"] = shown != null ? Convert.ToBase64String(shown) : null;   // what the bitmap holds (desktop columns filled)
       v["pred"] = pred;
+      Raise rz = _raise;
+      v["raise"] = rz != null ? (rz.P != null ? "waiting painted" : "waiting") : null;   // a raised FOREGROUND not checked yet
+      var own = new List<object>(); IntPtr[] ow = _owner; IntPtr lastOw = new IntPtr(-1);
+      foreach (IntPtr h in ow) if (h != lastOw) { own.Add(h.ToInt64().ToString(CultureInfo.InvariantCulture)); lastOw = h; }
+      v["owners"] = own;   // the row's windows left to right (hwnds, "0" = desktop), runs merged
       v["hwnd"] = wnd.ToInt64().ToString(CultureInfo.InvariantCulture);
       v["zUnderBar"] = zOk;
       result = v;
