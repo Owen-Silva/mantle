@@ -4894,12 +4894,19 @@ function rereadReadouts(why) {
   return true;
 }
 
+// Windows drops low-level hooks on a wake without saying so: put them back, and say it if that fails.
+const hookHealth = require('./lib/hook-health').makeHookHealth({
+  state, call: (cmd, args, ms) => sidecar.call(cmd, args, ms), log: (l) => process.stdout.write(`mantle: ${l}\n`),
+});
+sidecar.on('switcher', hookHealth.onHook);
+
 const gapRereader = makeGapRereader({
   delays: [3000, 20000],
   later: (fn, ms) => { const t = setTimeout(fn, ms); if (t.unref) t.unref(); return t; },
   cancel: (t) => clearTimeout(t),
   reread: (why, i) => {
     if (shuttingDown || sidecar.status !== 'ok') return;
+    if (i === 0) hookHealth.rearm(why);
     if (i === 0) watchArmer.rearmAll().catch(() => { /* each arm says why */ });   // the second pass only reads
     rereadReadouts(why);
   },
