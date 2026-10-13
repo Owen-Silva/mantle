@@ -131,7 +131,7 @@ function FAKE() {
     K('temp', 'Temporary files', 'Files in your temporary folder that nothing has changed for 7 days', 2.6 * GB, 5996, { allBytes: 9.1 * GB }),
     K('thumbnails', 'Thumbnails', 'Explorer\'s saved picture previews; Windows makes them again when it needs them', 20e6, 15),
     K('systemTemp', 'Windows temporary files', 'Files in Windows\' own temporary folder unchanged for 7 days', null, null),
-    K('deliveryOptimization', 'Delivery Optimization files', 'Update pieces Windows keeps to share with other PCs', null, null),
+    K('deliveryOptimization', 'Delivery Optimization files', 'Update pieces Windows keeps to share with other PCs', 412e6, null, { allFiles: null, via: 'service' }),   // sized by the DO service: no file count
     K('windowsUpdate', 'Windows Update cleanup', 'Update files Windows Update downloaded more than 10 days ago', 33e6, 5),
     K('recycleBin', 'Recycle Bin', 'Everything in the Recycle Bin on every drive, gone for good', 202e6, 13),
     K('downloads', 'Downloads', 'Everything in your Downloads folder, moved to the Recycle Bin', 6.4 * GB, 141133, { entries: 212 })] };
@@ -171,7 +171,7 @@ function FAKE() {
       case 'storageScanStop': emit('settings.system.storage', { ev: 'sysstorage', what: 'cancelled', scan: 'scan-1', done: 3, total: 14 }, 50); return later(10, { ok: true, stopping: true });
       case 'cleanupPlan': {
         const items = a.kinds.map((k) => TEMP.kinds.find((x) => x.kind === k));
-        lastPlan = { ok: true, plan: `plan-${++planN}-abcdef12`, items, totalBytes: items.reduce((s, x) => s + (x.bytes || 0), 0), totalFiles: items.reduce((s, x) => s + (x.files || 0), 0),
+        lastPlan = { ok: true, plan: `plan-${++planN}-abcdef12`, items, totalBytes: items.reduce((s, x) => s + (x.bytes || 0), 0), totalFiles: items.reduce((s, x) => s + (x.files || 0), 0), uncounted: items.some((x) => x.via === 'service'),
           needsAdmin: items.some((x) => x.admin), expiresInSec: 900, leftAlone: ['downloads', 'recycleBin'].filter((k) => !a.kinds.includes(k)), note: 'Nothing is deleted until this plan is confirmed' };
         return later(60, lastPlan);
       }
@@ -255,6 +255,17 @@ const SHOTS = [
     check('02: recommendations list the large and unused files', /made-up-game-capture\.mp4/.test(rec) && /Not changed for over a year/.test(rec), rec.slice(0, 200));
     check('02: recommendations are read-only WITH the reason', /Read only here: Mantle lists your large and unused files/.test(await rowText(p, 'system.storage.recommend') || ''));
     await scrollTo(p, 'system.storage.scan');
+  }],
+  ['sto-03b-do-size', PG, async (p) => {
+    const t = await rowText(p, 'system.storage.temp.deliveryOptimization') || '';
+    check('03b: Delivery Optimization files show their size before any cleanup, from the DO service, with no made-up file count', /393 MB, as the Delivery Optimization service reports it/.test(t) && !/in [0-9][0-9,]* files/.test(t) && !/only lets an administrator look inside/.test(t), t);
+    await click(p, 'system.storage.temp.deliveryOptimization');
+    await click(p, 'system.storage.temp.review');
+    await p.waitForTimeout(300);
+    const pl = await p.$eval(sel('system.storage.temp.plan'), (e) => e.textContent);
+    check('03b: the plan gives its size and says where it came from', /Delivery Optimization files/.test(pl) && /393 MB/.test(pl) && /size from the Delivery Optimization service/.test(pl), pl.slice(0, 300));
+    const cf = await rowText(p, 'system.storage.temp.confirm');
+    check('03b: the confirm button does not pretend to count its files', /Remove [0-9,]+ files and the Delivery Optimization files/.test(cf), cf);
   }],
   ['sto-03-plan', PG, async (p) => {
     await click(p, 'system.storage.temp.windowsUpdate');

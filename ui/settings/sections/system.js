@@ -1259,7 +1259,7 @@
     function fillKind(x) {
       const k = x && x.kind;
       if (!tick[k]) return;
-      const size = x.measured ? `${bytes(x.bytes)} in ${n0(k === 'downloads' ? x.entries : x.files)} ${k === 'downloads' || k === 'recycleBin' ? 'items' : 'files'}` : 'size not known yet';
+      const size = !x.measured ? 'size not known yet' : x.via === 'service' ? `${bytes(x.bytes)}, as the Delivery Optimization service reports it` : `${bytes(x.bytes)} in ${n0(k === 'downloads' ? x.entries : x.files)} ${k === 'downloads' || k === 'recycleBin' ? 'items' : 'files'}`;
       const there = x.measured && x.allBytes > x.bytes ? ` (${bytes(x.allBytes)} is there; the rest is newer)` : '';
       tick[k].set({ value: !!S.tick[k], disabled: !x.measured && !x.admin, help: `${x.rule}. ${size}${there}`,
         reason: !x.measured && !x.admin ? x.reason : null,
@@ -1278,11 +1278,11 @@
       if (!r.ok) return r;
       S.plan = r;
       planList.set({ items: r.items.map((x) => ({ key: x.kind, label: x.label, value: x.measured ? bytes(x.bytes) : 'Size unknown',
-        help: `${x.rule}${x.measured ? ` · ${n0(x.kind === 'downloads' ? x.entries : x.files)} ${x.kind === 'downloads' || x.kind === 'recycleBin' ? 'items' : 'files'}` : ''}${x.admin ? ' · needs administrator permission' : ''}`,
+        help: `${x.rule}${!x.measured ? '' : x.via === 'service' ? ' · size from the Delivery Optimization service' : ` · ${n0(x.kind === 'downloads' ? x.entries : x.files)} ${x.kind === 'downloads' || x.kind === 'recycleBin' ? 'items' : 'files'}`}${x.admin ? ' · needs administrator permission' : ''}`,
         reason: x.kind === 'downloads' ? 'Your own files: everything in Downloads moves to the Recycle Bin' : x.kind === 'recycleBin' ? 'Your own files: the Recycle Bin is emptied for good' : (x.measured ? null : x.reason) })) });
-      confirmBtn.set({ disabled: false, label: `Remove ${n0(r.totalFiles)} files (${bytes(r.totalBytes)})`, admin: r.needsAdmin ? S_CLEAN : undefined,
+      confirmBtn.set({ disabled: false, label: `Remove ${n0(r.totalFiles)} files${r.uncounted ? ' and the Delivery Optimization files' : ''} (${bytes(r.totalBytes)})`, admin: r.needsAdmin ? S_CLEAN : undefined,
         info: 'Only the files in this plan, and only if they have not changed since it was made' });
-      return { ok: true, note: `Plan ready: ${n0(r.totalFiles)} files, ${bytes(r.totalBytes)}. Nothing is deleted until you confirm below` };
+      return { ok: true, note: `Plan ready: ${n0(r.totalFiles)} files${r.uncounted ? ' and the Delivery Optimization files' : ''}, ${bytes(r.totalBytes)}. Nothing is deleted until you confirm below` };
     }
     async function confirmClick() {
       const p = S.plan;

@@ -355,15 +355,17 @@ namespace Mantle {
     /// One kind, measured: what a cleanup would remove (Bytes / Files) out of what is there (All*).
     sealed class Collected {
       public string Kind, Root, Reason;
+      public string Via;   // null = Mantle walked the folder; "service" = the size came from the Delivery Optimization service (no file count)
       public long Bytes, Files, AllBytes, AllFiles, Entries = -1;
       public bool Measured = true;
       public List<StorageTarget> Targets = new List<StorageTarget>();
       public IDictionary Json() {
+        bool counted = Measured && Via == null;
         return Mantle.Json.Obj("kind", Kind, "label", KindLabel(Kind), "rule", KindRule(Kind), "action", KindAction(Kind),
-          "bytes", Measured ? (object)Bytes : null, "files", Measured ? (object)Files : null,
-          "allBytes", Measured ? (object)AllBytes : null, "allFiles", Measured ? (object)AllFiles : null,
+          "bytes", Measured ? (object)Bytes : null, "files", counted ? (object)Files : null,
+          "allBytes", Measured ? (object)AllBytes : null, "allFiles", counted ? (object)AllFiles : null,
           "entries", Entries >= 0 ? (object)Entries : null, "admin", AdminKind(Kind), "yours", YoursKind(Kind),
-          "measured", Measured, "reason", Reason);
+          "measured", Measured, "via", Via, "reason", Reason);
       }
     }
 
@@ -379,7 +381,7 @@ namespace Mantle {
       c.Root = root;
       if (root == null) { c.Measured = false; c.Reason = "Windows did not say where this folder is"; return c; }
       if (!StorageFiles.Exists(root)) {
-        if (Marshal.GetLastWin32Error() == 5) { c.Measured = false; c.Reason = AdminWhy; }
+        if (Marshal.GetLastWin32Error() == 5) { c.Measured = false; c.Reason = AdminWhy; if (!keep) ServiceSize(c); }
         return c;   // not there: nothing to clean
       }
       var w = new StorageWalk();
@@ -402,7 +404,35 @@ namespace Mantle {
       }
       if (w.Denied > 0 && w.Dirs == 0) { c.Measured = false; c.Reason = AdminWhy; c.Targets.Clear(); }
       else if (w.Denied > 0) c.Reason = Plural(w.Denied, "folder") + " inside could not be read, so the size is a little low";
+      if (!keep) ServiceSize(c);
       return c;
+    }
+
+    /// Delivery Optimization's cache sits in NETWORK SERVICE's profile, which only an administrator may
+    /// list. The Delivery Optimization service publishes its own cache size to everyone: WMI
+    /// root\Microsoft\Windows\DeliveryOptimization, MSFT_DOCurrentStatus.CacheSizeBytes (the source of
+    /// Get-DeliveryOptimizationPerfSnap's CacheSizeBytes, DeliveryOptimizationStatus.psm1). A read only, capped
+    /// at 5 s; never used for a cleanup's file list (the administrator cleanup walks the folder itself).
+    static void ServiceSize(Collected c) {
+      if (c.Kind != "deliveryOptimization" || c.Measured) return;
+      try {
+        using (var s = new ManagementObjectSearcher(@"root\Microsoft\Windows\DeliveryOptimization", "SELECT CacheSizeBytes FROM MSFT_DOCurrentStatus")) {
+          s.Options.Timeout = TimeSpan.FromSeconds(5);
+          foreach (ManagementBaseObject o in s.Get()) {
+            object v = null;
+            try { v = o["CacheSizeBytes"]; } catch (ManagementException) { }
+            o.Dispose();
+            if (v == null) continue;
+            long b = Convert.ToInt64(v, CultureInfo.InvariantCulture);
+            if (b < 0) continue;
+            c.Measured = true; c.Via = "service"; c.Bytes = c.AllBytes = b; c.Files = c.AllFiles = 0; c.Reason = null;
+            return;
+          }
+        }
+        c.Reason = AdminWhy + ", and the Delivery Optimization service did not report its cache size";
+      } catch (Exception ex) {
+        c.Reason = AdminWhy + ", and the Delivery Optimization service did not answer (" + SysCommon.Why(ex) + ")";
+      }
     }
 
     static string KindsArg(object o, string cmd, bool adminOnly, out List<string> kinds) {
@@ -446,12 +476,12 @@ namespace Mantle {
       return Later(req, ref result, delegate {
         var rec = new PlanRec { Kinds = kinds, At = DateTime.UtcNow };
         var items = new List<object>();
-        long tb = 0, tf = 0; bool admin = false;
+        long tb = 0, tf = 0; bool admin = false, uncounted = false;
         foreach (string k in kinds) {
           Collected c = Collect(k, !AdminKind(k));
           rec.Got[k] = c;
           items.Add(c.Json());
-          if (c.Measured) { tb += c.Bytes; tf += c.Files; }
+          if (c.Measured) { tb += c.Bytes; tf += c.Files; if (c.Via != null) uncounted = true; }
           if (AdminKind(k)) admin = true;
         }
         lock (_gate) {
@@ -462,7 +492,7 @@ namespace Mantle {
         var left = new List<object>();
         if (!kinds.Contains("downloads")) left.Add("downloads");
         if (!kinds.Contains("recycleBin")) left.Add("recycleBin");
-        return Json.Obj("plan", rec.Token, "items", items, "totalBytes", tb, "totalFiles", tf,
+        return Json.Obj("plan", rec.Token, "items", items, "totalBytes", tb, "totalFiles", tf, "uncounted", uncounted,
                         "needsAdmin", admin && !SysCommon.Elevated(), "expiresInSec", PlanSec, "leftAlone", left,
                         "note", "Nothing is deleted until this plan is confirmed");
       });
