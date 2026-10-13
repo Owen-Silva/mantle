@@ -12,6 +12,7 @@ const { ShellState } = require('./lib/state');
 const { Sidecar } = require('./lib/sidecar');
 const { Apps, modulePathFor } = require('./lib/apps');
 const iconFresh = require('./lib/icon-fresh');
+const fgGrant = require('./lib/fg-grant');
 const { stats } = require('./lib/sys-stats');
 const MediaPick = require('./lib/media-pick');
 const { trayImage } = require('./lib/tray-icon');
@@ -3534,6 +3535,9 @@ async function launchItem(item, fresh) {
 
   if (aumid) {
     try {
+      // The sidecar starts it, so it needs the click's foreground right to pass on to the new app
+      // (else a Store app such as Terminal opens behind the window Owen was in). lib/fg-grant.js.
+      fgGrant.grant(sidecar.info && sidecar.info.pid);
       const r = await sidecar.call('launch', { aumid }, 8000);
       if (r && r.ok === false) {
         return { ok: false, reason: `Windows would not start${again} ${item.name}: ${r.reason || 'the sidecar did not say why'}` };
@@ -4609,8 +4613,9 @@ const COMMANDS = {
     }
     const fresh = !!(a && a.fresh);
     const wins = Array.isArray(item.windows) ? item.windows : [];
-    // One line per click, so a click that "did nothing" can be read back from the log.
-    process.stdout.write(`mantle: bar.open ${item.name}: ${wins.length} window(s)${fresh ? ', fresh' : ''}${wins.length === 1 ? `, active=${!!wins[0].active}, hwnd ${wins[0].hwnd}` : ''}\n`);
+    // One line per click, so a click that "did nothing" can be read back from the log. No app
+    // name in it (privacy rule, 10-01): the pin's kind says enough.
+    process.stdout.write(`mantle: bar.open (${item.kind || 'item'}): ${wins.length} window(s)${fresh ? ', fresh' : ''}${wins.length === 1 ? `, active=${!!wins[0].active}, hwnd ${wins[0].hwnd}` : ''}\n`);
 
     if (!fresh && wins.length >= 2) {
       return { ok: true, reason: null, action: 'list', windows: wins };
@@ -4618,12 +4623,16 @@ const COMMANDS = {
     if (!fresh && wins.length === 1) {
       const w = wins[0];
       const action = w.active ? 'minimize' : 'focus';
+      // THIS process got the click: hand its foreground right to the sidecar first (lib/fg-grant.js).
+      const g = action === 'focus' ? fgGrant.grant(sidecar.info && sidecar.info.pid) : null;
       try {
-        await sidecar.call(action, { hwnd: String(w.hwnd) }, 4000);
-        process.stdout.write(`mantle: bar.open ${item.name}: ${action} of ${w.hwnd} done\n`);
+        const r = await sidecar.call(action, { hwnd: String(w.hwnd) }, 4000);
+        process.stdout.write(`mantle: bar.open: ${action} of ${w.hwnd} done${g ? ` (${fgGrant.howWords(r)}; right ${fgGrant.words(g)})` : ''}\n`);
         return { ok: true, reason: null, action, hwnd: String(w.hwnd) };
       } catch (err) {
-        return { ok: false, reason: `${item.name} is running but Mantle could not ${action} it: ${err.message}` };
+        const e = fgGrant.splitTried(err.message);
+        if (g) process.stdout.write(`mantle: bar.open: focus of ${w.hwnd} lost (right ${fgGrant.words(g)}${e.tried ? `; ${e.tried}` : ''})\n`);
+        return { ok: false, reason: `${item.name} is running but Mantle could not ${action} it: ${e.shown}` };
       }
     }
     return launchItem(item, fresh);
@@ -4636,11 +4645,16 @@ const COMMANDS = {
     if (!['focus', 'minimize', 'close', 'toggle'].includes(action)) {
       return { ok: false, reason: `bar.window does not know the action "${action}" (it does focus, minimize, close and toggle)` };
     }
+    // A click on the bar's window list: hand the click's foreground right on (lib/fg-grant.js).
+    const g = action === 'focus' || action === 'toggle' ? fgGrant.grant(sidecar.info && sidecar.info.pid) : null;
     try {
-      await sidecar.call(action, { hwnd }, 4000);
+      const r = await sidecar.call(action, { hwnd }, 4000);
+      if (g) process.stdout.write(`mantle: bar.window: ${action} of ${hwnd} done (${fgGrant.howWords(r)}; right ${fgGrant.words(g)})\n`);
       return { ok: true, reason: null, action, hwnd };
     } catch (err) {
-      return { ok: false, reason: `could not ${action} that window: ${err.message}` };
+      const e = fgGrant.splitTried(err.message);
+      if (g) process.stdout.write(`mantle: bar.window: ${action} of ${hwnd} lost (right ${fgGrant.words(g)}${e.tried ? `; ${e.tried}` : ''})\n`);
+      return { ok: false, reason: `could not ${action} that window: ${e.shown}` };
     }
   },
 
