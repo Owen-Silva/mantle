@@ -680,6 +680,17 @@ namespace Mantle {
   /// (AllowSetForegroundWindow(sidecar pid), from the process that got the click, as switcher.pick
   /// already did), so rung 1 is a plain SetForegroundWindow and is expected to win. The others stay
   /// for callers with no click behind them (the clipboard history, a desktop switch).
+  ///
+  /// MEASURED ON SCREEN (sidecar/focus-lab.js, Windows 10.0.26300, 3 trials each, a real lock: app A
+  /// clicked to the front, then a non-activating "bar" clicked, then another process asks for B):
+  ///   SetForegroundWindow alone                refused every time (returns FALSE)
+  ///   AttachThreadInput to A, then SFW         attach succeeds, SFW STILL refused: no longer a way in
+  ///   bare Alt tap, then SFW                   accepted, but B showed in front 0-50 ms LATER in 2 of 3,
+  ///                                            which the old ladder's immediate check called a refusal
+  ///   Alt + VK 0xFF, then SFW                  accepted, in front by 50 ms every time
+  ///   SwitchToThisWindow                       never landed
+  ///   the bar's AllowSetForegroundWindow, SFW  "direct", in front in 5-12 ms every time
+  /// So: the hand-over is the fix, the alt rung is the real fallback (25-29 ms), and LandMs matters.
   static class FocusLadder {
     public interface IOps {
       IntPtr Root(IntPtr h);
