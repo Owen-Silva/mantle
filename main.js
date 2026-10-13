@@ -4108,11 +4108,16 @@ async function qsKeyboard(on) {
   const prev = qsKbPrev;
   qsKbPrev = null;
   if (!had || !prev) return { ok: true, focused: false, restored: null, reason: null };
+  // The bar had the keyboard, so THIS process is the foreground one: hand that on (lib/fg-grant.js).
+  const g = fgGrant.grant(sidecar.info && sidecar.info.pid);
   try {
-    await sidecar.call('focus', { hwnd: prev }, 4000);
+    const r = await sidecar.call('focus', { hwnd: prev }, 4000);
+    process.stdout.write(`mantle: qs.keyboard: focus went back (${fgGrant.howWords(r)}; right ${fgGrant.words(g)})\n`);
     return { ok: true, focused: false, restored: prev, reason: null };
   } catch (err) {
-    return { ok: false, focused: false, restored: null, reason: `the keyboard was released, but focus could not go back to the window that had it (${err.message})` };
+    const e = fgGrant.splitTried(err.message);
+    process.stdout.write(`mantle: qs.keyboard: focus did not go back (right ${fgGrant.words(g)}${e.tried ? `; ${e.tried}` : ''})\n`);
+    return { ok: false, focused: false, restored: null, reason: `the keyboard was released, but focus could not go back to the window that had it (${e.shown})` };
   }
 }
 
