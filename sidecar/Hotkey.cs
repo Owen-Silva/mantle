@@ -470,17 +470,24 @@ namespace Mantle {
       Win32.SendInput(2, _dummy, _inputSize);
     }
 
-    /// Used by WindowList.Focus, not by the gesture: a bare Alt press/release
-    /// makes Windows relax the foreground lock for us.
+    /// Used by WindowList.Focus (the ladder's "alt" rung), not by the gesture: an Alt press makes
+    /// Windows undo a LockSetForegroundWindow. Alt down, VK 0xFF down/up, Alt up, in ONE call: the
+    /// partner key (as for the solo-Win trick) means the app in front never sees a bare Alt tap,
+    /// which in an app with a menu bar OPENS THE MENU - and "no menus are active" is one of the
+    /// conditions SetForegroundWindow needs (2026-10-12; the old bare tap could defeat itself).
+    /// Then a short wait: SendInput only queues, and the press must be processed before the
+    /// SetForegroundWindow that follows it.
     public static void TapAltForFocusLock() {
       const ushort VK_MENU = 0x12;
-      var inputs = new Win32.INPUT[2];
-      inputs[0].type = Win32.INPUT_KEYBOARD;
-      inputs[0].u.ki.wVk = VK_MENU;
-      inputs[1].type = Win32.INPUT_KEYBOARD;
-      inputs[1].u.ki.wVk = VK_MENU;
-      inputs[1].u.ki.dwFlags = Win32.KEYEVENTF_KEYUP;
-      Win32.SendInput(2, inputs, Marshal.SizeOf(typeof(Win32.INPUT)));
+      var inputs = new Win32.INPUT[4];
+      ushort[] vk = { VK_MENU, Win32.VK_DUMMY, Win32.VK_DUMMY, VK_MENU };
+      for (int i = 0; i < 4; i++) {
+        inputs[i].type = Win32.INPUT_KEYBOARD;
+        inputs[i].u.ki.wVk = vk[i];
+        if (i == 2 || i == 3) inputs[i].u.ki.dwFlags = Win32.KEYEVENTF_KEYUP;
+      }
+      Win32.SendInput(4, inputs, Marshal.SizeOf(typeof(Win32.INPUT)));
+      System.Threading.Thread.Sleep(15);
     }
 
     // ------------------------------------------------------------ the protocol

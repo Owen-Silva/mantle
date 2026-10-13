@@ -388,6 +388,12 @@ namespace Mantle {
       // Never sends WM_GETTEXT, so a hung window cannot block the fixture check.
       [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
       public static extern int InternalGetWindowText(IntPtr hwnd, StringBuilder sb, int max);
+      // SetLastError, unlike Win32's: the ladder reports WHY an attach was refused.
+      [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+      public static extern bool AttachThreadInput(int idAttach, int idAttachTo, bool attach);
+      // The last rung. Not "intended for general use" (MSDN), but it is what Windows' own Alt+Tab
+      // called for years and it activates where a refused SetForegroundWindow only flashes.
+      [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hwnd, bool altTab);
     }
 
     static int _helpersOut;
@@ -403,38 +409,94 @@ namespace Mantle {
       return null;
     }
 
-    /// Raise a window owned by another process. Windows deliberately makes this
-    /// hard (foreground lock), so this is the documented escalation ladder:
-    /// restore -> AttachThreadInput -> the Alt-key nudge. Each step is only
-    /// taken if the previous one did not land, and if none do we say so rather
-    /// than reporting a success that did not happen.
-    public static string Focus(IntPtr hwnd) {
+    /// Raise a window owned by another process. Windows deliberately makes this hard (the
+    /// foreground lock), so this is an escalation ladder (FocusLadder below): direct ->
+    /// AttachThreadInput -> the Alt nudge -> SwitchToThisWindow. Each rung is only taken if the one
+    /// before did not land, and if none do we say so, rung by rung, rather than reporting a
+    /// success that did not happen.
+    public static string Focus(IntPtr hwnd) { return Focus(hwnd, null); }
+
+    /// Focus, filling `report` (when given) with how it went: {how: already|direct|attach|alt|switch
+    /// or null, tried: ["direct: refused", ...], ms}. No titles, names or paths in it (privacy).
+    public static string Focus(IntPtr hwnd, IDictionary report) {
       string bad = Check(hwnd);
       if (bad != null) return bad;
+      return FocusLadder.Run(hwnd, LiveOps.Instance, report);
+    }
 
+    /// How long a rung's accepted SetForegroundWindow gets to show in GetForegroundWindow. The
+    /// activation of another thread's window is handed to that thread, and until it runs Windows
+    /// can still report the app's previously active window (a second Quartz window, the window
+    /// whose dialog is up) - the old ladder read it at once and called a win a refusal.
+    public const int LandMs = 150;
+
+    /// The real Win32 side of the ladder.
+    sealed class LiveOps : FocusLadder.IOps {
+      public static readonly LiveOps Instance = new LiveOps();
+      public IntPtr Root(IntPtr h) {
+        if (h == IntPtr.Zero) return h;
+        IntPtr r = Win32.GetAncestor(h, Win32.GA_ROOTOWNER);
+        return r == IntPtr.Zero ? h : r;
+      }
+      public IntPtr ForegroundRoot() { return Root(Win32.GetForegroundWindow()); }
       // POSTED: the restore lands when the window's own thread gets to it, and a hung one can
-      // never hold us (the table above). SetForegroundWindow on a still-minimised window is fine:
-      // the switcher's "direct" path has done it in this order since it shipped.
-      if (Win32.IsIconic(hwnd)) Win32.ShowWindowAsync(hwnd, Win32.SW_RESTORE);
+      // never hold us (the table above). SetForegroundWindow on a still-minimised window is fine.
+      public bool RestoreIfMinimised(IntPtr h) {
+        if (!Win32.IsIconic(h)) return false;
+        Win32.ShowWindowAsync(h, Win32.SW_RESTORE);
+        return true;
+      }
+      // A window with a modal dialog up is really the dialog (Windows' own switcher does this).
+      public IntPtr ActivationTarget(IntPtr h) {
+        IntPtr popup = KeysNative.GetLastActivePopup(h);
+        return popup != IntPtr.Zero && popup != h && Win32.IsWindowVisible(popup) &&
+               KeysNative.IsWindowEnabled(popup) ? popup : h;
+      }
+      public bool SetForeground(IntPtr h) { return Win32.SetForegroundWindow(h); }
+      public string Attach(IntPtr h, out string attach, out bool accepted) {
+        var steps = Json.Obj();
+        string late = AttachAndRaise(h, Win32.GetForegroundWindow(), false, steps);
+        attach = steps["attachWords"] as string ?? "not tried";
+        accepted = steps["sfw"] is bool && (bool)steps["sfw"];
+        return late;
+      }
+      public void AltNudge() { Hotkey.TapAltForFocusLock(); }
+      public string SwitchTo(IntPtr h) { return Bounded(delegate { N.SwitchToThisWindow(h, true); }, "SwitchToThisWindow"); }
+      public bool WaitLanded(IntPtr root, int ms) {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (true) {
+          if (ForegroundRoot() == root) return true;
+          if (sw.ElapsedMilliseconds >= ms) return false;
+          System.Threading.Thread.Sleep(5);
+        }
+      }
+    }
 
-      IntPtr fg = Win32.GetForegroundWindow();
-      if (fg == hwnd) return null;
-
-      string late = AttachAndRaise(hwnd, fg, false, null);
-      if (Win32.GetForegroundWindow() == hwnd) return null;
-      // The helper is still attached to the app in front and waiting on it: an Alt tap now would
-      // only race it. Say so; the window may still come forward when that app answers.
-      if (late != null) return late;
-
-      // Last resort: Windows relaxes the foreground lock for a process that has
-      // just seen input, so we synthesise a bare Alt press/release. Not attached
-      // here, so SetForegroundWindow posts the change and does not wait.
-      Hotkey.TapAltForFocusLock();
-      Win32.SetForegroundWindow(hwnd);
-      if (Win32.GetForegroundWindow() == hwnd) return null;
-
-      return "could not raise window " + hwnd.ToInt64() +
-             ": Windows refused the foreground change (another app holds the foreground lock)";
+    /// Run `work` on a pool thread and wait at most AttachWaitMs, like AttachAndRaise: null when it
+    /// finished in time, else the words for the caller. HelpersOut counts the ones still out.
+    static string Bounded(System.Threading.WaitCallback work, string what) {
+      var h = new Helper();
+      var done = new System.Threading.ManualResetEvent(false);
+      System.Threading.ThreadPool.QueueUserWorkItem(delegate {
+        try { work(null); } catch (Exception) { /* the caller's own foreground check says whether it landed */ }
+        finally {
+          lock (h) {
+            h.Done = true;
+            if (h.Abandoned) System.Threading.Interlocked.Decrement(ref _helpersOut);
+          }
+          try { done.Set(); } catch (ObjectDisposedException) { /* the caller finished first */ }
+        }
+      });
+      bool inTime = done.WaitOne(AttachWaitMs);
+      if (!inTime) {
+        lock (h) {
+          if (h.Done) inTime = true;
+          else { h.Abandoned = true; System.Threading.Interlocked.Increment(ref _helpersOut); }
+        }
+      }
+      if (!inTime) return what + " did not return within " + AttachWaitMs + " ms, so Mantle stopped waiting";
+      done.Close();
+      return null;
     }
 
     /// The documented escalation step, BOUNDED: attach this thread's input to the thread in front
@@ -461,14 +523,18 @@ namespace Mantle {
 
       var h = new Helper();
       var done = new System.Threading.ManualResetEvent(false);
-      bool attachedOk = false;
+      bool attachedOk = false, sfw = false;
+      int attachErr = 0;
       System.Threading.ThreadPool.QueueUserWorkItem(delegate {
         int me = Win32.GetCurrentThreadId();
         bool attached = false;
         try {
-          if (wantAttach && toThread != me) attached = Win32.AttachThreadInput(me, toThread, true);
+          if (wantAttach && toThread != me) {
+            attached = N.AttachThreadInput(me, toThread, true);
+            if (!attached) attachErr = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+          }
           attachedOk = attached;
-          if (!rehearse) Win32.SetForegroundWindow(hwnd);
+          if (!rehearse) sfw = Win32.SetForegroundWindow(hwnd);
           else if (attached) Win32.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
                                                 Win32.SWP_NOSIZE | Win32.SWP_NOMOVE | Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE);
           // BringWindowToTop is a synchronous SetWindowPos(HWND_TOP): posted instead.
@@ -493,7 +559,16 @@ namespace Mantle {
           else { h.Abandoned = true; System.Threading.Interlocked.Increment(ref _helpersOut); }
         }
       }
-      if (steps != null) steps["attached"] = attachedOk;
+      if (steps != null) {
+        steps["attached"] = attachedOk;
+        steps["sfw"] = inTime && sfw;
+        // Plain words for the ladder's report. Error 5 is UIPI: the window in front runs as
+        // administrator and Mantle does not, so Windows will not let it join that input queue.
+        steps["attachWords"] = !wantAttach ? (string)steps["attach"]
+                             : attachedOk ? "attached"
+                             : attachErr == 5 ? "attach refused (the window in front runs as administrator)"
+                             : "attach failed (error " + attachErr + ")";
+      }
       if (!inTime) return "the app in front" + (toPid > 0 ? " (pid " + toPid + ")" : "") + " did not answer within " +
                           AttachWaitMs + " ms while Mantle handed the foreground over, so Mantle stopped waiting; " +
                           "the window may still come forward once that app answers";
@@ -553,6 +628,24 @@ namespace Mantle {
       return null;
     }
 
+    /// `focus.fixture {hwnd, onScreen:true}`: the real Focus, with its report, on a focus-lab window
+    /// only. It DOES take the foreground (onto the lab's own window), so it also wants onScreen:true,
+    /// which only sidecar/focus-lab-run.js sends, inside the visible slot. Runs in passive: `focus`
+    /// itself is refused there. Answers the report and the error words (null when it landed).
+    public static string FixtureFocus(Dictionary<string, object> req, ref object result) {
+      IntPtr hwnd = Json.GetHwnd(req, "hwnd");
+      string bad = Check(hwnd);
+      if (bad != null) return bad;
+      if (!IsFixture(hwnd))
+        return "focus.fixture only runs on the test fixture (\"" + FixtureTitle + "\", " + FixtureExe + " under %TEMP%)";
+      if (!Json.GetBool(req, "onScreen", false))
+        return "focus.fixture takes the real foreground, so it wants onScreen:true (the visible slot only)";
+      var rep = Json.Obj();
+      rep["error"] = Focus(hwnd, rep);
+      result = rep;
+      return null;
+    }
+
     public static string Close(IntPtr hwnd) {
       string bad = Check(hwnd);
       if (bad != null) return bad;
@@ -564,18 +657,175 @@ namespace Mantle {
 
     /// Taskbar-button behaviour: clicking the active app hides it, clicking any
     /// other app raises it.
-    public static string Toggle(IntPtr hwnd) {
+    public static string Toggle(IntPtr hwnd) { return Toggle(hwnd, null); }
+    public static string Toggle(IntPtr hwnd, IDictionary report) {
       string bad = Check(hwnd);
       if (bad != null) return bad;
-      if (Win32.GetForegroundWindow() == hwnd) return Minimize(hwnd);
-      return Focus(hwnd);
+      if (Win32.GetForegroundWindow() == hwnd) {
+        if (report != null) report["how"] = "minimized";
+        return Minimize(hwnd);
+      }
+      return Focus(hwnd, report);
+    }
+  }
+
+  /// THE LADDER, as logic only (2026-10-12, lane mn-focus). The Win32 side is behind IOps so
+  /// `focus.simulate` can drive every branch with a script, in passive, without touching a window.
+  ///
+  /// WHY CLICKS ON THE BAR LOST (live log, 10-10 to 10-12: 24 "did not open / did not switch"): the
+  /// bar is focusable:false, so a click on it leaves the app Owen was in as the foreground process,
+  /// and the click itself lands in Electron's process. The process that then called
+  /// SetForegroundWindow was the sidecar, which is neither - and with ForegroundLockTimeout at its
+  /// maximum on this machine, Windows never relents on time. main.js now hands the right on
+  /// (AllowSetForegroundWindow(sidecar pid), from the process that got the click, as switcher.pick
+  /// already did), so rung 1 is a plain SetForegroundWindow and is expected to win. The others stay
+  /// for callers with no click behind them (the clipboard history, a desktop switch).
+  ///
+  /// MEASURED ON SCREEN (sidecar/focus-lab.js, Windows 10.0.26300, 3 trials each, a real lock: app A
+  /// clicked to the front, then a non-activating "bar" clicked, then another process asks for B):
+  ///   SetForegroundWindow alone                refused every time (returns FALSE)
+  ///   AttachThreadInput to A, then SFW         attach succeeds, SFW STILL refused: no longer a way in
+  ///   bare Alt tap, then SFW                   accepted, but B showed in front 0-50 ms LATER in 2 of 3,
+  ///                                            which the old ladder's immediate check called a refusal
+  ///   Alt + VK 0xFF, then SFW                  accepted, in front by 50 ms every time
+  ///   SwitchToThisWindow                       never landed
+  ///   the bar's AllowSetForegroundWindow, SFW  "direct", in front in 5-12 ms every time
+  /// So: the hand-over is the fix, the alt rung is the real fallback (25-29 ms), and LandMs matters.
+  static class FocusLadder {
+    public interface IOps {
+      IntPtr Root(IntPtr h);
+      IntPtr ForegroundRoot();
+      bool RestoreIfMinimised(IntPtr h);
+      IntPtr ActivationTarget(IntPtr h);
+      bool SetForeground(IntPtr h);
+      /// AttachThreadInput to the thread in front + SetForegroundWindow, bounded. Null when it
+      /// returned in time (else the words); attach says what the attach did; accepted is the
+      /// SetForegroundWindow return value.
+      string Attach(IntPtr h, out string attach, out bool accepted);
+      void AltNudge();
+      /// Bounded SwitchToThisWindow: null when it returned in time, else the words.
+      string SwitchTo(IntPtr h);
+      bool WaitLanded(IntPtr root, int ms);
+    }
+
+    public static string Run(IntPtr hwnd, IOps ops, IDictionary report) {
+      var sw = System.Diagnostics.Stopwatch.StartNew();
+      var tried = new List<object>();
+      string how = null, err = null;
+      IntPtr root = ops.Root(hwnd);
+      bool restored = ops.RestoreIfMinimised(hwnd);
+      if (ops.ForegroundRoot() == root) how = "already";
+      else {
+        IntPtr to = ops.ActivationTarget(hwnd);
+        // 1. direct: lands whenever this process holds a foreground right (main hands it on at
+        //    the click). A refused call answers FALSE at once, so only an accepted one waits.
+        bool ok = ops.SetForeground(to);
+        if (ok && ops.WaitLanded(root, WindowList.LandMs)) how = "direct";
+        else {
+          tried.Add(ok ? "direct: accepted, but another window stayed in front" : "direct: refused");
+          // 2. attach: join the input queue of the thread in front, which may hand the
+          //    foreground over.
+          string attach; bool acc;
+          string late = ops.Attach(to, out attach, out acc);
+          if (ops.WaitLanded(root, late == null && acc ? WindowList.LandMs : 0)) how = "attach";
+          else if (late != null) {
+            // The helper is still attached to the app in front and waiting on it: anything more
+            // now would only race it. The window may still come forward when that app answers.
+            tried.Add("attach: " + late);
+            err = late;
+          } else {
+            tried.Add("attach: " + attach + ", " + (acc ? "accepted, but another window stayed in front" : "refused"));
+            // 3. alt: an injected Alt (with a partner key so the app in front does not open its
+            //    menu - an open menu is itself a reason Windows refuses) then try again.
+            ops.AltNudge();
+            ok = ops.SetForeground(to);
+            if (ok && ops.WaitLanded(root, WindowList.LandMs)) how = "alt";
+            else {
+              tried.Add(ok ? "alt: accepted, but another window stayed in front" : "alt: refused");
+              // 4. switch: SwitchToThisWindow, bounded like the attach.
+              string slate = ops.SwitchTo(to);
+              if (ops.WaitLanded(root, slate == null ? WindowList.LandMs : 0)) how = "switch";
+              else tried.Add("switch: " + (slate ?? "another window stayed in front"));
+            }
+          }
+        }
+      }
+      if (how == null && err == null)
+        err = "could not raise window " + hwnd.ToInt64() +
+              ": Windows refused the foreground change (another app holds the foreground lock); tried " +
+              string.Join("; ", tried.ConvertAll(x => (string)x).ToArray());
+      if (report != null) {
+        report["how"] = how;
+        report["tried"] = tried;
+        report["restored"] = restored;
+        report["ms"] = sw.ElapsedMilliseconds;
+      }
+      return err;
+    }
+
+    /// `focus.simulate {script}`: the ladder against made-up Windows behaviour. Pure. script:
+    ///   {already?, direct?: bool, directLands?: bool, attach?: 'ok'|'refused'|'failed'|'late',
+    ///    alt?: bool, switchLands?: bool, switchLate?: bool}
+    /// Answers {how, error, tried, calls}: calls is every IOps call in order.
+    public static string Simulate(Dictionary<string, object> req, ref object result) {
+      object raw;
+      var script = Json.TryGet(req, "script", out raw) ? raw as IDictionary : null;
+      if (script == null) return "focus.simulate needs a script: {already?, direct?, directLands?, attach?, alt?, switchLands?, switchLate?}";
+      var ops = new ScriptOps(script);
+      var rep = Json.Obj();
+      string err = Run(new IntPtr(4242), ops, rep);
+      rep["error"] = err;
+      rep["calls"] = ops.Calls;
+      result = rep;
+      return null;
+    }
+
+    sealed class ScriptOps : IOps {
+      readonly IDictionary s;
+      public readonly List<object> Calls = new List<object>();
+      bool landed;
+      public ScriptOps(IDictionary script) { s = script; }
+      bool B(string k) { return s.Contains(k) && s[k] is bool && (bool)s[k]; }
+      string S(string k) { return s.Contains(k) ? s[k] as string : null; }
+      public IntPtr Root(IntPtr h) { return h; }
+      public IntPtr ForegroundRoot() { Calls.Add("foreground"); return B("already") || landed ? new IntPtr(4242) : new IntPtr(7); }
+      public bool RestoreIfMinimised(IntPtr h) { Calls.Add("restore"); return B("minimised"); }
+      public IntPtr ActivationTarget(IntPtr h) { return h; }
+      int sets;
+      public bool SetForeground(IntPtr h) {
+        sets++;
+        Calls.Add(sets == 1 ? "direct" : "alt-set");
+        bool ok = sets == 1 ? B("direct") : B("alt");
+        if (ok && (sets > 1 || !s.Contains("directLands") || B("directLands"))) landed = true;
+        return ok;
+      }
+      public string Attach(IntPtr h, out string attach, out bool accepted) {
+        Calls.Add("attach");
+        string a = S("attach") ?? "refused";
+        attach = a == "failed" ? "attach refused (the window in front runs as administrator)" : "attached";
+        accepted = a == "ok";
+        if (a == "ok") landed = true;
+        return a == "late" ? "the app in front did not answer within " + WindowList.AttachWaitMs + " ms" : null;
+      }
+      public void AltNudge() { Calls.Add("alt-nudge"); }
+      public string SwitchTo(IntPtr h) {
+        Calls.Add("switch");
+        if (B("switchLands")) landed = true;
+        return B("switchLate") ? "SwitchToThisWindow did not return within " + WindowList.AttachWaitMs + " ms, so Mantle stopped waiting" : null;
+      }
+      public bool WaitLanded(IntPtr root, int ms) { Calls.Add("wait " + ms); return landed; }
     }
   }
 
   /// focus.rehearse (WindowList.Rehearse): the test's way into Focus's blocking-prone steps.
+  /// focus.simulate: the ladder's logic on a script. focus.fixture: the REAL ladder, on the focus
+  /// lab's own windows only (sidecar/focus-lab.js), for the on-screen check in the visible slot.
   [MantleFeature]
   static class FocusRehearsal {
     public static void Register(FeatureTable t) {
+      t.Add("focus.simulate", Lanes.Ui, FocusLadder.Simulate);
+      t.Add("focus.fixture", Lanes.Ui, WindowList.FixtureFocus);
+      Lanes.Register("focus.fixture", Lanes.Focus);
       t.Add("focus.rehearse", Lanes.Ui, WindowList.Rehearse);
       // On the focus lane, like `focus`. FeatureTable.Add only accepts the lanes it knew when it was
       // written, so the lane is set here (Lanes.Register overwrites the one Add just registered).

@@ -844,12 +844,14 @@ namespace Mantle {
           // them outright - a test run must never disturb whoever is at the machine.
           if (Passive) return PassiveRefusal;
           IntPtr hwnd = Json.GetHwnd(req, "hwnd");
-          string err = cmd == "focus" ? WindowList.Focus(hwnd)
+          // focus/toggle answer the ladder's report ({how, tried, ms}): main logs which rung won.
+          var report = Json.Obj();
+          string err = cmd == "focus" ? WindowList.Focus(hwnd, report)
                      : cmd == "minimize" ? WindowList.Minimize(hwnd)
                      : cmd == "close" ? WindowList.Close(hwnd)
-                     : WindowList.Toggle(hwnd);
+                     : WindowList.Toggle(hwnd, report);
           if (err != null) return err;
-          result = Json.Obj();
+          result = report;
           return null;
         }
 
