@@ -66,6 +66,22 @@ namespace Mantle {
     public const uint MSG_QUIT = 0x8000 + 26;
     public const uint MSG_REHOOK = 0x8000 + 27;
     public const uint MSG_LATE = 0x8000 + 28;       // wParam = vk, lParam = ms the key waited for the hook
+    const uint MSG_RAWKEYS = 0x8000 + 29;           // TEST ONLY: wParam = raw key events to pretend arrived
+
+    // HOOK HEALTH (HookHealth.cs): written on the hook thread only - the hook proc stores the tick
+    // of its last callback and zeroes the count; each WM_INPUT key event adds one.
+    static int _lastCallback;                  // Environment.TickCount of the last hook callback
+    static int _rawSinceHook;                  // raw key events since that callback
+    static int _rawSeen;                       // raw key events this run (status only)
+    static int _healedAt;                      // tick of the last re-install for a dead hook
+    static bool _healedOnce;
+    static int _heals, _outranked;             // dead hooks re-installed; suspicions an elevated window explained
+    static IntPtr _sink = IntPtr.Zero;         // the raw-input window, on the hook thread
+    static string _sinkWhy;                    // why there is no raw-input check, when there is none
+    static volatile string _health;            // null, or why the hook is gone and could not be put back
+    static volatile string _rearmWhy;          // the words for the next MSG_REHOOK
+    static bool _rawTestTrust;                 // TEST ONLY: skip the elevated-window check once
+    static bool _testFailRehook;               // TEST ONLY: the next dead-hook re-install "fails" (error 5)
 
     // LATE KEYS (lane shotfix, 2026-09-28). Windows waits at most LowLevelHooksTimeout for this hook
     // (HKCU\Control Panel\Desktop; 1000 ms on Owen's machine, which is also the most Windows 10 1709+
@@ -179,7 +195,11 @@ namespace Mantle {
                       "tracking", Switcher.Tracking,
                       "session", Machine.Active, "seq", Switcher.Seq, "rehooks", _rehooks,
                       "lateKeys", _late, "slowestMs", _slowest, "limitMs", _limitMs, "limitWhy", _limitWhy,
-                      "reason", _lastReason);
+                      "reason", _lastReason,
+                      "healthy", _health == null, "health", _health, "heals", _heals,
+                      "rawCheck", _sink != IntPtr.Zero, "rawCheckWhy", _sinkWhy, "rawSeen", _rawSeen,
+                      "rawSinceHook", _rawSinceHook, "outranked", _outranked,
+                      "lastCallbackAgoMs", Installed ? (object)unchecked(Environment.TickCount - _lastCallback) : null);
     }
 
     /// The hook's state, pushed whenever it changes, so main's state piece is
@@ -268,7 +288,15 @@ namespace Mantle {
         } else {
           _hook = h;
           ok = true;
+          _lastCallback = Environment.TickCount;
+          _rawSinceHook = 0;
+          _health = null;
           Switcher.StartTracking();
+          // The dead-hook check (HookHealth.cs). Without it the hook still works; status says why.
+          string sw;
+          _sink = HookHealth.OpenSink(out sw);
+          _sinkWhy = sw == null ? null : "Mantle cannot tell when Windows drops the keyboard hook: " + sw;
+          if (sw != null) KeyEvents.Log("warn", "keyboard hook: " + _sinkWhy + "; it is still re-installed on every wake and unlock");
         }
       } catch (Exception ex) {
         why[0] = "the hook thread threw " + ex.GetType().Name + ": " + ex.Message;
@@ -282,8 +310,22 @@ namespace Mantle {
           if (got == 0 || got == -1) break;
           if (msg.hwnd == IntPtr.Zero) {
             if (msg.message == MSG_QUIT) break;
-            if (msg.message == MSG_REHOOK) { RehookHere("the switcher asked for it"); continue; }
+            if (msg.message == MSG_REHOOK) {
+              string rw = _rearmWhy;
+              _rearmWhy = null;
+              RehookHere(rw ?? "the switcher asked for it");
+              continue;
+            }
             if (msg.message == MSG_LATE) { ReportLate((int)msg.wParam.ToInt64(), (int)msg.lParam.ToInt64()); continue; }
+            if (msg.message == MSG_RAWKEYS) {
+              long tf = msg.lParam.ToInt64();
+              _rawTestTrust = (tf & 1) != 0;
+              _testFailRehook = (tf & 2) != 0;
+              for (int i = (int)msg.wParam.ToInt64(); i > 0; i--) OnRawKey();
+              _rawTestTrust = false;
+              _testFailRehook = false;
+              continue;
+            }
             try {
               Switcher.OnThreadMessage(msg.message, msg.wParam, msg.lParam);
             } catch (Exception ex) {
@@ -292,6 +334,8 @@ namespace Mantle {
             }
             continue;
           }
+          // Dispatched as well: DefWindowProc frees the raw input.
+          if (msg.message == HookHealth.WM_INPUT && msg.hwnd == _sink) OnRawKey();
           KeysNative.TranslateMessage(ref msg);
           KeysNative.DispatchMessageW(ref msg);
         }
@@ -300,6 +344,9 @@ namespace Mantle {
                                "; the hook was removed, so the Win key and Alt+Tab are Windows' own again");
       } finally {
         try { Switcher.StopTracking(); } catch (Exception) { }
+        IntPtr sink = _sink;
+        _sink = IntPtr.Zero;
+        HookHealth.CloseSink(sink);
         IntPtr h = _hook;
         _hook = IntPtr.Zero;
         if (h != IntPtr.Zero) { try { Win32.UnhookWindowsHookEx(h); } catch (Exception) { } }
@@ -316,13 +363,38 @@ namespace Mantle {
       else Post(MSG_REHOOK, 0, 0);
     }
 
-    static void RehookHere(string why) {
+    /// Re-install from any thread, unconditionally: main asks on every wake and unlock (hotkey
+    /// {op:'rearm'}), because Windows drops low-level hooks while it resumes and never says so.
+    /// False when there is no hook to re-install.
+    public static bool Rearm(string why) {
+      if (!Installed || _tid == 0) return false;
+      _rearmWhy = why;
+      Post(MSG_REHOOK, 0, 0);
+      return true;
+    }
+
+    static void RehookHere(string why) { RehookHere(why, false); }
+
+    /// `dead`: the health check saw keys with no callback, so the old hook is gone for certain - a
+    /// failure here is then a broken Win key, said in the state strip until a re-install works.
+    static void RehookHere(string why, bool dead) {
       if (_proc == null) return;
       IntPtr old = _hook;
-      IntPtr h = Win32.SetWindowsHookExW(Win32.WH_KEYBOARD_LL, _proc, Win32.GetModuleHandleW(null), 0);
+      bool fake = dead && _testFailRehook;
+      IntPtr h = fake ? IntPtr.Zero : Win32.SetWindowsHookExW(Win32.WH_KEYBOARD_LL, _proc, Win32.GetModuleHandleW(null), 0);
       if (h == IntPtr.Zero) {
-        KeyEvents.Log("warn", "keyboard hook: " + why + ", and re-installing it failed (Win32 error " +
-                              Marshal.GetLastWin32Error() + "); the old one stays");
+        int code = fake ? 5 : Marshal.GetLastWin32Error();
+        if (dead) {
+          _health = "Windows dropped Mantle's keyboard hook and refused to put it back (Win32 error " + code +
+                    "), so the Win key opens Windows' Start, and Alt+Tab and Mantle's shortcuts are Windows' own; " +
+                    "Mantle tries again at the next keys it misses, the next wake or unlock";
+          KeyEvents.Log("warn", "keyboard hook: " + why + ", and re-installing it failed (Win32 error " + code +
+                                "); the Win key, Alt+Tab and Mantle's shortcuts are Windows' own until it works");
+          Announce();
+        } else {
+          KeyEvents.Log("warn", "keyboard hook: " + why + ", and re-installing it failed (Win32 error " +
+                                code + "); the old one stays");
+        }
         return;
       }
       // No keystroke can reach both hooks: callbacks only arrive while this
@@ -330,8 +402,35 @@ namespace Mantle {
       _hook = h;
       if (old != IntPtr.Zero) { try { Win32.UnhookWindowsHookEx(old); } catch (Exception) { } }
       _rehooks++;
-      KeyEvents.Log("warn", "keyboard hook: " + why + "; it was re-installed (" + _rehooks +
+      _lastCallback = Environment.TickCount;
+      _rawSinceHook = 0;
+      KeyEvents.Log(dead ? "warn" : "info", "keyboard hook: " + why + "; it was re-installed (" + _rehooks +
                             (_rehooks == 1 ? " time" : " times") + " this run)");
+      if (_health != null) { _health = null; Announce(); }
+    }
+
+    /// On the hook thread, per raw key event (WM_INPUT), or per pretend one from the test op.
+    /// Cheap until the count passes MissedKeys: one add and a compare.
+    static void OnRawKey() {
+      _rawSeen++;
+      if (++_rawSinceHook < HookHealth.MissedKeys) return;
+      int now = Environment.TickCount;
+      int quiet = unchecked(now - _lastCallback);
+      int v = HookHealth.KeyVerdict(_rawSinceHook, quiet, _healedOnce ? unchecked(now - _healedAt) : -1);
+      if (v != 1) return;   // alive, or re-installed a moment ago: give it the backoff first
+      if (!_rawTestTrust && HookHealth.ForegroundOutranksUs()) {
+        // An admin program's window is in front: its keys never reach a normal process's hook.
+        _outranked++;
+        _rawSinceHook = 0;
+        _lastCallback = now;
+        return;
+      }
+      int missed = _rawSinceHook;
+      _healedAt = now;
+      _healedOnce = true;
+      _heals++;
+      RehookHere("Windows stopped calling it (" + missed + " key presses and releases reached Windows in " +
+                 ((quiet / 100) / 10.0).ToString(System.Globalization.CultureInfo.InvariantCulture) + " s with no call; Windows drops a hook that answers too slowly, without saying so)", true);
     }
 
     // ------------------------------------------------------------ late keys
@@ -398,6 +497,9 @@ namespace Mantle {
     // ------------------------------------------------------------ the hook
 
     static IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam) {
+      // HOOK HEALTH: Windows is still calling us. Two stores, nothing else.
+      _lastCallback = Environment.TickCount;
+      _rawSinceHook = 0;
       if (nCode == Win32.HC_ACTION) {
         try {
           // The fields we need, read in place: PtrToStructure would box a copy
@@ -543,8 +645,44 @@ namespace Mantle {
           }
           case "popwatch": return PopWatch.Command(req, passive, out result);
           case "popesc": return PopWatch.EscTest(req, out result);
+          case "rearm": {
+            // Main, on every wake and unlock: put both kinds of hook back at the head of the chain.
+            // Only ever re-installs hooks this sidecar already has, so passive is fine.
+            string why = Json.GetString(req, "why");
+            if (string.IsNullOrEmpty(why)) why = "main asked";
+            if (why.Length > 80) why = why.Substring(0, 80);
+            bool k = Rearm(why + ", and Windows can drop the hook then without saying so");
+            bool p = PopWatch.Rearm(why);
+            result = Json.Obj("keyboard", k, "popwatch", p, "installed", Installed);
+            return null;
+          }
+          case "hookhealth": {
+            // PURE, for tests (passive too): the two dead-hook verdicts for made-up numbers.
+            object raw;
+            if (Json.TryGet(req, "aheadMs", out raw)) {
+              result = Json.Obj("dead", HookHealth.PopVerdict(Json.GetInt(req, "aheadMs", 0), Json.GetInt(req, "agoMs", 0)));
+            } else {
+              int v = HookHealth.KeyVerdict(Json.GetInt(req, "raw", 0), Json.GetInt(req, "sinceHookMs", 0), Json.GetInt(req, "sinceHealMs", -1));
+              result = Json.Obj("verdict", HookHealth.VerdictWord(v));
+            }
+            return null;
+          }
+          case "popdrop": {
+            if (!passive) return "hotkey popdrop is for tests: only a passive (test) sidecar takes it";
+            object inp;
+            return PopWatch.TestDrop(Json.TryGet(req, "input", out inp) && inp is bool && (bool)inp, out result);
+          }
+          case "hooktest":
+          case "hookdrop":
+          case "rawkeys": {
+            // TEST ONLY, passive only: a pass-through keyboard hook (every feature off, nothing is
+            // ever swallowed), Windows' silent removal of it (unhooked, the handle kept as if nothing
+            // happened), and raw key events that pretend keys were typed. A live sidecar refuses.
+            if (!passive) return "hotkey " + op + " is for tests: only a passive (test) sidecar takes it";
+            return TestOp(op, req, out result);
+          }
           default:
-            return "hotkey: unknown op '" + op + "' (simulate, order, list, status, pick, cancel, grid, popwatch, popesc)";
+            return "hotkey: unknown op '" + op + "' (simulate, order, list, status, pick, cancel, grid, popwatch, popesc, rearm, hookhealth)";
         }
       }
 
@@ -570,6 +708,42 @@ namespace Mantle {
       if (err != null) return err;
       result = Status();
       return null;
+    }
+
+    static string TestOp(string op, Dictionary<string, object> req, out object result) {
+      result = null;
+      lock (_gate) {
+        if (op == "hooktest") {
+          object raw;
+          bool on = !Json.TryGet(req, "on", out raw) || !(raw is bool) || (bool)raw;
+          if (on && !Installed) {
+            Machine.Reset();
+            Machine.WinTap = false; Machine.AltTab = false; Machine.WinKeys = false;
+            Machine.Chords = 0; Machine.Observe = 0;
+            string err = StartThread();
+            if (err != null) return err;
+          } else if (!on && (Installed || _thread != null)) {
+            StopThread();
+          }
+          result = Status();
+          return null;
+        }
+        if (!Installed) return "hotkey " + op + ": there is no keyboard hook (hotkey {op:'hooktest'} installs a test one)";
+        if (op == "hookdrop") {
+          // What Windows does: the hook stops being called, and nothing about the handle changes.
+          bool ok = Win32.UnhookWindowsHookEx(_hook);
+          result = Json.Obj("dropped", ok);
+          return null;
+        }
+        int n = Json.GetInt(req, "n", 0);
+        if (n < 1 || n > 1000) return "hotkey rawkeys needs n: how many raw key events to pretend (1 to 1000)";
+        object t;
+        bool trust = Json.TryGet(req, "trust", out t) && t is bool && (bool)t;
+        bool fail = Json.TryGet(req, "failRehook", out t) && t is bool && (bool)t;
+        bool posted = KeysNative.PostThreadMessageW(_tid, MSG_RAWKEYS, new IntPtr(n), new IntPtr((trust ? 1 : 0) | (fail ? 2 : 0)));
+        result = Json.Obj("posted", posted);
+        return null;
+      }
     }
 
     static string OptBool(Dictionary<string, object> req, string key, out bool? v) {
@@ -652,6 +826,15 @@ namespace Mantle {
     const uint MSG_ESC = 0x8000 + 42;     // wParam = 1 if swallowed
     const uint MSG_WAKE = 0x8000 + 43;    // look at the state again (disarm, a held Esc came up)
     const uint MSG_QUIT = 0x8000 + 44;
+    const uint MSG_REHOOK = 0x8000 + 45;  // re-install both hooks (main's wake/unlock rearm)
+
+    // HOOK HEALTH (HookHealth.cs): both procs store the tick of their last callback; the watch
+    // thread's timer compares it with GetLastInputInfo while armed. One heal per arm at most.
+    static volatile int _lastCb;
+    static volatile string _rearmWhy;
+    static volatile bool _healedThisArm;  // reset by each new arm (under _gate)
+    static volatile int _testInputAt;     // TEST ONLY: a pretend GetLastInputInfo tick, 0 = none
+    static int _popHeals, _popRehooks, _popOutranked;
 
     // The verdict's bits.
     public const int Swallow = 1, Report = 2, Held = 4;
@@ -764,7 +947,7 @@ namespace Mantle {
           if (_thread != null) { _thread.Join(1500); _thread = null; }
           _passive = passive;
           _escHeld = false;
-          _clicks = 0; _escs = 0;
+          _clicks = 0; _escs = 0; _healedThisArm = false;
           _bar = hwnd;
           _deadline = now + MsToTicks(lease);
           _leaseMs = lease;
@@ -774,7 +957,7 @@ namespace Mantle {
           _armed = true;
           renewed = false;
         } else {
-          if (!_armed) { _clicks = 0; _escs = 0; _pendingOff = null; }
+          if (!_armed) { _clicks = 0; _escs = 0; _pendingOff = null; _healedThisArm = false; }
           if (hasHwnd) _bar = hwnd;
           _deadline = now + MsToTicks(lease);
           _leaseMs = lease;
@@ -793,7 +976,9 @@ namespace Mantle {
           if (left < 0) left = 0;
         }
         return Json.Obj("armed", _armed, "esc", (_armed ? _passive : passive) ? "observe" : "swallow",
-                        "leaseLeftMs", left, "clicks", _clicks, "escs", _escs);
+                        "leaseLeftMs", left, "clicks", _clicks, "escs", _escs,
+                        "hooked", _mouseHook != IntPtr.Zero && _keyHook != IntPtr.Zero,
+                        "rehooks", _popRehooks, "heals", _popHeals, "outranked", _popOutranked);
       }
     }
 
@@ -821,6 +1006,71 @@ namespace Mantle {
     static void Post(uint msg) {
       int tid = _tid;
       if (tid != 0) KeysNative.PostThreadMessageW(tid, msg, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    /// Main's wake/unlock rearm (hotkey {op:'rearm'}): re-install both hooks if a watch is on.
+    public static bool Rearm(string why) {
+      if (!_armed || _tid == 0 || _exiting) return false;
+      _rearmWhy = why;
+      Post(MSG_REHOOK);
+      return true;
+    }
+
+    /// TEST ONLY (passive): drop the mouse hook the way Windows does (the handle kept, no more
+    /// calls) and, with `input`, pretend input arrived just now so the next check sees it unseen.
+    public static string TestDrop(bool input, out object result) {
+      result = null;
+      IntPtr m = _mouseHook;
+      if (!_armed || m == IntPtr.Zero) return "hotkey popdrop: the pop-up watch is not on (arm it first)";
+      bool ok = Win32.UnhookWindowsHookEx(m);
+      if (input) _testInputAt = Environment.TickCount;
+      result = Json.Obj("dropped", ok);
+      return null;
+    }
+
+    /// On the watch thread, per timer tick while armed: why both hooks look dead, or null.
+    static string DeadCheck() {
+      int now = Environment.TickCount;
+      int fake = _testInputAt;
+      int li = fake != 0 ? fake : HookHealth.LastInputTick(now);
+      int ahead = unchecked(li - _lastCb);
+      int ago = unchecked(now - li);
+      if (!HookHealth.PopVerdict(ahead, ago)) return null;
+      _testInputAt = 0;
+      _healedThisArm = true;   // one try per pop-up: touch input, for one, can move the clock with no hook call
+      if (fake == 0 && HookHealth.ForegroundOutranksUs()) { _popOutranked++; return null; }
+      _popHeals++;
+      return "input reached Windows " + ago + " ms ago and neither of its hooks was called " +
+             "(Windows drops a hook that answers too slowly, without saying so)";
+    }
+
+    /// On the watch thread: new hooks at the head of the chain, then the old ones off. False (both
+    /// old ones kept) when Windows refused a new one.
+    static bool RehookHere(ref IntPtr mh, ref IntPtr kh, string why, bool dead) {
+      IntPtr mod = Win32.GetModuleHandleW(null);
+      IntPtr nm = Win32.SetWindowsHookExW(WH_MOUSE_LL, _mouseProc, mod, 0);
+      int code = nm == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+      IntPtr nk = nm == IntPtr.Zero ? IntPtr.Zero : Win32.SetWindowsHookExW(WH_KEYBOARD_LL, _keyProc, mod, 0);
+      if (nm != IntPtr.Zero && nk == IntPtr.Zero) {
+        code = Marshal.GetLastWin32Error();
+        try { Win32.UnhookWindowsHookEx(nm); } catch (Exception) { }
+        nm = IntPtr.Zero;
+      }
+      if (nm == IntPtr.Zero) {
+        KeyEvents.Log("warn", "pop-up watch: " + why + ", and re-installing its hooks failed (" + Plain(code) + ")" +
+                              (dead ? "; the watch ends, and the bar watches again" : "; the old ones stay"));
+        return false;
+      }
+      IntPtr om = mh, ok = kh;
+      _mouseHook = nm; _keyHook = nk;
+      mh = nm; kh = nk;
+      if (ok != IntPtr.Zero) { try { Win32.UnhookWindowsHookEx(ok); } catch (Exception) { } }
+      if (om != IntPtr.Zero) { try { Win32.UnhookWindowsHookEx(om); } catch (Exception) { } }
+      _lastCb = Environment.TickCount;
+      _popRehooks++;
+      KeyEvents.Log(dead ? "warn" : "info", "pop-up watch: " + why + "; its hooks were re-installed (" + _popRehooks +
+                                            (_popRehooks == 1 ? " time" : " times") + " this run)");
+      return true;
     }
 
     static string Plain(int code) {
@@ -885,6 +1135,7 @@ namespace Mantle {
                      Plain(Marshal.GetLastWin32Error()) + "), so the pop-up watch is off";
           } else {
             _keyHook = kh;
+            _lastCb = Environment.TickCount;
             timer = SetTimer(IntPtr.Zero, UIntPtr.Zero, 200, IntPtr.Zero);
             ok = true;
           }
@@ -911,6 +1162,11 @@ namespace Mantle {
             continue;
           }
           if (msg.message == MSG_QUIT) { Leave(null); break; }
+          if (msg.message == MSG_REHOOK) {
+            string rw = _rearmWhy;
+            _rearmWhy = null;
+            RehookHere(ref mh, ref kh, (rw ?? "main asked") + ", and Windows can drop the hooks then without saying so", false);
+          }
           if (msg.message == MSG_CLICK) {
             if (_armed) {
               int w = (int)msg.wParam.ToInt64();
@@ -930,6 +1186,13 @@ namespace Mantle {
           }
           // WM_TIMER, MSG_WAKE and everything else: look at the lease and the drain.
           if (Tick()) break;
+          if (_armed && !_healedThisArm) {
+            string dead = DeadCheck();
+            if (dead != null && !RehookHere(ref mh, ref kh, dead, true)) {
+              Leave("Windows dropped the pop-up watch's hooks and refused to put them back");
+              break;
+            }
+          }
         }
       } catch (Exception ex) {
         Leave("the pop-up watch thread stopped on " + ex.GetType().Name + ": " + ex.Message);
@@ -995,6 +1258,7 @@ namespace Mantle {
     // ------------------------------------------------------------ the hooks
 
     static IntPtr MouseProc(int nCode, IntPtr wParam, IntPtr lParam) {
+      _lastCb = Environment.TickCount;   // HOOK HEALTH: still called (one store)
       if (nCode == HC_ACTION && _armed) {
         try {
           uint m = (uint)wParam.ToInt64();
@@ -1016,6 +1280,7 @@ namespace Mantle {
     }
 
     static IntPtr KeyProc(int nCode, IntPtr wParam, IntPtr lParam) {
+      _lastCb = Environment.TickCount;   // HOOK HEALTH: still called (one store)
       if (nCode == HC_ACTION) {
         try {
           int vk = Marshal.ReadInt32(lParam, 0);
