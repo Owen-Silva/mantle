@@ -2311,8 +2311,9 @@
     el.pop.style.left = left + 'px';
   }
 
-  /* The window is focusable:false in production, so Escape may never reach us — outside click is
-     the load-bearing close path and is handled on the document in the capture phase. */
+  /* The window is focusable:false in production, so Escape reaches this page only while the bar
+     holds the keyboard (main's pop-up watch brings every other Esc, below). A click inside the bar
+     window but outside the pop-up is handled here, on the document in the capture phase. */
   document.addEventListener('mousedown', function (ev) {
     if (!popKey) return;
     if (el.pop.contains(ev.target)) return;
@@ -2324,6 +2325,19 @@
     if (ev.key === 'Escape') { closePop(); return; }
     // the right-click menu's arrows / Enter / Right / Left (ui/bar/jumplist.js)
     if (popKey && popKey.indexOf('jl:') === 0 && window.MantleJumpList && MantleJumpList.key(ev)) ev.preventDefault();
+  });
+  /* ...and the clicks this page cannot see: a click OUTSIDE the bar window (into an app, the
+     desktop, another Mantle window) and Esc while another app has the keyboard. Main's pop-up
+     watch sees both (lib/popwatch.js: the sidecar's mouse hook, only while a pop-up is open) and
+     sends bar.popclose, so a pop-up closes the way a macOS menu does, and the bar is free to hide. */
+  on('bar.popclose', function () { if (popKey) closePop(); });
+  /* The bar lost the keyboard on its own (main.js qsKbBlur). A box that took it must not go on
+     looking typeable: quick settings drops its password field and says why (qs-more.js); the
+     media card's queue box, the right-click menu and the downloads list close, as on any way out. */
+  on('bar.keyboard.lost', function (p) {
+    if (!popKey) return;
+    if (popKey === 'qs') { if (window.MantleQsMore && MantleQsMore.keyboardLost) MantleQsMore.keyboardLost(p && p.why); return; }
+    if (popKey === 'media' || popKey === 'dl' || popKey.indexOf('jl:') === 0) closePop();
   });
 
   /* ================================================================= volume */

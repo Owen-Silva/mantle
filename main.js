@@ -1940,6 +1940,78 @@ function beginHide(why) {
   if (hideTimer.unref) hideTimer.unref();
 }
 
+/*
+ * POP-UPS CLOSE LIKE macOS MENUS (lane mn-pop, 2026-10-12, audit #1): on a click anywhere outside
+ * them and on Esc, whichever app has the keyboard. lib/popwatch.js holds the list of open pop-ups
+ * (the bar's, the timer's done card, the app-volumes panel) and the sidecar's mouse/Esc watch,
+ * which exists only while one is open. The bar's pop-up joins it with barPopover (bar.popover).
+ * The cursor's intent band (audit #6) is lib/bar-intent.js, used by hoverTick below.
+ */
+const BarIntent = require('./lib/bar-intent');
+const popwatch = require('./lib/popwatch');
+
+/** A pop-up key as the log may say it: its KIND, never the app or file it belongs to (the flyout's
+    and the jump list's keys carry an app's pin name, e.g. "app:<name>.lnk"). */
+function popKind(key) {
+  const k = String(key || 'unnamed');
+  const head = k.split(':')[0];
+  if (head === 'app') return 'window previews';
+  if (head === 'jl') return 'right-click menu';
+  return k.indexOf(':') === -1 && /^[a-z][a-z0-9-]{0,15}$/i.test(k) ? k : (/^[a-z][a-z0-9-]{0,15}$/i.test(head) ? head : 'unnamed');
+}
+
+let barPopCloseT = null;
+/** Ask the bar page to close its pop-up. A page that does not within 1 s (hung, or gone) has the
+    room taken back by main, so a dead page can never hold the bar up or keep Esc from the apps. */
+function closeBarPop(how) {
+  if (!barPopover) return;
+  const was = barPopover;
+  process.stdout.write(`mantle: bar pop-up (${popKind(was.key)}) closed: ${how}\n`);
+  broadcast('bar.popclose', { why: how });
+  if (barPopCloseT) clearTimeout(barPopCloseT);
+  barPopCloseT = setTimeout(() => {
+    barPopCloseT = null;
+    if (barPopover !== was) return;
+    process.stdout.write(`mantle: the bar page did not close its pop-up (${popKind(was.key)}) within 1 s, so main took its room back\n`);
+    COMMANDS['bar.popover']({ open: false }).catch(() => {});
+  }, 1000);
+  if (barPopCloseT.unref) barPopCloseT.unref();
+}
+
+/** The bar's pop-up in the watch, in step with barPopover. */
+function popWatchBar() {
+  if (barPopover && barWin && !barWin.isDestroyed()) {
+    if (!popwatch.isOpen('bar')) {
+      popwatch.open('bar', {
+        contains: (pt) => pointIn(barRect(), pt),
+        outside: (how) => closeBarPop(how),
+        esc: (how) => closeBarPop(how),
+      });
+    }
+  } else popwatch.close('bar');
+}
+
+sidecar.on('popwatch', (ev) => { popwatch.onEvent(ev); });
+app.on('browser-window-focus', () => popwatch.refresh());
+popwatch.configure({
+  call: (args) => sidecar.call('hotkey', Object.assign({ op: 'popwatch' }, args), 1500),
+  log: (line) => process.stdout.write(`mantle: ${line}\n`),
+  toDip: (pt) => screen.screenToDipPoint(pt),        // the hook's point is per-monitor physical
+  cursor: () => screen.getCursorScreenPoint(),
+  keys: () => raiseWin.keyStates(popwatch.VK),          // the fallback's buttons and Esc
+  // The window whose own page handles Esc while it holds the keyboard: the sidecar leaves Esc to it.
+  // The bar's (its Wi-Fi box), or any other Mantle window Owen is typing in (the launcher, notes,
+  // Settings) -- but not the desktop: a click on it already closed the pop-up, and an Esc there
+  // is meant for the pop-up.
+  hwnd: () => {
+    const f = BrowserWindow.getFocusedWindow();
+    if (f && !f.isDestroyed() && f !== desktopWin) return hwndOf(f);
+    return barWin && !barWin.isDestroyed() ? hwndOf(barWin) : null;
+  },
+  test: !!flags.test,
+  testArm: !!flags.test && ARGV.some((a) => a === '--test-popwatch'),
+});
+
 /**
  * One tick. Sequential by construction -- the next tick is scheduled only once
  * this one (including its await) has finished -- so the sidecar can never be
@@ -1977,7 +2049,7 @@ async function hoverTick() {
     process.stdout.write(`mantle: bar geometry: ${geo.shape} at ${geo.scale}x -- rests at physical ${JSON.stringify(sideRect(geo.rest))}, comes in from ${JSON.stringify(sideRect(geo.start))} over ${REVEAL_MS} ms\n`);
   } else if (HOVER_DEBUG && Date.now() - hoverDebugAt > 1000) {
     hoverDebugAt = Date.now();
-    process.stdout.write(`mantle: [hover] cursor ${pt.x},${pt.y} inBand=${inBand} revealed=${barRevealed} popover=${barPopover ? barPopover.key : 'none'}\n`);
+    process.stdout.write(`mantle: [hover] cursor ${pt.x},${pt.y} inBand=${inBand} revealed=${barRevealed} popover=${barPopover ? popKind(barPopover.key) : 'none'}\n`);
   }
 
   if (!barRevealed) {
@@ -1992,8 +2064,10 @@ async function hoverTick() {
     return;
   }
 
-  // Shown. Anything that counts as "Owen is still using it" resets the clock.
-  const inside = inHotZone(pt, barRect(), inBand);
+  // Shown. Anything that counts as "Owen is still using it" resets the clock. The zone that KEEPS
+  // the bar is wider than the band that reveals it (lib/bar-intent.js, audit #6): a cursor within
+  // KEEP_ABOVE_DIP above the pill is still using it, so the bar no longer slides away under it.
+  const inside = inHotZone(pt, barRect(), inBand) || BarIntent.holds(pt, barGeometry().rest.dip, flags.barEdge);
   const rendererSaysInside = Date.now() - rendererHoverAt < HIDE_GRACE_MS;
   if (inside || barPopover || rendererSaysInside) {
     barLeftAt = null;
@@ -2004,9 +2078,10 @@ async function hoverTick() {
     scheduleHoverTick();
     return;
   }
-  if (barLeftAt === null) barLeftAt = Date.now();
-  else if (Date.now() - barLeftAt >= HIDE_GRACE_MS) {
-    beginHide(`the cursor has been away from the bar for ${HIDE_GRACE_MS} ms`);
+  const step = BarIntent.shownTick(barLeftAt, Date.now(), false, HIDE_GRACE_MS);
+  barLeftAt = step.leftAt;
+  if (step.hide) {
+    beginHide(`the cursor has been away from the bar (and the ${BarIntent.KEEP_ABOVE_DIP} DIP above it) for ${HIDE_GRACE_MS} ms`);
   }
   scheduleHoverTick();
 }
@@ -2379,7 +2454,7 @@ async function barPopBackdrop(key) {
     process.stdout.write(`mantle: the bar could not be put back into screen captures after a pop-up picture: ${e.message}\n`);
   });
   if (!r.ok) {
-    process.stdout.write(`mantle: pop-up backdrop for ${key} failed: ${r.err.message}\n`);
+    process.stdout.write(`mantle: pop-up backdrop for ${popKind(key)} failed: ${r.err.message}\n`);
     send({ png: null, reason: Sidecar.isOldExeError(r.err) ? 'the sidecar exe has no "backdrop" command yet: run npm run build:sidecar' : r.err.message });
     return;
   }
@@ -4218,6 +4293,7 @@ async function qsBtToggle(op, a) {
  * NOT verified live (2026-09-23): a test instance must never take focus, so this
  * path waits for Owen's go; see the qsx report's live-test steps.
  */
+// <mainrel:qskbd> (lib/main-qskbd.test.js runs this region with a fake bar window and sidecar)
 let qsKbPrev = null;       // the hwnd that was in front before the password field took the keyboard
 let qsKbBlur = null;       // the bar's blur listener while it holds the keyboard
 
@@ -4263,6 +4339,10 @@ async function qsKeyboard(on) {
       barWin.setSkipTaskbar(true);
       qsKbPrev = null;
       process.stdout.write('mantle: the bar lost the keyboard (another window took focus); it is unfocusable again\n');
+      // The page is told (audit #8): a password box left showing would look typeable while every
+      // key went to the app in front. bar.js drops the field (qs-more.js keyboardLost) or closes
+      // the pop-up whose box it was.
+      broadcast('bar.keyboard.lost', { why: 'another window took focus' });
     };
     barWin.on('blur', qsKbBlur);
     return { ok: true, focused: true, note, reason: null };
@@ -4285,6 +4365,7 @@ async function qsKeyboard(on) {
     return { ok: false, focused: false, restored: null, reason: `the keyboard was released, but focus could not go back to the window that had it (${e.shown})` };
   }
 }
+// </mainrel:qskbd>
 
 /*
  * NOW PLAYING (2026-09-22): the bar's media chip and card, over the sidecar's `media` command
@@ -4864,6 +4945,20 @@ const COMMANDS = {
     return { ok: true, reason: null };
   },
 
+  // TEST ONLY (--test): hand lib/popwatch.js a made-up sidecar event ({op:'click', x, y}, in DIP
+  // when dip:true; or {op:'esc'}), so a test proves the road from the watch to the page's close
+  // without a real click or key on Owen's desktop. No ev: just the watch's state.
+  'popwatch.test': async (a) => {
+    if (!flags.test) throw new Error('popwatch.test exists only in a --test run');
+    const ev = Object.assign({}, a && a.ev);
+    if (ev.op === 'click' && a.dip) {
+      const p = screen.dipToScreenPoint({ x: Number(ev.x), y: Number(ev.y) });
+      ev.x = p.x; ev.y = p.y;
+    }
+    const result = ev.op ? popwatch.onEvent(ev) : null;
+    return { ok: true, result, state: popwatch.state(), bar: barRect(), barPopover: barPopover ? popKind(barPopover.key) : null, revealed: barRevealed };
+  },
+
   // The bar window is only 44px tall, so a popover drawn inside it would be
   // clipped by the window, not by the screen. The bar asks for room before it
   // opens one and gives it back when it closes. The window grows AWAY from its
@@ -4882,7 +4977,7 @@ const COMMANDS = {
     // A popover takes the volume pop-up down AT ONCE (r7-ontop, 2026-10-01). The app-volumes panel is
     // now really on top, so a left-click on the speaker within its ~1.5 s fade opened Quick settings
     // UNDER it. osd.faded with no seq is the pop-up's own unconditional hide (lib/features/osd.js).
-    if (open) dismissOsd(`the bar opened a popover (${String((a && a.key) || 'unnamed').slice(0, 40)})`);
+    if (open) dismissOsd(`the bar opened a popover (${popKind(a && a.key)})`);
     // A popover is the bar being used, so it pins the bar on screen for as long
     // as it is open (the hover poll checks barPopover on every tick) and brings
     // it back if something raced it into hiding.
@@ -4891,7 +4986,7 @@ const COMMANDS = {
     // top-left, and the window grows and shrinks from the top, so a preview left registered
     // across a resize slides down over the bar's own icons. The flyout re-sends its rectangles
     // once this call has resolved and the window has settled.
-    clearThumbs(open ? `the bar popover is resizing (${(a && a.key) || 'unnamed'})` : 'the bar popover closed');
+    clearThumbs(open ? `the bar popover is resizing (${popKind(a && a.key)})` : 'the bar popover closed');
     const asked = Number(a && a.height);
     const extra = open ? Math.max(0, Math.min(POPOVER_MAX, Number.isFinite(asked) ? Math.round(asked) : 0)) : 0;
     const total = BAR_H + extra;
@@ -4901,7 +4996,7 @@ const COMMANDS = {
     if (barTall()) {
       // TALL MODE (barTall, 2026-09-24): the window already has the room, so only its SHAPE
       // changes -- no resize, no relayout, nothing drawn stale, and the pill cannot move.
-      const set = setBarShape(extra, open ? `a popover opened (${(a && a.key) || 'unnamed'})` : 'the popover closed');
+      const set = setBarShape(extra, open ? `a popover opened (${popKind(a && a.key)})` : 'the popover closed');
       if (!set.ok) shapeErr = set.reason;
     } else if (flags.test && !flags.testLiveBar) {
       // A framed test window: sized by its CONTENT from fixed numbers (testFitPage), so the
@@ -4947,9 +5042,10 @@ const COMMANDS = {
     }
 
     barPopover = extra ? { key: (a && a.key) || 'unnamed', height: extra } : null;
+    popWatchBar();   // a click outside it or Esc closes it from now on (lib/popwatch.js)
     if (traceMarks) traceMarks.push({ t: traceNow(), what: 'popover done', open, extra });
     try {
-      process.stdout.write(`mantle: bar.popover ${open ? `open (${(a && a.key) || 'unnamed'}, asked ${asked}px, got ${extra}px)` : 'closed'} -> window now ${JSON.stringify(barWin.getBounds())} (DIP)${barTall() ? `, the bar's shape ${JSON.stringify(barRect())}` : ''}\n`);
+      process.stdout.write(`mantle: bar.popover ${open ? `open (${popKind(a && a.key)}, asked ${asked}px, got ${extra}px)` : 'closed'} -> window now ${JSON.stringify(barWin.getBounds())} (DIP)${barTall() ? `, the bar's shape ${JSON.stringify(barRect())}` : ''}\n`);
     } catch (_) { /* the window may be gone; the line is only a trace */ }
     // The window just changed size, which is another moment Windows can re-order
     // the topmost band -- and a popover nobody can click is worse than no popover.
