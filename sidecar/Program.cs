@@ -1166,6 +1166,21 @@ namespace Mantle {
         }
 
         case "desktop": {
+          // fit (lane mn-display, 2026-10-12): size the layer to the main display after a resolution
+          // or scale change. Same footing as place: it only moves a window Mantle already owns, it
+          // re-parents nothing, so passive mode has nothing to protect (and a test can drive it).
+          if (Json.GetBool(req, "fit", false)) {
+            IntPtr fHwnd = Json.GetHwnd(req, "hwnd");
+            if (fHwnd == IntPtr.Zero || !Win32.IsWindow(fHwnd)) return "desktop fit: hwnd is not a window";
+            { string own = Foreground.NotMantleWindow(fHwnd, "desktop fit"); if (own != null) return own; }
+            bool given = Json.HasKey(req, "w") || Json.HasKey(req, "h");
+            IDictionary fit;
+            string ferr = Desktop.Fit(fHwnd, given, Json.GetInt(req, "x", 0), Json.GetInt(req, "y", 0),
+                                      Json.GetInt(req, "w", 0), Json.GetInt(req, "h", 0), out fit);
+            if (ferr != null) return ferr;
+            result = fit;
+            return null;
+          }
           if (Passive) return PassiveRefusal;
           IntPtr hwnd = Json.GetHwnd(req, "hwnd");
           { string own = Foreground.NotMantleWindow(hwnd, "desktop"); if (own != null) return own; }

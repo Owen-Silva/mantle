@@ -35,6 +35,13 @@ const T = require('./test-lib');
       try { await s.call('desktop', extra, 4000); } catch (e) { err = e.message; }
       c.check(`passive: desktop ${extra.recheck ? 'recheck' : extra.detach ? 'detach' : 'attach'} is refused`, err === T.PASSIVE_REFUSAL, err || 'it answered');
     }
+    // fit (lane mn-display): it only sizes a window Mantle owns, so a passive sidecar runs it and
+    // answers with fit's own words (its real-window checks are lib/windows.test.js's Electron child)
+    {
+      let err = '';
+      try { await s.call('desktop', { hwnd: '1', fit: true }, 4000); } catch (e) { err = e.message; }
+      c.check('passive: desktop fit is not refused, and a bad handle gets fit\'s own words', /^desktop fit: hwnd is not a window/.test(err), err || 'it answered');
+    }
     const fg = await s.call('foreground', {}, 4000);
     c.check('foreground: answers with a fullscreen flag the pause rules can use', fg && typeof fg.fullscreen === 'boolean', JSON.stringify(fg && Object.keys(fg)));
     c.check('foreground: answers with a window handle', fg && fg.hwnd !== undefined);

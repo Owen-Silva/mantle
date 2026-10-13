@@ -28,6 +28,7 @@
 // player to Progman between the icons and the WorkerW, so a layer INSIDE the
 // WorkerW was drawn over by the video, the whole time, with every check green.
 using System;
+using System.Collections;
 using System.Collections.Generic;
 
 namespace Mantle {
@@ -208,6 +209,65 @@ namespace Mantle {
       GC.KeepAlive(cb);
       return found;
     }
+
+    /// FIT (lane mn-display, 2026-10-12): after a resolution or scale change the layer kept the size it
+    /// was made with, because Attach places it with SWP_NOSIZE and nothing sized it again. Fit puts the
+    /// window on a SCREEN rectangle in physical pixels (this process is DPI-aware): the one given, or
+    /// the main monitor's (the monitor at 0,0). A layer inside the desktop is a CHILD window, whose
+    /// SetWindowPos numbers are its parent's client coordinates, so the screen point is mapped into
+    /// the parent first; a top-level layer (a test run, or one that could not attach) takes it as is.
+    /// Already there = nothing is moved (changed:false), so a scale change that keeps the size costs
+    /// nothing. The rect is read back afterwards and a miss is an error with the numbers.
+    public static string Fit(IntPtr hwnd, bool given, int x, int y, int w, int h, out IDictionary result) {
+      result = null;
+      if (hwnd == IntPtr.Zero) return "no hwnd given";
+      if (!Win32.IsWindow(hwnd)) return "window " + hwnd.ToInt64() + " no longer exists";
+      if (!given) {
+        Win32.POINT origin = new Win32.POINT { x = 0, y = 0 };
+        IntPtr mon = Win32.MonitorFromPoint(origin, Win32.MONITOR_DEFAULTTOPRIMARY);
+        Win32.MONITORINFO mi = new Win32.MONITORINFO();
+        mi.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(Win32.MONITORINFO));
+        if (mon == IntPtr.Zero || !Win32.GetMonitorInfoW(mon, ref mi))
+          return "fit: Windows did not say where the main display is, so the desktop layer was left as it is";
+        x = mi.rcMonitor.left; y = mi.rcMonitor.top;
+        w = mi.rcMonitor.right - mi.rcMonitor.left; h = mi.rcMonitor.bottom - mi.rcMonitor.top;
+      }
+      if (w <= 0 || h <= 0) return "fit: w and h must be positive physical pixels";
+      Win32.RECT was;
+      Win32.GetWindowRect(hwnd, out was);
+      object[] target = new object[] { x, y, x + w, y + h };
+      object[] before = new object[] { was.left, was.top, was.right, was.bottom };
+      if (was.left == x && was.top == y && was.right == x + w && was.bottom == y + h) {
+        result = Json.Obj("changed", false, "target", target, "before", before, "rect", before, "child", false);
+        return null;
+      }
+      bool child = (Win32.GetWindowLongPtr(hwnd, Win32.GWL_STYLE).ToInt64() & Win32.WS_CHILD) != 0;
+      int px = x, py = y;
+      if (child) {
+        // GetParent answers the OWNER for an owned top-level window (see Attach), so the parent is
+        // asked for the way Attach checks it.
+        IntPtr parent = Win32.GetAncestor(hwnd, Win32.GA_PARENT);
+        Win32.POINT p = new Win32.POINT { x = x, y = y };
+        if (parent == IntPtr.Zero || !ScreenToClient(parent, ref p))
+          return "fit: the desktop layer's parent window could not map the screen point, so it was left as it is";
+        px = p.x; py = p.y;
+      }
+      if (!Win32.SetWindowPos(hwnd, IntPtr.Zero, px, py, w, h, Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE | SWP_NOOWNERZORDER))
+        return "fit: SetWindowPos failed (Win32 error " + System.Runtime.InteropServices.Marshal.GetLastWin32Error() + ")";
+      Win32.RECT now;
+      Win32.GetWindowRect(hwnd, out now);
+      object[] after = new object[] { now.left, now.top, now.right, now.bottom };
+      if (now.left != x || now.top != y || now.right != x + w || now.bottom != y + h)
+        return "fit: asked for " + x + "," + y + " " + w + "x" + h + " and the desktop layer is at " +
+               now.left + "," + now.top + " " + (now.right - now.left) + "x" + (now.bottom - now.top) +
+               " (was " + was.left + "," + was.top + " " + (was.right - was.left) + "x" + (was.bottom - was.top) + ")";
+      result = Json.Obj("changed", true, "target", target, "before", before, "rect", after, "child", child);
+      return null;
+    }
+
+    const uint SWP_NOOWNERZORDER = 0x0200;
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool ScreenToClient(IntPtr hwnd, ref Win32.POINT p);
 
     public static string Detach(IntPtr hwnd) {
       if (hwnd == IntPtr.Zero) return "no hwnd given";
