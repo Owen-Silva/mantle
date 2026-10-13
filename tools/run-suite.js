@@ -60,8 +60,27 @@ const LIST_ONLY = !!opt('list', false);
 // ------------------------------------------------------------------ known environment failures
 // Each: file (relative, forward slashes), fails = regexes that must cover EVERY failing check of that file,
 // reason = why it is the environment and not the code. Verified 2026-10-12 (see the lane report).
+// evidence (optional) = a regex one of the FAIL lines must ALSO match, so a real regression in the same checks
+// is not hidden. Everything not listed here counts as a code failure.
+//
+// Checked and DROPPED from the old ship-script list (2026-10-12): features 173/1 (the --electron half lacked
+// MANTLE_SIDECAR_EXE; the runner now passes this checkout's exe), mainrel 95/3 (a stale test sandbox, fixed in
+// lib/main-rel.test.js), windowsu 9/1, layoutsu, mcprobe (all pass on a normal machine).
+const SCREEN_OFF = 'the display is off or the session is locked: sidecar/TopbarStats.cs pauses the system sampler then BY DESIGN ' +
+  '(saves CPU while nobody can see the bar), so no sample arrives. Re-run with the screen on to judge these checks.';
 const KNOWN_ENV = [
-  // filled in below after verification
+  {
+    file: 'sidecar/test-topbar.js',
+    fails: [/stats: one sample a second/, /stats: evenly spaced/, /stats: CPU total/, /stats: RAM in use/, /stats: GPU is a number/,
+      /stats: network rates/, /stats detail: /, /stats: cheap/, /stats off: no more samples/],
+    evidence: /stats: one sample a second.*\(\s*[0-3] samples/,
+    reason: SCREEN_OFF,
+  },
+  {
+    file: 'selftest:topbar',
+    fails: [/a system sample arrived/],
+    reason: SCREEN_OFF,
+  },
 ];
 
 // ------------------------------------------------------------------ discovery
@@ -75,13 +94,27 @@ function walk(dir, acc) {
   }
   return acc;
 }
+// test files whose Electron half only runs behind a flag (found by grepping process.argv in every test file;
+// the other flags in use are comparisons or verbosity, not extra checks)
+const MODES = {
+  'lib/features.test.js': ['--electron'],
+  'lib/features/idle-unload.test.js': ['--electron'],
+  'lib/features/screenshot.test.js': ['--electron', '--electron-text'],
+};
+// selftests that start from a chord: once the instance is up, a SECOND 'electron . --test --profile-name=<same>
+// --test-chord=<chord>' hands it over through 'second-instance' (main.js), the hook's own routing, no keystroke
+const SELF_CHORD = { search: 'Win+S' };
 const rel = (p) => path.relative(ROOT, p).split(path.sep).join('/');
 
 function discover() {
   const all = walk(ROOT, []);
   const entries = [];
   entries.push({ id: 'tools/check.js', kind: 'node', file: path.join(ROOT, 'tools', 'check.js'), check: true });
-  for (const f of all.filter((p) => p.endsWith('.test.js')).sort()) entries.push({ id: rel(f), kind: 'node', file: f });
+  for (const f of all.filter((p) => p.endsWith('.test.js')).sort()) {
+    entries.push({ id: rel(f), kind: 'node', file: f });
+    // the same file's END-TO-END half: a separate run with its flag (one Electron --test instance each)
+    for (const flag of MODES[rel(f)] || []) entries.push({ id: rel(f) + ' ' + flag, kind: 'node', file: f, args: [flag] });
+  }
   const sc = path.join(ROOT, 'sidecar');
   for (const f of all.filter((p) => path.dirname(p) === sc && /^test-.*\.js$/.test(path.basename(p))).sort()) {
     const b = path.basename(f);
@@ -222,14 +255,14 @@ function knownEnv(id, res) {
   if (!ks.length || !res.failed) return null;
   if (!res.fails.length) return null;
   for (const k of ks) {
-    if (res.fails.every((f) => k.fails.some((re) => re.test(f)))) return k;
+    if (res.fails.every((f) => k.fails.some((re) => re.test(f))) && (!k.evidence || res.fails.some((f) => k.evidence.test(f)))) return k;
   }
   return null;
 }
 
 // ------------------------------------------------------------------ running one entry
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function logName(id) { return id.replace(/[\\/:]/g, '__') + '.log'; }
+function logName(id) { return id.replace(/[\\/: ]/g, '__') + '.log'; }
 
 async function runOne(e) {
   const t0 = Date.now();
@@ -237,6 +270,10 @@ async function runOne(e) {
   const env = Object.assign({}, process.env);
   delete env.MANTLE_TEST_VISIBLE;                      // never on Owen's screen from the suite
   env.MANTLE_SUITE = '1';
+  // this checkout's own built sidecar, unless the caller names one: several node tests (features, screenshot,
+  // idle-unload, switcher, launcher-extras, the e2e files) run their Electron/sidecar half only with it
+  const ownExe = path.join(ROOT, 'sidecar', 'bin', 'Mantle.Sidecar.exe');
+  if (!process.env.MANTLE_SIDECAR_EXE && fs.existsSync(ownExe)) env.MANTLE_SIDECAR_EXE = ownExe;
   // page tests write their PNGs here, not to the dead session scratchpads some still default to
   if (!process.env.MANTLE_SHOOT_OUT) env.MANTLE_SHOOT_OUT = path.join(OUT, 'shots', logName(e.id).replace(/\.log$/, ''));
   let args; let exe; let privTemp = null;
@@ -250,7 +287,7 @@ async function runOne(e) {
     args = ['.', '--test', `--profile-name=${LANE}-st-${e.name}`];
   } else {
     exe = process.execPath;
-    args = [e.file];
+    args = [e.file].concat(e.args || []);
     if (e.id === 'sidecar/test-files.js') {
       const sb = path.join(os.tmpdir(), 'mantle-suite-' + LANE, 'files', 'sandbox');
       fs.mkdirSync(sb, { recursive: true });
@@ -269,12 +306,18 @@ async function runOne(e) {
   child.on('error', (err) => { text += '\n[run-suite] spawn error: ' + err.message; });
 
   const limit = (e.kind === 'selftest' ? Math.min(TIMEOUT_S, 300) : TIMEOUT_S) * 1000;
-  let timedOut = false; let selfDone = false;
+  let timedOut = false; let selfDone = false; let chordSent = false;
   while (!exited) {
     await Promise.race([exitP, sleep(e.kind === 'selftest' ? 2000 : 1000)]);
     if (exited) break;
     if (Date.now() - t0 > limit) { timedOut = true; break; }
     if (e.kind === 'selftest' && SELF_DONE_RE.test(text)) { selfDone = true; await sleep(3000); break; }
+    if (e.kind === 'selftest' && SELF_CHORD[e.name] && !chordSent && /features: started/.test(text)) {
+      chordSent = true; await sleep(3000);
+      const k = spawn(exe, args.concat('--test-chord=' + SELF_CHORD[e.name]), { cwd: ROOT, env, windowsHide: true, stdio: 'ignore' });
+      k.on('error', () => {});
+      text += '\n[run-suite] sent ' + SELF_CHORD[e.name] + ' to the instance (--test-chord)\n';
+    }
   }
   // stop the root (timeout or selftest instance) and anything the test left behind, by pid
   const rows = await snap();

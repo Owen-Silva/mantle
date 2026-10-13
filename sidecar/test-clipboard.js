@@ -24,8 +24,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-const EXE = process.env.MANTLE_SIDECAR_EXE ||
-  path.join(os.tmpdir(), 'mantle-clipboard', 'Mantle.Sidecar.exe');
+// default: this checkout's built sidecar like every other harness (it was a lane's long-gone %TEMP% build)
+const EXE = process.env.MANTLE_SIDECAR_EXE || path.join(__dirname, 'bin', 'Mantle.Sidecar.exe');
 const PASSIVE = 'refused: sidecar is passive (test mode)';
 
 let pass = 0, fail = 0;
