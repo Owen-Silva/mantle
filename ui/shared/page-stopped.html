@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- page-stopped.html (lane mn-recover, 2026-10-12; main.js watchPage). Loaded into the bar, the
+     launcher or the desktop layer when its real page crashed past the reload cap, so the window is
+     never left dead and blank: it says what stopped, why, and what to do. ?what=&why=&compact=1 -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file: 'unsafe-inline'; script-src file:">
+<title>Mantle: a page stopped</title>
+<link rel="stylesheet" href="glass-light.css">
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; }
+  body { display: flex; align-items: center; justify-content: center;
+    font: 13px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--lg-ink); }
+  #s { box-sizing: border-box; display: flex; align-items: center; gap: 10px; max-width: 560px;
+    padding: 14px 18px; border-radius: var(--lg-r); background: var(--lg-fill-strong);
+    box-shadow: inset 0 0 0 1px var(--lg-edge-in), var(--lg-shadow); }
+  body.compact #s { width: 100%; height: 100%; max-width: none; padding: 0 16px; border-radius: var(--lg-r-pill); }
+  body.compact #why { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--lg-warn); }
+  #why { color: var(--lg-ink-2); }
+</style>
+</head>
+<body>
+<div id="s" role="alert"><span class="dot"></span><span><b id="what">This page</b> stopped working: <span id="why">no reason was given</span>. Restart Mantle from its tray icon.</span></div>
+<script src="page-stopped.js"></script>
+</body>
+</html>
