@@ -510,7 +510,8 @@
   function failure(op, lead, reason, codeHex) {
     return {
       op: op, lead: lead, reason: reason || 'Mantle gave no reason', codeHex: codeHex || null,
-      short: op === 'disconnect' ? 'Couldn’t disconnect' : op === 'kbd' ? 'Needs Windows’ Wi-Fi list' : 'Couldn’t connect'
+      short: op === 'disconnect' ? 'Couldn’t disconnect' : op === 'kbd' ? 'Needs Windows’ Wi-Fi list'
+        : op === 'kbdlost' ? 'Keyboard went elsewhere' : 'Couldn’t connect'
     };
   }
   function failShows(f, n) { return !!f && (f.op === 'disconnect' ? !!n.connected : !n.connected); }
@@ -617,6 +618,25 @@
       W.pwFor = key;
       renderWifi(true);
     });
+  }
+
+  /* The bar lost the keyboard ON ITS OWN (main.js qsKbBlur: Owen clicked another window, or one
+     took focus by itself). Main has already made the bar unfocusable again, so there is nothing
+     to release; but a password box left on screen would look typeable while every key went to
+     the app in front. So it closes, and its row says why and how to get it back (Connect asks
+     for the keyboard again). -> true when the panel changed. */
+  function keyboardLost(why) {
+    if (!S) return false;
+    var had = !!S.kbd;
+    S.kbd = false;
+    var W = S.w;
+    if (!W || !W.pwFor) return had;
+    var key = W.pwFor;
+    W.pwFor = null;
+    W.fail[key] = failure('kbdlost', 'The keyboard went to another window, so the password box closed.',
+      'Nothing typed after that reached this panel' + (why ? ' (' + why + ')' : '') + '. Press Connect to type the password again.');
+    renderWifi(true);
+    return true;
   }
 
   function cancelPassword() {
@@ -1305,5 +1325,5 @@
     }
   }
 
-  window.MantleQsMore = { init: init, attach: attach, closed: closed };
+  window.MantleQsMore = { init: init, attach: attach, closed: closed, keyboardLost: keyboardLost };
 })();
