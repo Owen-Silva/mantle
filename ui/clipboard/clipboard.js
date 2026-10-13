@@ -3,6 +3,7 @@
  * read before the box sees them (the key rules are in model.js keyAction).
  *
  * From main:  clipboard.show {list, arm}   clipboard.changed {list}   clipboard.notice {title, text}
+ *             clipboard.keyboard {ok, text}   (the panel could not take the keyboard, and why)
  *             clipboard.hide
  * To main:    clipboard.paste {item}  clipboard.pin {item, pinned}  clipboard.delete {item}
  *             clipboard.clear  clipboard.close  clipboard.painted {count}
@@ -302,7 +303,19 @@
     // a notice brings the panel up without the opening path: one picture for it too (dark only)
     if (window.MantleHudBackdrop && document.visibilityState !== 'visible') window.MantleHudBackdrop.request('notice', { hold: true });
   });
-  M.on('clipboard.hide', function () { q.value = ''; S.armed = false; document.body.classList.remove('noting'); });
+  M.on('clipboard.hide', function () { q.value = ''; S.armed = false; S.kbNote = false; document.body.classList.remove('noting'); });
+  /* main could not give the panel the keyboard (lib/surface-gate.js): say so until it has it (a
+     click in the panel) or it closes. Never silent: the keys were going to the app behind. */
+  M.on('clipboard.keyboard', function (p) {
+    if (p && !p.ok) {
+      var t = String(p.text || 'Click here to type.').replace(/^No keyboard:\s*/, '');
+      S.kbNote = true;
+      notice({ title: 'No keyboard', text: t.charAt(0).toUpperCase() + t.slice(1), ms: 10 * 60 * 1000 });
+    } else if (S.kbNote) {
+      S.kbNote = false;
+      document.body.classList.remove('noting');
+    }
+  });
 
   window.__clip = S;   // the mock harness and shoot.js read the page's state from here
 }());

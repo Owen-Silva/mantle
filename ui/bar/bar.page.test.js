@@ -121,7 +121,7 @@ async function run() {
       const pg = await open(PILL, W);
       await pg.reset();
       await pg.click('#start', { wait: 150 });
-      t.check('start: the launcher button asks for the launcher', (await pg.calls('launcher.show')).length === 1);
+      t.check('start: the launcher button toggles the launcher', (await pg.calls('launcher.toggle')).length === 1);
       t.check('start: it has a name', /launcher/i.test(await pg.eval(() => document.getElementById('start').title)));
       await pg.close();
     }

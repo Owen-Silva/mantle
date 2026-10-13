@@ -1422,6 +1422,7 @@
          can be watched as many times as it takes without reloading. In Electron this opens the
          real launcher and none of this runs. */
       case 'launcher.show':
+      case 'launcher.toggle':
         setTimeout(function () {
           revealed = false;
           emit('bar.hide', { why: 'mock: replay', ms: DUR_OUT });

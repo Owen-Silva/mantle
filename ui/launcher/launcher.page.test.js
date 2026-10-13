@@ -5,6 +5,8 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
  * page edits: one launch per decision (double Enter, held Enter, double-click), the keycap footer, the
  * loading / no-match / not-connected states, plain words (no "sidecar", codes or "undefined"), the
  * source-problem lines, PageDown/PageUp, the focus staying in the box, and Win+S with a query typed.
+ * Lane mn-launch (2026-10-12, audit #5/#7): a close and reopen keeps the query (selected), an action
+ * or 90 s clears it, Win+S over an open launcher applies its mode, and the no-keyboard line.
  *   bash <lanes>/bin/uislot.sh <lane> node ui/launcher/launcher.page.test.js
  * Prints "LAUNCHER PAGE TEST: n passed, m failed".
  */
@@ -211,6 +213,65 @@ async function main() {
     await page.waitForTimeout(150);
     const dead = await page.evaluate(() => (document.querySelector('#results .empty.is-bad') || {}).textContent || '');
     check('not connected: plain sentence', /could not connect to Mantle/.test(dead) && !JARGON.test(dead), dead);
+    await page.close();
+
+    /* 13. (audit #5) a close and reopen keeps what you typed, selected; an action or 90 s clears it */
+    page = await open('');
+    await page.waitForTimeout(250);
+    await page.evaluate(SPY);
+    await page.evaluate(() => window.__mockShow());
+    await typeQ(page, 'note');
+    const qState = () => page.evaluate(() => { const q = document.getElementById('q'); return { v: q.value, s: q.selectionStart, e: q.selectionEnd, f: document.activeElement.id, mode: document.body.dataset.mode }; });
+    await page.evaluate(() => { window.__mockHide(); window.__mockShow(); });
+    await page.waitForTimeout(260);
+    let qs = await qState();
+    check('reopen: the query survives a close', qs.v === 'note', JSON.stringify(qs));
+    check('reopen: it is selected and focused, so typing replaces it', qs.s === 0 && qs.e === 4 && qs.f === 'q', JSON.stringify(qs));
+    rows = await rowsOf(page);
+    check('reopen: its results are shown', rows.length > 0 && /note/i.test(rows[0].name), rows.map((r) => r.name).join());
+    await page.keyboard.type('calc');
+    qs = await qState();
+    check('reopen: typing replaced the kept query', qs.v === 'calc', qs.v);
+    await typeQ(page, 'note');
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => { window.__mockHide(); window.__mockShow(); });
+    await page.waitForTimeout(200);
+    check('Esc then reopen: kept (Esc is a close, not an action)', (await qState()).v === 'note');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    check('Enter launched the row', (await calls(page, 'apps.launch')) === 1);
+    await page.evaluate(() => { window.__mockHide(); window.__mockShow(); });
+    await page.waitForTimeout(200);
+    check('after an action: the next open starts clean', (await qState()).v === '');
+    await typeQ(page, 'note');
+    await page.evaluate(() => { window.__mockHide(); const real = Date.now; Date.now = () => real() + 91000; window.__mockShow(); Date.now = real; });
+    await page.waitForTimeout(200);
+    check('reopened after 90 s: starts clean', (await qState()).v === '');
+    /* Win+S over an OPEN launcher: main sends launcher.open and no new launcher:visible */
+    await typeQ(page, 'note');
+    await page.evaluate(() => window.__mockEmit('launcher.open', { mode: 'search', query: 'report', from: 'mock' }));
+    await page.waitForTimeout(260);
+    qs = await qState();
+    check('Win+S over an open launcher: its mode and query land', qs.mode === 'search' && qs.v === 'report' && qs.f === 'q', JSON.stringify(qs));
+    await page.evaluate(() => { window.__mockHide(); window.__mockShow(); });
+    await page.waitForTimeout(200);
+    qs = await qState();
+    check('a plain reopen after it keeps that search', qs.mode === 'search' && qs.v === 'report', JSON.stringify(qs));
+
+    /* 14. (audit #7) no keyboard: main says why, the page shows it in words, and it goes on a close */
+    const kbd = () => page.evaluate(() => { const k = document.getElementById('kbdNote'); return k ? { hidden: k.hidden, text: k.textContent, shown: !!(k.offsetWidth && k.offsetHeight) } : null; });
+    check('no keyboard: the line is hidden normally', (await kbd()) && (await kbd()).hidden && !(await kbd()).shown);
+    const kbText = 'No keyboard: Windows refused the foreground change. Click here to type; click outside or press Esc to close.';
+    await page.evaluate((t) => window.__mockEmit('launcher.keyboard', { ok: false, text: t }), kbText);
+    let kb = await kbd();
+    check('no keyboard: the line is shown, in plain words', kb && !kb.hidden && kb.shown && kb.text === kbText && !JARGON.test(kb.text), JSON.stringify(kb));
+    await page.evaluate(() => window.__mockEmit('launcher.keyboard', { ok: true }));
+    kb = await kbd();
+    check('keyboard arrived: the line goes', kb && kb.hidden && !kb.shown, JSON.stringify(kb));
+    await page.evaluate((t) => window.__mockEmit('launcher.keyboard', { ok: false, text: t }), kbText);
+    await page.evaluate(() => window.__mockHide());
+    kb = await kbd();
+    check('closed: the line goes with it', kb && kb.hidden, JSON.stringify(kb));
     await page.close();
 
     check('no page errors', errors.length === 0, errors.join(' | '));

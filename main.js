@@ -2663,14 +2663,30 @@ function stopHoverWatch() {
 // ---------------------------------------------------------------------------
 // The launcher's visibility, which three different things can change.
 // ---------------------------------------------------------------------------
-function showLauncher() {
-  if (!launcherWin || launcherWin.isDestroyed()) return;
-  // The FIRST frame is captured while the window is still hidden -- no content
-  // protection needed, and nothing to photograph itself -- so the launcher's
-  // frost is real on the frame it appears in rather than a flat tint that pops a
-  // quarter of a second later. Then the same 4 fps loop the bar runs.
-  const show = () => {
-    if (!launcherWin || launcherWin.isDestroyed()) return;
+// <mainrel:launcher> (lib/launcher-gate.test.js runs this region with a fake window, backdrop, sidecar and clock)
+// One state machine for every open/close request (lib/surface-gate.js, audit #14): the Win tap, the
+// Start button, Alt+Space, Win+S, the tray, Esc and click-away all go through launcherGate, so the
+// LAST request wins and a close during the first show's backdrop capture is never dropped.
+const surfaceGate = require('./lib/surface-gate');
+let launcherKbWatch = null;                               // the click-outside / Esc watch while it has no keyboard
+let launcherKb = { ok: null, how: null, reason: null };   // the last keyboard verdict (tests and the log)
+
+function launcherAlive() { return !!launcherWin && !launcherWin.isDestroyed(); }
+function launcherSay(name, payload) {
+  try { launcherWin.webContents.send('mantle:event', { name, payload }); } catch (_) { /* reloading: the next open says it again */ }
+}
+function stopLauncherKbWatch() { if (launcherKbWatch) { launcherKbWatch.stop(); launcherKbWatch = null; } }
+
+const launcherGate = surfaceGate.createGate({
+  isShown: () => launcherAlive() && launcherWin.isVisible(),
+  log: (t) => process.stdout.write(`mantle: launcher: ${t}\n`),
+  // The FIRST frame is captured while the window is still hidden -- no content protection needed,
+  // and nothing to photograph itself -- so the launcher's frost is real on the frame it appears in
+  // rather than a flat tint that pops a quarter of a second later. A close meanwhile wins (the gate).
+  prepare: () => (launcherAlive() ? launcherBackdrop.once('the launcher is opening') : null),
+  reveal: ({ again }) => {
+    if (!launcherAlive()) throw new Error('there is no launcher window');
+    const wasVisible = launcherWin.isVisible();
     if (flags.test) {
       // A test run must never take focus from whoever is at the machine.
       launcherWin.showInactive();
@@ -2680,22 +2696,80 @@ function showLauncher() {
       // On top EVERY time (r7-ontop, 2026-10-01): show() and focus() never re-order a window Windows
       // has let sink, and focus() is refused when Mantle is not the foreground app. 'floating' is the
       // level it was made with (lib/windows.js createLauncher).
-      raiseWin.up(launcherWin, { level: 'floating', what: 'the launcher', wanted: () => !!launcherWin && !launcherWin.isDestroyed() && launcherWin.isVisible() });
+      raiseWin.up(launcherWin, { level: 'floating', what: 'the launcher', wanted: () => launcherAlive() && launcherWin.isVisible() });
     }
-    broadcast('launcher:visible', true);
-    launcherBackdrop.start('the launcher is open');
-  };
-  if (launcherWin.isVisible()) { show(); return; }
-  launcherBackdrop.once('the launcher is opening').then(show, show);
+    // An OPEN (the gate had it closed) tells the page, which then keeps or clears your query; a
+    // repeat while it is up (Win+S over an open launcher) does not, so nothing typed is wiped.
+    if (!again || !wasVisible) {
+      broadcast('launcher:visible', true);
+      launcherBackdrop.start('the launcher is open');
+    }
+    if (!flags.test) armLauncherKeyboard();
+  },
+  conceal: () => {
+    stopLauncherKbWatch();
+    launcherBackdrop.stop('the launcher closed');
+    launcherWin.hide();
+    broadcast('launcher:visible', false);
+  },
+});
+
+/** Its keyboard, live only (audit #7): checked, retried once through the sidecar, else SAID. */
+function armLauncherKeyboard() {
+  const win = launcherWin;
+  const seq = launcherGate.seq;
+  const alive = () => launcherWin === win && !win.isDestroyed() && win.isVisible() && launcherGate.seq === seq;
+  surfaceGate.ensureKeyboard({
+    alive,
+    isFocused: () => win.isFocused(),
+    retry: async () => {
+      // The Start click or the Win tap came to Mantle or the sidecar: hand the right on (lib/fg-grant.js).
+      const g = fgGrant.grant(sidecar.info && sidecar.info.pid);
+      try {
+        const r = await sidecar.call('focus', { hwnd: hwndOf(win) }, 2000);
+        process.stdout.write(`mantle: launcher: the keyboard retry ran (${fgGrant.howWords(r)}; right ${fgGrant.words(g)})\n`);
+      } catch (err) {
+        const e = fgGrant.splitTried(err.message);
+        process.stdout.write(`mantle: launcher: the keyboard retry failed (right ${fgGrant.words(g)}${e.tried ? `; ${e.tried}` : ''})\n`);
+        throw new Error(e.shown);
+      }
+    },
+    onResult: (r) => launcherKeyboardResult(win, r),
+  }).catch((err) => process.stdout.write(`mantle: launcher: the keyboard check threw (${err.message})\n`));
 }
 
-function hideLauncher() {
-  if (!launcherWin || launcherWin.isDestroyed()) return;
-  if (!launcherWin.isVisible()) return;
-  launcherBackdrop.stop('the launcher closed');
-  launcherWin.hide();
-  broadcast('launcher:visible', false);
+function launcherKeyboardResult(win, r) {
+  if (launcherWin !== win || win.isDestroyed()) return;
+  stopLauncherKbWatch();
+  if (r.ok) {
+    if (launcherKb.ok === false) launcherSay('launcher.keyboard', { ok: true });
+    launcherKb = { ok: true, how: r.how, reason: null };
+    return;
+  }
+  launcherKbWatch = surfaceGate.watchOutside({
+    bounds: () => (launcherAlive() ? launcherWin.getBounds() : null),
+    cursor: () => screen.getCursorScreenPoint(),
+    onOutside: (why) => { launcherKbWatch = null; hideLauncher(why); },
+  });
+  launcherKb = { ok: false, how: null, reason: r.reason };
+  launcherSay('launcher.keyboard', { ok: false, text: surfaceGate.noKeyboardWords(r.reason, launcherKbWatch.ok) });
+  process.stdout.write(`mantle: launcher: shown WITHOUT the keyboard (${r.reason}); ${launcherKbWatch.ok ? 'a click outside or Esc closes it' : `no outside-click watch: ${launcherKbWatch.reason}`}\n`);
 }
+
+/** The page got the keyboard after all (a click in it): the no-keyboard line goes, blur works again. */
+function launcherGotKeyboard(win) {
+  if (launcherWin !== win || launcherKb.ok !== false) return;
+  launcherKeyboardResult(win, { ok: true, how: 'click' });
+}
+
+const NO_LAUNCHER = { opened: false, reason: 'there is no launcher window' };
+/** Open (or bring forward). Win+S, the tray and the search feature: always "open". */
+function showLauncher(from) { return launcherAlive() ? launcherGate.open(from || 'open') : Promise.resolve(NO_LAUNCHER); }
+/** Close, and cancel an open still on its way. */
+function hideLauncher(why) { stopLauncherKbWatch(); return launcherAlive() ? launcherGate.close(why || 'hide') : { closed: false, was: 'hidden' }; }
+/** The Win tap, the Start button and Alt+Space: the same key closes it, like Spotlight / Raycast. */
+function toggleLauncher(from) { return launcherAlive() ? launcherGate.toggle(from || 'toggle') : Promise.resolve(NO_LAUNCHER); }
+// </mainrel:launcher>
 
 /** The volume pop-up down now, if it is up (a bar popover is opening where it would cover it). Never throws. */
 function dismissOsd(why) {
@@ -2824,7 +2898,8 @@ function makeLauncher(again) {
     // toback.ps1 runs then, and a test never puts a window in front of Owen.
     if (!again) win.once('ready-to-show', () => { if (!win.isDestroyed()) win.showInactive(); });
   } else {
-    win.on('blur', () => hideLauncher());
+    win.on('blur', () => hideLauncher('blur'));
+    win.on('focus', () => launcherGotKeyboard(win));
     if (again) win.once('ready-to-show', () => { if (launcherWin === win) squareCorners('the launcher', win).catch(() => {}); });
   }
   return win;
@@ -4844,7 +4919,8 @@ const COMMANDS = {
     return res;
   },
 
-  'launcher.show': async () => { showLauncher(); return { visible: true }; },
+  'launcher.show': async () => { showLauncher('a page'); return { visible: true }; },
+  'launcher.toggle': async () => { const r = await toggleLauncher('the Start button'); return { visible: !!(r && r.opened) }; },
   'launcher.hide': async () => { hideLauncher(); return { visible: false }; },
 
   'apps.index': async (a) => apps.index({ refresh: !!(a && a.refresh) }),
@@ -5627,7 +5703,7 @@ sidecar.on('tbhide', (msg) => {
 });
 
 sidecar.on('hotkey', (msg) => {
-  if (msg && msg.name === 'win') showLauncher();
+  if (msg && msg.name === 'win') toggleLauncher('the Win key');
 });
 
 sidecar.on('taskbar', (msg) => {
@@ -7677,8 +7753,7 @@ function registerShortcuts() {
 
   try {
     launcher = globalShortcut.register('Alt+Space', () => {
-      if (launcherWin && !launcherWin.isDestroyed() && launcherWin.isVisible()) hideLauncher();
-      else showLauncher();
+      toggleLauncher('Alt+Space');
     });
   } catch (err) {
     problems.push(`Alt+Space threw (${err.message})`);
