@@ -127,6 +127,7 @@ namespace Mantle {
     const int RaiseCheckFrames = 3;  // a raised FOREGROUND must be on top in the real z-order by then (3 frames,
     const double RaiseCheckMinMs = 30;   // ...but never under 30 ms: an attached activation moves up to 18 ms late)
     const double FlashSkipMs = 60;   // HSHELL_FLASH for a window this close before its FOREGROUND = a refused activation
+    const double WatchMs = 1500;     // ...and its window is watched this long for Windows granting it later
     const long HSHELL_FLASH = 0x8006;    // HSHELL_REDRAW | HSHELL_HIGHBIT: a taskbar button flashes
     static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 
@@ -151,7 +152,7 @@ namespace Mantle {
     static long _paints, _capPaints, _predPaints, _held, _confirmed, _corrected, _cacheHits, _cacheMiss, _hintUsed, _records, _events, _ulwFails;
     // the raised FOREGROUND path: events whose window was not on top yet, predictions painted on one, the check's
     // verdicts, and refused activations skipped on their taskbar flash
-    static long _raiseMoved, _raisePred, _raiseOk, _raiseBad, _raiseFlashSkip, _flashSeen, _cacheDrop, _predSame;
+    static long _raiseMoved, _raisePred, _raiseOk, _raiseBad, _raiseFlashSkip, _flashSeen, _cacheDrop, _predSame, _raiseLate;
     static readonly Dictionary<string, long> _raiseBadBy = new Dictionary<string, long>(StringComparer.Ordinal);
     static string _shellHook = "off";   // on | off | the reason it could not be registered
     static readonly Dictionary<string, long> _predBy = new Dictionary<string, long>(StringComparer.Ordinal);
@@ -306,7 +307,7 @@ namespace Mantle {
           "cache", _cacheCount, "hints", _hintCount, "ulwFails", _ulwFails,
           "predLagMedianMs", Math.Round(med, 1), "predLagP95Ms", Math.Round(p95, 1),
           "raiseMoved", _raiseMoved, "raisePredicted", _raisePred, "raiseConfirmed", _raiseOk, "raiseCorrected", _raiseBad,
-          "raiseCorrectedBy", rb, "raiseFlashSkipped", _raiseFlashSkip, "shellHook", _shellHook, "shellFlashes", _flashSeen, "cacheDropped", _cacheDrop, "predictedNoChange", _predSame);
+          "raiseCorrectedBy", rb, "raiseFlashSkipped", _raiseFlashSkip, "shellHook", _shellHook, "shellFlashes", _flashSeen, "cacheDropped", _cacheDrop, "predictedNoChange", _predSame, "raiseGrantedLater", _raiseLate);
       }
     }
     static int _cacheCount, _hintCount;
@@ -385,6 +386,7 @@ namespace Mantle {
     static IntPtr _flashH; static long _flashQ;   // the last HSHELL_FLASH (a refused activation flashes its button)
     static IntPtr _simFg;                      // sim: what GetForegroundWindow says
     static byte[] _pendRec;                    // a frame that came before the settle time: Record at it (Timers)
+    static IntPtr _watchH; static long _watchUntilQ;   // a refused activation's window, watched by the frames (Watch)
     static uint _shellMsg;                     // RegisterWindowMessage("SHELLHOOK"), 0 = no shell hook
     static bool _fine;                         // timeBeginPeriod(1) is on
 
@@ -597,7 +599,7 @@ namespace Mantle {
       }
       _shellMsg = 0;
       FreeDib();
-      _shown = false; _painted = null; _shownCols = null; _cap = null; _pred = null; _raise = null; _pendRec = null; _flashH = IntPtr.Zero; _bar = IntPtr.Zero;
+      _shown = false; _painted = null; _shownCols = null; _cap = null; _pred = null; _raise = null; _pendRec = null; _watchH = IntPtr.Zero; _flashH = IntPtr.Zero; _bar = IntPtr.Zero;
       lock (_gate) { _layerInfo = null; _shellHook = "off"; }
     }
 
@@ -692,6 +694,7 @@ namespace Mantle {
       // a frame came: has the z-order caught up with a raised FOREGROUND? (after the paint: the frame's own paint
       // must not wait for a z-order walk)
       if (_raise != null) { long nq = Q(); RaiseCheck(nq, nq >= _raise.CheckQ); }
+      if (_watchH != IntPtr.Zero) Watch(Q());
       // a frame before the settle time (or before a raise is checked) is kept and recorded then, if no newer
       // frame or event replaced it: a window that is still after its switch sends its only frame ~14 ms after
       // the event, so it was never cached (and its next switch had nothing to predict from)
@@ -1186,12 +1189,15 @@ namespace Mantle {
     static void Foreground(IntPtr h, long evQ) {
       if (h == IntPtr.Zero) { Switch("switch", evQ); return; }
       lock (_gate) _events++;
-      _raise = null; _pendRec = null;   // a newer activation: the coverage is re-read below with this one raised instead
+      _raise = null; _pendRec = null; _watchH = IntPtr.Zero;   // a newer activation: the coverage is re-read below with this one raised instead
       if (h == _flashH && evQ - _flashQ <= Dq(FlashSkipMs) && FgRoot() != h) {
         // a refused SetForegroundWindow: its taskbar button flashed just now and it is not the foreground.
         // Nothing is predicted (this used to flash its colour on the bar for 67-83 ms, the old window still there)
         _flashH = IntPtr.Zero;
         lock (_gate) _raiseFlashSkip++;
+        // when Windows grants it later (an attach-input retry, a click), no new FOREGROUND comes (measured: one
+        // event per refused-then-granted switch), so the frames watch for it (Watch)
+        _watchH = h; _watchUntilQ = evQ + Dq(WatchMs);
         Cov(evQ);
         _settleQ = Math.Max(_settleQ, evQ + Dq(SettleFrames * _frameMs));
         return;
@@ -1247,6 +1253,17 @@ namespace Mantle {
       _raise = null;
       Cov(q);   // no raise pending now: the real coverage
       RaiseFail(r, "flash");
+    }
+    /// A frame came while a refused activation's window is watched: is it the foreground now? Then the coverage
+    /// is re-read (it still says the old window: nothing told it) and this frame waits for the settle time,
+    /// or the next record would file the new window's pixels under the old one.
+    static void Watch(long now) {
+      if (now > _watchUntilQ) { _watchH = IntPtr.Zero; return; }
+      if (FgRoot() != _watchH) return;
+      _watchH = IntPtr.Zero;
+      lock (_gate) _raiseLate++;
+      Cov(now);
+      _settleQ = Math.Max(_settleQ, now + Dq(SettleFrames * _frameMs));
     }
     static void RaiseFail(Raise r, string why) {
       lock (_gate) { _raiseBad++; Count(_raiseBadBy, why); }
@@ -1306,7 +1323,7 @@ namespace Mantle {
           // without an event the coverage must follow, or later rows record against the old windows (all "desktop")
           // (while a raised FOREGROUND waits for its check, wins alone is the z-order catching up: on screen that
           // is no event, so the settle time stays the event's)
-          if (!(bool)it[2]) { Cov(now); if (_raise == null) _settleQ = now; }
+          if (!(bool)it[2] && _watchH == IntPtr.Zero) { Cov(now); if (_raise == null) _settleQ = now; }   // (watched: the frames notice it, Watch)
           continue;
         }
         if (k == "row") {

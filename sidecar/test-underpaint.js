@@ -554,6 +554,18 @@ function cpuMs(pid) {
         t.check('...counted as raiseCorrectedBy flash, the cache kept', n(p.raiseCorrectedBy, 'flash') === n(st.raiseCorrectedBy, 'flash') + 1 && p.corrected === st.corrected && p.cache === st.cache, JSON.stringify(p.raiseCorrectedBy));
         await sleep(80);
 
+        // refused, then granted with no event of its own (an attach retry): the frames notice it, and the frame
+        // that shows it is recorded under IT, not under the window the coverage still named
+        st = await pk();
+        await up({ flash: Y.hwnd, wins: [X, Y], ev: { type: 'foreground', hwnd: Y.hwnd, fg: X.hwnd } }); await sleep(30);
+        await up({ fg: Y.hwnd, wins: [Y, X] }); await inj(rowY); await sleep(80);
+        p = await pk();
+        t.check('a refused activation granted later without an event is noticed by the next frame (raiseGrantedLater ' + st.raiseGrantedLater + ' -> ' + p.raiseGrantedLater + ', owners ' + JSON.stringify(p.owners) + ')', p.raiseGrantedLater === st.raiseGrantedLater + 1 && JSON.stringify(p.owners) === JSON.stringify([Y.hwnd]), '');
+        await fgEv(X.hwnd, [Y, X]); await sleep(8);
+        const px = await pk();
+        t.check('...and X\'s cache entry was not overwritten with Y\'s frame (switching back paints X\'s own colour)', px.pred === 'switch painted cache' && maxDiff(buf(px.painted), rowX) === 0, JSON.stringify({ pred: px.pred }));
+        await wins([X, Y]); await sleep(5); await inj(rowX); await sleep(80);
+
         // a window flashing while it really is the foreground is not a refusal
         st = await pk();
         await fgEv(Y.hwnd, [X, Y]); await sleep(5);
