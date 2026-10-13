@@ -123,6 +123,16 @@ const brief = (r) => JSON.stringify(r).slice(0, 300);
   t.check('sysabout windows specs', B.windows && /Windows/.test(B.windows.edition || '') && /^\d+\.\d+$/.test(B.windows.build), brief(B.windows));
   t.check('sysabout Windows 11 is not called Windows 10', !(Number((B.windows && B.windows.build || '0').split('.')[0]) >= 22000 && /Windows 10/.test(B.windows.edition)), brief(B.windows));
   t.check('sysabout rename points at the elevate lane', B.rename && B.rename.elevate === 'system.renamePc', brief(B.rename));
+  {
+    // the waiting name is read from the same registry pairs Windows keeps (a real read, no write):
+    // null when nothing waits, else the NEW name, which then differs from the running one
+    const pn = B.device && B.device.pendingName;
+    const reg = (key, val) => { try { return (require('child_process').execSync(`reg query "${key}" /v "${val}"`, { encoding: 'utf8' }).match(/REG_SZ\s+(\S+)/) || [])[1] || null; } catch (_) { return null; } };
+    const T = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters', C = 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\ComputerName\\';
+    const waits = String(reg(T, 'NV Hostname')).toLowerCase() !== String(reg(T, 'Hostname')).toLowerCase() ||
+      String(reg(C + 'ComputerName', 'ComputerName')).toLowerCase() !== String(reg(C + 'ActiveComputerName', 'ComputerName')).toLowerCase();
+    t.check('sysabout pendingName matches the registry (null = no rename waiting for a restart)', waits ? typeof pn === 'string' && pn.toLowerCase() !== String(B.device.name).toLowerCase() : pn === null, `${pn} waits=${waits}`);
+  }
   const ac = await send('sysabout.activation', {}, 30000);
   t.check('sysabout.activation answers', ac.ok && (typeof (ac.result || {}).activated === 'boolean' || typeof (ac.result || {}).reason === 'string'), brief(ac));
   const rc = await send('sysabout.recovery');

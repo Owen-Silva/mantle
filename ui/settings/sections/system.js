@@ -329,12 +329,21 @@
     const name = kit.text({ row: 'system.about.name', label: 'Device name', admin: 'rename this PC',
       help: 'Letters, numbers and hyphens, 1 to 15 characters. Takes effect after a restart',
       onChange: (s) => {
-        const n = String(s || '').trim(), cur = cur0.name;
-        if (!n) return { ok: false, reason: 'Type a name for this PC' };
-        if (cur && n.toLowerCase() === cur.toLowerCase()) return { ok: true, value: cur };   // nothing to change: no prompt
-        return A(kit, 'system.renamePc', { name: n }).then((r) => r && r.ok && !r.dryRun ? { ok: true, value: r.name, note: r.note } : r);
+        const n = String(s || '').trim(), cur = cur0.shown;
+        // An answer decided here comes back while the box still has focus, and the kit never rewrites a
+        // focused box: put the shown name back by hand so the spring-back is seen (the declined-prompt path
+        // answers later, after the disabled box has lost focus, so the kit restores that one itself).
+        if (!n) { settle(cur); return { ok: false, reason: 'Type a name for this PC' }; }
+        if (cur && n.toLowerCase() === cur.toLowerCase()) { settle(cur); return { ok: true, value: cur }; }   // nothing to change: no prompt
+        return A(kit, 'system.renamePc', { name: n }).then((r) => {
+          if (!(r && r.ok && !r.dryRun)) return r;
+          setTimeout(update, 300);   // read the waiting name back from Windows
+          return { ok: true, value: r.name, note: r.note };
+        });
       } });
-    const cur0 = { name: null };
+    const settle = (v) => { const i = name.el.querySelector('input'); if (i && v != null) i.value = v; };
+    // name = what Windows runs under now; shown = the name a rename is waiting to give it after a restart, else name
+    const cur0 = { name: null, shown: null };
     const D = {};
     const dRows = [['processor', 'Processor'], ['ram', 'Installed RAM'], ['storage', 'Storage'], ['model', 'Device'], ['deviceId', 'Device ID'], ['productId', 'Product ID'], ['systemType', 'System type'], ['penTouch', 'Pen and touch']];
     for (const [k, label] of dRows) D[k] = kit.status({ row: `system.about.${k}`, label, value: 'Reading…', tone: 'info' });
@@ -347,7 +356,8 @@
       if (!a || !a.ok) { name.set({ reason: fail('The device', a), disabled: true }); return; }
       const d = a.device, w = a.windows;
       cur0.name = d.name;
-      name.set({ value: d.name });
+      cur0.shown = d.pendingName || d.name;
+      name.set({ value: cur0.shown, info: d.pendingName ? `Renamed: the new name takes effect after a restart. Until then this PC is still called ${d.name}` : null });
       const v = { processor: `${d.processor} (${d.cores} logical processors)`, ram: d.ramInstalledBytes ? `${bytes(d.ramInstalledBytes)} (${bytes(d.ramUsableBytes)} usable)` : '—',
         storage: bytes(d.storageBytes), model: [d.manufacturer, d.model].filter(Boolean).join(' ') || '—', deviceId: d.deviceId || '—', productId: d.productId || '—',
         systemType: d.systemType, penTouch: d.penTouch };

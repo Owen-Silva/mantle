@@ -53,7 +53,7 @@ async function nodeTests() {
 /* ================================================================ PART 2: the page on the mock */
 function FAKE() {
   const q = new URLSearchParams(location.search);
-  const TEST = q.get('test') === '1', NOBAT = q.get('nobat') === '1';
+  const TEST = q.get('test') === '1', NOBAT = q.get('nobat') === '1', PENDING = q.get('pending');
   const CH = [{ value: 0, label: 'Do nothing' }, { value: 1, label: 'Sleep' }, { value: 2, label: 'Hibernate' }, { value: 3, label: 'Shut down' }];
   const two = (ac, dc, extra) => Object.assign({ applies: true, why: null, ac: { value: ac, writable: true }, dc: { value: dc, writable: true } }, extra || {});
   const POWER = { ok: true, caps: { battery: !NOBAT }, hibernation: { on: false }, fastStartup: { on: true, available: true },
@@ -75,7 +75,7 @@ function FAKE() {
         const copy = args && typeof args === 'object' ? JSON.parse(JSON.stringify(args)) : {};
         if (name === 'settings.sections') return Promise.resolve({ ok: true, reason: null, sections: [{ id: 'system', file: 'sections/system.js', down: null, main: null }] });
         let mine = null;
-        if (name === 'settings.system.read') mine = copy.what === 'about' ? later(30, JSON.parse(JSON.stringify(ABOUT))) : copy.what === 'power' ? later(30, JSON.parse(JSON.stringify(POWER))) : later(10, { ok: false, reason: 'fake: not this page' });
+        if (name === 'settings.system.read') mine = copy.what === 'about' ? later(30, Object.assign(JSON.parse(JSON.stringify(ABOUT)), PENDING ? { device: Object.assign({}, ABOUT.device, { pendingName: PENDING }) } : {})) : copy.what === 'power' ? later(30, JSON.parse(JSON.stringify(POWER))) : later(10, { ok: false, reason: 'fake: not this page' });
         if (name === 'settings.system.write') mine = later(30, TEST ? { ok: true, dryRun: true, reason: `test run: nothing was changed (would write: PowerWriteACValueIndex ${copy.setting} = ${copy.value})` } : { ok: false, reason: 'fake: no real writes' });
         if (name === 'battery.get') mine = later(20, BAT);
         if (name === 'powermode.get') mine = later(20, { ok: true, mode: 'balanced', inForce: 'balanced', saver: false, available: true, settable: true });
@@ -120,6 +120,15 @@ const SHOTS = [
     await type(p, 'NEW-PC');
     check('03: a test-run rename is a dry run with its note, and springs back', /test run/i.test(await rowText(p, 'system.about.name') || '') && await val(p) === 'MADEUP-PC', await rowText(p, 'system.about.name'));
     check('03: the device specifications are filled', /Made-up CPU 8000 \(16 logical processors\)/.test(await rowText(p, 'system.about.processor') || '') && /16(\.0)? GB/.test(await rowText(p, 'system.about.ram') || ''));
+  }],
+  ['about-04-pending', PG + '&pending=Next-PC', async (p) => {
+    check('04: a rename waiting for a restart shows the NEW name in the box', await val(p) === 'Next-PC', await val(p));
+    check('04: ... and says in words that it applies after a restart, naming the name in use now', /takes effect after a restart\. Until then this PC is still called MADEUP-PC/.test(await rowText(p, 'system.about.name') || ''), await rowText(p, 'system.about.name'));
+    await type(p, 'next-pc');
+    check('04: the waiting name (any case) asks for nothing', (await calls(p, 'settings.system.admin')).length === 0 && await val(p) === 'Next-PC', await val(p));
+    await type(p, 'MADEUP-PC');
+    const a = await calls(p, 'settings.system.admin');
+    check('04: typing the name in use now is a rename back, through the broker', a.length === 1 && JSON.stringify(a[0].args.args) === '{"name":"MADEUP-PC"}', JSON.stringify(a));
   }],
   ['power-01-desktop', '?section=system&page=power&nobat=1', async (p) => {
     const hid = ['system.power.screenOff.dc', 'system.power.sleep.dc', 'system.power.hibernate.dc', 'system.power.lid.dc', 'system.power.lid.ac', 'system.power.powerButton.dc', 'system.power.sleepButton.dc', 'system.power.sleepButton.ac', 'system.power.saverAt'];
