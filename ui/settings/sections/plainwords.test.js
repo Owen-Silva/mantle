@@ -96,6 +96,7 @@ async function run() {
           check(`${theme} PLAIN: the last-checked line says why in words`, /did not answer: there is no internet connection/.test(texts['windows-update']), texts['windows-update'].slice(0, 400));
           check(`${theme} PLAIN: the list's failure says Windows Update is busy`, /Windows Update is busy with another check or an install/.test(texts['windows-update']), texts['windows-update'].slice(0, 400));
           check(`${theme} PLAIN: the history's failure is a plain sentence, not silent`, /The update history could not be read: Windows Update reported an error it did not explain/.test(texts.history), texts.history.slice(0, 300));
+          check(`${theme} PLAIN: the history's failure is not said twice`, !/could not be read: The update history could not be read/i.test(texts.history), texts.history.slice(0, 300));
         }
         await ctx.close();
       }

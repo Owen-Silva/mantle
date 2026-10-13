@@ -1069,7 +1069,7 @@ function lookToastShow(payload) {
     const w = lookToastWin;
     const wa = screen.getPrimaryDisplay().workArea;
     w.setBounds({ x: Math.round(wa.x + (wa.width - W) / 2), y: Math.round(wa.y + wa.height - H - 8), width: W, height: H });
-    const send = () => { if (!w.isDestroyed()) w.webContents.send('mantle:event', { name: 'ontop.toast', payload: Object.assign({ hint: '', below: false }, payload) }); };
+    const send = () => { if (!w.isDestroyed()) w.webContents.send('mantle:event', { name: 'ontop.toast', payload: toPage('ontop.toast', Object.assign({ hint: '', below: false }, payload)) }); };
     if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
     if (!flags.test) {
       w.showInactive();
@@ -2921,7 +2921,7 @@ let launcherKb = { ok: null, how: null, reason: null };   // the last keyboard v
 
 function launcherAlive() { return !!launcherWin && !launcherWin.isDestroyed(); }
 function launcherSay(name, payload) {
-  try { launcherWin.webContents.send('mantle:event', { name, payload }); } catch (_) { /* reloading: the next open says it again */ }
+  try { launcherWin.webContents.send('mantle:event', { name, payload: toPage(name, payload) }); } catch (_) { /* reloading: the next open says it again */ }
 }
 function stopLauncherKbWatch() { if (launcherKbWatch) { launcherKbWatch.stop(); launcherKbWatch = null; } }
 
