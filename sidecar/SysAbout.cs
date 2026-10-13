@@ -52,6 +52,21 @@ namespace Mantle {
 
     static string S(string hive, string key, string name) { string w; object v = SysCommon.Read(hive, key, name, out w); return v == null ? null : Convert.ToString(v, CultureInfo.InvariantCulture); }
 
+    /// The name a rename is waiting to give this PC after a restart, or null when none is waiting.
+    /// SetComputerNameEx (Elevate.cs system.renamePc) writes the NEW name to ComputerName\ComputerName
+    /// and Tcpip\Parameters "NV Hostname"; the running name stays in ActiveComputerName\ComputerName and
+    /// Tcpip\Parameters "Hostname" until Windows restarts (Microsoft Learn, SetComputerNameExW: the change
+    /// takes effect the next time the computer is restarted). Either pair differing = a rename is waiting.
+    static string PendingName() {
+      const string CN = @"SYSTEM\CurrentControlSet\Control\ComputerName\";
+      const string TCP = @"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters";
+      string nb = S("HKLM", CN + "ComputerName", "ComputerName"), nbNow = S("HKLM", CN + "ActiveComputerName", "ComputerName");
+      string dns = S("HKLM", TCP, "NV Hostname"), dnsNow = S("HKLM", TCP, "Hostname");
+      if (!string.IsNullOrEmpty(dns) && !string.IsNullOrEmpty(dnsNow) && !string.Equals(dns, dnsNow, StringComparison.OrdinalIgnoreCase)) return dns;
+      if (!string.IsNullOrEmpty(nb) && !string.IsNullOrEmpty(nbNow) && !string.Equals(nb, nbNow, StringComparison.OrdinalIgnoreCase)) return nb;
+      return null;
+    }
+
     /// PURE: Windows 11 still says "Windows 10" in ProductName (known since 21H2); build >= 22000 is 11.
     public static string ProductName(string raw, int build) {
       if (raw == null) return null;
@@ -80,6 +95,7 @@ namespace Mantle {
           "ok", true,
           "device", Json.Obj(
             "name", Environment.MachineName,
+            "pendingName", PendingName(),
             "manufacturer", S("HKLM", @"HARDWARE\DESCRIPTION\System\BIOS", "SystemManufacturer"),
             "model", S("HKLM", @"HARDWARE\DESCRIPTION\System\BIOS", "SystemProductName"),
             "processor", (S("HKLM", @"HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString") ?? "").Trim(),

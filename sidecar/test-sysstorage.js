@@ -87,7 +87,16 @@ const CATS = ['apps', 'documents', 'pictures', 'videos', 'music', 'temp', 'syste
     const tp = await send('sysstorage.temp', {}, 120000);
     const TK = (tp.result && tp.result.kinds) || [];
     t.check('temp answers with all 7 kinds', tp.ok === true && KINDS.every((k) => TK.some((x) => x.kind === k)), JSON.stringify(tp).slice(0, 300));
-    t.check('temp: every kind is measured, or says why not', TK.every((x) => (x.measured && Number.isFinite(x.bytes) && Number.isFinite(x.files)) || (!x.measured && typeof x.reason === 'string' && x.bytes === null)));
+    t.check('temp: every kind is measured, or says why not', TK.every((x) => (x.measured && Number.isFinite(x.bytes) && (Number.isFinite(x.files) || (x.via === 'service' && x.files === null))) || (!x.measured && typeof x.reason === 'string' && x.bytes === null)));
+    {
+      // Delivery Optimization: its folder is administrators-only, so the size comes from the DO service (a real read)
+      const d = TK.find((x) => x.kind === 'deliveryOptimization') || {};
+      let wmi = null;
+      try { wmi = Number(require('child_process').execSync('powershell -NoProfile -Command "(Get-CimInstance -Namespace root/Microsoft/Windows/DeliveryOptimization -ClassName MSFT_DOCurrentStatus -ErrorAction Stop | Select-Object -First 1).CacheSizeBytes"', { encoding: 'utf8', timeout: 30000 }).trim()); } catch (_) { wmi = null; }
+      if (d.via === 'service') t.check('temp: Delivery Optimization is sized by the DO service, with no made-up file count, and matches it', d.measured === true && d.files === null && Number.isFinite(d.bytes) && (wmi === null || Number.isNaN(wmi) || Math.abs(d.bytes - wmi) <= Math.max(1, wmi * 0.05)), JSON.stringify([d, wmi]));
+      else t.check('temp: Delivery Optimization is measured from its folder, or says why not', d.measured ? Number.isFinite(d.files) : typeof d.reason === 'string', JSON.stringify(d));
+      t.check('temp: Windows temporary files stay unmeasured without an administrator, saying why', TK.some((x) => x.kind === 'systemTemp' && (x.measured || /only lets an administrator look inside/.test(x.reason || ''))));
+    }
     t.check('temp: Downloads and the Recycle Bin are marked as Owen\'s own', TK.filter((x) => x.yours).map((x) => x.kind).sort().join() === 'downloads,recycleBin');
     t.check('temp: the administrator kinds are marked', TK.filter((x) => x.admin).map((x) => x.kind).sort().join() === 'deliveryOptimization,systemTemp,windowsUpdate');
     t.check('temp: Downloads goes to the Recycle Bin, the bin is emptied, the rest deleted', TK.every((x) => x.action === (x.kind === 'downloads' ? 'recycle' : x.kind === 'recycleBin' ? 'empty' : 'delete')));

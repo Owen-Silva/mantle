@@ -329,12 +329,21 @@
     const name = kit.text({ row: 'system.about.name', label: 'Device name', admin: 'rename this PC',
       help: 'Letters, numbers and hyphens, 1 to 15 characters. Takes effect after a restart',
       onChange: (s) => {
-        const n = String(s || '').trim(), cur = cur0.name;
-        if (!n) return { ok: false, reason: 'Type a name for this PC' };
-        if (cur && n.toLowerCase() === cur.toLowerCase()) return { ok: true, value: cur };   // nothing to change: no prompt
-        return A(kit, 'system.renamePc', { name: n }).then((r) => r && r.ok && !r.dryRun ? { ok: true, value: r.name, note: r.note } : r);
+        const n = String(s || '').trim(), cur = cur0.shown;
+        // An answer decided here comes back while the box still has focus, and the kit never rewrites a
+        // focused box: put the shown name back by hand so the spring-back is seen (the declined-prompt path
+        // answers later, after the disabled box has lost focus, so the kit restores that one itself).
+        if (!n) { settle(cur); return { ok: false, reason: 'Type a name for this PC' }; }
+        if (cur && n.toLowerCase() === cur.toLowerCase()) { settle(cur); return { ok: true, value: cur }; }   // nothing to change: no prompt
+        return A(kit, 'system.renamePc', { name: n }).then((r) => {
+          if (!(r && r.ok && !r.dryRun)) return r;
+          setTimeout(update, 300);   // read the waiting name back from Windows
+          return { ok: true, value: r.name, note: r.note };
+        });
       } });
-    const cur0 = { name: null };
+    const settle = (v) => { const i = name.el.querySelector('input'); if (i && v != null) i.value = v; };
+    // name = what Windows runs under now; shown = the name a rename is waiting to give it after a restart, else name
+    const cur0 = { name: null, shown: null };
     const D = {};
     const dRows = [['processor', 'Processor'], ['ram', 'Installed RAM'], ['storage', 'Storage'], ['model', 'Device'], ['deviceId', 'Device ID'], ['productId', 'Product ID'], ['systemType', 'System type'], ['penTouch', 'Pen and touch']];
     for (const [k, label] of dRows) D[k] = kit.status({ row: `system.about.${k}`, label, value: 'Reading…', tone: 'info' });
@@ -347,7 +356,8 @@
       if (!a || !a.ok) { name.set({ reason: fail('The device', a), disabled: true }); return; }
       const d = a.device, w = a.windows;
       cur0.name = d.name;
-      name.set({ value: d.name });
+      cur0.shown = d.pendingName || d.name;
+      name.set({ value: cur0.shown, info: d.pendingName ? `Renamed: the new name takes effect after a restart. Until then this PC is still called ${d.name}` : null });
       const v = { processor: `${d.processor} (${d.cores} logical processors)`, ram: d.ramInstalledBytes ? `${bytes(d.ramInstalledBytes)} (${bytes(d.ramUsableBytes)} usable)` : '—',
         storage: bytes(d.storageBytes), model: [d.manufacturer, d.model].filter(Boolean).join(' ') || '—', deviceId: d.deviceId || '—', productId: d.productId || '—',
         systemType: d.systemType, penTouch: d.penTouch };
@@ -1249,7 +1259,7 @@
     function fillKind(x) {
       const k = x && x.kind;
       if (!tick[k]) return;
-      const size = x.measured ? `${bytes(x.bytes)} in ${n0(k === 'downloads' ? x.entries : x.files)} ${k === 'downloads' || k === 'recycleBin' ? 'items' : 'files'}` : 'size not known yet';
+      const size = !x.measured ? 'size not known yet' : x.via === 'service' ? `${bytes(x.bytes)}, as the Delivery Optimization service reports it` : `${bytes(x.bytes)} in ${n0(k === 'downloads' ? x.entries : x.files)} ${k === 'downloads' || k === 'recycleBin' ? 'items' : 'files'}`;
       const there = x.measured && x.allBytes > x.bytes ? ` (${bytes(x.allBytes)} is there; the rest is newer)` : '';
       tick[k].set({ value: !!S.tick[k], disabled: !x.measured && !x.admin, help: `${x.rule}. ${size}${there}`,
         reason: !x.measured && !x.admin ? x.reason : null,
@@ -1268,11 +1278,11 @@
       if (!r.ok) return r;
       S.plan = r;
       planList.set({ items: r.items.map((x) => ({ key: x.kind, label: x.label, value: x.measured ? bytes(x.bytes) : 'Size unknown',
-        help: `${x.rule}${x.measured ? ` · ${n0(x.kind === 'downloads' ? x.entries : x.files)} ${x.kind === 'downloads' || x.kind === 'recycleBin' ? 'items' : 'files'}` : ''}${x.admin ? ' · needs administrator permission' : ''}`,
+        help: `${x.rule}${!x.measured ? '' : x.via === 'service' ? ' · size from the Delivery Optimization service' : ` · ${n0(x.kind === 'downloads' ? x.entries : x.files)} ${x.kind === 'downloads' || x.kind === 'recycleBin' ? 'items' : 'files'}`}${x.admin ? ' · needs administrator permission' : ''}`,
         reason: x.kind === 'downloads' ? 'Your own files: everything in Downloads moves to the Recycle Bin' : x.kind === 'recycleBin' ? 'Your own files: the Recycle Bin is emptied for good' : (x.measured ? null : x.reason) })) });
-      confirmBtn.set({ disabled: false, label: `Remove ${n0(r.totalFiles)} files (${bytes(r.totalBytes)})`, admin: r.needsAdmin ? S_CLEAN : undefined,
+      confirmBtn.set({ disabled: false, label: `Remove ${n0(r.totalFiles)} files${r.uncounted ? ' and the Delivery Optimization files' : ''} (${bytes(r.totalBytes)})`, admin: r.needsAdmin ? S_CLEAN : undefined,
         info: 'Only the files in this plan, and only if they have not changed since it was made' });
-      return { ok: true, note: `Plan ready: ${n0(r.totalFiles)} files, ${bytes(r.totalBytes)}. Nothing is deleted until you confirm below` };
+      return { ok: true, note: `Plan ready: ${n0(r.totalFiles)} files${r.uncounted ? ' and the Delivery Optimization files' : ''}, ${bytes(r.totalBytes)}. Nothing is deleted until you confirm below` };
     }
     async function confirmClick() {
       const p = S.plan;
