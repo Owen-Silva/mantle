@@ -22,16 +22,6 @@ const path = require('path');
 const fs = require('fs');
 const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
 
-/* the newest ms-playwright chromium on the machine (the pinned 1234 build was removed 2026-10-05) */
-const CHROME = (() => {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
-  for (const d of fs.readdirSync(base).filter(n => n.startsWith('chromium-')).sort().reverse())
-    for (const sub of ['chrome-win64/chrome.exe', 'chrome-win/chrome.exe']) {
-      const p = path.join(base, d, sub);
-      if (fs.existsSync(p)) return p;
-    }
-  return base + '/chromium-*/chrome-win64/chrome.exe';
-})();
 /* MANTLE_THEME=dark|light forces <html data-theme> before first paint and fires 'mantle-theme',
    the harness stand-in for the CLI's --theme= (lane dm-launcher, 2026-10-08) */
 const THEME = ['dark', 'light'].includes(process.env.MANTLE_THEME) ? process.env.MANTLE_THEME : null;
@@ -52,10 +42,9 @@ const SAMPLE = {
 };
 
 (async () => {
-  if (!fs.existsSync(CHROME)) throw new Error('no chromium at ' + CHROME);
   fs.mkdirSync(OUT, { recursive: true });
 
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true });
+  const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true });
   const ctx = await browser.newContext({
     viewport: { width: 680, height: 460 },
     deviceScaleFactor: DPR,

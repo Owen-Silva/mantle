@@ -21,16 +21,6 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 const path = require('path');
 const fs = require('fs');
 
-const CHROME = (() => {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
-  try {
-    for (const d of fs.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
-      const p = base + '/' + d + '/chrome-win64/chrome.exe';
-      if (fs.existsSync(p)) return p;
-    }
-  } catch (_) { /* launch without a path */ }
-  return null;
-})();
 const PAGE = 'file:///' + path.resolve(__dirname, 'index.html').replace(/\\/g, '/');
 
 let passed = 0;
@@ -215,7 +205,7 @@ async function run(browser, theme) {
   let browser = null;
   try {
     const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
-    browser = await chromium.launch({ timeout: 0, executablePath: CHROME || undefined, headless: true });
+    browser = await require('../settings/test-browser.js').launch(chromium, { timeout: 0, headless: true });
     await run(browser, 'light');
     await run(browser, 'dark');
   } catch (e) {

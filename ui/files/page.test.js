@@ -13,12 +13,6 @@ const path = require('path');
 
 let chromium = null;
 for (const c of ['C:/Users/user/other-app/node_modules/playwright-core', 'C:/Users/user/Downloads/other-app/node_modules/playwright-core', 'playwright-core']) { try { chromium = require(c).chromium; break; } catch (e) { /* next */ } }
-function findChrome() {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
-  for (const d of fs.readdirSync(base).filter((n) => n.startsWith('chromium-')).sort().reverse())
-    for (const sub of ['chrome-win/chrome.exe', 'chrome-win64/chrome.exe']) { const p = path.join(base, d, sub); if (fs.existsSync(p)) return p; }
-  return null;
-}
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const HOME = 'C:\\Users\\Robin';
 let passed = 0;
@@ -28,7 +22,7 @@ const HEX = /0x[0-9a-f]{4,}|\bE(NOENT|ACCES|PERM|BUSY)\b|Windows error|sidecar|u
 
 async function main() {
   if (!chromium) { console.log('FILES PAGE TEST: 0 passed, 1 failed (playwright-core not found)'); process.exit(1); }
-  const browser = await chromium.launch({ executablePath: findChrome() || undefined, headless: true });
+  const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));

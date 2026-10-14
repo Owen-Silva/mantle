@@ -20,11 +20,6 @@ let passed = 0;
 const failures = [];
 const check = (name, ok, detail) => { if (ok) passed++; else failures.push(detail !== undefined ? `${name} (${String(detail).slice(0, 300)})` : name); return ok; };
 
-function findChrome() {
-  for (const d of fs.readdirSync(CHROME_BASE).filter((n) => n.startsWith('chromium-')).sort().reverse())
-    for (const sub of ['chrome-win64/chrome.exe', 'chrome-win/chrome.exe']) { const p = path.join(CHROME_BASE, d, sub); if (fs.existsSync(p)) return p; }
-  return null;
-}
 function gaming() {
   try { return parseInt(execSync('powershell -NoProfile -Command "@(Get-Process VALORANT*,javaw,Minecraft*,RobloxPlayerBeta -ErrorAction SilentlyContinue).Count"', { encoding: 'utf8' }).trim(), 10) || 0; } catch (_) { return -1; }
 }
@@ -32,7 +27,7 @@ function gaming() {
 (async () => {
   if (gaming() > 0) { console.log('TASKMGR PAGE TEST: skipped (a game is running)'); process.exit(0); }
   const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
-  const browser = await chromium.launch({ timeout: 0, executablePath: findChrome(), headless: true });
+  const browser = await require('../settings/test-browser.js').launch(chromium, { timeout: 0, headless: true });
   const errors = [];
   async function open(mock, w, h) {
     const page = await browser.newPage({ viewport: { width: w || 780, height: h || 640 } });
