@@ -87,7 +87,18 @@ async function nodeTests() {
   const src = fs.readFileSync(path.join(ROOT, 'ui', 'settings', 'sections', 'personalization.js'), 'utf8');
   vm.runInNewContext(src, { MantleSettings: { section(x) { DEF = x; } }, window: {}, document: { currentScript: { dataset: { section: 'personalization' } } }, console });
   check('page: checkSection is happy', DEF && M.checkSection(DEF, 'personalization') === null, DEF && M.checkSection(DEF, 'personalization'));
-  check('page: order 40 in the Windows group, replaces nothing', DEF && DEF.order === 40 && DEF.group === 'windows' && DEF.replaces === undefined);
+  {
+    // the guard note (look-sync CONTRACT section 3): Bar tint says when the shared top-band darkening raised it
+    const GR_ = DEF && DEF._pure && DEF._pure.guardRaised;
+    const on = { on: true, state: 'ok' };
+    const G = { ok: true, alpha: 0.54, contrast: 4.3, light: { ok: true, alpha: 0.62, contrast: 4.8 } };
+    check('page: guard note, dark: raised .50 -> .54 says what, to what and why', !!GR_ && GR_({ sync: on, guard: G }, 'dark', 0.5) === 'Top bar raised to 54% over this wallpaper so text stays readable (Helm and Quartz use the same)', GR_ && GR_({ sync: on, guard: G }, 'dark', 0.5));
+    check('page: guard note, dark: not raised (alpha = tint, or below) -> none', !!GR_ && GR_({ sync: on, guard: Object.assign({}, G, { alpha: 0.5 }) }, 'dark', 0.5) === null && GR_({ sync: on, guard: G }, 'dark', 0.6) === null);
+    check('page: guard note, light: names the white Helm and Quartz use, and Mantle\'s own frost', !!GR_ && /^Helm's and Quartz's top strips raised to 62% white over this wallpaper so text stays readable \(Mantle's light top bar keeps its own frost\)$/.test(GR_({ sync: on, guard: G }, 'light', 0.45) || ''));
+    check('page: guard note: sync off, no guard, a failed guard or a failed light guard -> none', !!GR_ && GR_({ sync: { on: false }, guard: G }, 'dark', 0.5) === null && GR_({ sync: on }, 'dark', 0.5) === null
+      && GR_({ sync: on, guard: { ok: false, reason: 'x', alpha: null } }, 'dark', 0.5) === null && GR_({ sync: on, guard: Object.assign({}, G, { light: { ok: false, reason: 'x' } }) }, 'light', 0.45) === null && GR_(null, 'dark', 0.5) === null);
+  }
+  check('page: order 40 in the Windows group, replaces nothing',DEF && DEF.order === 40 && DEF.group === 'windows' && DEF.replaces === undefined);
   const ids = DEF ? DEF.pages.map((p) => p.id) : [];
   check('page: the ten pages', ids.join(' ') === 'background colors themes lock-screen text-input dynamic-lighting start taskbar fonts device-usage', ids.join(' '));
   const rows = DEF ? DEF.pages.flatMap((p) => p.search || []) : [];
@@ -558,6 +569,12 @@ const SHOTS = [
     const l0 = [await rng(p, GB), await rng(p, GD), await rng(p, GP)];
     check('26: light: the sliders show the light glass (12 px, 45%, 76%)', l0.map((x) => x.out).join(' ') === '12 px 45% 76%' && l0.every((x) => !x.dis), JSON.stringify(l0));
     check('26: light: Bar tint says how white', /How white the bar's glass is/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    check('26: light: no light top band published -> no guard note', !/raised to/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    await p.evaluate(() => window.__mockLook({ guard: { light: { ok: true, alpha: 0.62, contrast: 4.8, reason: null } } }));
+    await p.waitForTimeout(150);
+    check('26: light: guard note names the white Helm and Quartz use', /Helm's and Quartz's top strips raised to 62% white over this wallpaper so text stays readable/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    await p.evaluate(() => window.__mockLook({ guard: { light: null } }));
+    await p.waitForTimeout(150);
     check('26: light: Reset names the light defaults', /Blur 12 px, bar tint 45%, panel opacity 76% \(the light look\)/.test(await rowText(p, GR) || ''), await rowText(p, GR));
     await slide(p, GD, 60);
     await p.waitForTimeout(250);
@@ -575,6 +592,15 @@ const SHOTS = [
     await p.setViewportSize({ width: 1280, height: 900 });
     check('27: painted dark', await p.evaluate(() => document.documentElement.dataset.theme) === 'dark');
     check('27: dark: the sliders say they edit the dark look', /Editing the dark look/.test(await rowText(p, GB) || ''), await rowText(p, GB));
+    check('27: guard note: Bar tint 50% with the shared darkening at 54% says it was raised, and why', /Top bar raised to 54% over this wallpaper so text stays readable/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    await p.evaluate(() => window.__mockLook({ sync: { on: false } }));
+    await p.waitForTimeout(150);
+    check('27: guard note: sync off -> no shared value quoted', !/raised to/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    await p.evaluate(() => window.__mockLook({ sync: { on: true }, guard: { alpha: 0.5 } }));
+    await p.waitForTimeout(150);
+    check('27: guard note: darkening at the tint -> no note', !/raised to/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    await p.evaluate(() => window.__mockLook({ guard: { alpha: 0.54 } }));
+    await p.waitForTimeout(150);
     await p.click(sel(AM) + ' button[data-v="custom"]');
     await p.waitForTimeout(250);
     await p.$eval(sel('personalization.colors.mantle-mode'), (e) => e.scrollIntoView({ block: 'start' }));

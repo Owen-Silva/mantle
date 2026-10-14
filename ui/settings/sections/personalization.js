@@ -447,6 +447,25 @@
   const PANEL_RANGE = [-0.30, 0.15];
   const DEFAULT_HUE = 212;
   const said = (s) => (typeof s === 'string' && s.trim() ? s.trim().replace(/[.\s]+$/, '') : null);
+  /* The GUARD NOTE (look-sync CONTRACT section 3: "when a guard raises a value, the appearance panel says so").
+   * The shared top-band darkening Mantle publishes (desktop.guard) starts at the Bar tint and steps up over a
+   * bright wallpaper until text reads; when it ends above the slider, the slider says what was raised, to what
+   * and why. Dark: Mantle's top bar uses guard.dark.alpha (lib/look-guard.js). Light: guard.light.alpha is the
+   * white Helm and Quartz use; Mantle's light top bar keeps its own frost. Sync off: Mantle's top bar works out
+   * its own (no shared value to quote), so no note. -> string | null */
+  function guardRaised(v, look, dim) {
+    if (!v || !v.sync || !v.sync.on || typeof dim !== 'number') return null;
+    const gd = v.guard && typeof v.guard === 'object' && v.guard.ok === true ? v.guard : null;
+    if (!gd) return null;
+    const p = (a) => Math.round(a * 100) + '%';
+    if (look === 'light') {
+      const gl = gd.light && typeof gd.light === 'object' && gd.light.ok === true ? gd.light : null;
+      if (!gl || typeof gl.alpha !== 'number' || !(gl.alpha > dim + 0.005)) return null;
+      return 'Helm\'s and Quartz\'s top strips raised to ' + p(gl.alpha) + ' white over this wallpaper so text stays readable (Mantle\'s light top bar keeps its own frost)';
+    }
+    if (typeof gd.alpha !== 'number' || !(gd.alpha > dim + 0.005)) return null;
+    return 'Top bar raised to ' + p(gd.alpha) + ' over this wallpaper so text stays readable (Helm and Quartz use the same)';
+  }
   function lookSync(kit, R) {
     const S = { v: null, hue: DEFAULT_HUE };
     const num = (x) => typeof x === 'number' && isFinite(x);
@@ -533,7 +552,7 @@
       const pin = panel.el.querySelector('input[type="range"]');
       if (pin) { pin.min = String(Math.round((PANEL_BASE[look] + PANEL_RANGE[0]) * 100)); pin.max = String(Math.round((PANEL_BASE[look] + PANEL_RANGE[1]) * 100)); }
       blur.set({ value: Math.round(g.blurPx), disabled: !!ro, reason: ro, info: which });
-      dim.set({ value: pct(g.dim), disabled: !!ro, reason: ro, info: null,
+      dim.set({ value: pct(g.dim), disabled: !!ro, reason: ro, info: ro ? null : guardRaised(v, look, g.dim),
         help: look === 'light' ? 'How white the bar\'s glass is' : 'How dark the bar\'s glass is' });
       panel.set({ value: panelPct(g.panel, look), disabled: !!ro, reason: ro, info: null });
       const atSeed = Math.abs(g.blurPx - seed.blurPx) < 0.5 && Math.abs(g.dim - seed.dim) < 0.005 && Math.abs(g.panel - seed.panel) < 0.005;
@@ -832,5 +851,6 @@
     help: 'Background, colours, lock screen, fonts',
     keywords: 'personalize personalization appearance look wallpaper theme dark mode',
     pages,
+    _pure: { guardRaised },   // for personalization.test.js part 1 (node)
   });
 })();
