@@ -632,6 +632,54 @@ function cpuMs(pid) {
         p = await pk();
         t.check('...and a newer event before the settle time drops it (records ' + st.records + ' -> ' + kept.records + ' -> ' + p.records + ')', kept.records === st.records && p.records === st.records, JSON.stringify({ r: p.records, cache: p.cache }));
         t.check('the sim layer has no shell hook (shellHook ' + p.shellHook + ')', /^off/.test(p.shellHook || ''), p.shellHook);
+
+        // 4k: the FAST PATH (lane wk-underpaint). A FOREGROUND whose window has a cache entry at its rect now paints
+        // it without the full z-order walk, but only once the z-order shows it above the row's windows, and never
+        // sooner than 0.5 ms after the event; the full pass then confirms it. A z-order that never moves = no fast
+        // paint (the full pass predicts as before); topmost windows keep their columns; fast:false turns it off.
+        const fg = (x) => x.foreground || {};
+        const lastFg = (x) => { const r = (x.fgRecent || []).slice(-1)[0] || ''; const a = r.split(' '); return { h: a[0], ev: Number(a[1]), paint: Number(a[2]), how: a[3] }; };
+        await wins([X, Y]); await sleep(20); await inj(rowX); await sleep(60);
+        await fgEv(Y.hwnd, [Y, X]); await sleep(50); await inj(rowY); await sleep(60);
+        await fgEv(X.hwnd, [X, Y]); await sleep(50); await inj(rowX); await sleep(80);
+        st = await pk();
+        await fgEv(Y.hwnd, [Y, X]); await sleep(10);   // the z-order has moved by the event
+        p = await pk();
+        let lf = lastFg(p);
+        t.check('4k: a FOREGROUND to a cached window already above the row paints on the fast path (pred ' + p.pred + ', how ' + lf.how + ')', p.pred === 'switch painted cache' && maxDiff(buf(p.painted), rowY) === 0 && lf.how === 'fast' && lf.h === Y.hwnd, JSON.stringify({ pred: p.pred, how: lf.how }));
+        t.check('...counted once (fastPainted ' + fg(st).fastPainted + ' -> ' + fg(p).fastPainted + ', fastKept ' + fg(st).fastKept + ' -> ' + fg(p).fastKept + ', cacheHits ' + st.cacheHits + ' -> ' + p.cacheHits + ')', fg(p).fastPainted === fg(st).fastPainted + 1 && fg(p).fastKept === fg(st).fastKept + 1 && p.cacheHits === st.cacheHits + 1 && p.predictedNoChange === st.predictedNoChange, '');
+        t.check('...never sooner than 0.5 ms after the event (' + (lf.paint - lf.ev).toFixed(3) + ' ms)', lf.paint - lf.ev >= 0.5 && lf.paint - lf.ev < 20, String(lf.paint - lf.ev));
+        t.check('...and View has the event -> paint times (foreground.paintMs ' + JSON.stringify(fg(p).paintMs) + ')', fg(p).paintMs && fg(p).paintMs.n > 0 && fg(p).paintMs.p50 >= 0 && fg(p).fullMs && fg(p).fullMs.n > 0, '');
+        await inj(rowY); await sleep(40);
+        p = await pk();
+        t.check('...the agreeing row confirms it (raiseConfirmed ' + st.raiseConfirmed + ' -> ' + p.raiseConfirmed + ', pred ' + p.pred + ')', p.pred == null && p.raiseConfirmed === st.raiseConfirmed + 1 && p.corrected === st.corrected, '');
+        await sleep(60);
+        // the z-order has not moved: no fast paint, the full pass predicts it raised as before
+        st = await pk();
+        await fgEv(X.hwnd, [Y, X]); await sleep(15);
+        p = await pk(); lf = lastFg(p);
+        const zKey = Object.keys(fg(p).fastSkippedBy || {}).find((k) => /z-order did not move/.test(k));
+        t.check('4k: a z-order that does not move in time = no fast paint (how ' + lf.how + ', skipped ' + JSON.stringify(fg(p).fastSkippedBy) + ')', lf.how === 'full' && fg(p).fastPainted === fg(st).fastPainted && !!zKey && n(fg(p).fastSkippedBy, zKey) === n(fg(st).fastSkippedBy, zKey) + 1, '');
+        t.check('...and the full pass still predicts it raised (pred ' + p.pred + ', raise ' + p.raise + ')', p.pred === 'switch painted cache' && p.raise === 'waiting painted' && maxDiff(buf(p.painted), rowX) === 0, '');
+        await wins([X, Y]); await sleep(5); await inj(rowX); await sleep(80);
+        // a topmost window over part of the row keeps its columns
+        await wins([T, X, Y]); await sleep(20); await inj(expTX); await sleep(80);
+        st = await pk();
+        await fgEv(Y.hwnd, [T, Y, X]); await sleep(10);
+        p = await pk(); lf = lastFg(p);
+        t.check('4k: a topmost window keeps its columns on the fast path (how ' + lf.how + ', diff ' + maxDiff(buf(p.painted), rowTY) + ')', lf.how === 'fast' && maxDiff(buf(p.painted), rowTY) === 0, '');
+        await inj(rowTY); await sleep(80);
+        await wins([X, Y]); await sleep(20); await inj(rowX); await sleep(80);
+        // fast:false (the A/B harness): the full pass alone
+        await up(Object.assign({}, SIM, { fast: false })); await sleep(30);
+        st = await pk();
+        await fgEv(Y.hwnd, [Y, X]); await sleep(10);
+        p = await pk(); lf = lastFg(p);
+        t.check('4k: fast:false paints on the full pass only (how ' + lf.how + ', fast ' + fg(p).fast + ')', fg(p).fast === false && lf.how === 'full' && fg(p).fastPainted === fg(st).fastPainted && p.pred === 'switch painted cache' && maxDiff(buf(p.painted), rowY) === 0, '');
+        await inj(rowY); await sleep(60);
+        await up(SIM); await sleep(30);
+        p = await pk();
+        t.check('...and the next ask without it turns it back on (fast ' + fg(p).fast + ')', fg(p).fast === true, '');
       }
       await up({ on: false }); P = null;
       await sleep(200);

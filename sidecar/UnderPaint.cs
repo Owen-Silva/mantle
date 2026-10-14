@@ -128,6 +128,9 @@ namespace Mantle {
     const double RaiseCheckMinMs = 30;   // ...but never under 30 ms: an attached activation moves up to 18 ms late)
     const double FlashSkipMs = 60;   // HSHELL_FLASH for a window this close before its FOREGROUND = a refused activation
     const double WatchMs = 1500;     // ...and its window is watched this long for Windows granting it later
+    const double FastMinMs = 0.5;    // the fast path never paints sooner than this after its FOREGROUND event,
+    const double FastAfterZMs = 0.6; // ...nor sooner than this after the z-order showed the window raised,
+    const double FastWaitMaxMs = 4;  // ...and gives up (the full pass paints) when the z-order has not moved by then
     const long HSHELL_FLASH = 0x8006;    // HSHELL_REDRAW | HSHELL_HIGHBIT: a taskbar button flashes
     static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 
@@ -154,6 +157,18 @@ namespace Mantle {
     // verdicts, and refused activations skipped on their taskbar flash
     static long _raiseMoved, _raisePred, _raiseOk, _raiseBad, _raiseFlashSkip, _flashSeen, _cacheDrop, _predSame, _raiseLate;
     static readonly Dictionary<string, long> _raiseBadBy = new Dictionary<string, long>(StringComparer.Ordinal);
+    // the FOREGROUND event's own timing: entry -> the paint's UpdateLayeredWindow returned (fgPaintMs), entry ->
+    // the full pass (z-order walk + prediction) done (fgFullMs); events that painted nothing, by why; the fast path
+    static readonly List<double> _fgPaintMs = new List<double>(), _fgFullMs = new List<double>();   // last FgKeep
+    // the fast path's stages: event -> its colours ready, event -> the z-order seen moved, the paint's own cost
+    static readonly List<double> _fastReadyMs = new List<double>(), _fastZMs = new List<double>(), _fastLandMs = new List<double>();
+    static long _fastZAtOnce;   // the z-order had moved already at the first look
+    static readonly Dictionary<string, long> _fgNoPaintBy = new Dictionary<string, long>(StringComparer.Ordinal);
+    static readonly Dictionary<string, long> _fastSkipBy = new Dictionary<string, long>(StringComparer.Ordinal);
+    static long _fgEvents, _fastPaints, _fastKept, _fastExtended, _fastChanged, _fastTakenBack;
+    static readonly Queue<string> _fgRecent = new Queue<string>();   // "hwnd evMs paintMs how" (QPC ms), last FgKeep
+    const int FgKeep = 100;
+    static volatile bool _fastOn = true;   // `underpaint` fast:false turns the fast path off (the A/B harness)
     static string _shellHook = "off";   // on | off | the reason it could not be registered
     static readonly Dictionary<string, long> _predBy = new Dictionary<string, long>(StringComparer.Ordinal);
     static readonly Dictionary<string, long> _corrBy = new Dictionary<string, long>(StringComparer.Ordinal);
@@ -215,6 +230,7 @@ namespace Mantle {
         if (Program.Passive && Environment.GetEnvironmentVariable("MANTLE_UNDERPAINT_VISIBLE") != "1") vis = false;
         _visibleAsk = vis;
         _sim = Json.GetBool(req, "sim", false);
+        _fastOn = Json.GetBool(req, "fast", true);   // (main never sends it: on)
         if (req.TryGetValue("wash", out v)) {
           string b = v as string;
           byte[] w = null;
@@ -299,7 +315,13 @@ namespace Mantle {
         var lags = new List<double>(_predLags); lags.Sort();
         double med = lags.Count > 0 ? lags[lags.Count / 2] : -1, p95 = lags.Count > 0 ? lags[Math.Min(lags.Count - 1, (int)(lags.Count * 0.95))] : -1;
         long dec = _confirmed + _corrected;
-        return Json.Obj("ok", true, "on", _want, "mode", _mode, "reason", _reason, "sim", _sim, "layer", _layerInfo,
+        var nb = Json.Obj(); foreach (var kv in _fgNoPaintBy) nb[kv.Key] = kv.Value;
+        var fs = Json.Obj(); foreach (var kv in _fastSkipBy) fs[kv.Key] = kv.Value;
+        var fg = Json.Obj("events", _fgEvents, "paintMs", Pct(_fgPaintMs), "fullMs", Pct(_fgFullMs), "noPaintBy", nb,
+          "fast", _fastOn, "fastPainted", _fastPaints, "fastKept", _fastKept, "fastExtended", _fastExtended,
+          "fastChanged", _fastChanged, "fastTakenBack", _fastTakenBack, "fastSkippedBy", fs,
+          "fastReadyMs", Pct(_fastReadyMs), "fastZMs", Pct(_fastZMs), "fastZAtOnce", _fastZAtOnce, "fastLandMs", Pct(_fastLandMs));
+        return Json.Obj("foreground", fg, "ok", true, "on", _want, "mode", _mode, "reason", _reason, "sim", _sim, "layer", _layerInfo,
           "paints", _paints, "capturePaints", _capPaints, "predictionPaints", _predPaints, "held", _held,
           "predictions", pb, "confirmed", _confirmed, "corrected", _corrected, "correctedBy", cb,
           "correctionRate", dec > 0 ? Math.Round((double)_corrected / dec, 3) : 0.0,
@@ -311,6 +333,13 @@ namespace Mantle {
       }
     }
     static int _cacheCount, _hintCount;
+    /// {n, p50, p95, max} of a list of ms (under _gate).
+    static IDictionary Pct(List<double> l) {
+      var s = new List<double>(l); s.Sort();
+      if (s.Count == 0) return Json.Obj("n", 0);
+      return Json.Obj("n", s.Count, "p50", Math.Round(s[s.Count / 2], 2), "p95", Math.Round(s[Math.Min(s.Count - 1, (int)(s.Count * 0.95))], 2), "max", Math.Round(s[s.Count - 1], 2));
+    }
+    static void Keep(List<double> l, double v) { l.Add(Math.Round(v, 3)); if (l.Count > FgKeep) l.RemoveAt(0); }
 
     static void SetMode(string mode, string reason) {
       bool emit;
@@ -389,6 +418,9 @@ namespace Mantle {
     static IntPtr _watchH; static long _watchUntilQ;   // a refused activation's window, watched by the frames (Watch)
     static uint _shellMsg;                     // RegisterWindowMessage("SHELLHOOK"), 0 = no shell hook
     static bool _fine;                         // timeBeginPeriod(1) is on
+    static long _ulwQ, _ulwSeq;                // when the last UpdateLayeredWindow returned, and how many so far
+    static string _predWhy;                    // what the last Predict did ("painted", or why it painted nothing)
+    static bool _fastRecount;                  // Predict is the full pass after a fast paint: it counts no lookups
 
     static long Q() { long v; N.QueryPerformanceCounter(out v); return v; }
     static double Ms(long dq) { return dq * 1000.0 / _qpf; }
@@ -628,6 +660,7 @@ namespace Mantle {
       var src = new Win32.POINT();
       var bf = new N.BLEND(); bf.Op = 0; bf.Flags = 0; bf.Alpha = (byte)(_visible ? 255 : 0); bf.Format = 1;
       bool ok = N.UpdateLayeredWindow(_wnd, IntPtr.Zero, ref dst, ref size, _memDC, ref src, 0, ref bf, 2 /* ULW_ALPHA */);
+      _ulwQ = Q(); _ulwSeq++;
       bool first = _painted == null;
       _painted = (byte[])logical.Clone();
       _shownCols = show;
@@ -1022,10 +1055,10 @@ namespace Mantle {
 
     /// Build a prediction for the columns `only` says (null = every column whose window or title changed).
     static void Predict(string kind, long evQ, IntPtr[] prevOwner, Dictionary<IntPtr, Win> prevCov, IntPtr only, string learnKey) {
-      if (_n == 0 || _owner.Length != _n) return;
+      if (_n == 0 || _owner.Length != _n) { _predWhy = "the layer has no row yet"; return; }
       var o = new byte[_n * 3]; var m = new bool[_n];
       var p = new Pred(); p.Kind = kind; p.EvQ = evQ; p.LearnKey = learnKey;
-      bool any = false, differs = false;
+      bool any = false, differs = false, changed = false;
       for (int c = 0; c < _n; c++) {
         IntPtr h = _owner[c];
         if (only != IntPtr.Zero) { if (h != only) continue; }
@@ -1037,6 +1070,7 @@ namespace Mantle {
                                            a.L == b.L && a.T == b.T && a.R == b.R && a.B == b.B);
           if (same) continue;
         }
+        changed = true;
         Win w = null;
         if (h != IntPtr.Zero && !_cov.TryGetValue(h, out w)) continue;
         string app;
@@ -1047,9 +1081,12 @@ namespace Mantle {
         int i = c * 3;
         if (cur == null || Math.Abs(cur[i] - o[i]) > 3 || Math.Abs(cur[i + 1] - o[i + 1]) > 3 || Math.Abs(cur[i + 2] - o[i + 2]) > 3) differs = true;
       }
-      lock (_gate) { if (any) { if (p.FromHint) _hintUsed++; if (p.FromCache) _cacheHits++; } else _cacheMiss++; }
-      if (any && !differs) { lock (_gate) _predSame++; }   // known, and already what the layer shows
-      if (!any || !differs) return;
+      if (!_fastRecount) {   // (after a fast paint the lookup was counted by FastPaint)
+        lock (_gate) { if (any) { if (p.FromHint) _hintUsed++; if (p.FromCache) _cacheHits++; } else _cacheMiss++; }
+        if (any && !differs) { lock (_gate) _predSame++; }   // known, and already what the layer shows
+      }
+      if (!any || !differs) { _predWhy = !changed ? "nothing changed under the row" : !any ? "not in the cache" : "already shown"; return; }
+      _predWhy = "painted";
       // a newer event replaces an unconfirmed prediction (not a correction: nothing disagreed with it yet)
       p.Cols = o; p.Mask = m;
       Count(_predBy, kind + (p.FromHint ? ":hint" : ":cache"));
@@ -1188,7 +1225,7 @@ namespace Mantle {
     /// painted now, on the switch frame. The real z-order then has to agree (RaiseCheck, Flash).
     static void Foreground(IntPtr h, long evQ) {
       if (h == IntPtr.Zero) { Switch("switch", evQ); return; }
-      lock (_gate) _events++;
+      lock (_gate) { _events++; _fgEvents++; }
       _raise = null; _pendRec = null; _watchH = IntPtr.Zero;   // a newer activation: the coverage is re-read below with this one raised instead
       if (h == _flashH && evQ - _flashQ <= Dq(FlashSkipMs) && FgRoot() != h) {
         // a refused SetForegroundWindow: its taskbar button flashed just now and it is not the foreground.
@@ -1200,20 +1237,153 @@ namespace Mantle {
         _watchH = h; _watchUntilQ = evQ + Dq(WatchMs);
         Cov(evQ);
         _settleQ = Math.Max(_settleQ, evQ + Dq(SettleFrames * _frameMs));
+        FgDone(h, evQ, 0, "refused (taskbar flash)");
         return;
       }
       var prevOwner = _owner; var prevCov = _cov;
+      Pred before = _pred;
+      long seq0 = _ulwSeq, paintQ = 0;
+      Pred fast = FastPaint(h, evQ);
+      if (_ulwSeq != seq0) paintQ = _ulwQ;
       bool moved;
       Cov(evQ, h, out moved);
       _settleQ = Math.Max(_settleQ, evQ + Dq(SettleFrames * _frameMs));
-      Pred before = _pred;
-      Predict("switch", evQ, prevOwner, prevCov, IntPtr.Zero, null);
+      long seq1 = _ulwSeq;
+      _predWhy = null; _fastRecount = fast != null;
+      try { Predict("switch", evQ, prevOwner, prevCov, IntPtr.Zero, null); } finally { _fastRecount = false; }
+      if (paintQ == 0 && _ulwSeq != seq1) paintQ = _ulwQ;
+      string fastHow = fast != null ? FastCheck(fast, h) : null;
       bool painted = _pred != null && _pred != before && _pred.Painted;
-      lock (_gate) { if (moved) _raiseMoved++; if (painted) _raisePred++; }
+      lock (_gate) { if (moved) _raiseMoved++; if (painted) _raisePred++; Keep(_fgFullMs, Ms(Q() - evQ)); }
+      string how = fastHow != null ? fastHow : paintQ != 0 ? "full" : !_cov.ContainsKey(h) ? "not on the row" : (_predWhy ?? "no prediction");
+      FgDone(h, evQ, paintQ, how);
       if (!moved && !painted) return;   // already on top and nothing painted: there is nothing to take back
       var r = new Raise(); r.H = h; r.EvQ = evQ; r.P = painted ? _pred : null;
       r.CheckQ = evQ + Dq(Math.Max(RaiseCheckFrames * _frameMs, RaiseCheckMinMs));
       _raise = r;
+    }
+    /// The FOREGROUND event's timing for View / Peek: when it painted (0 = it did not), and how or why not.
+    static void FgDone(IntPtr h, long evQ, long paintQ, string how) {
+      lock (_gate) {
+        if (paintQ != 0) Keep(_fgPaintMs, Ms(paintQ - evQ)); else Count(_fgNoPaintBy, how);
+        _fgRecent.Enqueue(h.ToInt64().ToString(CultureInfo.InvariantCulture) + " " + Ms(evQ).ToString("F3", CultureInfo.InvariantCulture) + " " +
+          (paintQ != 0 ? Ms(paintQ).ToString("F3", CultureInfo.InvariantCulture) : "0") + " " + how.Replace(' ', '_'));
+        while (_fgRecent.Count > FgKeep) _fgRecent.Dequeue();
+      }
+    }
+
+    /// THE FAST PATH (lane wk-underpaint, 2026-10-14). The full pass walks every top-level window (Live) before it
+    /// predicts: measured on Owen's PC (m3.js A/B, passive sidecar, plain switches) event -> paint 5.7-7.0 ms p50,
+    /// 7.3-10 ms p95, 30/35 on the switch frame. With this path 1.7-2.3 ms p50 (colours ready ~0.3 ms, the
+    /// UpdateLayeredWindow itself ~0.9 ms) and 45/47 on the frame, none early, no wrong colour.
+    /// On screen (wk-refresh-floor) a paint 0.5-1 ms after the event lands on the switch frame
+    /// 96% of the time, at once 90% (the rest a frame EARLY: the z-order has not moved yet), from 2 ms on later
+    /// and later. So when h's own cache entry covers the row at its rect now, its columns are painted here,
+    /// without the walk: only where the row's window now is NOT h, not topmost and not of h's owner group, and
+    /// only once the real z-order shows h above those windows (polled; never sooner than FastMinMs after the
+    /// event or FastAfterZMs after the z-order moved, the composition lag of a z-order change). A z-order that
+    /// has not moved by FastWaitMaxMs (a refused or slow activation) = no fast paint: a refused activation still
+    /// never shows its colour. The full pass then runs as before and confirms or corrects it (FastCheck).
+    static Pred FastPaint(IntPtr h, long evQ) {
+      if (!_fastOn) return null;
+      if (_n == 0 || _owner.Length != _n) { FastSkip("the layer has no row yet"); return null; }
+      Win w;
+      if (!ReadWin(h, out w)) { FastSkip("not a visible window"); return null; }
+      if (!(w.T <= _ry && w.B > _ry)) { FastSkip("not on the row"); return null; }
+      IntPtr group = OwnerOf(w);
+      var o = new byte[_n * 3]; var m = new bool[_n];
+      var p = new Pred(); p.Kind = "switch"; p.EvQ = evQ; p.DueQ = evQ;
+      var over = new List<IntPtr>();   // the windows h has to come above
+      bool any = false, differs = false, unknown = false;
+      byte[] cur = _painted ?? _cap;
+      for (int c = 0; c < _n; c++) {
+        double xc = _rx + (c + 0.5) * _rw / _n;
+        if (!(xc >= w.L && xc < w.R)) continue;
+        IntPtr x = _owner[c];
+        // h there already, or the desktop (h was not on the row: minimised, restoring, another desktop) = the full pass
+        if (x == h || x == IntPtr.Zero) continue;
+        Win xw;
+        if (!_cov.TryGetValue(x, out xw) || xw.Top || OwnerOf(xw) == group) continue;   // stays over h
+        if (!over.Contains(x)) over.Add(x);
+        string app;   // the same order as Predict: the app's own hint, then the cache
+        if (FromHint(w, h, c, o, out app)) { p.FromHint = true; p.App = app; }
+        else if (FromCache(w, h, c, o, p.Keys)) p.FromCache = true;
+        else { unknown = true; continue; }
+        m[c] = true; any = true;
+        int i = c * 3;
+        if (cur == null || Math.Abs(cur[i] - o[i]) > 3 || Math.Abs(cur[i + 1] - o[i + 1]) > 3 || Math.Abs(cur[i + 2] - o[i + 2]) > 3) differs = true;
+      }
+      if (!any) { FastSkip(unknown ? "not in the cache" : "nothing changes under the row"); return null; }
+      if (!differs) { FastSkip("already shown"); return null; }
+      long readyQ = Q(), minQ = evQ + Dq(FastMinMs), maxQ = evQ + Dq(FastWaitMaxMs), zQ = 0;
+      bool zFirst = false;
+      for (int k = 0; ; k++) {
+        long now = Q();
+        if (zQ == 0 && AboveAll(h, over)) { zQ = now; zFirst = k == 0; }
+        if (zQ != 0 && now >= minQ && now >= zQ + Dq(FastAfterZMs)) break;
+        if (zQ == 0 && now >= maxQ) { FastSkip("the z-order did not move within " + FastWaitMaxMs + " ms"); return null; }
+        Thread.SpinWait(20);
+      }
+      p.Cols = o; p.Mask = m;
+      // counted like the full pass's own prediction (which then counts nothing again: _fastRecount)
+      Count(_predBy, "switch" + (p.FromHint ? ":hint" : ":cache"));
+      lock (_gate) { if (p.FromHint) _hintUsed++; if (p.FromCache) _cacheHits++; }
+      _pred = p;
+      long landQ = Q();
+      Land();
+      long doneQ = Q();
+      lock (_gate) {
+        _fastPaints++; if (zFirst) _fastZAtOnce++;
+        Keep(_fastReadyMs, Ms(readyQ - evQ)); Keep(_fastZMs, Ms(zQ - evQ)); Keep(_fastLandMs, Ms(doneQ - landQ));
+      }
+      return p;
+    }
+    static void FastSkip(string why) { lock (_gate) Count(_fastSkipBy, why); }
+    /// Is h above every window in xs in the real z-order now (sim: the sim list's order)?
+    static bool AboveAll(IntPtr h, List<IntPtr> xs) {
+      if (_sim) {
+        var l = _simWins; if (l == null) return false;
+        int ih = -1;
+        for (int i = 0; i < l.Count; i++) if (l[i].H == h) { ih = i; break; }
+        if (ih < 0) return false;
+        foreach (IntPtr x in xs) for (int i = 0; i < ih; i++) if (l[i].H == x) return false;
+        return true;
+      }
+      foreach (IntPtr x in xs) {
+        // up from x (it is near the top: it had the row): h is above it once Windows moved it
+        IntPtr u = x; bool found = false;
+        for (int k = 0; k < 4096; k++) { u = N.GetWindow(u, 3 /* GW_HWNDPREV */); if (u == IntPtr.Zero) break; if (u == h) { found = true; break; } }
+        if (!found) return false;
+      }
+      return true;
+    }
+    /// After the full pass: did it agree with the fast paint? Kept as it is, extended (the full prediction covers
+    /// more), changed (a fast column's colour or window differed: counted, the full one shows now), or taken back
+    /// at once (the full pass predicts nothing there, and its coverage says h does not own those columns).
+    static string FastCheck(Pred f, IntPtr h) {
+      Pred now = _pred;
+      if (now != f) {
+        bool same = now != null && now.Painted && now.Mask != null;
+        for (int c = 0; same && c < _n; c++) {
+          if (!f.Mask[c]) continue;
+          int i = c * 3;
+          if (!now.Mask[c] || Math.Abs(now.Cols[i] - f.Cols[i]) > AgreeLevels || Math.Abs(now.Cols[i + 1] - f.Cols[i + 1]) > AgreeLevels ||
+              Math.Abs(now.Cols[i + 2] - f.Cols[i + 2]) > AgreeLevels) same = false;
+        }
+        lock (_gate) { if (same) _fastExtended++; else _fastChanged++; }
+        return same ? "fast" : "fast, then changed";
+      }
+      for (int c = 0; c < _n; c++) {
+        if (!f.Mask[c]) continue;
+        if (_owner.Length == _n && _owner[c] == h) continue;
+        _pred = null;
+        lock (_gate) _fastTakenBack++;
+        byte[] o = Compose();
+        if (o != null) PaintNow(o, false);
+        return "fast, taken back";
+      }
+      lock (_gate) _fastKept++;
+      return "fast";
     }
     /// Has the real z-order caught up with the raised FOREGROUND? Yes (h is the foreground window and the row's
     /// windows are the ones the raise said): the real coverage takes over and the cache may record again. Still
@@ -1383,6 +1553,7 @@ namespace Mantle {
       v["owners"] = own;   // the row's windows left to right (hwnds, "0" = desktop), runs merged
       v["hwnd"] = wnd.ToInt64().ToString(CultureInfo.InvariantCulture);
       v["zUnderBar"] = zOk;
+      lock (_gate) v["fgRecent"] = new List<object>(_fgRecent.ToArray());   // "hwnd evMs paintMs how", QPC ms (0 = no paint)
       result = v;
       return null;
     }
