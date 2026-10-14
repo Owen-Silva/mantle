@@ -394,6 +394,83 @@ namespace Mantle {
       // The last rung. Not "intended for general use" (MSDN), but it is what Windows' own Alt+Tab
       // called for years and it activates where a refused SetForegroundWindow only flashes.
       [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hwnd, bool altTab);
+      // The input desktop check (InputElsewhere). SetLastError: a refused open says why.
+      [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+      public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+      [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr hdesk);
+      [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern IntPtr GetThreadDesktop(int threadId);
+      [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+      public static extern bool GetUserObjectInformationW(IntPtr obj, int index, StringBuilder info, int length, out int needed);
+      // focus.inputdesk {offDesktop:true} only: a scratch desktop that is never switched to.
+      [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+      public static extern IntPtr CreateDesktopW(string name, IntPtr device, IntPtr devmode, uint flags, uint access, IntPtr sa);
+      [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)] public static extern bool SetThreadDesktop(IntPtr hdesk);
+    }
+
+    const uint DESKTOP_READOBJECTS = 0x0001;
+    const uint DESKTOP_CREATEWINDOW = 0x0002;
+    const int UOI_NAME = 2;
+
+    static string DeskName(IntPtr hdesk) {
+      if (hdesk == IntPtr.Zero) return null;
+      var sb = new StringBuilder(256);
+      int needed;
+      return N.GetUserObjectInformationW(hdesk, UOI_NAME, sb, sb.Capacity * 2, out needed) ? sb.ToString() : null;
+    }
+
+    /// Null when the desktop that gets the keyboard and mouse is this thread's own; else why not, in
+    /// words (lane wk-mantle-focus, 2026-10-14). While the PIN box of the sign-in screen (or a UAC
+    /// prompt) is up, the input desktop is Windows' secure desktop, which a user process may not even
+    /// open (error 5). Measured on a thread whose desktop was not the input desktop: GetForegroundWindow
+    /// answers NULL (the live log's "attach: skipped: no thread to attach to") and GetCursorPos fails
+    /// with error 5. No rung can win there, and the Alt rung would type into the switch. A name that
+    /// cannot be read counts as ours: the ladder then runs exactly as before.
+    public static string InputElsewhere() {
+      IntPtr input = N.OpenInputDesktop(0, false, DESKTOP_READOBJECTS);
+      if (input == IntPtr.Zero) {
+        int e = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+        return "the sign-in or lock screen has the keyboard (Windows' secure desktop" +
+               (e != 0 ? ", which Mantle may not open: error " + e : "") + ")";
+      }
+      try {
+        string inName = DeskName(input);
+        string mine = DeskName(N.GetThreadDesktop(Win32.GetCurrentThreadId()));
+        if (inName == null || mine == null || string.Equals(inName, mine, StringComparison.OrdinalIgnoreCase)) return null;
+        return "another desktop has the keyboard (\"" + inName + "\", not Mantle's \"" + mine + "\")";
+      } finally {
+        N.CloseDesktop(input);
+      }
+    }
+
+    /// `focus.inputdesk {offDesktop?}`: read-only. {ours, words, input, thread} for the sidecar's own
+    /// thread. offDesktop:true runs the SAME check on a thread moved to a scratch desktop that is never
+    /// switched to (nothing is shown), which is what Mantle's threads are while the secure desktop has
+    /// the input, so the "elsewhere" branch runs on the real Win32 calls; the desktop is closed after.
+    public static string InputDesk(Dictionary<string, object> req, ref object result) {
+      if (!Json.GetBool(req, "offDesktop", false)) {
+        string w = InputElsewhere();
+        result = Json.Obj("ours", w == null, "words", w, "thread", DeskName(N.GetThreadDesktop(Win32.GetCurrentThreadId())));
+        return null;
+      }
+      IntPtr scratch = N.CreateDesktopW("mantle-focus-test-" + System.Diagnostics.Process.GetCurrentProcess().Id + "-" + Environment.TickCount,
+                                        IntPtr.Zero, IntPtr.Zero, 0, DESKTOP_READOBJECTS | DESKTOP_CREATEWINDOW, IntPtr.Zero);
+      if (scratch == IntPtr.Zero) return "could not make a scratch desktop (error " + System.Runtime.InteropServices.Marshal.GetLastWin32Error() + ")";
+      try {
+        string words = null, thread = null, setErr = null;
+        var t = new System.Threading.Thread(delegate () {
+          if (!N.SetThreadDesktop(scratch)) { setErr = "SetThreadDesktop failed (error " + System.Runtime.InteropServices.Marshal.GetLastWin32Error() + ")"; return; }
+          thread = DeskName(N.GetThreadDesktop(Win32.GetCurrentThreadId()));
+          words = InputElsewhere();
+        });
+        t.IsBackground = true;
+        t.Start();
+        if (!t.Join(2000)) return "the scratch-desktop check did not finish within 2 s";
+        if (setErr != null) return setErr;
+        result = Json.Obj("ours", words == null, "words", words, "thread", thread);
+        return null;
+      } finally {
+        N.CloseDesktop(scratch);
+      }
     }
 
     static int _helpersOut;
@@ -439,6 +516,7 @@ namespace Mantle {
         return r == IntPtr.Zero ? h : r;
       }
       public IntPtr ForegroundRoot() { return Root(Win32.GetForegroundWindow()); }
+      public string InputElsewhere() { return WindowList.InputElsewhere(); }
       // POSTED: the restore lands when the window's own thread gets to it, and a hung one can
       // never hold us (the table above). SetForegroundWindow on a still-minimised window is fine.
       public bool RestoreIfMinimised(IntPtr h) {
@@ -691,10 +769,21 @@ namespace Mantle {
   ///   SwitchToThisWindow                       never landed
   ///   the bar's AllowSetForegroundWindow, SFW  "direct", in front in 5-12 ms every time
   /// So: the hand-over is the fix, the alt rung is the real fallback (25-29 ms), and LandMs matters.
+  ///
+  /// AFTER THE HAND-OVER WENT LIVE (10-12 22:32 to 10-13 23:39): every bar click "direct ... right
+  /// granted" (13 of 13), no bar refusals. The only refusals left were Task View opened by the
+  /// top-left hot corner 0.35-0.45 s after "the lock screen closed", five of five: the PIN box had the
+  /// input (secure desktop), GetCursorPos fails there (error 5, measured), and Electron's
+  /// screen.getCursorScreenPoint() does not report a failure, so the cursor read as resting in the
+  /// top-left corner (inferred: all five fires were that corner; fixed in
+  /// lib/features/corners.js). Rung 0 (InputElsewhere) makes the ladder say that, not "another app
+  /// holds the foreground lock", and keeps it from typing an Alt into the desktop switch.
   static class FocusLadder {
     public interface IOps {
       IntPtr Root(IntPtr h);
       IntPtr ForegroundRoot();
+      /// Null when the input desktop is ours; else why not (WindowList.InputElsewhere).
+      string InputElsewhere();
       bool RestoreIfMinimised(IntPtr h);
       IntPtr ActivationTarget(IntPtr h);
       bool SetForeground(IntPtr h);
@@ -712,6 +801,22 @@ namespace Mantle {
       var sw = System.Diagnostics.Stopwatch.StartNew();
       var tried = new List<object>();
       string how = null, err = null;
+      // 0. Is the keyboard even on our desktop? While the PIN box or a UAC prompt is up it is not,
+      //    and every rung below loses (the live log, 10-13: five Task View opens right after "the
+      //    lock screen closed", each "direct: refused; attach: skipped: no thread to attach to,
+      //    refused; alt: refused; switch: ..."). Say so, and touch nothing: no restore, no Alt.
+      string away = ops.InputElsewhere();
+      if (away != null) {
+        err = "could not raise window " + hwnd.ToInt64() + ": " + away + ", so no window can come forward until it closes";
+        if (report != null) {
+          report["how"] = null;
+          report["tried"] = tried;
+          report["restored"] = false;
+          report["inputDesktop"] = away;
+          report["ms"] = sw.ElapsedMilliseconds;
+        }
+        return err;
+      }
       IntPtr root = ops.Root(hwnd);
       bool restored = ops.RestoreIfMinimised(hwnd);
       if (ops.ForegroundRoot() == root) how = "already";
@@ -764,13 +869,14 @@ namespace Mantle {
     }
 
     /// `focus.simulate {script}`: the ladder against made-up Windows behaviour. Pure. script:
-    ///   {already?, direct?: bool, directLands?: bool, attach?: 'ok'|'refused'|'failed'|'late',
-    ///    alt?: bool, switchLands?: bool, switchLate?: bool}
+    ///   {elsewhere?: bool (the secure desktop has the input), already?, direct?: bool,
+    ///    directLands?: bool, attach?: 'ok'|'refused'|'failed'|'late', alt?: bool, switchLands?: bool,
+    ///    switchLate?: bool}
     /// Answers {how, error, tried, calls}: calls is every IOps call in order.
     public static string Simulate(Dictionary<string, object> req, ref object result) {
       object raw;
       var script = Json.TryGet(req, "script", out raw) ? raw as IDictionary : null;
-      if (script == null) return "focus.simulate needs a script: {already?, direct?, directLands?, attach?, alt?, switchLands?, switchLate?}";
+      if (script == null) return "focus.simulate needs a script: {elsewhere?, already?, direct?, directLands?, attach?, alt?, switchLands?, switchLate?}";
       var ops = new ScriptOps(script);
       var rep = Json.Obj();
       string err = Run(new IntPtr(4242), ops, rep);
@@ -789,6 +895,10 @@ namespace Mantle {
       string S(string k) { return s.Contains(k) ? s[k] as string : null; }
       public IntPtr Root(IntPtr h) { return h; }
       public IntPtr ForegroundRoot() { Calls.Add("foreground"); return B("already") || landed ? new IntPtr(4242) : new IntPtr(7); }
+      public string InputElsewhere() {
+        Calls.Add("inputdesk");
+        return B("elsewhere") ? "the sign-in or lock screen has the keyboard (Windows' secure desktop, which Mantle may not open: error 5)" : null;
+      }
       public bool RestoreIfMinimised(IntPtr h) { Calls.Add("restore"); return B("minimised"); }
       public IntPtr ActivationTarget(IntPtr h) { return h; }
       int sets;
@@ -826,6 +936,7 @@ namespace Mantle {
       t.Add("focus.simulate", Lanes.Ui, FocusLadder.Simulate);
       t.Add("focus.fixture", Lanes.Ui, WindowList.FixtureFocus);
       Lanes.Register("focus.fixture", Lanes.Focus);
+      t.Add("focus.inputdesk", Lanes.Ui, WindowList.InputDesk);
       t.Add("focus.rehearse", Lanes.Ui, WindowList.Rehearse);
       // On the focus lane, like `focus`. FeatureTable.Add only accepts the lanes it knew when it was
       // written, so the lane is set here (Lanes.Register overwrites the one Add just registered).

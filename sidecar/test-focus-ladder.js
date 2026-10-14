@@ -7,6 +7,10 @@
 // focusable:false, so the click left the app Owen was in as the foreground process and was
 // delivered to Electron; the sidecar, which called SetForegroundWindow, had no right to.
 //
+// AFTER THAT SHIPPED (lane wk-mantle-focus, 2026-10-14): bar clicks all won on rung 1; the only
+// refusals left came while the sign-in screen's PIN box had the input. Rung 0 (InputElsewhere) now
+// says so and touches nothing; focus.inputdesk runs the real check, also on a scratch desktop.
+//
 // PASSIVE PART (always): focus.simulate drives every branch of the ladder on a script (which rung
 // wins, the order, that a late attach stops the ladder, the words, no rung after a win); `focus`
 // and focus.fixture refuse what they must; lib/fg-grant.js answers in words and never throws.
@@ -31,7 +35,8 @@ const onscreen = process.argv.includes('--onscreen') || process.env.MANTLE_TEST_
     s = await T.startPassive();
     const ping = await s.call('ping', {}, 4000);
     const cmds = (ping.features && ping.features.commands) || [];
-    t.check('ping lists focus.simulate and focus.fixture', cmds.includes('focus.simulate') && cmds.includes('focus.fixture'), JSON.stringify(cmds.filter((c) => /^focus/.test(c))));
+    t.check('ping lists focus.simulate, focus.fixture and focus.inputdesk', cmds.includes('focus.simulate') && cmds.includes('focus.fixture') &&
+      cmds.includes('focus.inputdesk'), JSON.stringify(cmds.filter((c) => /^focus/.test(c))));
 
     const sim = (script) => s.call('focus.simulate', { script }, 4000);
 
@@ -43,7 +48,7 @@ const onscreen = process.argv.includes('--onscreen') || process.env.MANTLE_TEST_
     // 2. The hand-over worked: rung 1 wins and nothing after it runs.
     r = await sim({ direct: true });
     t.check('granted: direct wins, attach/alt/switch never run', r.how === 'direct' && r.error === null && r.tried.length === 0 &&
-      r.calls.join(',') === 'restore,foreground,direct,wait 150', JSON.stringify(r.calls));
+      r.calls.join(',') === 'inputdesk,restore,foreground,direct,wait 150', JSON.stringify(r.calls));
 
     // 3. Accepted but the app showed another of its windows first: not a win, the next rung runs,
     //    and the report says what happened (the old ladder called this a refusal and stopped there).
@@ -86,7 +91,39 @@ const onscreen = process.argv.includes('--onscreen') || process.env.MANTLE_TEST_
 
     // 10. A minimised window is restored first, before anything else.
     r = await sim({ minimised: true, direct: true });
-    t.check('minimised: restore is the first call and is reported', r.restored === true && r.calls[0] === 'restore', JSON.stringify(r));
+    t.check('minimised: restore is the first call after the input-desktop check, and is reported', r.restored === true &&
+      r.calls[0] === 'inputdesk' && r.calls[1] === 'restore', JSON.stringify(r));
+
+    // 10b. Rung 0 (lane wk-mantle-focus, 2026-10-14). The live log after the hand-over shipped: the only
+    //      refusals left were Task View fired by the top-left hot corner right after "the lock screen
+    //      closed", while the PIN box (Windows' secure desktop) had the input. There the ladder must
+    //      say THAT, not "another app holds the foreground lock", and touch nothing: no restore, no
+    //      SetForegroundWindow, no Alt typed into the desktop switch, no SwitchToThisWindow.
+    r = await sim({ elsewhere: true, minimised: true, direct: true, alt: true, switchLands: true });
+    t.check('secure desktop has the input: says so, in words', r.how === null &&
+      /^could not raise window 4242: the sign-in or lock screen has the keyboard \(Windows' secure desktop.*\), so no window can come forward until it closes$/.test(String(r.error)) &&
+      !/foreground lock/.test(String(r.error)), String(r.error));
+    t.check('secure desktop has the input: no rung, no restore, no Alt (only the check ran)', r.calls.join(',') === 'inputdesk' &&
+      r.tried.length === 0 && r.restored === false && typeof r.inputDesktop === 'string', JSON.stringify(r));
+    t.check('secure desktop: the bar shows the whole sentence (no "; tried" list to split off)',
+      fgGrant.splitTried(r.error).shown === r.error && fgGrant.splitTried(r.error).tried === '', JSON.stringify(fgGrant.splitTried(r.error)));
+    r = await sim({ elsewhere: false, direct: true });
+    t.check('input desktop is ours: the ladder runs as before (direct wins)', r.how === 'direct' && r.calls[0] === 'inputdesk' &&
+      r.calls.includes('direct'), JSON.stringify(r.calls));
+
+    // 10c. The REAL check (WindowList.InputElsewhere, the Win32 calls themselves), read-only. On the
+    //      sidecar's own thread the session is unlocked while tests run, so the input desktop is ours.
+    //      offDesktop moves a thread onto a scratch desktop that is never switched to (nothing shown),
+    //      which is what Mantle's threads are while the secure desktop has the input.
+    const own = await s.call('focus.inputdesk', {}, 4000);
+    t.check('real check, own thread: the input desktop is ours ("Default")', own.ours === true && own.words === null &&
+      own.thread === 'Default', JSON.stringify(own));
+    const off = await s.call('focus.inputdesk', { offDesktop: true }, 4000);
+    t.check('real check, a thread on another desktop: not ours, in words that name both desktops', off.ours === false &&
+      /^another desktop has the keyboard \("Default", not Mantle's "mantle-focus-test-\d+-\d+"\)$/.test(String(off.words)) &&
+      /^mantle-focus-test-/.test(String(off.thread)), JSON.stringify(off));
+    const again = await s.call('focus.inputdesk', {}, 4000);
+    t.check('real check: the scratch desktop left the sidecar\'s own thread alone', again.ours === true && again.thread === 'Default', JSON.stringify(again));
 
     // 11. Refusals the real commands must give.
     let e = '';
