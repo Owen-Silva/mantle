@@ -170,15 +170,18 @@ namespace Mantle {
       return s.Length <= 40 ? s : s.Substring(0, 40) + "...";
     }
 
+    // The card draws art at 72 DIP; 192 px stays sharp up to 250% scaling
+    // (96 px was upscaled, and looked soft, at 150% and 200%).
+    // Outside the #if: Handle's artSize check reads it in BOTH builds, and the
+    // union-winmd build (no MANTLE_WINMD) failed with CS0103 while it lived below.
+    public const int DefaultArtPx = 192;
+
 #if !MANTLE_WINMD
     const string Unavailable =
       "media controls are not built into this sidecar: build.ps1 did not find the WinRT metadata " +
       "(System32\\WinMetadata\\Windows.Media.winmd and its companions) or the System.Runtime facade, " +
       "so MANTLE_WINMD was not defined";
 #else
-    // The card draws art at 72 DIP; 192 px stays sharp up to 250% scaling
-    // (96 px was upscaled, and looked soft, at 150% and 200%).
-    public const int DefaultArtPx = 192;
     const int CallMs = 2000;       // one WinRT call (props, a button, opening the artwork)
     const int RequestMs = 3500;    // a whole request, under the 4 s the client waits
     const int BudgetMs = RequestMs - 300;   // what the work itself may spend, so the answer beats RequestMs
