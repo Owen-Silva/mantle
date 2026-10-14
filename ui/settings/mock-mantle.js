@@ -288,16 +288,19 @@
      window.__mockLookRefuse(reason | null): the next look.* writes answer ok:false with that reason. */
   const shared = {
     sync: { on: true, state: 'ok', text: null, reason: null, rev: 40, by: 'Quartz', at: '2026-10-10T09:00:00Z' },
-    glass: { blurPx: 5, dim: 0.5, panel: 0 }, accent: { hue: null },
+    glass: { blurPx: 5, dim: 0.5, panel: 0 }, glassLight: { blurPx: 12, dim: 0.45, panel: 0 }, accent: { hue: null },
     desktop: { ok: true, text: 'Shared with Helm and Quartz: "Snow peak" (rev 41)', reason: null, rev: 41, id: 'builtin:snow-peak', title: 'Snow peak', type: 'picture' },
     windows: { ok: true, text: 'Windows\' wallpaper matches', reason: null },
     guard: { ok: true, working: false, text: 'Top band darkened to 54% for Helm, Quartz and Mantle', reason: null, alpha: 0.54, contrast: 4.32 },
     theme: null, refuse: null,
   };
   const syncText = (s) => (s.text != null ? s.text : !s.on ? 'Off: Mantle keeps its own look' : 'On · in sync (last change from ' + (s.by || 'Mantle') + ', just now)');
+  /* the sliders edit the glass of the look Mantle shows now (shared.glass = dark, shared.glassLight = light), like main */
+  const lookNow = () => ((shared.theme || themeNow().theme) === 'light' ? 'light' : 'dark');
   const lookView = () => ({ ok: true, theme: shared.theme || themeNow().theme,
     sync: Object.assign({}, shared.sync, { state: shared.sync.on ? shared.sync.state : 'off', text: syncText(shared.sync) }),
-    glass: Object.assign({}, shared.glass), ranges: { blurPx: [0, 64], dim: [0.2, 0.9], panel: [-0.3, 0.15] }, accent: Object.assign({}, shared.accent),
+    glass: Object.assign({}, lookNow() === 'light' ? shared.glassLight : shared.glass), glassLook: lookNow(),
+    glassBoth: { dark: Object.assign({}, shared.glass), light: Object.assign({}, shared.glassLight) }, ranges: { blurPx: [0, 64], dim: [0.2, 0.9], panel: [-0.3, 0.15] }, accent: Object.assign({}, shared.accent),
     desktop: Object.assign({}, shared.desktop), windows: Object.assign({}, shared.windows), guard: Object.assign({}, shared.guard) });
   const emitShared = () => emit('look', lookView());
   const mine = () => { shared.sync = Object.assign({}, shared.sync, { rev: (shared.sync.rev || 0) + 1, by: 'Mantle', at: new Date().toISOString(), text: null }); };
@@ -322,12 +325,14 @@
       if (shared.sync.on && shared.sync.state === 'newer') return { ok: false, reason: shared.sync.reason || 'a newer Helm or Quartz wrote the shared look' };
       if (name === 'look.glass') {
         const R = { blurPx: [0, 64, 'Blur must be 0 to 64 px'], dim: [0.2, 0.9, 'Bar tint must be 20% to 90%'], panel: [-0.3, 0.15, 'Panel opacity must be 53% to 98%'] };
+        if (a.look !== undefined && a.look !== 'light' && a.look !== 'dark') return { ok: false, reason: 'the glass change named no look (light or dark)' };
+        const look = a.look || lookNow();
         const keys = Object.keys(a).filter((k) => k in R);
         if (!keys.length) return { ok: false, reason: 'Nothing to change (Mantle was sent ' + sent(a) + ')' };
         for (const k of keys) if (typeof a[k] !== 'number' || !isFinite(a[k]) || a[k] < R[k][0] || a[k] > R[k][1]) return { ok: false, reason: R[k][2] + ' (Mantle was sent ' + sent(a[k]) + ')' };
-        const g = Object.assign({}, shared.glass);
+        const g = Object.assign({}, look === 'light' ? shared.glassLight : shared.glass);
         keys.forEach((k) => { g[k] = a[k]; });
-        shared.glass = g;
+        if (look === 'light') shared.glassLight = g; else shared.glass = g;
       } else if (name === 'look.accent') {
         if (!(a.hue === null || (Number.isInteger(a.hue) && a.hue >= 0 && a.hue <= 360))) return { ok: false, reason: 'A hue must be a whole number from 0 to 360, or none (Mantle was sent ' + sent(a.hue) + ')' };
         shared.accent = { hue: a.hue };

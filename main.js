@@ -1159,14 +1159,14 @@ function startLookDesktop() {
       glass: () => look.guardGlass(),
       monitor: () => { const b = screen.getPrimaryDisplay().bounds; return [b.width, b.height]; },
     });
-    // a new dark dim or blur (from any app) republishes the record with a new guard; nothing else here does
-    const glassKey = () => { const g = look.guardGlass(); return `${g.dim}|${g.blurPx}`; };
+    // a new dark or light dim or blur (from any app) republishes the record with a new guard (dark + light); nothing else here does
+    const glassKey = () => { const g = look.guardGlass(); const l = g.light || {}; return `${g.dim}|${g.blurPx}|${l.dim}|${l.blurPx}`; };
     let lastGlass = glassKey();
     look.onChange(() => {
       const k = glassKey();
       if (k === lastGlass) return;
       lastGlass = k;
-      lookDesktop.check('the dark glass changed');
+      lookDesktop.check('the glass changed');
     });
     let lastWall = null;
     const look1 = () => {
