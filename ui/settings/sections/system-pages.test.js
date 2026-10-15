@@ -20,7 +20,6 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..', '..');
-const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT || path.join(require('os').tmpdir(), 'mantle-sysabout-shots');
 

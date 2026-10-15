@@ -87,7 +87,18 @@ async function nodeTests() {
   const src = fs.readFileSync(path.join(ROOT, 'ui', 'settings', 'sections', 'personalization.js'), 'utf8');
   vm.runInNewContext(src, { MantleSettings: { section(x) { DEF = x; } }, window: {}, document: { currentScript: { dataset: { section: 'personalization' } } }, console });
   check('page: checkSection is happy', DEF && M.checkSection(DEF, 'personalization') === null, DEF && M.checkSection(DEF, 'personalization'));
-  check('page: order 40 in the Windows group, replaces nothing', DEF && DEF.order === 40 && DEF.group === 'windows' && DEF.replaces === undefined);
+  {
+    // the guard note (look-sync CONTRACT section 3): Bar tint says when the shared top-band darkening raised it
+    const GR_ = DEF && DEF._pure && DEF._pure.guardRaised;
+    const on = { on: true, state: 'ok' };
+    const G = { ok: true, alpha: 0.54, contrast: 4.3, light: { ok: true, alpha: 0.62, contrast: 4.8 } };
+    check('page: guard note, dark: raised .50 -> .54 says what, to what and why', !!GR_ && GR_({ sync: on, guard: G }, 'dark', 0.5) === 'Top bar raised to 54% over this wallpaper so text stays readable (Helm and Quartz use the same)', GR_ && GR_({ sync: on, guard: G }, 'dark', 0.5));
+    check('page: guard note, dark: not raised (alpha = tint, or below) -> none', !!GR_ && GR_({ sync: on, guard: Object.assign({}, G, { alpha: 0.5 }) }, 'dark', 0.5) === null && GR_({ sync: on, guard: G }, 'dark', 0.6) === null);
+    check('page: guard note, light: names the white Helm and Quartz use, and Mantle\'s own frost', !!GR_ && /^Helm's and Quartz's top strips raised to 62% white over this wallpaper so text stays readable \(Mantle's light top bar keeps its own frost\)$/.test(GR_({ sync: on, guard: G }, 'light', 0.45) || ''));
+    check('page: guard note: sync off, no guard, a failed guard or a failed light guard -> none', !!GR_ && GR_({ sync: { on: false }, guard: G }, 'dark', 0.5) === null && GR_({ sync: on }, 'dark', 0.5) === null
+      && GR_({ sync: on, guard: { ok: false, reason: 'x', alpha: null } }, 'dark', 0.5) === null && GR_({ sync: on, guard: Object.assign({}, G, { light: { ok: false, reason: 'x' } }) }, 'light', 0.45) === null && GR_(null, 'dark', 0.5) === null);
+  }
+  check('page: order 40 in the Windows group, replaces nothing',DEF && DEF.order === 40 && DEF.group === 'windows' && DEF.replaces === undefined);
   const ids = DEF ? DEF.pages.map((p) => p.id) : [];
   check('page: the ten pages', ids.join(' ') === 'background colors themes lock-screen text-input dynamic-lighting start taskbar fonts device-usage', ids.join(' '));
   const rows = DEF ? DEF.pages.flatMap((p) => p.search || []) : [];
@@ -403,7 +414,7 @@ const SHOTS = [
     check("23: the desktop row names the shared wallpaper and says Windows' matches", /Shared with Helm and Quartz: "Snow peak" \(rev 41\)/.test(d0) && /Windows' wallpaper matches/.test(d0), d0);
     const g0 = [await rng(p, GB), await rng(p, GD), await rng(p, GP)];
     check('23: the sliders show 5 px, 50%, 83%', g0.map((x) => x.out).join(' ') === '5 px 50% 83%' && g0.every((x) => !x.dis), JSON.stringify(g0));
-    check('23: dark: no light note on the sliders', !/light keeps its own frost/.test(await p.textContent('#page')));
+    check('23: dark: the sliders say they edit the dark look', /Editing the dark look/.test(await rowText(p, GB) || '') && !/Editing the light look/.test(await p.textContent('#page')), await rowText(p, GB));
     check('23: Reset glass is off at the defaults, and says so', await p.$eval(sel(GR) + ' button', (b) => b.disabled && b.textContent === 'Reset glass') && /The glass is at its defaults/.test(await rowText(p, GR) || ''));
     check("23: accent reads Mantle's own, the hue slider is off and says how to turn it on", await seg(p, AM) === "Mantle's own" && (await rng(p, AH)).dis && /Pick Custom hue to choose one/.test(await rowText(p, AH) || ''));
     check('23: the accent swatch is drawn from --lg-acc', await p.$eval(sel(AM) + ' [data-accent-swatch]', (e) => /var\(--lg-acc\)/.test(e.style.background)));
@@ -421,7 +432,7 @@ const SHOTS = [
     await slide(p, GB, 20);
     await p.waitForTimeout(250);
     let gl = await calls(p, 'look.glass');
-    check('23: Blur release sends look.glass { blurPx: 20 } once', gl.length === 1 && JSON.stringify(gl[0].args) === '{"blurPx":20}' && (await rng(p, GB)).out === '20 px', JSON.stringify(gl));
+    check('23: Blur release sends look.glass { blurPx: 20 } once', gl.length === 1 && JSON.stringify(gl[0].args) === '{"look":"dark","blurPx":20}' && (await rng(p, GB)).out === '20 px', JSON.stringify(gl));
     check('23: Reset glass turns on once the glass moved', await p.$eval(sel(GR) + ' button', (b) => !b.disabled) && !/at its defaults/.test(await rowText(p, GR) || ''));
     await p.focus(sel(GB) + ' input');
     await p.keyboard.press('ArrowRight');
@@ -431,11 +442,11 @@ const SHOTS = [
     await slide(p, GD, 35);
     await p.waitForTimeout(250);
     gl = await calls(p, 'look.glass');
-    check('23: Bar tint 35% sends { dim: 0.35 }', gl.length === 3 && JSON.stringify(gl[2].args) === '{"dim":0.35}' && (await rng(p, GD)).out === '35%', JSON.stringify(gl));
+    check('23: Bar tint 35% sends { look: dark, dim: 0.35 }', gl.length === 3 && JSON.stringify(gl[2].args) === '{"look":"dark","dim":0.35}' && (await rng(p, GD)).out === '35%', JSON.stringify(gl));
     await slide(p, GP, 70);
     await p.waitForTimeout(250);
     gl = await calls(p, 'look.glass');
-    check('23: Panel opacity 70% sends { panel: -0.13 } and shows 70%', gl.length === 4 && JSON.stringify(gl[3].args) === '{"panel":-0.13}' && (await rng(p, GP)).out === '70%', JSON.stringify(gl));
+    check('23: Panel opacity 70% sends { look: dark, panel: -0.13 } and shows 70%', gl.length === 4 && JSON.stringify(gl[3].args) === '{"look":"dark","panel":-0.13}' && (await rng(p, GP)).out === '70%', JSON.stringify(gl));
     check('23: Panel opacity says lower is more see-through', /Lower is more see-through/.test(await rowText(p, GP) || ''));
     // a refused write springs back with the reason
     await p.evaluate(() => window.__mockLookRefuse('made up: look.json is read-only'));
@@ -449,7 +460,7 @@ const SHOTS = [
     await p.waitForTimeout(250);
     gl = await calls(p, 'look.glass');
     const g1 = [await rng(p, GB), await rng(p, GD), await rng(p, GP)].map((x) => x.out).join(' ');
-    check('23: Reset glass sends { blurPx: 5, dim: 0.5, panel: 0 } and every slider is back', gl.length === 6 && JSON.stringify(gl[5].args) === '{"blurPx":5,"dim":0.5,"panel":0}' && g1 === '5 px 50% 83%' &&
+    check('23: Reset glass sends { blurPx: 5, dim: 0.5, panel: 0 } and every slider is back', gl.length === 6 && JSON.stringify(gl[5].args) === '{"look":"dark","blurPx":5,"dim":0.5,"panel":0}' && g1 === '5 px 50% 83%' &&
       await p.$eval(sel(GR) + ' button', (b) => b.disabled), JSON.stringify(gl[5]) + ' ' + g1);
     // accent: own -> custom -> a hue -> own -> custom keeps the last hue
     await p.click(sel(AM) + ' button[data-v="custom"]');
@@ -512,7 +523,17 @@ const SHOTS = [
     const gBad = await rowText(p, LST) || '';
     check('24: a darkening failure warns on the sync status line with its reason', /On · in sync/.test(gBad) && /Top-band darkening not shared: made up: the still's top band could not be read as pixels/.test(gBad)
       && !/darkened to 54%/.test(gBad) && await p.$eval(sel(LST) + ' .pip', (e) => e.classList.contains('warn')), gBad);
-    await p.evaluate(() => window.__mockLook({ guard: { ok: true, text: 'Top band darkened to 54% for Helm, Quartz and Mantle', reason: null, alpha: 0.54 } }));
+    // guard.light (CONTRACT "Light look"): its value beside the dark one; a light-only failure warns with its reason
+    await p.evaluate(() => window.__mockLook({ guard: { ok: true, text: 'Top band darkened to 54% for Helm, Quartz and Mantle', reason: null, alpha: 0.54, light: { ok: true, alpha: 0.47, contrast: 4.9, reason: null } } }));
+    await p.waitForTimeout(150);
+    const glOk = await rowText(p, LST) || '';
+    check('24: the light top band shows its white under the sync status', /Light top band: white 47% for Helm and Quartz/.test(glOk) && await p.$eval(sel(LST) + ' .pip', (e) => e.classList.contains('ok')), glOk);
+    await p.evaluate(() => window.__mockLook({ guard: { ok: true, text: 'Top band darkened to 54% for Helm, Quartz and Mantle', reason: null, alpha: 0.54, light: { ok: false, alpha: null, contrast: null, reason: 'made up: the light band could not be read' } } }));
+    await p.waitForTimeout(150);
+    const glBad = await rowText(p, LST) || '';
+    check('24: a light-only failure warns with its reason (the dark value still shows)', /Light top band not shared: made up: the light band could not be read/.test(glBad) && /darkened to 54%/.test(glBad)
+      && await p.$eval(sel(LST) + ' .pip', (e) => e.classList.contains('warn')), glBad);
+    await p.evaluate(() => window.__mockLook({ guard: { ok: true, text: 'Top band darkened to 54% for Helm, Quartz and Mantle', reason: null, alpha: 0.54, light: null } }));
     // a newer Helm or Quartz: glass and accent are read-only with the reason; sync stays usable
     await p.evaluate(() => window.__mockLook({ sync: { state: 'newer', reason: 'made up: Quartz 3.0 wrote look.json in a newer format', text: 'On · read only' } }));
     await p.waitForTimeout(150);
@@ -543,16 +564,26 @@ const SHOTS = [
   ['perso-26-look-light', PG('colors', '&theme=light'), async (p) => {
     await p.setViewportSize({ width: 1280, height: 900 });
     check('26: painted light', await p.evaluate(() => document.documentElement.dataset.theme) === 'light');
-    const li = await p.evaluate((rows) => rows.map((r) => /These shape the dark look; light keeps its own frost/.test(document.querySelector(`[data-row="${r}"]`).textContent)), [GB, GD, GP]);
-    check('26: light: each glass slider says it shapes the dark look', li.every(Boolean), JSON.stringify(li));
-    check('26: light: the sliders stay usable', !(await rng(p, GB)).dis && !(await rng(p, GD)).dis && !(await rng(p, GP)).dis);
+    // the light look un-held (CONTRACT "Light look", 2026-10-14): in light the sliders edit glass.light, and say so
+    check('26: light: the sliders say they edit the light look', /Editing the light look/.test(await rowText(p, GB) || ''), await rowText(p, GB));
+    const l0 = [await rng(p, GB), await rng(p, GD), await rng(p, GP)];
+    check('26: light: the sliders show the light glass (12 px, 45%, 76%)', l0.map((x) => x.out).join(' ') === '12 px 45% 76%' && l0.every((x) => !x.dis), JSON.stringify(l0));
+    check('26: light: Bar tint says how white', /How white the bar's glass is/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    check('26: light: no light top band published -> no guard note', !/raised to/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    await p.evaluate(() => window.__mockLook({ guard: { light: { ok: true, alpha: 0.62, contrast: 4.8, reason: null } } }));
+    await p.waitForTimeout(150);
+    check('26: light: guard note names the white Helm and Quartz use', /Helm's and Quartz's top strips raised to 62% white over this wallpaper so text stays readable/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    await p.evaluate(() => window.__mockLook({ guard: { light: null } }));
+    await p.waitForTimeout(150);
+    check('26: light: Reset names the light defaults', /Blur 12 px, bar tint 45%, panel opacity 76% \(the light look\)/.test(await rowText(p, GR) || ''), await rowText(p, GR));
     await slide(p, GD, 60);
     await p.waitForTimeout(250);
     const gl = await calls(p, 'look.glass');
-    check('26: light: a slider still writes', gl.length === 1 && gl[0].args.dim === 0.6, JSON.stringify(gl));
+    check('26: light: Bar tint 60% sends { look: light, dim: 0.6 }', gl.length === 1 && JSON.stringify(gl[0].args) === '{"look":"light","dim":0.6}' && (await rng(p, GD)).out === '60%', JSON.stringify(gl));
     await p.evaluate(() => window.__mockWindowsMode('dark'));
     await p.waitForTimeout(200);
-    check('26: Match Windows going dark drops the light note (the look event carries the theme)', !/light keeps its own frost/.test(await p.textContent('#page')));
+    check('26: Match Windows going dark: the sliders edit the dark look and show it (the look event carries the theme)', /Editing the dark look/.test(await rowText(p, GB) || '')
+      && (await rng(p, GD)).out === '50%' && (await rng(p, GB)).out === '5 px', await rowText(p, GB));
     await p.evaluate(() => window.__mockWindowsMode('light'));
     await p.waitForTimeout(200);
     await p.$eval(sel('personalization.colors.mantle-mode'), (e) => e.scrollIntoView({ block: 'start' }));
@@ -560,7 +591,16 @@ const SHOTS = [
   ['perso-27-look-dark', PG('colors', '&theme=dark'), async (p) => {
     await p.setViewportSize({ width: 1280, height: 900 });
     check('27: painted dark', await p.evaluate(() => document.documentElement.dataset.theme) === 'dark');
-    check('27: dark: no light note', !/light keeps its own frost/.test(await p.textContent('#page')));
+    check('27: dark: the sliders say they edit the dark look', /Editing the dark look/.test(await rowText(p, GB) || ''), await rowText(p, GB));
+    check('27: guard note: Bar tint 50% with the shared darkening at 54% says it was raised, and why', /Top bar raised to 54% over this wallpaper so text stays readable/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    await p.evaluate(() => window.__mockLook({ sync: { on: false } }));
+    await p.waitForTimeout(150);
+    check('27: guard note: sync off -> no shared value quoted', !/raised to/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    await p.evaluate(() => window.__mockLook({ sync: { on: true }, guard: { alpha: 0.5 } }));
+    await p.waitForTimeout(150);
+    check('27: guard note: darkening at the tint -> no note', !/raised to/.test(await rowText(p, GD) || ''), await rowText(p, GD));
+    await p.evaluate(() => window.__mockLook({ guard: { alpha: 0.54 } }));
+    await p.waitForTimeout(150);
     await p.click(sel(AM) + ' button[data-v="custom"]');
     await p.waitForTimeout(250);
     await p.$eval(sel('personalization.colors.mantle-mode'), (e) => e.scrollIntoView({ block: 'start' }));

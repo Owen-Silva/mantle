@@ -99,11 +99,16 @@ $cscArgs = @(
 # Bluetooth.cs uses its PowerShell fallback, which says via:'powershell' in
 # every reply. Install the Windows SDK and this build picks the fast route up
 # automatically, with no code change.
+# NEVER UnionMetadata\Facade\Windows.winmd (MEASURED on GitHub's Windows
+# runners via cloudtest, 2026-10-14): it holds only type FORWARDS, and "Facade" sorts above
+# the "10.0.x" version folders, so it used to win and csc failed with CS1069 in
+# Bluetooth.cs. The real union file is UnionMetadata\<version>\Windows.winmd.
 $union = @()
 foreach ($d in @('C:\Program Files (x86)\Windows Kits\10\UnionMetadata',
                  'C:\Program Files\Windows Kits\10\UnionMetadata')) {
   if (Test-Path $d) {
     $union += Get-ChildItem $d -Recurse -Filter 'Windows.winmd' -ErrorAction SilentlyContinue |
+              Where-Object { $_.Directory.Name -ne 'Facade' } |
               Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName
   }
 }

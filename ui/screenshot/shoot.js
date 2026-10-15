@@ -28,21 +28,8 @@ const { execFileSync, spawn } = require('child_process');
 const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
 const G = require('./geometry.js');
 
-// the newest installed Playwright Chromium (the pinned chromium-1234 build was removed 2026-10-05;
-// lane same-finish, 2026-10-09, same recipe as ui/desktop/wall-player.test.js)
-const CHROME = (() => {
-  const fsx = require('fs');
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
-  try {
-    for (const d of fsx.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
-      const p = base + '/' + d + '/chrome-win64/chrome.exe';
-      if (fsx.existsSync(p)) return p;
-    }
-  } catch (_) { /* reported below as "no chromium at" */ }
-  return base + '/chromium-*/chrome-win64/chrome.exe';
-})();
-const PAGE = 'file:///C:/Users/user/mantle/ui/screenshot/index.html';
-const CARD = 'file:///C:/Users/user/mantle/ui/screenshot/card.html';
+const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');   // this checkout's pages
+const CARD = 'file:///' + path.join(__dirname, 'card.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/screenshot/shots';
 const EXE = process.env.MANTLE_SIDECAR_EXE || '';
@@ -299,60 +286,131 @@ async function cards(browser) {
     check(`card ${st}: no page errors`, errors.length === 0, errors.join(' | '));
     await ctx.close();
   }
+  const dismissals = (page) => page.evaluate(() => window.__mock.calls.filter((c) => c.name === 'screenshot.cardDismiss').map((c) => c.args));
+  const state = (page) => page.evaluate(() => Object.assign(window.__cardState(), {
+    thumb: getComputedStyle(document.getElementById('open')).display, actions: getComputedStyle(document.querySelector('.actions')).display,
+    justSaved: document.getElementById('card').classList.contains('just-saved') }));
+  const calls = (page, name) => page.evaluate((n) => window.__mock.calls.filter((c) => c.name === n).map((c) => c.args), name);
   // A picture card after a text card: the text-card class must not stick (one card window serves both).
   {
     const { ctx, page } = await open(browser, `${CARD}?state=text&life=0`, 420, 190, 1);
-    await page.evaluate(() => window.__cardEmit('screenshot.card', { seq: 4, name: 'Screenshot 2026-09-27 101500.png', path: 'C:\\x.png', w: 800, h: 600, copied: true, lifeMs: 1e9 }));
-    const t = await page.evaluate(() => ({ cls: document.getElementById('card').classList.contains('text-card'), thumb: getComputedStyle(document.getElementById('open')).display, title: document.getElementById('title').textContent, folder: document.getElementById('folder').disabled }));
-    check('card: a picture card after a text card is a picture card again (thumbnail, actions)', !t.cls && t.thumb !== 'none' && t.title === 'Screenshot copied' && !t.folder, JSON.stringify(t));
+    await page.evaluate(() => window.__cardEmit('screenshot.card', { seq: 4, thumb: window.__mockPieces(), w: 800, h: 600, copied: true, canSave: true, lifeMs: 1e9 }));
+    await page.waitForTimeout(300);
+    const t = Object.assign(await state(page), { cls: await page.evaluate(() => document.getElementById('card').classList.contains('text-card')) });
+    check('card: a picture card after a text card is a picture card again (picture, Save)', !t.cls && t.thumb !== 'none' && t.title === 'Screenshot copied' && t.save && t.save.label === 'Save' && t.pic >= 1, JSON.stringify(t));
     await ctx.close();
   }
-  for (const st of ['ok', 'nosave', 'nocopy', 'neither']) {
+  // THE STATES (lane shot-save): copied is the default; Save is offered whenever nothing was saved.
+  for (const st of ['copied', 'auto', 'nosave', 'nocopy', 'neither']) {
     const { ctx, page, errors } = await open(browser, `${CARD}?state=${st}&life=0`, 420, 190, 1.25);
     await page.waitForTimeout(700);
     await page.screenshot({ path: path.join(OUT, `card-${st}.png`) });
-    const t = await page.evaluate(() => ({ title: document.getElementById('title').textContent, name: document.getElementById('name').textContent, status: document.getElementById('status').textContent, warn: document.getElementById('warn').hidden ? '' : document.getElementById('warn').textContent, folder: document.getElementById('folder').disabled, thumb: getComputedStyle(document.getElementById('open')).display, actions: getComputedStyle(document.querySelector('.actions')).display }));
-    if (st === 'ok') check('card ok: "Screenshot copied", one line with the folder and size, no file name line', t.title === 'Screenshot copied' && t.status === 'Saved to Screenshots · 1280 × 720' && !t.name && !t.warn && !t.folder, JSON.stringify(t));
-    if (st === 'nosave') check('card nosave: says copied, not saved, and why; folder disabled', /copied/.test(t.title) && /Not saved: Windows did not let Mantle save there/.test(t.warn) && t.folder, JSON.stringify(t));
-    if (st === 'nocopy') check('card nocopy: says saved, not copied, and why', /saved/.test(t.title) && /Not copied:/.test(t.warn), JSON.stringify(t));
-    if (st === 'neither') check('card neither: says not saved, both reasons', /not saved/.test(t.title) && /Not saved/.test(t.warn) && /Not copied/.test(t.warn), JSON.stringify(t));
-    if (st === 'nosave' || st === 'neither') check(`card ${st}: no empty picture box and no dead buttons (nothing was saved)`, t.thumb === 'none' && t.actions === 'none', JSON.stringify(t));
-    if (st === 'nocopy') check('card nocopy: the picture and the file actions are there (it was saved)', t.thumb !== 'none' && t.actions !== 'none' && !t.folder, JSON.stringify(t));
+    const t = await state(page);
+    if (st === 'copied') check('card copied (the default): "Screenshot copied", its size, a Save button, no file actions, picture drawn from the frame, nothing to open',
+      t.title === 'Screenshot copied' && t.status === '1280 × 720' && !t.warn && t.save && t.save.label === 'Save' && !t.save.disabled && !t.folder && !t.copyPath && !t.open && t.pic >= 1, JSON.stringify(t));
+    if (st === 'auto') check('card auto (saving every screenshot): "Screenshot copied", "Saved to Screenshots · size", Show in folder + Copy path, no Save',
+      t.title === 'Screenshot copied' && t.status === 'Saved to Screenshots · 1280 × 720' && !t.warn && !t.save && t.folder === 'Show in folder' && t.copyPath && t.open, JSON.stringify(t));
+    if (st === 'nosave') check('card nosave: copied, says not saved and why, and offers Save again', t.title === 'Screenshot copied' && /^Not saved: Windows did not let Mantle save there/.test(t.warn) && t.save && !t.folder, JSON.stringify(t));
+    if (st === 'nocopy') check('card nocopy: says not copied and why, and offers Save', t.title === 'Screenshot not copied' && /^Not copied: another app/.test(t.warn) && t.save && t.save.label === 'Save' && t.thumb !== 'none', JSON.stringify(t));
+    if (st === 'neither') check('card neither: not copied, both reasons, Save offered', t.title === 'Screenshot not copied' && /Not saved/.test(t.warn) && /Not copied/.test(t.warn) && !!t.save, JSON.stringify(t));
     check(`card ${st}: no jargon on screen`, !/sidecar|\bshot\.\w|Exception|0x[0-9A-F]|HRESULT|undefined|null|NaN/.test(t.title + t.status + t.warn), t.title + ' | ' + t.status + ' | ' + t.warn);
     check(`card ${st}: no page errors`, errors.length === 0, errors.join(' | '));
     await ctx.close();
   }
-  // THE ACTIONS, clicked (lane capture-shot): each asks main once, naming THIS card (its seq), and the
-  // timer pauses under the pointer and runs out once it leaves.
-  const dismissals = (page) => page.evaluate(() => window.__mock.calls.filter((c) => c.name === 'screenshot.cardDismiss').map((c) => c.args));
+  // SAVE, pressed: "Saving..." holds the card, then it says where it went; a double press saves once.
+  {
+    const { ctx, page, errors } = await open(browser, `${CARD}?state=copied&life=0&saveslow=900`, 420, 190, 1.25);
+    await page.waitForTimeout(700);
+    await page.click('#save');
+    await page.click('#save', { force: true }).catch(() => {});
+    await page.waitForTimeout(150);
+    const busy = await state(page);
+    await page.screenshot({ path: path.join(OUT, 'card-saving.png') });
+    check('card Save: says "Saving…" (disabled) and the timer rests while it works', busy.save && busy.save.label === 'Saving…' && busy.save.disabled && busy.paused, JSON.stringify(busy));
+    await page.waitForTimeout(1100);
+    await page.mouse.move(2, 2);
+    await page.waitForTimeout(250);
+    const t = await state(page);
+    await page.screenshot({ path: path.join(OUT, 'card-saved.png') });
+    const saves = await calls(page, 'screenshot.cardSave');
+    check('card Save: asks main ONCE for this card (a double press adds nothing)', saves.length === 1 && saves[0].seq === 3 && saves[0].via === 'button', JSON.stringify(saves));
+    check('card Save: then says "Saved to Screenshots" (with its check), "1280 × 720 · also copied", Show in folder + Copy path, the picture opens it',
+      t.title === 'Saved to Screenshots' && t.status === '1280 × 720 · also copied' && t.justSaved && !t.save && t.folder === 'Show in folder' && t.copyPath && t.open && !t.warn, JSON.stringify(t));
+    const holds = (await calls(page, 'screenshot.cardHold')).map((c) => c.held);
+    check('card Save: main hears the card held while saving and let go after (its backstop follows)', holds[0] === true && holds.includes(false), JSON.stringify(holds));
+    const sizes = await calls(page, 'screenshot.cardSize');
+    check('card Save: the window is told the card\'s new size', sizes.length >= 1 && sizes[0].w > 300, JSON.stringify(sizes));
+    check('card Save: no page errors', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+  }
+  // SAVE FAILS: the card stays, says why in plain words, and Save can be pressed again.
+  {
+    const { ctx, page } = await open(browser, `${CARD}?state=copied&life=0&savefail=1`, 420, 190, 1.25);
+    await page.waitForTimeout(700);
+    await page.click('#save');
+    await page.waitForTimeout(400);
+    await page.mouse.move(2, 2);
+    await page.waitForTimeout(200);
+    const t = await state(page);
+    await page.screenshot({ path: path.join(OUT, 'card-savefail.png') });
+    const ds = await dismissals(page);
+    check('card Save fails: the card stays, says "Not saved: <why>", and the button says Try again', ds.length === 0 && !t.gone && /^Not saved: Windows did not let Mantle save there/.test(t.warn) &&
+      t.save && t.save.label === 'Try again' && !t.save.disabled && t.title === 'Screenshot copied', JSON.stringify(t));
+    await page.click('#save');
+    await page.waitForTimeout(300);
+    check('card Save fails: Try again asks main again', (await calls(page, 'screenshot.cardSave')).length === 2);
+    await ctx.close();
+  }
+  // KEYBOARD: the arrows reach Save; Ctrl+S saves; Esc closes.
+  {
+    const { ctx, page } = await open(browser, `${CARD}?state=copied&life=0`, 420, 190, 1);
+    await page.waitForTimeout(500);
+    await page.keyboard.press('ArrowRight');
+    const first = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    await page.keyboard.press('Control+s');
+    await page.waitForTimeout(300);
+    const saves = await calls(page, 'screenshot.cardSave');
+    check('card keyboard: Right lands on Save first (the picture has nothing to open yet), Ctrl+S saves', first === 'save' && saves.length === 1 && saves[0].via === 'key', JSON.stringify({ first, saves }));
+    await ctx.close();
+  }
+  // THE TIMER: ~7 s with a Save button, resting under the pointer, then it goes by itself.
+  const dismissals2 = dismissals;
+  {
+    const { ctx, page } = await open(browser, `${CARD}?state=copied`, 420, 190, 1);
+    const l00 = await page.evaluate(() => window.__card.life);
+    await page.hover('#card');
+    await page.waitForTimeout(200);
+    const l0 = await page.evaluate(() => window.__cardState().left);
+    await page.waitForTimeout(1500);
+    const l1 = await page.evaluate(() => window.__cardState());
+    check('card timer: a picture card lives 7 s; the pointer on it pauses the countdown and the bar rests', l00 === 7000 && Math.abs(l1.left - l0) < 60 && l1.paused && (await dismissals2(page)).length === 0, JSON.stringify({ l00, l0, l1 }));
+    await page.mouse.move(5, 5);         // off the card, so the timer runs
+    const t0 = Date.now();
+    await page.waitForFunction(() => window.__mock.calls.some((c) => c.name === 'screenshot.cardDismiss'), null, { timeout: 12000 }).catch(() => {});
+    const d = await lastCall(page, 'screenshot.cardDismiss');
+    check('card timer: it goes by itself once the pointer leaves, after the time it had left', d && d.why === 'timeout' && d.seq === 3 && Date.now() - t0 > 4000, JSON.stringify({ d, ms: Date.now() - t0 }));
+    await ctx.close();
+  }
+  // THE ACTIONS of a saved card (lane capture-shot): each asks main once, naming THIS card (its seq).
   const card5 = (seq) => ({ seq, name: 'Screenshot 2026-09-29 101500.png', folderName: 'Screenshots', path: 'C:\\x.png', w: 10, h: 10, copied: true, lifeMs: 1e9 });
   {
-    const { ctx, page } = await open(browser, `${CARD}?state=ok`, 420, 190, 1);
+    const { ctx, page } = await open(browser, `${CARD}?state=auto`, 420, 190, 1);
     await page.click('#copy-path');
     await page.click('#copy-path');
     const n = await page.evaluate(() => window.__mock.calls.filter((c) => c.name === 'screenshot.cardCopyPath').length);
     const cp = await lastCall(page, 'screenshot.cardCopyPath');
     const lbl = await page.textContent('#copy-path');
     check('card: Copy path asks main once (a second click adds nothing), names this card, says "Path copied"', n === 1 && cp && cp.seq === 3 && lbl === 'Path copied', JSON.stringify({ n, cp, lbl }));
-    await page.hover('#card');
-    const l0 = await page.evaluate(() => window.__card.left);
-    await page.waitForTimeout(1200);
-    const l1 = await page.evaluate(() => ({ left: window.__card.left, paused: document.getElementById('card').classList.contains('paused') }));
-    check('card: the pointer on the card pauses its timer, and the countdown bar rests', Math.abs(l1.left - l0) < 60 && l1.paused, JSON.stringify({ l0, l1 }));
-    await page.mouse.move(5, 5);         // off the card, so the timer runs
-    await page.waitForFunction(() => window.__mock.calls.some((c) => c.name === 'screenshot.cardDismiss'), null, { timeout: 9000 }).catch(() => {});
-    const d = await lastCall(page, 'screenshot.cardDismiss');
-    check('card: it dismisses itself after its time', d && d.why === 'timeout' && d.seq === 3, JSON.stringify(d));
     await ctx.close();
   }
   {
-    const { ctx, page } = await open(browser, `${CARD}?state=ok&life=0`, 420, 190, 1);
+    const { ctx, page } = await open(browser, `${CARD}?state=auto&life=0`, 420, 190, 1);
     await page.waitForTimeout(700);
     await page.hover('#open');
     await page.waitForTimeout(200);
     const aff = await page.evaluate(() => ({ glyph: getComputedStyle(document.querySelector('.open-glyph')).opacity, tip: document.getElementById('open').title, titleTag: document.getElementById('title').tagName }));
-    await page.screenshot({ path: path.join(OUT, 'card-ok-hover.png') });
-    check('card: the picture looks clickable on hover (open glyph) and names the file in its tooltip; the title is plain text', aff.glyph === '1' && /^Open Screenshot 2026-09-24 143005\.png$/.test(aff.tip) && aff.titleTag === 'DIV', JSON.stringify(aff));
+    await page.screenshot({ path: path.join(OUT, 'card-auto-hover.png') });
+    check('card: a saved picture looks clickable on hover (open glyph) and names the file in its tooltip; the title is plain text', aff.glyph === '1' && /^Open Screenshot 2026-09-24 143005\.png$/.test(aff.tip) && aff.titleTag === 'DIV', JSON.stringify(aff));
     await page.dblclick('#open');
     await page.waitForTimeout(500);
     const opens = await page.evaluate(() => window.__mock.calls.filter((c) => c.name === 'screenshot.cardOpen').length);
@@ -361,7 +419,7 @@ async function cards(browser) {
     await ctx.close();
   }
   {
-    const { ctx, page } = await open(browser, `${CARD}?state=ok&life=0&openfail=1`, 420, 190, 1);
+    const { ctx, page } = await open(browser, `${CARD}?state=auto&life=0&openfail=1`, 420, 190, 1);
     await page.click('#open');
     await page.waitForTimeout(500);
     const w = await page.evaluate(() => document.getElementById('warn').hidden ? '' : document.getElementById('warn').textContent);
@@ -371,12 +429,12 @@ async function cards(browser) {
     await ctx.close();
   }
   {
-    const { ctx, page } = await open(browser, `${CARD}?state=ok&life=0`, 420, 190, 1);
+    const { ctx, page } = await open(browser, `${CARD}?state=auto&life=0`, 420, 190, 1);
     await page.click('#folder');
     await page.waitForTimeout(450);
     const f = await lastCall(page, 'screenshot.cardFolder');
     let d = await lastCall(page, 'screenshot.cardDismiss');
-    check('card: Open folder asks main (this card) and the card goes', f && f.seq === 3 && d && d.why === 'folder' && d.seq === 3, JSON.stringify({ f, d }));
+    check('card: Show in folder asks main (this card) and the card goes', f && f.seq === 3 && d && d.why === 'folder' && d.seq === 3, JSON.stringify({ f, d }));
     await page.evaluate((c) => window.__cardEmit('screenshot.card', c), card5(4));
     await page.waitForTimeout(700);
     await page.click('#dismiss');
@@ -388,7 +446,7 @@ async function cards(browser) {
     const walk = [];
     for (let i = 0; i < 3; i++) { await page.keyboard.press('ArrowRight'); walk.push(await page.evaluate(() => document.activeElement && document.activeElement.id)); }
     const held = await page.evaluate(() => window.__card.focus);
-    check('card: the arrows walk its controls from the first (picture, Copy path, Open folder); keyboard focus holds the timer', walk.join(',') === 'open,copy-path,folder' && held, JSON.stringify({ walk, held }));
+    check('card: the arrows walk a saved card\'s controls from the first (picture, Show in folder, Copy path); keyboard focus holds the timer', walk.join(',') === 'open,folder,copy-path' && held, JSON.stringify({ walk, held }));
     await page.keyboard.press('Escape');
     await page.waitForTimeout(450);
     d = await lastCall(page, 'screenshot.cardDismiss');
@@ -397,7 +455,7 @@ async function cards(browser) {
   }
   {
     // A new capture's card arriving DURING the old card's slide-out stays up: the old dismiss is dropped.
-    const { ctx, page } = await open(browser, `${CARD}?state=ok&life=0`, 420, 190, 1);
+    const { ctx, page } = await open(browser, `${CARD}?state=copied&life=0`, 420, 190, 1);
     await page.waitForTimeout(700);
     await page.click('#dismiss');
     await page.evaluate((c) => window.__cardEmit('screenshot.card', c), card5(9));
@@ -425,7 +483,7 @@ async function frameFormat(browser) {
     const m = reply.result.monitors[0];
     const ctx = await browser.newContext({ viewport: { width: 400, height: 300 } });
     const page = await ctx.newPage();
-    await page.goto('file:///C:/Users/user/mantle/ui/screenshot/card.html?life=0');
+    await page.goto(CARD + '?life=0');
     const r = await page.evaluate(async (src) => {
       const img = new Image();
       const t0 = performance.now();
@@ -487,17 +545,19 @@ function themeEvery(browser) {
   const games = gamesRunning();
   if (games) { console.log(`NOT RUN: ${games} game process(es) are running; screenshots wait.`); process.exit(2); }
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ timeout: 0, executablePath: fs.existsSync(CHROME) ? CHROME : undefined, headless: true, args: ['--allow-file-access-from-files'] });
+  const browser = await require('../settings/test-browser.js').launch(chromium, { timeout: 0, headless: true, args: ['--allow-file-access-from-files'] });
   themeEvery(browser);   // MANTLE_THEME=dark|light: <html data-theme> + the mantle-theme event, as dm-core's plumbing does
   try {
-    await dpiCase(browser, 1, 0, true);
-    await dpiCase(browser, 1.25, 0, true);
-    await dpiCase(browser, 1.5, -1920, true);
-    await dpiCase(browser, 2, 0, false);
-    await modes(browser);
-    await copyText(browser);
+    // MANTLE_SHOOT_ONLY=cards: just the card's states and actions (lane shot-save: one theme pass each).
+    const only = process.env.MANTLE_SHOOT_ONLY === 'cards';
+    if (!only) await dpiCase(browser, 1, 0, true);
+    if (!only) await dpiCase(browser, 1.25, 0, true);
+    if (!only) await dpiCase(browser, 1.5, -1920, true);
+    if (!only) await dpiCase(browser, 2, 0, false);
+    if (!only) await modes(browser);
+    if (!only) await copyText(browser);
     await cards(browser);
-    await frameFormat(browser);
+    if (!only) await frameFormat(browser);
   } finally {
     await browser.close();
   }

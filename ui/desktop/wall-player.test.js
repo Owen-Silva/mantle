@@ -20,18 +20,6 @@ const fs = require('fs');
 const os = require('os');
 
 const ROOT = path.resolve(__dirname, '..', '..');
-// the newest installed Playwright Chromium (the pinned chromium-1234 build was removed 2026-10-05;
-// lane same-shell, 2026-10-09)
-const CHROME = (() => {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
-  try {
-    for (const d of fs.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
-      const p = base + '/' + d + '/chrome-win64/chrome.exe';
-      if (fs.existsSync(p)) return p;
-    }
-  } catch (_) { /* reported below as "no chromium at" */ }
-  return base + '/chromium-*/chrome-win64/chrome.exe';
-})();
 const PAGE = 'file:///' + path.join(ROOT, 'ui', 'desktop', 'index.html').replace(/\\/g, '/') + '?ok=1';
 const BASE = (process.argv.find((a) => a.startsWith('--base=')) || '').slice(7);
 
@@ -60,9 +48,8 @@ const PNG_B = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS
 const pic = (id, url) => ({ ok: true, reason: '', paused: false, unload: false, item: { id, title: id, type: 'picture', url, look: { fit: 'cover', filter: '', rate: 1 }, props: [] } });
 
 async function run() {
-  if (!fs.existsSync(CHROME)) { failures.push('no chromium at ' + CHROME); return; }
   const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--autoplay-policy=no-user-gesture-required', '--allow-file-access-from-files'] });
+  const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true, args: ['--autoplay-policy=no-user-gesture-required', '--allow-file-access-from-files'] });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mantle-wallplayer-'));
   try {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });

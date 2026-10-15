@@ -18,7 +18,6 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
 
-const CHROME = 'C:/Users/user/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
 const PAGE = 'file:///C:/Users/user/mantle/ui/settings/index.html';
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/settings-shots';

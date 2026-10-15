@@ -14,7 +14,10 @@
  *   2. lifecycle + placement: the layer window, its styles, its owner, hidden until the first row, the rect,
  *      not in `windows`, the focus untouched, on:false and a lapsed keep-alive take it down, transparent
  *   3. following a fake bar: directly under it in the z-order, moves / hides / shows with it
- *   4. predictions in sim mode: cache, confirm, hold + correct, partial rows, moves, titles, hints, flush
+ *   4. predictions in sim mode: cache, confirm, hold + correct, partial rows, moves, titles, hints, flush,
+ *      4i the raised FOREGROUND (lane mn-underpaint): the event comes before the z-order change, so it predicts
+ *      with its window raised; the z-order check confirms or takes it back; a taskbar flash (a refused
+ *      activation) skips it or takes it back at once; topmost windows stay over it; its owner comes with it
  *   5. a real-screen smoke with `underwatch` (skipped, with the reason, when duplication polls)
  */
 const path = require('path');
@@ -339,7 +342,7 @@ function cpuMs(pid) {
       t.check('a window moved down drops its entry (cache ' + st.cache + ' -> ' + p.cache + ')', p.cache === st.cache - 1 && p.pred == null, JSON.stringify({ cache: p.cache, pred: p.pred }));
       st = p;
       const D2 = Object.assign({}, D, { rect: [1200, 50, 1390, 600] });
-      await ev('foreground', D.hwnd, [C3, D2, A]); await sleep(40);
+      await ev('foreground', D.hwnd, [D2, C3, A]); await sleep(40);   // D on top already (4i: one that is not yet)
       p = await pk();
       t.check('a resized window drops its entry (cache ' + st.cache + ' -> ' + p.cache + ')', p.cache === st.cache - 1, JSON.stringify({ cache: p.cache, pred: p.pred }));
       // the column D2 uncovered (39) is A's: A was seen whole, then only cols 0-9 (C2 and D over it): its entry kept the rest
@@ -474,6 +477,228 @@ function cpuMs(pid) {
       await up({ flush: true }); await sleep(40);
       const c1 = (await pk()).cache;
       t.check('flush empties the cache (' + c0 + ' -> ' + c1 + ')', c0 > 0 && c1 === 0, c0 + ' -> ' + c1);
+
+      // 4i: the raised FOREGROUND. On screen the event arrives 1-18 ms BEFORE Windows moves the window up, so
+      // a foreground ev here comes with its window NOT first in `wins` (the z-order at the event); a later
+      // `wins` is the z-order catching up. `fg` is what GetForegroundWindow says; `flash` an HSHELL_FLASH.
+      {
+        await up(SIM); P = SIM; await sleep(60);
+        const X = { hwnd: '1011', title: 'Xi', rect: [1000, 100, 1400, 600] };
+        const Y = { hwnd: '1012', title: 'Ypsilon', rect: [1000, 100, 1400, 600] };
+        const T = { hwnd: '1013', title: 'Tau', rect: [1000, 100, 1200, 600], topmost: true };   // cols 0-19, topmost
+        const Dl = { hwnd: '1014', title: 'Dialog', rect: [1100, 100, 1200, 600], owner: X.hwnd };   // cols 10-19, owned by X
+        const rowX = row((c) => [180, 30 + c * 4, 60]);
+        const rowY = row((c) => [30, 160, 40 + c * 4]);
+        const at = (r, c) => [r[c * 3], r[c * 3 + 1], r[c * 3 + 2]];
+        const rowTY = row((c) => (c < 20 ? [250, 250, 0] : at(rowY, c)));
+        const expTX = row((c) => (c < 20 ? at(rowTY, c) : at(rowX, c)));
+        const rowDX = row((c) => (c >= 10 && c < 20 ? [0, 0, 250] : at(rowX, c)));
+        const fgEv = (hwnd, w, fg) => up({ wins: w, ev: fg ? { type: 'foreground', hwnd, fg } : { type: 'foreground', hwnd } });
+        const n = (o, k) => (o && o[k]) || 0;
+        // setup: X and Y both cached, X on top and painted
+        await wins([X, Y]); await sleep(20); await inj(rowX); await sleep(60);
+        await fgEv(Y.hwnd, [Y, X]); await sleep(50); await inj(rowY); await sleep(60);
+        await fgEv(X.hwnd, [X, Y]); await sleep(10); await inj(rowX); await sleep(80);
+        p = await pk();
+        t.check('(4i setup: X and Y cached, X on top and painted)', p.cache >= 2 && maxDiff(buf(p.painted), rowX) === 0 && p.pred == null && p.raise == null, JSON.stringify({ cache: p.cache, pred: p.pred, raise: p.raise }));
+
+        // predict: the event comes while Y is still under X
+        st = p;
+        await fgEv(Y.hwnd, [X, Y]); await sleep(10);
+        p = await pk();
+        t.check('a FOREGROUND whose window is not on top yet still predicts it, raised (pred ' + p.pred + ', raise ' + p.raise + ')', p.pred === 'switch painted cache' && p.raise === 'waiting painted' && maxDiff(buf(p.painted), rowY) === 0, JSON.stringify({ pred: p.pred, raise: p.raise }));
+        t.check('...counted (raiseMoved ' + st.raiseMoved + ' -> ' + p.raiseMoved + ', raisePredicted ' + st.raisePredicted + ' -> ' + p.raisePredicted + ')', p.raiseMoved === st.raiseMoved + 1 && p.raisePredicted === st.raisePredicted + 1, '');
+        // confirm: the z-order catches up, the next frame agrees
+        await wins([Y, X]); await sleep(5); await inj(rowY); await sleep(30);
+        p = await pk();
+        t.check('...the z-order catching up confirms it (raiseConfirmed ' + st.raiseConfirmed + ' -> ' + p.raiseConfirmed + ', confirmed ' + st.confirmed + ' -> ' + p.confirmed + ')', p.raiseConfirmed === st.raiseConfirmed + 1 && p.confirmed === st.confirmed + 1 && p.raise == null && p.pred == null && p.raiseCorrected === st.raiseCorrected, JSON.stringify({ rc: p.raiseConfirmed, c: p.confirmed, raise: p.raise }));
+        await sleep(60);
+
+        // correct: Windows never brings X forward (refused, and no flash seen): taken back at the check
+        st = await pk();
+        const t0 = Date.now();
+        await fgEv(X.hwnd, [Y, X], Y.hwnd); await sleep(8);
+        const pa = await pk();
+        t.check('a refused activation (no flash seen) is predicted at first (pred ' + pa.pred + ')', pa.pred === 'switch painted cache' && maxDiff(buf(pa.painted), rowX) === 0, pa.pred);
+        await sleep(8); await inj(rowY);   // the screen still shows Y
+        const gone = await until(async () => { const x = await pk(); return x.pred == null ? x : null; }, 300, 2);
+        const ms = Date.now() - t0;
+        console.log('  info: a refused raise (no flash) was taken back ' + ms + ' ms after its event (check at 3 frames; the old path held 4 frames, then waited for a capture)');
+        p = gone.v || await pk();
+        t.check('...and taken back by the z-order check in ~3 frames (' + ms + ' ms; raiseCorrectedBy ' + JSON.stringify(p.raiseCorrectedBy) + ')', !!gone.v && n(p.raiseCorrectedBy, 'zorder') === n(st.raiseCorrectedBy, 'zorder') + 1 && p.raiseCorrected === st.raiseCorrected + 1 && maxDiff(buf(p.painted), rowY) === 0 && ms < 150, JSON.stringify({ pred: p.pred, raise: p.raise }));
+        t.check('...not as a stale cache entry: corrected stays ' + st.corrected + ' and the cache keeps X (' + st.cache + ' -> ' + p.cache + ')', p.corrected === st.corrected && p.cache === st.cache, JSON.stringify({ k: p.corrected, cache: p.cache }));
+        await sleep(60);
+
+        // an attached activation: GetForegroundWindow and the z-order flip ~15 ms after the event: confirmed
+        st = await pk();
+        await fgEv(X.hwnd, [Y, X], Y.hwnd); await sleep(15);
+        await up({ fg: X.hwnd, wins: [X, Y] }); await sleep(5); await inj(rowX); await sleep(30);
+        p = await pk();
+        t.check('an activation whose foreground and z-order flip late (attached) is confirmed, not taken back', p.raiseConfirmed === st.raiseConfirmed + 1 && p.raiseCorrected === st.raiseCorrected && p.confirmed === st.confirmed + 1 && maxDiff(buf(p.painted), rowX) === 0, JSON.stringify({ rc: p.raiseConfirmed, rk: p.raiseCorrected, c: p.confirmed, pred: p.pred }));
+        await sleep(60);
+
+        // flash first: the refusal's own taskbar flash just before its FOREGROUND = no prediction at all
+        st = await pk();
+        await up({ flash: Y.hwnd, wins: [X, Y], ev: { type: 'foreground', hwnd: Y.hwnd, fg: X.hwnd } }); await sleep(10);
+        p = await pk();
+        t.check('an HSHELL_FLASH just before a FOREGROUND skips the prediction (raiseFlashSkipped ' + st.raiseFlashSkipped + ' -> ' + p.raiseFlashSkipped + ')', p.raiseFlashSkipped === st.raiseFlashSkipped + 1 && p.pred == null && p.raise == null && p.raisePredicted === st.raisePredicted && maxDiff(buf(p.painted), rowX) === 0, JSON.stringify({ pred: p.pred, raise: p.raise }));
+        await sleep(80);
+
+        // flash after: painted on the event, taken back the moment the flash comes
+        st = await pk();
+        await fgEv(Y.hwnd, [X, Y], X.hwnd); await sleep(5);
+        const pb = await pk();
+        await up({ flash: Y.hwnd }); await sleep(5);
+        p = await pk();
+        t.check('an HSHELL_FLASH just after the FOREGROUND takes the prediction back at once (before ' + pb.pred + ', after ' + p.pred + ')', pb.pred === 'switch painted cache' && maxDiff(buf(pb.painted), rowY) === 0 && p.pred == null && p.raise == null && maxDiff(buf(p.painted), rowX) === 0, JSON.stringify({ before: pb.pred, after: p.pred }));
+        t.check('...counted as raiseCorrectedBy flash, the cache kept', n(p.raiseCorrectedBy, 'flash') === n(st.raiseCorrectedBy, 'flash') + 1 && p.corrected === st.corrected && p.cache === st.cache, JSON.stringify(p.raiseCorrectedBy));
+        await sleep(80);
+
+        // refused, then granted with no event of its own (an attach retry): the frames notice it, and the frame
+        // that shows it is recorded under IT, not under the window the coverage still named
+        st = await pk();
+        await up({ flash: Y.hwnd, wins: [X, Y], ev: { type: 'foreground', hwnd: Y.hwnd, fg: X.hwnd } }); await sleep(30);
+        await up({ fg: Y.hwnd, wins: [Y, X] }); await inj(rowY); await sleep(80);
+        p = await pk();
+        t.check('a refused activation granted later without an event is noticed by the next frame (raiseGrantedLater ' + st.raiseGrantedLater + ' -> ' + p.raiseGrantedLater + ', owners ' + JSON.stringify(p.owners) + ')', p.raiseGrantedLater === st.raiseGrantedLater + 1 && JSON.stringify(p.owners) === JSON.stringify([Y.hwnd]), '');
+        await fgEv(X.hwnd, [Y, X]); await sleep(8);
+        const px = await pk();
+        t.check('...and X\'s cache entry was not overwritten with Y\'s frame (switching back paints X\'s own colour)', px.pred === 'switch painted cache' && maxDiff(buf(px.painted), rowX) === 0, JSON.stringify({ pred: px.pred }));
+        await wins([X, Y]); await sleep(5); await inj(rowX); await sleep(80);
+
+        // a window flashing while it really is the foreground is not a refusal
+        st = await pk();
+        await fgEv(Y.hwnd, [X, Y]); await sleep(5);
+        await up({ flash: Y.hwnd }); await sleep(5);
+        p = await pk();
+        t.check('a flash from the window that IS the foreground does not cancel it (pred ' + p.pred + ')', p.pred === 'switch painted cache' && p.raise === 'waiting painted' && maxDiff(buf(p.painted), rowY) === 0, JSON.stringify({ pred: p.pred, raise: p.raise }));
+        await wins([Y, X]); await sleep(5); await inj(rowY); await sleep(30);
+        p = await pk();
+        t.check('...and is confirmed', p.raiseConfirmed === st.raiseConfirmed + 1 && p.confirmed === st.confirmed + 1, JSON.stringify({ rc: p.raiseConfirmed, c: p.confirmed }));
+        await sleep(80);
+
+        // a topmost window stays over the raised one
+        await wins([T, Y, X]); await sleep(20); await inj(rowTY); await sleep(60);
+        st = await pk();
+        await fgEv(X.hwnd, [T, Y, X]); await sleep(10);
+        p = await pk();
+        const pt = buf(p.painted);
+        t.check('a raised window goes UNDER a topmost one: cols 0-19 stay the topmost window\'s (diff ' + maxDiff(pt, rowTY, 0, 20) + '), 20-39 are X\'s (diff ' + maxDiff(pt, rowX, 20, 40) + ')', p.pred === 'switch painted cache' && maxDiff(pt, rowTY, 0, 20) === 0 && maxDiff(pt, rowX, 20, 40) === 0, p.pred);
+        await wins([T, X, Y]); await sleep(5); await inj(expTX); await sleep(30);
+        p = await pk();
+        t.check('...confirmed (topmost)', p.raiseConfirmed === st.raiseConfirmed + 1 && p.confirmed === st.confirmed + 1, JSON.stringify({ rc: [st.raiseConfirmed, p.raiseConfirmed], c: [st.confirmed, p.confirmed], pred: p.pred, raise: p.raise }));
+        await sleep(80);
+
+        // an owned dialog: its owner comes forward with it
+        await wins([Dl, X, Y]); await sleep(20); await inj(rowDX); await sleep(60);
+        await fgEv(Y.hwnd, [Dl, X, Y]); await sleep(10); await wins([Y, Dl, X]); await sleep(5); await inj(rowY); await sleep(80);
+        st = await pk();
+        await fgEv(Dl.hwnd, [Y, Dl, X]); await sleep(10);
+        p = await pk();
+        const pd = buf(p.painted);
+        t.check('a FOREGROUND for an owned dialog raises its owner under it (dialog cols diff ' + maxDiff(pd, rowDX, 10, 20) + ', owner cols diff ' + Math.max(maxDiff(pd, rowDX, 0, 10), maxDiff(pd, rowDX, 20, 40)) + ')', p.pred === 'switch painted cache' && maxDiff(pd, rowDX) === 0, p.pred);
+        await wins([Dl, X, Y]); await sleep(5); await inj(rowDX); await sleep(30);
+        p = await pk();
+        t.check('...confirmed (owner)', p.raiseConfirmed === st.raiseConfirmed + 1 && p.confirmed === st.confirmed + 1, JSON.stringify({ rc: [st.raiseConfirmed, p.raiseConfirmed], c: [st.confirmed, p.confirmed], pred: p.pred, raise: p.raise }));
+        await sleep(80);
+
+        // still windows: the only frame after a switch comes before the settle time; it is recorded AT the settle
+        // time (it used to be dropped, so switching between two still windows never had anything to predict)
+        const P1 = { hwnd: '1015', title: 'Still one', rect: [1000, 100, 1400, 600] };
+        const P2 = { hwnd: '1016', title: 'Still two', rect: [1000, 100, 1400, 600] };
+        const rowP1 = row((c) => [90, 10 + c * 5, 200]);
+        const rowP2 = row((c) => [10 + c * 5, 220, 90]);
+        await wins([P1, P2]); await sleep(20); await inj(rowP1); await sleep(60);
+        st = await pk();
+        await fgEv(P2.hwnd, [P1, P2]); await up({ wins: [P2, P1], inject: b64(rowP2) });   // the z-order caught up, and the window's one frame
+        const early = await pk();
+        await sleep(60);
+        p = await pk();
+        t.check('a frame before the settle time is not recorded at once (records ' + st.records + ' -> ' + early.records + ')', early.records === st.records, JSON.stringify({ r: early.records }));
+        t.check('...but at the settle time, as the screen stayed (records ' + st.records + ' -> ' + p.records + ', cache ' + st.cache + ' -> ' + p.cache + ')', p.records === st.records + 1 && p.cache === st.cache + 1, JSON.stringify({ r: p.records, cache: p.cache }));
+        await fgEv(P1.hwnd, [P2, P1]); await sleep(5); await wins([P1, P2]); await sleep(5); await inj(rowP1); await sleep(80);
+        st = await pk();
+        await fgEv(P2.hwnd, [P1, P2]); await sleep(8);
+        p = await pk();
+        t.check('...so the next switch to that still window is painted from it on the event (pred ' + p.pred + ')', p.pred === 'switch painted cache' && maxDiff(buf(p.painted), rowP2) === 0 && p.raisePredicted === st.raisePredicted + 1, JSON.stringify({ pred: p.pred }));
+        await wins([P2, P1]); await sleep(5); await inj(rowP2); await sleep(80);
+        // a newer event before the settle time drops the kept frame (it predates what that event leaves on screen)
+        const P3 = { hwnd: '1017', title: 'Still three', rect: [1000, 100, 1400, 600] };
+        st = await pk();
+        // (back to back, no sleeps: a node sleep(5) can take 15 ms here, and the kept frame's settle time is 33 ms)
+        await fgEv(P3.hwnd, [P2, P3, P1]); await up({ wins: [P3, P2, P1], inject: b64(solid(5, 5, 5)) });
+        const kept = await pk();
+        await up({ wins: [P2, P1], ev: { type: 'close', hwnd: P3.hwnd } }); await sleep(550);   // past that event's own settle (450 ms)
+        p = await pk();
+        t.check('...and a newer event before the settle time drops it (records ' + st.records + ' -> ' + kept.records + ' -> ' + p.records + ')', kept.records === st.records && p.records === st.records, JSON.stringify({ r: p.records, cache: p.cache }));
+        t.check('the sim layer has no shell hook (shellHook ' + p.shellHook + ')', /^off/.test(p.shellHook || ''), p.shellHook);
+
+        // 4k: the FAST PATH (lane wk-underpaint). A FOREGROUND whose window has a cache entry at its rect now paints
+        // it without the full z-order walk, but only once the z-order shows it above the row's windows, and never
+        // sooner than 0.5 ms after the event; the full pass then confirms it. A z-order that never moves = no fast
+        // paint (the full pass predicts as before); topmost windows keep their columns; fast:false turns it off.
+        const fg = (x) => x.foreground || {};
+        const lastFg = (x) => { const r = (x.fgRecent || []).slice(-1)[0] || ''; const a = r.split(' '); return { h: a[0], ev: Number(a[1]), paint: Number(a[2]), how: a[3] }; };
+        await wins([X, Y]); await sleep(20); await inj(rowX); await sleep(60);
+        await fgEv(Y.hwnd, [Y, X]); await sleep(50); await inj(rowY); await sleep(60);
+        await fgEv(X.hwnd, [X, Y]); await sleep(50); await inj(rowX); await sleep(80);
+        st = await pk();
+        await fgEv(Y.hwnd, [Y, X]); await sleep(10);   // the z-order has moved by the event
+        p = await pk();
+        let lf = lastFg(p);
+        t.check('4k: a FOREGROUND to a cached window already above the row paints on the fast path (pred ' + p.pred + ', how ' + lf.how + ')', p.pred === 'switch painted cache' && maxDiff(buf(p.painted), rowY) === 0 && lf.how === 'fast' && lf.h === Y.hwnd, JSON.stringify({ pred: p.pred, how: lf.how }));
+        t.check('...counted once (fastPainted ' + fg(st).fastPainted + ' -> ' + fg(p).fastPainted + ', fastKept ' + fg(st).fastKept + ' -> ' + fg(p).fastKept + ', cacheHits ' + st.cacheHits + ' -> ' + p.cacheHits + ')', fg(p).fastPainted === fg(st).fastPainted + 1 && fg(p).fastKept === fg(st).fastKept + 1 && p.cacheHits === st.cacheHits + 1 && p.predictedNoChange === st.predictedNoChange, '');
+        t.check('...never sooner than 0.5 ms after the event (' + (lf.paint - lf.ev).toFixed(3) + ' ms)', lf.paint - lf.ev >= 0.5 && lf.paint - lf.ev < 20, String(lf.paint - lf.ev));
+        t.check('...and View has the event -> paint times (foreground.paintMs ' + JSON.stringify(fg(p).paintMs) + ')', fg(p).paintMs && fg(p).paintMs.n > 0 && fg(p).paintMs.p50 >= 0 && fg(p).fullMs && fg(p).fullMs.n > 0, '');
+        await inj(rowY); await sleep(40);
+        p = await pk();
+        t.check('...the agreeing row confirms it (raiseConfirmed ' + st.raiseConfirmed + ' -> ' + p.raiseConfirmed + ', pred ' + p.pred + ')', p.pred == null && p.raiseConfirmed === st.raiseConfirmed + 1 && p.corrected === st.corrected, '');
+        await sleep(60);
+        // the z-order has not moved: no fast paint, the full pass predicts it raised as before
+        st = await pk();
+        await fgEv(X.hwnd, [Y, X]); await sleep(15);
+        p = await pk(); lf = lastFg(p);
+        const zKey = Object.keys(fg(p).fastSkippedBy || {}).find((k) => /z-order did not move/.test(k));
+        t.check('4k: a z-order that does not move in time = no fast paint (how ' + lf.how + ', skipped ' + JSON.stringify(fg(p).fastSkippedBy) + ')', lf.how === 'full' && fg(p).fastPainted === fg(st).fastPainted && !!zKey && n(fg(p).fastSkippedBy, zKey) === n(fg(st).fastSkippedBy, zKey) + 1, '');
+        t.check('...and the full pass still predicts it raised (pred ' + p.pred + ', raise ' + p.raise + ')', p.pred === 'switch painted cache' && p.raise === 'waiting painted' && maxDiff(buf(p.painted), rowX) === 0, '');
+        await wins([X, Y]); await sleep(5); await inj(rowX); await sleep(80);
+        // a topmost window over part of the row keeps its columns
+        await wins([T, X, Y]); await sleep(20); await inj(expTX); await sleep(80);
+        st = await pk();
+        await fgEv(Y.hwnd, [T, Y, X]); await sleep(10);
+        p = await pk(); lf = lastFg(p);
+        t.check('4k: a topmost window keeps its columns on the fast path (how ' + lf.how + ', diff ' + maxDiff(buf(p.painted), rowTY) + ')', lf.how === 'fast' && maxDiff(buf(p.painted), rowTY) === 0, '');
+        await inj(rowTY); await sleep(80);
+        await wins([X, Y]); await sleep(20); await inj(rowX); await sleep(80);
+        // fast:false (the A/B harness): the full pass alone
+        await up(Object.assign({}, SIM, { fast: false })); await sleep(30);
+        st = await pk();
+        await fgEv(Y.hwnd, [Y, X]); await sleep(10);
+        p = await pk(); lf = lastFg(p);
+        t.check('4k: fast:false paints on the full pass only (how ' + lf.how + ', fast ' + fg(p).fast + ')', fg(p).fast === false && lf.how === 'full' && fg(p).fastPainted === fg(st).fastPainted && p.pred === 'switch painted cache' && maxDiff(buf(p.painted), rowY) === 0, '');
+        await inj(rowY); await sleep(60);
+        await up(SIM); await sleep(30);
+        p = await pk();
+        t.check('...and the next ask without it turns it back on (fast ' + fg(p).fast + ')', fg(p).fast === true, '');
+      }
+      await up({ on: false }); P = null;
+      await sleep(200);
+    }
+
+    // 4j: a live layer (passive, so transparent) registers the shell hook, and the message the shell hook posts
+    // for a flashing taskbar button (SHELLHOOK, HSHELL_FLASH, hwnd) reaches its window procedure. (FlashWindowEx
+    // on the fake bar posts nothing: a tool window has no button. A flash from a real window cannot be made
+    // here without a window on the taskbar.)
+    {
+      const L = Object.assign({}, SIM, { sim: false });
+      await up(L); P = L;
+      const lg = await until(async () => { const x = await pk(); return x.shellHook && x.shellHook !== 'off' && !/sim/.test(x.shellHook) && x.hwnd !== '0' ? x : null; }, 2000, 20);
+      t.check('a live layer registers its shell hook (shellHook ' + (lg.v && lg.v.shellHook) + ')', !!lg.v && lg.v.shellHook === 'on', JSON.stringify(lg.v && lg.v.shellHook));
+      const f0 = lg.v ? lg.v.shellFlashes : 0;
+      console.log('  info: HSHELL_FLASH from other windows on this machine since the live layer started: ' + f0);
+      const sf = lg.v ? await bar.cmd('shellflash ' + lg.v.hwnd) : { ok: false };
+      const fl = await until(async () => { const x = await pk(); return x.shellFlashes > f0 ? x : null; }, 1500, 20);
+      t.check('...and HSHELL_FLASH posted to it is counted (shellFlashes ' + f0 + ' -> ' + (fl.v ? fl.v.shellFlashes : f0) + ', ' + fl.ms + ' ms)', sf.ok === true && !!fl.v, JSON.stringify(sf));
       await up({ on: false }); P = null;
       await sleep(200);
     }

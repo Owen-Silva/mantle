@@ -628,7 +628,7 @@ namespace Mantle {
       bool onUi = r.Lane == Lanes.Ui;
       if (onUi) {
         Interlocked.Decrement(ref Lanes.UiQueued);
-        Lanes.UiBusySinceTs = Stopwatch.GetTimestamp();
+        Lanes.UiBusySinceAwake = Lanes.AwakeMs();
         Lanes.UiBusyCmd = r.Cmd;
       }
       try {
@@ -636,7 +636,7 @@ namespace Mantle {
       } finally {
         if (onUi) {
           Lanes.UiBusyCmd = null;
-          Lanes.NoteHeld(Lanes.Ui, r.Cmd, Lanes.MsSince(Lanes.UiBusySinceTs), Thread.VolatileRead(ref Lanes.UiQueued));
+          Lanes.NoteHeld(Lanes.Ui, r.Cmd, Lanes.AwakeMsSince(Lanes.UiBusySinceAwake), Thread.VolatileRead(ref Lanes.UiQueued));
         }
       }
     }

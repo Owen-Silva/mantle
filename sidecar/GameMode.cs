@@ -78,6 +78,7 @@ namespace Mantle {
       t.Add("gamemode.saver", Lanes.Qs, Saver);       // Energy saver's "turn on at" level (opt-in)
       t.Add("gamemode.guard", Lanes.Slow, GuardCmd);  // PURE: would a target be refused, and why
       t.Add("gamemode.trim", Lanes.Slow, Trim);       // Mantle resting: its OWN Electron processes' idle pages back to Windows
+      WarmScan();                                     // the first game check finds a finished read (THE SCAN WORKER)
     }
 
     [DllImport("psapi.dll", SetLastError = true)] static extern bool EmptyWorkingSet(IntPtr h);
@@ -200,14 +201,14 @@ namespace Mantle {
       return false;
     }
 
-    sealed class Proc { public uint Pid, Ppid, Session; public string File; }
+    sealed class Proc { public uint Pid, Ppid, Session; public string File; public long Created, CpuMs; public int BasePrio; public Inst I; }
 
-    /// THE PROCESS LIST: one NtQuerySystemInformation(SystemProcessInformation) read (lane r6-cpu,
-    /// 2026-09-30). It was a Toolhelp snapshot, which is a copy of this very read: the rows are the same
-    /// (pid, parent, exe name). WHY: the top bar asks for this list once a second (a game starting or
-    /// exiting) and game mode every 3 s, and it was the live sidecar's biggest idle cost. MEASURED (this
-    /// PC, ~310 processes, ~3,700 threads, thread cycle time): Toolhelp 6.5 ms of CPU a list, this read
-    /// 3.1 ms. The buffer is kept (~0.5 MB) and grown when the list outgrows it: no allocation per call.
+    /// ONE RUN OF ONE PROCESS, kept for its whole life (lane mantle-lanes, 2026-10-15). Keyed by pid and
+    /// checked against its start time, parent pid and exe name, so a reused pid is a new entry. It holds
+    /// what never changes while the process runs: its session (asked once) and, for Owen's own
+    /// non-game processes, the exe path and whether it runs elevated (one QUERY_LIMITED open, once).
+    /// Everything that does change - CPU time, priority - comes from the process list read itself,
+    /// which carries both, so a scan opens only processes it has never seen.
     ///
     /// THE SESSION keeps its old meaning: null when Windows will not let Mantle read the process (the
     /// ProcessIdToSessionId answer). Game mode's plan counts such a process as Windows' own and leaves
@@ -215,13 +216,18 @@ namespace Mantle {
     /// compositor, the logon process) on the panel as "could not be read". It is asked ONCE per
     /// process (lane sysmon-game, 2026-09-29: ProcessIdToSessionId opens the process with QUERY_LIMITED
     /// under the hood, and the game watch must not open the game and its anti-cheat every tick), and
-    /// now an unreadable answer is remembered too, after it failed on three scans in a row (a process
-    /// caught while it starts can refuse once): it was asked again on every scan, ~110 refused opens a
-    /// second. Keyed by pid and checked against the parent pid and the exe name, so a reused pid is
-    /// asked again.
-    sealed class SessionSeen { public uint Ppid, Session; public string File; public int Tries; }
+    /// an unreadable answer is remembered too, after it failed on three scans in a row (a process
+    /// caught while it starts can refuse once). The detail open follows the same rule.
+    sealed class Inst {
+      public uint Ppid; public long Created; public string File;
+      public uint Session = uint.MaxValue; public int Tries;        // under _procLock
+      // Written by the scan worker only. Detailed goes true LAST, so a reader that sees it sees the rest.
+      public volatile bool Detailed;
+      public volatile string Why;                                   // the open failed (null = it worked)
+      public string Path; public object Elevated; public int DetailTries;
+    }
     const int UnreadableTries = 3;
-    static Dictionary<uint, SessionSeen> _sessions = new Dictionary<uint, SessionSeen>();
+    static Dictionary<uint, Inst> _inst = new Dictionary<uint, Inst>();
     const int SystemProcessInformation = 5;
     const int STATUS_INFO_LENGTH_MISMATCH = unchecked((int)0xC0000004);
     static IntPtr _procBuf = IntPtr.Zero;
@@ -230,6 +236,12 @@ namespace Mantle {
 
     static List<Proc> Snapshot(out string err) { int asks; return Snapshot(out err, out asks); }
 
+    /// THE PROCESS LIST: one NtQuerySystemInformation(SystemProcessInformation) read (lane r6-cpu,
+    /// 2026-09-30). It was a Toolhelp snapshot, which is a copy of this very read: the rows are the same
+    /// (pid, parent, exe name). MEASURED (this PC, ~310 processes, ~3,700 threads, thread cycle time):
+    /// Toolhelp 6.5 ms of CPU a list, this read 3.1 ms. The buffer is kept (~0.5 MB) and grown when the
+    /// list outgrows it: no allocation per call. The same record carries each process's start time,
+    /// CPU time and base priority, so none of those needs a handle.
     /// asks = how many sessions this read had to ask Windows for (the scan reply says it; a test holds it down).
     static List<Proc> Snapshot(out string err, out int asks) {
       err = null;
@@ -247,23 +259,26 @@ namespace Mantle {
           }
         }
         if (rc != 0) { err = "Windows would not list the processes (status 0x" + rc.ToString("X8") + ")"; return list; }
-        // SYSTEM_PROCESS_INFORMATION: ImageName (UNICODE_STRING) at 56, then BasePriority,
-        // UniqueProcessId, InheritedFromUniqueProcessId.
+        // SYSTEM_PROCESS_INFORMATION: CreateTime at 32, UserTime 40, KernelTime 48 (100 ns units), ImageName
+        // (UNICODE_STRING) at 56, then BasePriority, UniqueProcessId, InheritedFromUniqueProcessId.
         bool x64 = IntPtr.Size == 8;
-        int oBuf = x64 ? 64 : 60, oPid = x64 ? 80 : 68, oPpid = x64 ? 88 : 72;
+        int oBuf = x64 ? 64 : 60, oPrio = x64 ? 72 : 64, oPid = x64 ? 80 : 68, oPpid = x64 ? 88 : 72;
         long at = _procBuf.ToInt64();
-        var next = new Dictionary<uint, SessionSeen>();
+        var next = new Dictionary<uint, Inst>(_inst.Count + 16);
         for (int n = 0; n < 65536; n++) {
           IntPtr e = new IntPtr(at);
           uint pid = (uint)Marshal.ReadIntPtr(e, oPid).ToInt64();
           uint ppid = (uint)Marshal.ReadIntPtr(e, oPpid).ToInt64();
+          long created = Marshal.ReadInt64(e, 32);
+          long cpuMs = (Marshal.ReadInt64(e, 40) + Marshal.ReadInt64(e, 48)) / 10000;
+          int basePrio = Marshal.ReadInt32(e, oPrio);
           int len = Marshal.ReadInt16(e, 56) & 0xFFFF;
           IntPtr name = Marshal.ReadIntPtr(e, oBuf);
           // Toolhelp's names, exactly: the idle process has no image name and is "[System Process]" there.
           string file = len > 0 && name != IntPtr.Zero ? Marshal.PtrToStringUni(name, len / 2) : pid == 0 ? "[System Process]" : "";
-          SessionSeen seen;
-          if (!_sessions.TryGetValue(pid, out seen) || seen.Ppid != ppid || !string.Equals(seen.File, file, StringComparison.Ordinal)) {
-            seen = new SessionSeen { Ppid = ppid, File = file, Session = uint.MaxValue };
+          Inst seen;
+          if (!_inst.TryGetValue(pid, out seen) || seen.Created != created || seen.Ppid != ppid || !string.Equals(seen.File, file, StringComparison.Ordinal)) {
+            seen = new Inst { Ppid = ppid, Created = created, File = file };
           }
           if (seen.Session == uint.MaxValue && seen.Tries < UnreadableTries) {
             uint s;
@@ -272,73 +287,284 @@ namespace Mantle {
             if (N.ProcessIdToSessionId(pid, out s)) seen.Session = s;
           }
           next[pid] = seen;
-          list.Add(new Proc { Pid = pid, Ppid = ppid, File = file, Session = seen.Session });
+          list.Add(new Proc { Pid = pid, Ppid = ppid, File = file, Session = seen.Session, Created = created, CpuMs = cpuMs, BasePrio = basePrio, I = seen });
           int step = Marshal.ReadInt32(e, 0);
           if (step <= 0) break;
           at += step;
         }
-        _sessions = next;   // only live processes are kept: the cache never grows
+        _inst = next;   // only live processes are kept: the cache never grows
       }
       return list;
     }
 
-    /// Path, start time, CPU time, priority and elevation, from ONE QUERY_LIMITED handle. Never
-    /// called for a game-ish name (the caller checks), so the game is not opened here at all.
-    static void Detail(Proc p, IDictionary row) {
-      IntPtr h = N.OpenProcess(QUERY_LIMITED, false, p.Pid);
-      if (h == IntPtr.Zero) { row["why"] = "could not be read (error " + Marshal.GetLastWin32Error() + ")"; return; }
-      try {
-        var sb = new StringBuilder(1024); uint size = 1024;
-        if (N.QueryFullProcessImageNameW(h, 0, sb, ref size)) row["path"] = sb.ToString(0, (int)size);
-        long c, x, k, u;
-        if (N.GetProcessTimes(h, out c, out x, out k, out u)) {
-          row["created"] = c.ToString(CultureInfo.InvariantCulture);
-          row["cpuMs"] = (k + u) / 10000;
+    /// Would a detail scan open this process? Only Owen's own session, never a game-ish name (those are
+    /// listed by name and pid only, enough to see the game is still running, and never opened).
+    static bool Detailable(Proc p, uint own) { return p.Session == own && p.Pid > 8 && !IsGameish(p.File); }
+
+    /// The detail of every process this table has NOT seen yet (scan worker only). One QUERY_LIMITED
+    /// handle each, once per run of a process: the exe path and the elevation. Returns how many it opened.
+    static int FillDetail(List<Proc> all, uint own) {
+      int opened = 0;
+      foreach (Proc p in all) {
+        Inst i = p.I;
+        if (i.Detailed && (i.Why == null || i.DetailTries >= UnreadableTries)) continue;   // the common case, first: no string compares
+        if (!Detailable(p, own)) continue;
+        opened++;
+        IntPtr h = N.OpenProcess(QUERY_LIMITED, false, p.Pid);
+        if (h == IntPtr.Zero) {
+          i.DetailTries++;
+          i.Why = "could not be read (error " + Marshal.GetLastWin32Error() + ")";
+          i.Detailed = true;
+          continue;
         }
-        row["prio"] = PrioName(N.GetPriorityClass(h));
-        IntPtr tok;
-        if (N.OpenProcessToken(h, 0x0008 /* TOKEN_QUERY */, out tok)) {
-          try { int el, ret; if (N.GetTokenInformation(tok, 20 /* TokenElevation */, out el, 4, out ret)) row["elevated"] = el != 0; }
-          finally { N.CloseHandle(tok); }
-        }
-      } finally { N.CloseHandle(h); }
+        try {
+          var sb = new StringBuilder(1024); uint size = 1024;
+          i.Path = N.QueryFullProcessImageNameW(h, 0, sb, ref size) ? sb.ToString(0, (int)size) : null;
+          IntPtr tok;
+          if (N.OpenProcessToken(h, 0x0008 /* TOKEN_QUERY */, out tok)) {
+            try { int el, ret; if (N.GetTokenInformation(tok, 20 /* TokenElevation */, out el, 4, out ret)) i.Elevated = el != 0; }
+            finally { N.CloseHandle(tok); }
+          }
+        } finally { N.CloseHandle(h); }
+        i.Why = null;
+        i.Detailed = true;
+      }
+      return opened;
     }
 
-    /// {procs?, detail?} -> {fg:{...Foreground.Read(), game verdict}, procs?:[{pid, ppid, file, session,
-    /// path?, created?, cpuMs?, prio?, elevated?}], sessionAsks?, ownPid, parentPid, ownSession, fgPid, ms}
-    static string Scan(Dictionary<string, object> req, ref object result) {
+    /// The priority class from the list's base priority (the mapping SetPriorityClass makes; checked on
+    /// this PC against GetPriorityClass for every process Mantle can open: 146 of 146 the same).
+    static string PrioOf(int basePrio) {
+      switch (basePrio) {
+        case 4: return PrioName(IDLE); case 6: return PrioName(BELOW_NORMAL); case 8: return PrioName(NORMAL);
+        case 10: return PrioName(ABOVE_NORMAL); case 13: return PrioName(HIGH); case 24: return PrioName(REALTIME);
+      }
+      return "other";
+    }
+
+    // ================================================================ THE SCAN WORKER
+    // (lane mantle-lanes, 2026-10-15). The live log showed gamemode.scan holding the scan lane for up to
+    // 7,013 ms - a read that takes 5-15 ms on an idle PC - and the top bar's 3 s game check timing out
+    // behind it 9 times in 3 days (and a hot corner's 1.5 s one). Which call stalls (the window in front,
+    // Windows' full-screen state, the process list, a process open) was never logged. Now the read runs
+    // on its own thread, and a request waits for it at most ScanBudgetMs: a read that is slower than that
+    // is answered from the last finished read, marked stale with its age and what the worker is stuck
+    // on, so no caller waits behind a stall and the log names the slow step. Once the read in flight
+    // has been stuck past StaleLimitMs, the old answer is no longer passed off: that is an error
+    // naming the step.
+    const int ScanBudgetMs = 400, StaleLimitMs = 10000, FirstReadMs = 8000;
+    const long ScanSlowLogMs = 1000, ScanSlowLogEveryMs = 60000;
+
+    sealed class ScanRead {
+      public long Taken;              // every request numbered up to this one is answered by this read
+      public long AtAwake;            // awake ms when the read began (Lanes.AwakeMs)
+      public IDictionary Fg;
+      public int Quns = -1;
+      public uint Own;
+      public List<Proc> Procs;
+      public string ProcErr, Error;
+      public int Asks, Opened;
+      public long Ms;
+    }
+
+    static readonly object _scanGate = new object();
+    static Thread _scanThread;                 // under _scanGate
+    static long _wantSeq, _takenSeq;           // under _scanGate
+    static ScanRead _last;                     // under _scanGate; never changed once published
+    static volatile string _scanStage;         // what the worker is doing now (null = waiting)
+    static long _scanStageAt;                  // awake ms the stage began (Interlocked)
+    static long _slowLogAt, _slowSkipped;      // under _scanGate
+    static long _testStallMs;                  // Interlocked; passive tests only (see Scan)
+    static long _readAt;                       // Interlocked: awake ms the worker's current read began
+
+    static void EnsureScanWorker() {
+      lock (_scanGate) {
+        if (_scanThread != null) return;
+        _scanThread = new Thread(ScanLoop);
+        _scanThread.IsBackground = true;
+        _scanThread.Name = "mantle-gamescan";
+        // STA, AboveNormal: what the scan lane was (Lanes.cs), so the calls behave as they always did.
+        _scanThread.SetApartmentState(ApartmentState.STA);
+        _scanThread.Priority = ThreadPriority.AboveNormal;
+        _scanThread.Start();
+      }
+    }
+
+    /// Starts a read now, so the first caller (the top bar, seconds after start) finds one finished.
+    static void WarmScan() {
+      EnsureScanWorker();
+      lock (_scanGate) { _wantSeq++; Monitor.PulseAll(_scanGate); }
+    }
+
+    static void ScanLoop() {
+      for (;;) {
+        long seq;
+        lock (_scanGate) {
+          while (_wantSeq <= _takenSeq) Monitor.Wait(_scanGate);
+          seq = _takenSeq = _wantSeq;
+        }
+        ScanRead r;
+        try { r = ReadOnce(seq); }
+        catch (Exception ex) { r = new ScanRead { Taken = seq, AtAwake = Lanes.AwakeMs(), Error = "the read failed (" + ex.GetType().Name + ": " + ex.Message + ")" }; }
+        _scanStage = null;
+        lock (_scanGate) { _last = r; Monitor.PulseAll(_scanGate); }
+      }
+    }
+
+    static void Stage(string what) {
+      Interlocked.Exchange(ref _scanStageAt, Lanes.AwakeMs());
+      _scanStage = what;
+    }
+
+    static string StageNow() {
+      string s = _scanStage;
+      return s == null ? null : s + " for " + Math.Max(0, Lanes.AwakeMs() - Interlocked.Read(ref _scanStageAt)) + " ms";
+    }
+
+    /// One whole read, on the worker: the window in front, the full-screen state, the game verdict, the
+    /// process list (sessions asked for new processes only) and the detail of new processes only.
+    static ScanRead ReadOnce(long seq) {
       var sw = Stopwatch.StartNew();
+      long t0 = Lanes.AwakeMs(), t;
+      Interlocked.Exchange(ref _readAt, t0);
+      var r = new ScanRead { Taken = seq, AtAwake = t0 };
+      long[] ms = new long[5];
+      Stage("reading the window in front");
+      t = Lanes.AwakeMs();
       IDictionary fg = Foreground.Read();
-      int quns = -1;
-      try { quns = QunsNow(); } catch (Exception) { }
+      ms[0] = Lanes.AwakeMs() - t;
+      Stage("asking Windows whether a full-screen app runs");
+      t = Lanes.AwakeMs();
+      try { r.Quns = QunsNow(); } catch (Exception) { }
+      ms[1] = Lanes.AwakeMs() - t;
+      Stage("deciding whether the window in front is a game");
+      t = Lanes.AwakeMs();
       string exe = fg["exe"] as string ?? "";
       bool covers = fg["fullscreen"] is bool && (bool)fg["fullscreen"];
       int fpid = fg["pid"] is int ? (int)fg["pid"] : 0;
       bool self = fpid != 0 && (fpid == Program.OwnPid || fpid == Program.ParentPid);
       fg["self"] = self;
-      fg["verdict"] = self || fpid == 0 ? null : MenuBar.Verdict(exe, fg["title"] as string ?? "", covers, quns);
-      var res = Json.Obj("fg", fg, "quns", quns, "ownPid", Program.OwnPid, "parentPid", Program.ParentPid,
-                         "ownSession", (long)OwnSession());
+      fg["verdict"] = self || fpid == 0 ? null : MenuBar.Verdict(exe, fg["title"] as string ?? "", covers, r.Quns);
+      r.Fg = fg;
+      r.Own = OwnSession();
+      ms[2] = Lanes.AwakeMs() - t;
+      Stage("listing the processes");
+      t = Lanes.AwakeMs();
+      long stall = Interlocked.Exchange(ref _testStallMs, 0);   // passive tests only (see Scan)
+      if (stall > 0) Thread.Sleep((int)stall);
+      string err;
+      r.Procs = Snapshot(out err, out r.Asks);
+      r.ProcErr = err;
+      ms[3] = Lanes.AwakeMs() - t;
+      Stage("reading the processes that started since the last look");
+      t = Lanes.AwakeMs();
+      if (err == null) r.Opened = FillDetail(r.Procs, r.Own);
+      ms[4] = Lanes.AwakeMs() - t;
+      _scanStage = null;
+      r.Ms = sw.ElapsedMilliseconds;
+      long awake = Lanes.AwakeMs() - t0;
+      if (awake >= ScanSlowLogMs) {
+        long skipped = -1;
+        lock (_scanGate) {
+          if (_slowLogAt != 0 && Lanes.AwakeMs() - _slowLogAt < ScanSlowLogEveryMs) _slowSkipped++;
+          else { skipped = _slowSkipped; _slowSkipped = 0; _slowLogAt = Lanes.AwakeMs(); }
+        }
+        // Step names and counts only: never a window title, an exe name or a path.
+        if (skipped >= 0)
+          Program.EmitLog("warn", "gamemode.scan: one read took " + awake + " ms (the window in front " + ms[0] + " ms, the full-screen state " +
+                                  ms[1] + " ms, the game verdict " + ms[2] + " ms, the process list " + ms[3] + " ms with " + r.Asks +
+                                  " session(s) asked, new processes " + ms[4] + " ms with " + r.Opened + " opened); callers got the last read meanwhile" +
+                                  (skipped > 0 ? "; " + skipped + " more like it in the last " + (ScanSlowLogEveryMs / 1000) + " s" : ""));
+      }
+      return r;
+    }
+
+    /// {procs?, detail?} -> {fg:{...Foreground.Read(), game verdict}, procs?:[{pid, ppid, file, session,
+    /// path?, created?, cpuMs?, prio?, elevated?, why?, pending?}], sessionAsks?, opened?, ownPid, parentPid,
+    /// ownSession, fgPid, ms (the read), waitMs (this request), stale?, ageMs?, staleWhy?}
+    /// `pending`: a detail row whose first look is still running (only in a stale answer); the plan
+    /// leaves it out until the next scan.
+    static string Scan(Dictionary<string, object> req, ref object result) {
+      var wait = Stopwatch.StartNew();
+      // TESTS ONLY, and only in passive (a scan writes nothing either way): the read this request starts
+      // stalls this long while "listing the processes", so test-lane-latency.js can prove a stalled read
+      // never holds the lane.
+      if (Program.Passive && Json.HasKey(req, "testStallMs"))
+        Interlocked.Exchange(ref _testStallMs, Math.Max(0, Math.Min(15000, Json.GetInt(req, "testStallMs", 0))));
+      EnsureScanWorker();
+      // NOTHING TO ANSWER WITH YET (the sidecar's first read, cold: 0.1 s here, ~4 s on a 2-core CI
+      // runner): wait as long as the caller will (its ttl, less a margin), because an error there is
+      // worse than a late first answer. Once any read has finished, never more than ScanBudgetMs.
+      long ttl = Json.GetInt(req, "ttl", 0);
+      long firstMs = ttl > 0 ? Math.Max(ScanBudgetMs, ttl - 250) : FirstReadMs;
+      ScanRead r;
+      bool fresh;
+      lock (_scanGate) {
+        long seq = ++_wantSeq;
+        Monitor.PulseAll(_scanGate);
+        for (;;) {
+          if (_last != null && _last.Taken >= seq) break;
+          long left = (_last == null ? firstMs : ScanBudgetMs) - wait.ElapsedMilliseconds;
+          if (left <= 0) break;
+          // The worker is still in an OLDER read that has already run past the budget: it is stuck,
+          // and this request's read cannot even start, so waiting is pointless. Answer now. (A second
+          // caller queued behind the first one would otherwise pay the budget again.)
+          if (_last != null && _takenSeq < seq && _scanStage != null && Lanes.AwakeMs() - Interlocked.Read(ref _readAt) >= ScanBudgetMs) break;
+          Monitor.Wait(_scanGate, (int)Math.Min(left, 50));
+        }
+        r = _last;
+        fresh = r != null && r.Taken >= seq;
+      }
+      string stage = StageNow() ?? "finishing";
+      if (r == null) return "gamemode.scan: the first look at the window in front and the processes is still running (" + stage + ")";
+      long age = Math.Max(0, Lanes.AwakeMs() - r.AtAwake);
+      // Stuck = the read in flight has run past StaleLimitMs (not "the last answer is old": after a
+      // quiet minute the last read IS old, and one slow read then is still just slow).
+      long running = _scanStage != null ? Math.Max(0, Lanes.AwakeMs() - Interlocked.Read(ref _readAt)) : 0;
+      if (!fresh && running > StaleLimitMs)
+        return "gamemode.scan: the game check has been stuck for " + (running / 1000) + " s (" + stage + "), so there is no current answer";
+      if (r.Error != null) return "gamemode.scan: " + r.Error;
+      var fg = new System.Collections.Specialized.OrderedDictionary();
+      foreach (DictionaryEntry e in r.Fg) fg[e.Key] = e.Value;
+      var res = Json.Obj("fg", fg, "quns", r.Quns, "ownPid", Program.OwnPid, "parentPid", Program.ParentPid,
+                         "ownSession", (long)r.Own);
       if (Json.GetBool(req, "procs", false)) {
-        string err;
-        int asks;
-        List<Proc> all = Snapshot(out err, out asks);
         bool detail = Json.GetBool(req, "detail", false);
-        uint own = OwnSession();
         var rows = new List<object>();
-        foreach (Proc p in all) {
+        int pending = 0;
+        foreach (Proc p in r.Procs) {
           IDictionary row = Json.Obj("pid", (long)p.Pid, "ppid", (long)p.Ppid, "file", p.File,
                                      "session", p.Session == uint.MaxValue ? (object)null : (long)p.Session);
-          // Only Owen's own session, and never a game-ish name: those are listed by name and pid
-          // only (enough to see the game is still running), and never opened.
-          if (detail && p.Session == own && p.Pid > 8 && !IsGameish(p.File)) Detail(p, row);
+          if (detail && Detailable(p, r.Own)) {
+            Inst i = p.I;
+            if (!i.Detailed) { row["pending"] = true; pending++; }
+            else {
+              string why = i.Why;
+              if (why != null) row["why"] = why;
+              else {
+                if (i.Path != null) row["path"] = i.Path;
+                row["created"] = p.Created.ToString(CultureInfo.InvariantCulture);
+                row["cpuMs"] = p.CpuMs;
+                row["prio"] = PrioOf(p.BasePrio);
+                if (i.Elevated != null) row["elevated"] = i.Elevated;
+              }
+            }
+          }
           rows.Add(row);
         }
         res["procs"] = rows;
-        res["sessionAsks"] = asks;
-        if (err != null) res["procsReason"] = err;
+        res["sessionAsks"] = r.Asks;
+        res["opened"] = r.Opened;
+        if (pending > 0) res["pending"] = pending;
+        if (r.ProcErr != null) res["procsReason"] = r.ProcErr;
       }
-      res["ms"] = sw.ElapsedMilliseconds;
+      res["ms"] = r.Ms;
+      res["waitMs"] = wait.ElapsedMilliseconds;
+      if (!fresh) {
+        res["stale"] = true;
+        res["ageMs"] = age;
+        res["staleWhy"] = "the game check is still busy " + stage + "; this is the last finished one, " + age + " ms old";
+      }
       result = res;
       return null;
     }
@@ -374,11 +600,17 @@ namespace Mantle {
       // TESTS ONLY, and only in passive (which writes nothing): stand a process the test started in
       // for "the app in front", so the in-front rule is proved without touching Owen's window.
       if (Program.Passive && req.ContainsKey("testFgPid")) fgPid = (uint)Math.Max(0, Json.GetInt(req, "testFgPid", 0));
+      // ONE process-list read for the whole batch (lane mantle-lanes, 2026-10-15): it was one read per
+      // item, up to CHUNK full lists in a row on the slow lane, each one taking the list lock the game
+      // check needs.
+      string listErr;
+      var names = new Dictionary<uint, string>();
+      foreach (Proc p in Snapshot(out listErr)) names[p.Pid] = p.File;
       var outList = new List<object>();
       foreach (object o in items) {
         var it = o as Dictionary<string, object>;
         if (it == null) continue;
-        outList.Add(ApplyOne(it, fgPid, own));
+        outList.Add(ApplyOne(it, fgPid, own, names));
       }
       result = Json.Obj("results", outList, "passive", Program.Passive);
       return null;
@@ -410,16 +642,15 @@ namespace Mantle {
       return any;
     }
 
-    static IDictionary ApplyOne(Dictionary<string, object> it, uint fgPid, uint own) {
+    static IDictionary ApplyOne(Dictionary<string, object> it, uint fgPid, uint own, Dictionary<uint, string> names) {
       uint pid = (uint)Math.Max(0, Json.GetInt(it, "pid", 0));
       string wantCreated = Json.GetString(it, "created");
       IDictionary r = Json.Obj("pid", (long)pid, "file", Json.GetString(it, "file"), "ok", false, "same", false);
       uint session;
       if (!N.ProcessIdToSessionId(pid, out session)) { r["why"] = "it has exited"; r["gone"] = true; return r; }
-      // Look the name up in a snapshot (no handle) BEFORE opening anything: a game is never opened.
-      string err, file = null;
-      foreach (Proc p in Snapshot(out err)) if (p.Pid == pid) { file = p.File; break; }
-      if (file == null) { r["why"] = "it has exited"; r["gone"] = true; return r; }
+      // Look the name up in the batch's process list (no handle) BEFORE opening anything: a game is never opened.
+      string file;
+      if (!names.TryGetValue(pid, out file)) { r["why"] = "it has exited"; r["gone"] = true; return r; }
       r["file"] = file;
       // PUTTING BACK is allowed on the app in front (lane sysmon-game, 2026-09-29): the in-front rule is
       // there so game mode never slows what Owen is using. It used to refuse the restore too, so the app

@@ -141,14 +141,16 @@
       Promise.resolve().then(() => fn(want)).then((x) => x, (e) => ({ ok: false, reason: msg(e) })).then((x) => {
         if (dead) return;
         r.busy = false;
-        if (x && typeof x === 'object' && x.cancelled) { r.value = was; r.note = { tone: 'info', text: CANCELLED }; }
-        else if (x && typeof x === 'object' && x.ok === false) { r.value = was; r.note = { tone: 'warn', text: x.reason || 'It did not take, and no reason came back' }; }
-        else if (x && typeof x === 'object' && x.dryRun) { r.value = was; r.note = { tone: 'info', text: x.reason || 'Test run: nothing was changed' }; }
+        // springing back must reach the screen even in a text box that still has focus: paint() otherwise
+        // never rewrites a focused box, which left a refused name on screen (PC rename, 2026-10-12)
+        if (x && typeof x === 'object' && x.cancelled) { r.value = was; r.force = true; r.note = { tone: 'info', text: CANCELLED }; }
+        else if (x && typeof x === 'object' && x.ok === false) { r.value = was; r.force = true; r.note = { tone: 'warn', text: x.reason || 'It did not take, and no reason came back' }; }
+        else if (x && typeof x === 'object' && x.dryRun) { r.value = was; r.force = true; r.note = { tone: 'info', text: x.reason || 'Test run: nothing was changed' }; }
         else {
-          if (x && typeof x === 'object' && 'value' in x) r.value = x.value;
+          if (x && typeof x === 'object' && 'value' in x) { r.value = x.value; r.force = true; }   // the read-back has the last word too
           if (x && typeof x === 'object' && typeof x.note === 'string' && x.note) r.note = { tone: 'info', text: x.note };
         }
-        r.text(); paint();
+        r.text(); paint(); r.force = false;
       });
     }
 
@@ -183,7 +185,8 @@
         const opts = Array.isArray(o.options) ? o.options : [];
         const seg = o.style ? o.style === 'segmented' : opts.length <= 4 && opts.every((x) => String(x.label).length <= 14);
         const box = seg ? h('div', { class: 'seg', role: 'radiogroup', 'aria-label': o.label || null }) : h('select', { 'aria-label': o.label || null });
-        const r = base(o, box, 'choice');
+        // a dropdown sits in .selwrap like every other <select> in Settings: its ::after is the chevron
+        const r = base(o, seg ? box : h('span', { class: 'selwrap' }, box), 'choice');
         const draw = () => {
           const list = Array.isArray(r.o.options) ? r.o.options : [];
           box.replaceChildren(...list.map((x) => (seg ? h('button', { type: 'button', role: 'radio', 'data-v': String(x.value) }, x.label) : h('option', { value: String(x.value) }, x.label))));
@@ -339,7 +342,7 @@
     function field(o, type) {
       const inp = h('input', { class: 'inp' + (type === 'number' ? ' num' : ''), type, min: o.min, max: o.max, step: o.step, placeholder: o.placeholder || null, spellcheck: 'false', 'aria-label': o.label || null });
       const r = base(o, [inp, o.unit ? h('span', { class: 'val' }, o.unit) : null], type === 'number' ? 'number' : 'text');
-      const paint = () => { if (document.activeElement !== inp && inp.value !== String(r.value == null ? '' : r.value)) inp.value = r.value == null ? '' : r.value; inp.disabled = !!r.o.disabled || r.busy; };
+      const paint = () => { if ((r.force || document.activeElement !== inp) && inp.value !== String(r.value == null ? '' : r.value)) inp.value = r.value == null ? '' : r.value; inp.disabled = !!r.o.disabled || r.busy; };
       inp.addEventListener('change', () => { act(r, paint, type === 'number' ? (inp.value === '' ? null : +inp.value) : inp.value, r.o.onChange); });
       return handle(r, paint);
     }

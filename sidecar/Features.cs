@@ -43,7 +43,7 @@ namespace Mantle {
     public void Add(string name, string lane, FeatureCommand fn) {
       if (string.IsNullOrEmpty(name) || name.IndexOf('.') <= 0)
         throw new ArgumentException(_owner + ": feature command \"" + name + "\" must be named feature.verb");
-      if (lane != Lanes.Ui && lane != Lanes.Capture && lane != Lanes.Slow && lane != Lanes.Audio && lane != Lanes.Qs && lane != Lanes.Scan)
+      if (lane != Lanes.Ui && lane != Lanes.Capture && lane != Lanes.Slow && lane != Lanes.Audio && lane != Lanes.Qs && lane != Lanes.Scan && lane != Lanes.Notif)
         throw new ArgumentException(_owner + ": feature command \"" + name + "\" names an unknown lane \"" + lane + "\"");
       if (fn == null) throw new ArgumentException(_owner + ": feature command \"" + name + "\" has no handler");
       if (_cmds.ContainsKey(name))

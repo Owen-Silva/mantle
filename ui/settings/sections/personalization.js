@@ -435,21 +435,46 @@
   }
 
   /* Look sync with Helm and Quartz (main's look.get / look.sync / look.glass / look.accent, the 'look'
-     event): theme, accent hue and the dark glass are shared through %APPDATA%\look-sync\look.json, and
+     event): theme, accent hue and the glass (light and dark) are shared through %APPDATA%\look-sync\look.json, and
      Mantle shares its desktop wallpaper there too. Every answer and every 'look' event is the whole VIEW,
      so one show() draws every row; a change made in Helm or Quartz arrives as a 'look' event. Sliders
      write once, on release. */
-  const GLASS_SEED = { blurPx: 5, dim: 0.5, panel: 0 };
-  const PANEL_BASE = 0.83;   // panel is an offset on the dark panel's .83 opacity
+  /* The sliders edit the glass of the look Mantle shows now (CONTRACT "Light look", 2026-10-14): glass.light
+     while Mantle is light, glass.dark in dark; the view says which (v.glassLook) and every write names it. */
+  const GLASS_SEED = { dark: { blurPx: 5, dim: 0.5, panel: 0 }, light: { blurPx: 12, dim: 0.45, panel: 0 } };
+  // panel is an offset on the look's panel opacity: dark .83 (Helm's panel), light .76 (the contract's white panel)
+  const PANEL_BASE = { dark: 0.83, light: 0.76 };
+  const PANEL_RANGE = [-0.30, 0.15];
   const DEFAULT_HUE = 212;
   const said = (s) => (typeof s === 'string' && s.trim() ? s.trim().replace(/[.\s]+$/, '') : null);
+  /* The GUARD NOTE (look-sync CONTRACT section 3: "when a guard raises a value, the appearance panel says so").
+   * The shared top-band darkening Mantle publishes (desktop.guard) starts at the Bar tint and steps up over a
+   * bright wallpaper until text reads; when it ends above the slider, the slider says what was raised, to what
+   * and why. Dark: Mantle's top bar uses guard.dark.alpha (lib/look-guard.js). Light: guard.light.alpha is the
+   * white Helm and Quartz use; Mantle's light top bar keeps its own frost. Sync off: Mantle's top bar works out
+   * its own (no shared value to quote), so no note. -> string | null */
+  function guardRaised(v, look, dim) {
+    if (!v || !v.sync || !v.sync.on || typeof dim !== 'number') return null;
+    const gd = v.guard && typeof v.guard === 'object' && v.guard.ok === true ? v.guard : null;
+    if (!gd) return null;
+    const p = (a) => Math.round(a * 100) + '%';
+    if (look === 'light') {
+      const gl = gd.light && typeof gd.light === 'object' && gd.light.ok === true ? gd.light : null;
+      if (!gl || typeof gl.alpha !== 'number' || !(gl.alpha > dim + 0.005)) return null;
+      return 'Helm\'s and Quartz\'s top strips raised to ' + p(gl.alpha) + ' white over this wallpaper so text stays readable (Mantle\'s light top bar keeps its own frost)';
+    }
+    if (typeof gd.alpha !== 'number' || !(gd.alpha > dim + 0.005)) return null;
+    return 'Top bar raised to ' + p(gd.alpha) + ' over this wallpaper so text stays readable (Helm and Quartz use the same)';
+  }
   function lookSync(kit, R) {
     const S = { v: null, hue: DEFAULT_HUE };
     const num = (x) => typeof x === 'number' && isFinite(x);
     const isView = (v) => !!(v && typeof v === 'object' && v.ok !== false && v.sync && typeof v.sync === 'object' && v.glass && typeof v.glass === 'object'
       && num(v.glass.blurPx) && num(v.glass.dim) && num(v.glass.panel) && v.accent && typeof v.accent === 'object');
     const pct = (d) => Math.round(d * 100);
-    const panelPct = (p) => Math.round((PANEL_BASE + p) * 100);
+    const lookOf = (v) => (v && (v.glassLook === 'light' || v.glassLook === 'dark') ? v.glassLook : v && v.theme === 'light' ? 'light' : 'dark');
+    S.look = 'dark';
+    const panelPct = (p, look) => Math.round((PANEL_BASE[look || S.look] + p) * 100);
     const hueOf = (v) => (Number.isInteger(v.accent.hue) ? v.accent.hue : null);
     /* every write: the answer is the VIEW; ok:false (or no VIEW) springs the row back with the reason */
     async function send(cmd, args, value) {
@@ -464,13 +489,13 @@
     const status = kit.status({ row: R('look-status'), label: 'Sync status', value: 'Reading…' });
     const desk = kit.status({ row: R('look-desktop'), label: 'Desktop wallpaper', value: 'Reading…' });
     const blur = kit.slider({ row: R('glass-blur'), label: 'Blur', help: 'How much the glass softens what is behind it', min: 0, max: 64, step: 1, unit: ' px',
-      onChange: (v) => send('look.glass', { blurPx: v }, (x) => x.glass.blurPx) });
+      onChange: (v) => send('look.glass', { look: S.look, blurPx: v }, (x) => x.glass.blurPx) });
     const dim = kit.slider({ row: R('glass-dim'), label: 'Bar tint', help: 'How dark the bar\'s glass is', min: 20, max: 90, step: 1, unit: '%',
-      onChange: (v) => send('look.glass', { dim: v / 100 }, (x) => pct(x.glass.dim)) });
+      onChange: (v) => send('look.glass', { look: S.look, dim: v / 100 }, (x) => pct(x.glass.dim)) });
     const panel = kit.slider({ row: R('glass-panel'), label: 'Panel opacity', help: 'Lower is more see-through', min: 53, max: 97, step: 1, unit: '%',
-      onChange: (v) => send('look.glass', { panel: +(v / 100 - PANEL_BASE).toFixed(2) }, (x) => panelPct(x.glass.panel)) });
+      onChange: (v) => send('look.glass', { look: S.look, panel: +(v / 100 - PANEL_BASE[S.look]).toFixed(2) }, (x) => panelPct(x.glass.panel, lookOf(x))) });
     const reset = kit.button({ row: R('glass-reset'), label: 'Default glass', help: 'Blur 5 px, bar tint 50%, panel opacity 83%', text: 'Reset glass',
-      onClick: () => send('look.glass', Object.assign({}, GLASS_SEED), () => undefined).then((x) => (x.ok ? { ok: true } : x)) });
+      onClick: () => send('look.glass', Object.assign({ look: S.look }, GLASS_SEED[S.look]), () => undefined).then((x) => (x.ok ? { ok: true } : x)) });
     const accent = kit.choice({ row: R('accent-mode'), label: 'Accent', help: 'Mantle\'s own accent, or one hue for all three apps', style: 'segmented',
       options: [{ value: 'own', label: 'Mantle\'s own' }, { value: 'custom', label: 'Custom hue' }],
       onChange: (m) => send('look.accent', { hue: m === 'own' ? null : S.hue }, (x) => (hueOf(x) == null ? 'own' : 'custom')) });
@@ -503,8 +528,14 @@
       // the lock screen follows the wallpaper (lib/look-desktop.js matchLock): a failure is on this line, with its reason
       const lk = v.lock && typeof v.lock === 'object' ? v.lock : {};
       const lWhy = lk.ok === false ? said(lk.reason) || 'Windows did not say why' : null;
-      status.set({ value: syText, tone: st === 'ok' && !gWhy && !lWhy ? 'ok' : warn || gWhy || lWhy ? 'warn' : null, help: gd.ok === true ? said(gd.text) : null, info: null,
+      // desktop.guard.light (CONTRACT "Light look"): the white Helm and Quartz use in light, or why it is missing
+      const gl = gd.ok === true && gd.light && typeof gd.light === 'object' ? gd.light : null;
+      const glWhy = gl && gl.ok === false ? said(gl.reason) || 'Mantle did not say why' : null;
+      const glText = gl && gl.ok === true && typeof gl.alpha === 'number' ? 'Light top band: white ' + Math.round(gl.alpha * 100) + '% for Helm and Quartz' : null;
+      status.set({ value: syText, tone: st === 'ok' && !gWhy && !lWhy && !glWhy ? 'ok' : warn || gWhy || lWhy || glWhy ? 'warn' : null,
+        help: gd.ok === true ? [said(gd.text), glText].filter(Boolean).join('. ') : null, info: null,
         reason: [syWhy && syText.indexOf(syWhy) < 0 ? syWhy : null, gWhy ? 'Top-band darkening not shared: ' + gWhy : null,
+          glWhy ? 'Light top band not shared: ' + glWhy : null,
           lWhy ? 'Lock screen not changed: ' + lWhy : null].filter(Boolean).join('. ') || null });
       const d = v.desktop || {}, w = v.windows || {};
       const dWhy = d.ok === false ? said(d.reason) || 'Mantle did not say why' : null;
@@ -512,13 +543,21 @@
       desk.set({ value: said(d.text) || 'Not shared', tone: d.ok === false ? 'warn' : null, help: [said(w.text), said(lk.text)].filter(Boolean).join('. ') || null,
         reason: [dWhy, wWhy && 'Windows\' wallpaper: ' + wWhy].filter(Boolean).join('. ') || null, info: null });
       const ro = st === 'newer' ? 'Read only here: ' + (syWhy || 'a newer Helm or Quartz wrote the shared look') : null;
-      const light = v.theme === 'light' ? 'These shape the dark look; light keeps its own frost' : null;
+      // which look the sliders edit: the one Mantle shows now; the first row says so
+      const look = lookOf(v), seed = GLASS_SEED[look];
+      S.look = look;
+      const which = look === 'light' ? 'Editing the light look (Mantle is light now). In dark these edit the dark look'
+        : 'Editing the dark look (Mantle is dark now). In light these edit the light look';
       const g = v.glass;
-      blur.set({ value: Math.round(g.blurPx), disabled: !!ro, reason: ro, info: light });
-      dim.set({ value: pct(g.dim), disabled: !!ro, reason: ro, info: light });
-      panel.set({ value: panelPct(g.panel), disabled: !!ro, reason: ro, info: light });
-      const atSeed = Math.abs(g.blurPx - GLASS_SEED.blurPx) < 0.5 && Math.abs(g.dim - GLASS_SEED.dim) < 0.005 && Math.abs(g.panel - GLASS_SEED.panel) < 0.005;
-      reset.set({ disabled: !!ro || atSeed, reason: ro, info: !ro && atSeed ? 'The glass is at its defaults' : null });
+      const pin = panel.el.querySelector('input[type="range"]');
+      if (pin) { pin.min = String(Math.round((PANEL_BASE[look] + PANEL_RANGE[0]) * 100)); pin.max = String(Math.round((PANEL_BASE[look] + PANEL_RANGE[1]) * 100)); }
+      blur.set({ value: Math.round(g.blurPx), disabled: !!ro, reason: ro, info: which });
+      dim.set({ value: pct(g.dim), disabled: !!ro, reason: ro, info: ro ? null : guardRaised(v, look, g.dim),
+        help: look === 'light' ? 'How white the bar\'s glass is' : 'How dark the bar\'s glass is' });
+      panel.set({ value: panelPct(g.panel, look), disabled: !!ro, reason: ro, info: null });
+      const atSeed = Math.abs(g.blurPx - seed.blurPx) < 0.5 && Math.abs(g.dim - seed.dim) < 0.005 && Math.abs(g.panel - seed.panel) < 0.005;
+      reset.set({ disabled: !!ro || atSeed, reason: ro, info: !ro && atSeed ? 'The glass is at its defaults (' + look + ' look)' : null,
+        help: 'Blur ' + seed.blurPx + ' px, bar tint ' + pct(seed.dim) + '%, panel opacity ' + pct(PANEL_BASE[look]) + '% (the ' + look + ' look)' });
       const h = hueOf(v);
       if (h != null) S.hue = h;
       accent.set({ value: h == null ? 'own' : 'custom', disabled: !!ro, reason: ro, info: v.theme === 'light' ? 'Applies to the dark look; light keeps its own colours' : null });
@@ -748,9 +787,9 @@
         { row: 'personalization.colors.look-sync', label: 'Sync look with Helm and Quartz', keywords: 'look sync share match helm quartz theme accent glass apps together' },
         { row: 'personalization.colors.look-status', label: 'Look sync status', keywords: 'look sync status helm quartz shared in sync' },
         { row: 'personalization.colors.look-desktop', label: 'Shared desktop wallpaper', keywords: 'desktop wallpaper background shared helm quartz windows wallpaper match sync' },
-        { row: 'personalization.colors.glass-blur', label: 'Glass blur', keywords: 'glass blur frost acrylic transparency see-through dark look' },
-        { row: 'personalization.colors.glass-dim', label: 'Bar tint', keywords: 'glass tint dim bar darkness transparency see-through dark look' },
-        { row: 'personalization.colors.glass-panel', label: 'Panel opacity', keywords: 'glass panel opacity transparency see-through translucent dark look' },
+        { row: 'personalization.colors.glass-blur', label: 'Glass blur', keywords: 'glass blur frost acrylic transparency see-through dark light look' },
+        { row: 'personalization.colors.glass-dim', label: 'Bar tint', keywords: 'glass tint dim bar darkness whiteness transparency see-through dark light look' },
+        { row: 'personalization.colors.glass-panel', label: 'Panel opacity', keywords: 'glass panel opacity transparency see-through translucent dark light look' },
         { row: 'personalization.colors.glass-reset', label: 'Reset glass', keywords: 'glass reset default blur tint transparency' },
         { row: 'personalization.colors.accent-mode', label: 'Mantle accent', keywords: 'accent hue colour color custom mantle helm quartz look sync' },
         { row: 'personalization.colors.accent-hue', label: 'Accent hue', keywords: 'accent hue colour color wheel custom helm quartz' },
@@ -812,5 +851,6 @@
     help: 'Background, colours, lock screen, fonts',
     keywords: 'personalize personalization appearance look wallpaper theme dark mode',
     pages,
+    _pure: { guardRaised },   // for personalization.test.js part 1 (node)
   });
 })();

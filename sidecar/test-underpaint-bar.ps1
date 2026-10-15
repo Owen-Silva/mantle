@@ -48,6 +48,7 @@ public static class FakeBar {
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterWindowMessageW(string name);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(IntPtr h, StringBuilder sb, int n);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out int pid);
   [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr(IntPtr h, int i);
@@ -117,6 +118,11 @@ public static class FakeBar {
       if (c == "hide") { ShowWindow(_wnd, 0); return Info(); }
       if (c == "show") { ShowWindow(_wnd, 4 /* SW_SHOWNOACTIVATE */); return Info(); }
       if (c == "fg") return "{\"ok\":true,\"fg\":" + H(GetForegroundWindow()) + "}";
+      if (c == "shellflash") {   // post what the shell hook posts for a flashing button: (SHELLHOOK, HSHELL_FLASH, this window) to window a[1]
+        uint msg = RegisterWindowMessageW("SHELLHOOK");
+        bool ok = msg != 0 && PostMessageW(new IntPtr(long.Parse(a[1])), msg, new IntPtr(0x8006), _wnd);
+        return "{\"ok\":" + B(ok) + ",\"hwnd\":" + H(_wnd) + "}";
+      }
       if (c == "win") {
         IntPtr h = new IntPtr(long.Parse(a[1]));
         if (!IsWindow(h)) return "{\"ok\":true,\"exists\":false}";

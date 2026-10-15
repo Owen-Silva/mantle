@@ -30,19 +30,6 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
 
-// the newest installed Playwright Chromium (the pinned chromium-1234 build was removed 2026-10-05;
-// lane same-finish, 2026-10-09, same recipe as ui/desktop/wall-player.test.js)
-const CHROME = (() => {
-  const fsx = require('fs');
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
-  try {
-    for (const d of fsx.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
-      const p = base + '/' + d + '/chrome-win64/chrome.exe';
-      if (fsx.existsSync(p)) return p;
-    }
-  } catch (_) { /* reported below as "no chromium at" */ }
-  return base + '/chromium-*/chrome-win64/chrome.exe';
-})();
 const PAGE = 'file:///C:/Users/user/mantle/ui/switcher/index.html';
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/alttab/shots';
@@ -139,7 +126,7 @@ function themeEvery(browser) {
   const games = gamesRunning();
   if (games) { console.log(`NOT RUN: ${games} game process(es) are running; screenshots wait.`); process.exit(2); }
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch({ timeout: 0, executablePath: fs.existsSync(CHROME) ? CHROME : undefined, headless: true });
+  const browser = await require('../settings/test-browser.js').launch(chromium, { timeout: 0, headless: true });
   themeEvery(browser);   // MANTLE_THEME=dark|light: <html data-theme> + the mantle-theme event, as dm-core's plumbing does
   const results = [];
   const bench = [];

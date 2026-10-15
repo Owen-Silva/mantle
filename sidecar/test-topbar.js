@@ -250,7 +250,11 @@ function flat(items, out) {
     const med = (a) => a[Math.floor(a.length / 2)];
     console.log(`  stats: ${got.length} samples; sampler CPU per tick median ${med(costs)} ms (max ${costs[costs.length - 1]}); wall per tick median ${med(wall)} ms; ` +
       `whole sidecar ${Math.round(c1 - c0)} ms CPU in the first ~10 s (PDH start-up included); GPU ${last.gpu.name || '?'} engines ${(last.gpu.engines || []).length}`);
-    t.check('stats: cheap - the sampler costs under 10 ms of CPU per tick (median)', med(costs) < 10, costs.join(','));
+    // costMs is thread CPU time, which Windows counts in 15.625 ms quanta: each tick reads 0, 15.6 or 31.3, so
+    // the MEDIAN flips to 15.6 whenever just over half the ticks straddle a quantum (a busy machine) and says
+    // nothing about the real cost. The MEAN over the ticks is the honest estimate (lane mn-suite, 2026-10-12).
+    const meanCost = costs.reduce((s, x) => s + x, 0) / Math.max(1, costs.length);
+    t.check('stats: cheap - the sampler costs under 10 ms of CPU per tick (mean over the ticks)', meanCost < 10, `mean ${meanCost.toFixed(2)}: ${costs.join(',')}`);
     // detail: the top processes by name, only while asked
     await s.call('topbar.stats', { detail: 'mem' }, 4000);
     await T.sleep(1300);

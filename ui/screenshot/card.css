@@ -1,4 +1,4 @@
-/* card.css - the "Screenshot saved" card. The taskbar island's popover glass (--lg-fill-strong: a
+/* card.css - the screenshot card ("Screenshot copied" + Save). The taskbar island's popover glass (--lg-fill-strong: a
  * card carries text, so it gets a real surface), plain hairlines, accent only for focus.
  * THE CALM PASS (lane lookhud, 2026-09-29, Settings' 377e901 applied to the pop-ups): one layer of
  * --lg-fill-strong over a dark desktop read ~190 grey with the desktop showing through (no blur under
@@ -52,14 +52,22 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
   background: var(--lg-sunk); box-shadow: 0 0 0 1px var(--lg-edge-out);
   transition: transform 120ms var(--lg-ease);
 }
-.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter 120ms linear; }
+.thumb img, .thumb canvas { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter 120ms linear; }
 .thumb img:not([src]) { visibility: hidden; }
+/* The picture drawn from the frozen frame (card.js drawThumb) takes the box; the <img> is only for a
+   saved file with no frame behind it. Not yet drawn: the sunk box shows, never a broken image. */
+.thumb canvas { position: absolute; inset: 0; visibility: hidden; }
+#card.has-pic .thumb canvas { visibility: visible; }
+#card.has-pic .thumb img { visibility: hidden; }
+/* Not saved yet: the picture is just the picture (nothing to open), so it does not act clickable. */
+.thumb[disabled] { cursor: default; }
 .open-glyph {
   position: absolute; right: 5px; bottom: 5px; width: 20px; height: 20px; padding: 3px; box-sizing: border-box;
   border-radius: 50%; background: var(--hud-face); color: var(--lg-ink); box-shadow: 0 0 0 1px var(--lg-edge-out);
   opacity: 0; transition: opacity 120ms linear;
 }
-.thumb:not([disabled]):hover img, .thumb:focus-visible img { filter: brightness(.9); }
+.thumb:not([disabled]):hover img, .thumb:focus-visible img,
+.thumb:not([disabled]):hover canvas, .thumb:focus-visible canvas { filter: brightness(.9); }
 .thumb:not([disabled]):hover .open-glyph, .thumb:focus-visible .open-glyph { opacity: 1; }
 .thumb:not([disabled]):active { transform: scale(.97); }
 .thumb:focus-visible { box-shadow: 0 0 0 1px var(--lg-edge-out), 0 0 0 3px var(--lg-acc); }
@@ -83,8 +91,26 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 .act:hover { background: var(--lg-hover); }
 .act:active { background: var(--lg-press); }
 .act[disabled] { color: var(--lg-ink-3); background: transparent; }
+.act[hidden] { display: none; }
 .act.done { color: var(--lg-acc); }
 .act.bad { color: var(--lg-warn); }
+/* SAVE, the card's one verb (lane shot-save): the accent fill, the way Windows 11 marks a dialog's
+   default button; a touch wider so it reads as THE button. Working: the label says Saving... and it
+   rests at the sunk face; hover/press shade the fill rather than swap it. */
+.act.primary { min-width: 72px; font-weight: 600; background: var(--lg-acc); color: var(--lg-acc-on); }
+.act.primary:hover { background: var(--lg-acc); filter: brightness(1.08); }
+.act.primary:active { background: var(--lg-acc); filter: brightness(.94); }
+.act.primary[disabled] { background: var(--lg-sunk); color: var(--lg-ink-2); filter: none; }
+/* Saved just now: the title is where it went; a small check says it happened. */
+#card.just-saved .title { padding-left: 20px; position: relative; }
+#card.just-saved .title::before {
+  content: ''; position: absolute; left: 0; top: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--lg-acc);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Ccircle cx='7' cy='7' r='7'/%3E%3C/svg%3E") center / 14px 14px no-repeat;
+}
+#card.just-saved .title::after {
+  content: ''; position: absolute; left: 3.5px; top: 6.5px; width: 7px; height: 7px; background: var(--lg-acc-on);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 7 7' fill='none' stroke='%23000' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M.9 3.7l1.7 1.6L6.1 1.6'/%3E%3C/svg%3E") center / 7px 7px no-repeat;
+}
 
 .x {
   position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border-radius: var(--lg-r-ctl);
@@ -94,9 +120,10 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 .x:hover { background: var(--lg-hover); color: var(--lg-ink); }
 .x:active { background: var(--lg-press); color: var(--lg-ink); }
 
-/* No file (a Copy text card, a capture that was not saved, Windows' snip standing in): no empty
-   picture box and no actions that could never work - the warn line says what happened instead. */
-#card.no-file .thumb, #card.no-file .actions { display: none; }
+/* No picture (a Copy text card, Windows' snip standing in, a failure): no empty picture box; nothing
+   to act on: no actions row - the warn line says what happened instead. A copied capture keeps its
+   picture and its Save button whether or not it is saved yet (lane shot-save). */
+#card.no-file .thumb, #card.no-actions .actions { display: none; }
 #card.text-card .name { color: var(--lg-ink); }
 
 /* How long the card has left: a hairline that shrinks, paused while the pointer or focus is on it. */
@@ -136,6 +163,11 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 :root[data-theme="dark"] .act:hover { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-strong), inset 0 1px 0 var(--lg-edge-inner); }
 :root[data-theme="dark"] .act:active { background: var(--lg-card); }
 :root[data-theme="dark"] .act[disabled] { background: var(--lg-card); opacity: var(--lg-disabled); }
+/* Save in dark: Helm's accent button - the accent face with its ink, the inner lip, --lg-acc-strong on hover. */
+:root[data-theme="dark"] .act.primary { background: var(--lg-acc); color: var(--lg-acc-on); box-shadow: inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .act.primary:hover { background: var(--lg-acc-strong); box-shadow: inset 0 1px 0 var(--lg-edge-inner); filter: none; }
+:root[data-theme="dark"] .act.primary:active { background: var(--lg-acc); filter: none; }
+:root[data-theme="dark"] .act.primary[disabled] { background: var(--lg-card); color: var(--lg-ink-2); opacity: 1; box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
 :root[data-theme="dark"] .x:hover { background: var(--lg-press); }
 :root[data-theme="dark"] .x:active { background: var(--lg-card); }
 :root[data-theme="dark"] button:focus-visible { box-shadow: var(--lg-focus); }

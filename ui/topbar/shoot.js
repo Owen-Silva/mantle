@@ -18,19 +18,6 @@ const path = require('path');
 const fs = require('fs');
 const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
 
-// the newest installed Playwright Chromium (the pinned chromium-1234 build was removed 2026-10-05;
-// lane same-finish, 2026-10-09, same recipe as ui/desktop/wall-player.test.js)
-const CHROME = (() => {
-  const fsx = require('fs');
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
-  try {
-    for (const d of fsx.readdirSync(base).filter((n) => /^chromium-[0-9]+$/.test(n)).sort((x, y) => +y.slice(9) - +x.slice(9))) {
-      const p = base + '/' + d + '/chrome-win64/chrome.exe';
-      if (fsx.existsSync(p)) return p;
-    }
-  } catch (_) { /* reported below as "no chromium at" */ }
-  return base + '/chromium-*/chrome-win64/chrome.exe';
-})();
 const PAGE = process.env.MANTLE_TOPBAR_PAGE || 'file:///' + path.join(__dirname, 'index.html').split(path.sep).join('/');   // this checkout's page (a worktree shoots its own)
 // MANTLE_THEME=dark: the shot list above in dark (<html data-theme="dark"> before the first paint)
 const THEME = process.env.MANTLE_THEME === 'dark' ? 'dark' : 'light';
@@ -725,7 +712,7 @@ async function glassChecks(browser, check) {
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
-  const browser = await chromium.launch(Object.assign(fs.existsSync(CHROME) ? { executablePath: CHROME } : {}, { headless: true, args: ['--allow-file-access-from-files'] }));   // the 1234 build is gone (2026-10-05): playwright's own then
+  const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true, args: ['--allow-file-access-from-files'] });
   let fails = 0, checks = 0;
   const check = (name, ok, detail) => { checks++; if (!ok) { fails++; console.log('  FAIL ' + name + (detail ? ' (' + detail + ')' : '')); } };
   try {
