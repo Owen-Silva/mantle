@@ -1,0 +1,44 @@
+/* deskmenu.css -- the desktop right-click menu (ui/desktop/deskmenu.js draws it into a window of its
+   own) and the desktop widgets' off switch. Every colour comes from glass-light.css (--lg-*), so the
+   menu is the island theme in light and in dark. Loaded by the desktop page AND by the menu window. */
+
+/* Desktop widgets off (the menu's switch): every widget pane hides; nothing moves. */
+body.widgets-off .pane { visibility: hidden !important; }
+
+/* ---- the menu window */
+html.dm-root, html.dm-root body { margin: 0; background: transparent; overflow: hidden; }
+.dm-body {
+  display: inline-block;
+  padding: 10px;                 /* = deskmenu.js INSET: room for the shadow */
+  font-family: var(--ui-font);
+  font-size: 13px;
+  color: var(--lg-ink);
+  user-select: none;
+  cursor: default;
+}
+.dm-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 224px;
+  max-width: 320px;
+  padding: 5px;
+  box-sizing: border-box;
+  background: var(--lg-fill-pop);
+  border-radius: var(--lg-r);
+  box-shadow: var(--lg-shadow), inset 0 0 0 1px var(--lg-edge-out), var(--lg-lip-up);
+}
+.dm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--lg-r-ctl);
+  white-space: nowrap;
+}
+.dm-row:hover { background: var(--lg-hover); }
+.dm-row:active, .dm-row.busy { background: var(--lg-press); }
+.dm-ic { width: 16px; text-align: center; font-family: var(--icon-font); font-size: 14px; color: var(--lg-ink-2); }
+.dm-sep { height: 1px; margin: 4px 8px; background: var(--lg-edge-out); }
+.dm-note { padding: 6px 10px 4px; white-space: normal; color: var(--lg-warn); font-size: 12px; }
+.dm-note[hidden] { display: none; }
