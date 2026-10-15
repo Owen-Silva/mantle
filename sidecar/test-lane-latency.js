@@ -104,7 +104,13 @@ const ms = () => Number(process.hrtime.bigint() / 1000000n);
     const seen = (await s.send('gamemode.scan', { procs: true, detail: true }, 3000)).result || {};
     const row = (seen.procs || []).find((p) => p.pid === child.pid);
     t.check('e: a process that started is opened (opened >= 1) and read in detail: path, start time, priority, CPU time',
-      seen.opened >= 1 && row && row.path && row.created && row.prio === 'normal' && typeof row.cpuMs === 'number', JSON.stringify(row));
+      seen.opened >= 1 && row && row.path && row.created && typeof row.prio === 'string' && typeof row.cpuMs === 'number', JSON.stringify(row));
+    // the priority now comes from the list's base priority, not GetPriorityClass: it must say what
+    // Windows says (os.getPriority reads GetPriorityClass). A CI runner starts tests below normal.
+    const PRIO = { 19: 'idle', 10: 'belownormal', 0: 'normal', [-7]: 'abovenormal', [-14]: 'high', [-20]: 'realtime' };
+    let osPrio = null;
+    try { osPrio = PRIO[require('os').getPriority(child.pid)]; } catch (_) { /* gone */ }
+    t.check('e: ... its priority is the one Windows reports for it (GetPriorityClass)', row && osPrio && row.prio === osPrio, `${row && row.prio} vs ${osPrio}`);
     const again = (await s.send('gamemode.scan', { procs: true, detail: true }, 3000)).result || {};
     const row2 = (again.procs || []).find((p) => p.pid === child.pid);
     t.check('e: ... the next scan does not open it again, and gives the same detail', again.opened <= 5 && row2 && row2.path === row.path && row2.created === row.created, `opened ${again.opened}`);
