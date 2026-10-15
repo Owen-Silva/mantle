@@ -837,7 +837,8 @@ namespace Mantle {
         if (refuse != null) { r["why"] = "refused: " + refuse; return r; }
         // Mantle's MAIN process is never slowed: its desktop layer sits inside Explorer's desktop (97dec56
         // left it out of the plan; this is the copy a bug in main cannot get past). Putting back is allowed.
-        if (Program.ParentPid > 0 && pid == (uint)Program.ParentPid && !Easing(it)) { r["why"] = "refused: Mantle's main process (slowing it can stall Explorer)"; return r; }
+        // (A passive sidecar writes nothing to it anyway: test-gamemode.js uses its own process for the refusals.)
+        if (!Program.Passive && Program.ParentPid > 0 && pid == (uint)Program.ParentPid && !Easing(it)) { r["why"] = "refused: Mantle's main process (slowing it can stall Explorer)"; return r; }
         // A passive (--test) sidecar writes only to the test burner (sidecar/apppower-burner.js), like App power.
         bool passiveNo = Program.Passive && !IsBurner(path);
         long c, x, k, u;
