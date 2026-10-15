@@ -28,6 +28,7 @@ namespace Mantle {
       [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
       [DllImport("kernel32.dll")] public static extern IntPtr GetCurrentProcess();
       [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool QueryFullProcessImageNameW(IntPtr h, uint flags, StringBuilder sb, ref uint size);
+      [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern uint GetLongPathNameW(string shortPath, StringBuilder longPath, uint size);
       [DllImport("kernel32.dll", SetLastError = true)] public static extern uint GetPriorityClass(IntPtr h);
       [DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetPriorityClass(IntPtr h, uint cls);
       [DllImport("kernel32.dll", SetLastError = true)] public static extern bool GetProcessInformation(IntPtr h, int cls, ref THROTTLE info, uint size);
@@ -211,6 +212,9 @@ namespace Mantle {
       if (path == null) return false;
       string temp;
       try { temp = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath()); } catch (Exception) { return false; }
+      // %TEMP% can be an 8.3 short path (C:\Users\RUNNER~1\... on a GitHub runner) while the image path
+      // Windows reports is always the long one: compare the long forms
+      { var lb = new StringBuilder(1024); uint ln = N.GetLongPathNameW(temp, lb, (uint)lb.Capacity); if (ln > 0 && ln < lb.Capacity) temp = lb.ToString(); }
       if (!path.StartsWith(temp, StringComparison.OrdinalIgnoreCase)) return false;
       string file = ExeOf(System.IO.Path.GetFileName(path));
       if (file.StartsWith("mpburn-", StringComparison.OrdinalIgnoreCase)) return true;

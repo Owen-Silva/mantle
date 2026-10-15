@@ -534,7 +534,25 @@
     S.open = { stat: key };
     renderBar();
     renderMenus();
-    call('topbar.statsDetail', { kind: key });
+    askDetail(S.open);
+  }
+  // The sidecar sends a meter's details (top processes, adapters) for 10 s after each ask, so a page that
+  // went away never leaves them on. While the dropdown stays open the ask is renewed every 5 s; before
+  // (lane mantle-power-e2e, 2026-10-14) the top processes, and an app power panel open under one of them,
+  // vanished 10 s after the dropdown opened.
+  // The renewal is sent half-way between two samples: the sidecar answers every ask with a sample at
+  // once and starts its 1 s grid again from there, and a sample taken a few ms after the last one
+  // measures noise (process times tick every 15.6 ms): the rows jumped about and a busy app could
+  // drop out of the list for a second.
+  const DETAIL_RENEW_MS = 5000, DETAIL_RENEW_AFTER_SAMPLE_MS = 450;
+  function askDetail(o) {
+    if (!o || !o.stat || o.stat === 'ping') return;
+    o.detailAt = Date.now();
+    call('topbar.statsDetail', { kind: o.stat });
+  }
+  function renewDetail(o) {
+    if (!o || !o.stat || o.stat === 'ping' || o.renewT || Date.now() - (o.detailAt || 0) < DETAIL_RENEW_MS) return;
+    o.renewT = setTimeout(() => { o.renewT = 0; if (S.open === o) askDetail(o); }, DETAIL_RENEW_AFTER_SAMPLE_MS);
   }
 
   function renderStatMenu(o) {
@@ -755,7 +773,7 @@
     if (ev && ev.paused) { S.paused = ev.reason || 'paused'; renderStats(); return; }
     S.paused = null;
     S.stats = ev;
-    if (S.open && S.open.stat) renderStatMenu(S.open);   // in place: no re-fade, scroll kept
+    if (S.open && S.open.stat) { renderStatMenu(S.open); renewDetail(S.open); }   // in place: no re-fade, scroll kept
     renderStats();
   });
   mantle.on('topbar.note', (ev) => setNote(ev && ev.text));
