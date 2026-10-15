@@ -961,7 +961,7 @@
       GM_BG, GM_MT, GM_WP, GM_LV, GM_NOTE, GM_GAME];
   }
   var gmState = (function () {
-    var base = { on: false, how: null, game: null, busy: null, auto: true, liftSaver: false, dry: false, enabled: true, watching: true,
+    var base = { on: false, how: null, game: null, busy: null, auto: true, liftSaver: false, boost: true, dry: false, enabled: true, watching: true,
                  reason: 'explorer.exe is not a game', actions: [], fromCrash: false,
                  last: { at: Date.now() - 600000, why: 'VALORANT-Win64-Shipping.exe exited', game: 'VALORANT-Win64-Shipping.exe', minutes: 42, ok: true,
                          text: '63 apps back to normal, 4 had exited; plugged in back to balanced; wallpaper let go' } };
@@ -1307,6 +1307,7 @@
       case 'gamemode.set': return gmSet(payload);
       case 'gamemode.auto': gmState = Object.assign({}, gmState, { auto: !!(payload && payload.on) }); return Object.assign({}, gmState);
       case 'gamemode.liftSaver': gmState = Object.assign({}, gmState, { liftSaver: !!(payload && payload.on) }); return Object.assign({}, gmState);
+      case 'gamemode.boost': gmState = Object.assign({}, gmState, { boost: !!(payload && payload.on) }); return Object.assign({}, gmState);
       case 'powermode.plan': {
         var pp = powerPlan(payload);
         if (PM === 'slow') return new Promise(function (res) { setTimeout(function () { res(pp); }, 1500); });

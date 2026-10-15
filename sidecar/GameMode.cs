@@ -78,6 +78,7 @@ namespace Mantle {
       t.Add("gamemode.saver", Lanes.Qs, Saver);       // Energy saver's "turn on at" level (opt-in)
       t.Add("gamemode.guard", Lanes.Slow, GuardCmd);  // PURE: would a target be refused, and why
       t.Add("gamemode.trim", Lanes.Slow, Trim);       // Mantle resting: its OWN Electron processes' idle pages back to Windows
+      t.Add("gamemode.trimbg", Lanes.Slow, TrimBg);   // the boost: ONE trim per idle background process, once per game
       WarmScan();                                     // the first game check finds a finished read (THE SCAN WORKER)
     }
 
@@ -124,6 +125,157 @@ namespace Mantle {
       return null;
     }
 
+    // ------------------------------------------------------------------ the boost's one trim
+
+    [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr h, int cls, IntPtr buf, int len, out int ret);
+
+    /// Never trimmed by the boost, only eased: an agent may be mid-task in them (_gamemode-plan.js NO_TRIM).
+    static readonly string[] NoTrimPrefixes = { "Helm", "claude" };
+
+    /// The test burner only: an mpburn-* exe under %TEMP% (sidecar/apppower-burner.js), the rule App
+    /// power's passive writes use (AppPower.IsTestTarget). Owen's apps never live there by that name.
+    static bool IsBurner(string path) {
+      if (string.IsNullOrEmpty(path)) return false;
+      string temp;
+      try { temp = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath()); } catch (Exception) { return false; }
+      if (!AppPower.LongPath(path).StartsWith(AppPower.LongPath(temp), StringComparison.OrdinalIgnoreCase)) return false;
+      return System.IO.Path.GetFileName(path).StartsWith("mpburn-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// Which part of a Chromium / Electron app this is, from its command line's --type= switch (a
+    /// QUERY_LIMITED handle is enough: ProcessCommandLineInformation, Windows 8.1+). "" = no --type (an
+    /// app's main process, or not a Chromium app); null = the line could not be read. The line itself is
+    /// never kept, returned or logged (it can carry a file name).
+    static string ChromiumType(IntPtr h) {
+      int len = 8192, ret;
+      IntPtr buf = Marshal.AllocHGlobal(len);
+      try {
+        int st = NtQueryInformationProcess(h, 60, buf, len, out ret);
+        if (st == STATUS_INFO_LENGTH_MISMATCH && ret > len && ret < (1 << 20)) {
+          Marshal.FreeHGlobal(buf); len = ret; buf = Marshal.AllocHGlobal(len);
+          st = NtQueryInformationProcess(h, 60, buf, len, out ret);
+        }
+        if (st != 0) return null;
+        int n = Marshal.ReadInt16(buf, 0) & 0xFFFF;
+        IntPtr s = Marshal.ReadIntPtr(buf, IntPtr.Size);
+        if (s == IntPtr.Zero || n == 0) return "";
+        string line = Marshal.PtrToStringUni(s, n / 2);
+        int i = line.IndexOf(" --type=", StringComparison.Ordinal);
+        if (i < 0) return "";
+        int j = i + 8, k = j;
+        while (k < line.Length && line[k] != ' ' && line[k] != '"') k++;
+        return line.Substring(j, k - j).ToLowerInvariant();
+      } finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    static string HelperWords(string type) {
+      if (type == "gpu-process") return "its app's graphics process (only an app's pages are trimmed)";
+      if (type == "utility") return "a helper of its app (network, sound or storage; only an app's pages are trimmed)";
+      if (type.StartsWith("crashpad", StringComparison.Ordinal)) return "its app's crash reporter";
+      return "a helper of its app (only an app's pages are trimmed)";
+    }
+
+    /// GAME-MODE BOOST (lane mantle-boost, 2026-10-15; notes/valorant-stutter.md section 6). ONE
+    /// EmptyWorkingSet per idle background process, once per game, chosen by main (_gamemode-plan.js
+    /// trimPlan) and checked AGAIN here. {items:[{pid, created, file}], dry?, testFgPid? (passive only)}
+    /// -> {results:[{pid, file, ok, gone?, why?, kind?, wsBefore, wsAfter?, freed?}], trimmed, freed, passive}.
+    /// Refused BY NAME from the process list before any handle: a game, an anti-cheat or anything on the
+    /// never-touch list, Helm and Claude. Refused from the list: this sidecar, Mantle's main process and
+    /// its own Electron children (they rest instead), a process with same-exe children (an app's main
+    /// process: its windows live there), a reused pid. Refused after a QUERY_LIMITED|SET_QUOTA open: the
+    /// app in front, another session, elevated, Windows' own, a Chromium helper that is not a page.
+    /// Nothing is closed or suspended; trimmed pages come back by themselves when the app touches them.
+    /// A passive (--test) sidecar trims only the test burner; anything else says what it would have done.
+    static string TrimBg(Dictionary<string, object> req, ref object result) {
+      var items = req.ContainsKey("items") ? req["items"] as List<object> : null;
+      if (items == null) return "gamemode.trimbg needs items: [{pid, created, file}]";
+      bool dry = Json.GetBool(req, "dry", false);
+      uint fgPid = ForegroundPid(), own = OwnSession();
+      if (Program.Passive && req.ContainsKey("testFgPid")) fgPid = (uint)Math.Max(0, Json.GetInt(req, "testFgPid", 0));
+      string err;
+      List<Proc> snap = Snapshot(out err);
+      if (err != null) return err;
+      var byPid = new Dictionary<uint, Proc>();
+      foreach (Proc p in snap) byPid[p.Pid] = p;
+      var parents = new HashSet<uint>();          // processes with a child running the same exe
+      foreach (Proc p in snap) {
+        Proc q;
+        if (p.Ppid != p.Pid && byPid.TryGetValue(p.Ppid, out q) && q.Created <= p.Created && string.Equals(q.File, p.File, StringComparison.OrdinalIgnoreCase)) parents.Add(q.Pid);
+      }
+      Proc main = null;
+      if (Program.ParentPid > 0) byPid.TryGetValue((uint)Program.ParentPid, out main);
+      var outList = new List<object>();
+      var done = new List<IDictionary>();
+      int trimmed = 0;
+      foreach (object o in items) {
+        var it = o as Dictionary<string, object>;
+        if (it == null) continue;
+        uint pid = (uint)Math.Max(0, Json.GetInt(it, "pid", 0));
+        string wantCreated = Json.GetString(it, "created");
+        IDictionary r = Json.Obj("pid", (long)pid, "file", Json.GetString(it, "file"), "ok", false);
+        outList.Add(r);
+        Proc p;
+        if (!byPid.TryGetValue(pid, out p)) { r["why"] = "it has exited"; r["gone"] = true; continue; }
+        r["file"] = p.File;
+        if (!string.IsNullOrEmpty(wantCreated) && p.Created.ToString(CultureInfo.InvariantCulture) != wantCreated) { r["why"] = "that pid is a different process now (it restarted)"; r["gone"] = true; continue; }
+        r["wsBefore"] = p.Ws;
+        string f = p.File ?? "";
+        if (pid <= 8 || IsGameish(f)) { r["why"] = "refused: " + (pid <= 8 ? "a system process" : f + " is on game mode's never-touch list"); continue; }
+        string noTrim = null;
+        foreach (string n in NoTrimPrefixes) if (f.StartsWith(n, StringComparison.OrdinalIgnoreCase)) noTrim = n;
+        if (noTrim != null) { r["why"] = "refused: Helm and Claude are only eased (an agent may be working)"; continue; }
+        if (pid == (uint)Program.OwnPid) { r["why"] = "refused: the sidecar itself (it runs the keyboard hook)"; continue; }
+        if (main != null && (pid == main.Pid || (p.Ppid == main.Pid && string.Equals(f, main.File, StringComparison.OrdinalIgnoreCase)))) { r["why"] = "refused: Mantle's own processes rest instead"; continue; }
+        if (parents.Contains(pid)) { r["why"] = "refused: its app's main process (its windows live there)"; continue; }
+        if (pid == fgPid) { r["why"] = "refused: the app in front"; continue; }
+        uint session;
+        if (!N.ProcessIdToSessionId(pid, out session)) { r["why"] = "it has exited"; r["gone"] = true; continue; }
+        IntPtr h = N.OpenProcess(SET_QUOTA | QUERY_LIMITED, false, pid);
+        if (h == IntPtr.Zero) { r["why"] = "Windows would not let Mantle trim it (error " + Marshal.GetLastWin32Error() + ")"; continue; }
+        try {
+          var sb = new StringBuilder(1024); uint size = 1024;
+          string path = N.QueryFullProcessImageNameW(h, 0, sb, ref size) ? sb.ToString(0, (int)size) : null;
+          bool elevated = false;
+          IntPtr tok;
+          if (N.OpenProcessToken(h, 0x0008, out tok)) {
+            try { int el, ret; if (N.GetTokenInformation(tok, 20, out el, 4, out ret)) elevated = el != 0; } finally { N.CloseHandle(tok); }
+          }
+          string refuse = Refuse(f, path, pid, session, elevated, fgPid, own);
+          if (refuse != null) { r["why"] = "refused: " + refuse; continue; }
+          long c, x, k, u;
+          if (!N.GetProcessTimes(h, out c, out x, out k, out u) || c != p.Created) { r["why"] = "that pid is a different process now (it restarted)"; r["gone"] = true; continue; }
+          string kind = ChromiumType(h);
+          r["kind"] = kind == null ? "unknown" : kind.Length == 0 ? "main" : kind;
+          if (kind != null && kind.Length > 0 && kind != "renderer") { r["why"] = "refused: " + HelperWords(kind); continue; }
+          if (kind == null && byPid.ContainsKey(p.Ppid) && string.Equals(byPid[p.Ppid].File, f, StringComparison.OrdinalIgnoreCase)) {
+            r["why"] = "refused: which part of its app it is could not be read"; continue;
+          }
+          if (dry) { r["why"] = "test run: would hand its idle memory back to Windows"; r["dry"] = true; continue; }
+          if (Program.Passive && !IsBurner(path)) { r["why"] = FeatureTable.PassiveRefusal + ": it would have handed back the idle memory of " + f; r["passive"] = true; continue; }
+          if (EmptyWorkingSet(h)) { r["ok"] = true; trimmed++; done.Add(r); }
+          else r["why"] = "Windows refused (error " + Marshal.GetLastWin32Error() + ")";
+        } finally { N.CloseHandle(h); }
+      }
+      // The working sets AFTER, from one more list read (no handle): what each one handed back.
+      long freed = 0;
+      if (done.Count > 0) {
+        List<Proc> after = Snapshot(out err);
+        var now = new Dictionary<uint, long>();
+        foreach (Proc p in after) now[p.Pid] = p.Ws;
+        foreach (IDictionary r in done) {
+          long ws, before = Convert.ToInt64(r["wsBefore"], CultureInfo.InvariantCulture);
+          uint pid = (uint)Convert.ToInt64(r["pid"], CultureInfo.InvariantCulture);
+          if (!now.TryGetValue(pid, out ws)) continue;
+          r["wsAfter"] = ws;
+          long d = Math.Max(0, before - ws);
+          r["freed"] = d;
+          freed += d;
+        }
+      }
+      result = Json.Obj("results", outList, "trimmed", trimmed, "freed", freed, "passive", Program.Passive);
+      return null;
+    }
+
     // ------------------------------------------------------------------ the never-touch rule
 
     /// Exe names (or name prefixes) game mode never writes to: the games and their anti-cheat, voice,
@@ -147,6 +299,12 @@ namespace Mantle {
       "TeamSpeak", "ts3client", "Mumble", "Teams", "ms-teams", "Zoom", "Skype", "WhatsApp", "audiodg",
       "lghub", "LGHUB", "Razer", "SteelSeries", "iCUE", "Corsair", "NVIDIA", "nvcontainer", "Mantle.Sidecar",
       "TabTip", "GameInput", "TextInputHost", "ctfmon", "Defender", "MsMpEng", "MpDefender", "SecurityHealth", "NisSrv",
+      // lane mantle-boost, 2026-10-15: the boost never touches sound, input or the network path (the
+      // 10-14 freezes were Wi-Fi), nor Windows' shell. Same names as _gamemode-plan.js NEVER.
+      "RtkAud", "Realtek", "Nahimic", "Dolby", "Waves", "MaxxAudio", "voicemeeter", "EarTrumpet", "SoundSwitch", "Krisp",
+      "PowerToys", "AutoHotkey", "Logi", "Wacom", "WTablet", "DS4Windows", "x360ce", "ViGEm", "Synaptics", "SynTP", "ETDCtrl",
+      "tailscale", "openvpn", "wireguard", "NordVPN", "ProtonVPN", "ExpressVPN", "Surfshark", "mullvad", "Cloudflare", "warp-svc", "ZeroTier", "Killer",
+      "explorer",
     };
     // Declared after both halves: static initialisers run in the order they are written.
     static readonly string[] NeverPrefixes = Join(GamePrefixes, OtherNeverPrefixes);
@@ -201,7 +359,7 @@ namespace Mantle {
       return false;
     }
 
-    sealed class Proc { public uint Pid, Ppid, Session; public string File; public long Created, CpuMs; public int BasePrio; public Inst I; }
+    sealed class Proc { public uint Pid, Ppid, Session; public string File; public long Created, CpuMs, Ws; public int BasePrio; public Inst I; }
 
     /// ONE RUN OF ONE PROCESS, kept for its whole life (lane mantle-lanes, 2026-10-15). Keyed by pid and
     /// checked against its start time, parent pid and exe name, so a reused pid is a new entry. It holds
@@ -262,7 +420,8 @@ namespace Mantle {
         // SYSTEM_PROCESS_INFORMATION: CreateTime at 32, UserTime 40, KernelTime 48 (100 ns units), ImageName
         // (UNICODE_STRING) at 56, then BasePriority, UniqueProcessId, InheritedFromUniqueProcessId.
         bool x64 = IntPtr.Size == 8;
-        int oBuf = x64 ? 64 : 60, oPrio = x64 ? 72 : 64, oPid = x64 ? 80 : 68, oPpid = x64 ? 88 : 72;
+        // WorkingSetSize (SIZE_T) at 144 / 104: the boost's before and after, read with no handle.
+        int oBuf = x64 ? 64 : 60, oPrio = x64 ? 72 : 64, oPid = x64 ? 80 : 68, oPpid = x64 ? 88 : 72, oWs = x64 ? 144 : 104;
         long at = _procBuf.ToInt64();
         var next = new Dictionary<uint, Inst>(_inst.Count + 16);
         for (int n = 0; n < 65536; n++) {
@@ -272,6 +431,7 @@ namespace Mantle {
           long created = Marshal.ReadInt64(e, 32);
           long cpuMs = (Marshal.ReadInt64(e, 40) + Marshal.ReadInt64(e, 48)) / 10000;
           int basePrio = Marshal.ReadInt32(e, oPrio);
+          long ws = Marshal.ReadIntPtr(e, oWs).ToInt64();
           int len = Marshal.ReadInt16(e, 56) & 0xFFFF;
           IntPtr name = Marshal.ReadIntPtr(e, oBuf);
           // Toolhelp's names, exactly: the idle process has no image name and is "[System Process]" there.
@@ -287,7 +447,7 @@ namespace Mantle {
             if (N.ProcessIdToSessionId(pid, out s)) seen.Session = s;
           }
           next[pid] = seen;
-          list.Add(new Proc { Pid = pid, Ppid = ppid, File = file, Session = seen.Session, Created = created, CpuMs = cpuMs, BasePrio = basePrio, I = seen });
+          list.Add(new Proc { Pid = pid, Ppid = ppid, File = file, Session = seen.Session, Created = created, CpuMs = cpuMs, Ws = ws, BasePrio = basePrio, I = seen });
           int step = Marshal.ReadInt32(e, 0);
           if (step <= 0) break;
           at += step;
@@ -545,6 +705,7 @@ namespace Mantle {
                 if (i.Path != null) row["path"] = i.Path;
                 row["created"] = p.Created.ToString(CultureInfo.InvariantCulture);
                 row["cpuMs"] = p.CpuMs;
+                row["ws"] = p.Ws;
                 row["prio"] = PrioOf(p.BasePrio);
                 if (i.Elevated != null) row["elevated"] = i.Elevated;
               }
@@ -674,6 +835,11 @@ namespace Mantle {
         }
         string refuse = Refuse(file, path, pid, session, elevated, fgPid, own);
         if (refuse != null) { r["why"] = "refused: " + refuse; return r; }
+        // Mantle's MAIN process is never slowed: its desktop layer sits inside Explorer's desktop (97dec56
+        // left it out of the plan; this is the copy a bug in main cannot get past). Putting back is allowed.
+        if (Program.ParentPid > 0 && pid == (uint)Program.ParentPid && !Easing(it)) { r["why"] = "refused: Mantle's main process (slowing it can stall Explorer)"; return r; }
+        // A passive (--test) sidecar writes only to the test burner (sidecar/apppower-burner.js), like App power.
+        bool passiveNo = Program.Passive && !IsBurner(path);
         long c, x, k, u;
         string created = N.GetProcessTimes(h, out c, out x, out k, out u) ? c.ToString(CultureInfo.InvariantCulture) : null;
         if (!string.IsNullOrEmpty(wantCreated) && created != wantCreated) { r["why"] = "that pid is a different process now (it restarted)"; r["gone"] = true; return r; }
@@ -690,7 +856,7 @@ namespace Mantle {
           else if (GetMask(it, "ecoIf", out ic, out istate) && (!known || bc != ic || bs != istate)) {
             e["why"] = known ? "left as it is: the app changed its own efficiency setting since" : "its efficiency setting could not be read (error " + rerr + ")";
             e["after"] = known ? Eco(bc, bs) : null; e["skipped"] = true;
-          } else if (Program.Passive) {
+          } else if (passiveNo) {
             e["why"] = FeatureTable.PassiveRefusal + ": it would have set efficiency mode " + (wc == 0 ? "back to Windows' choice" : ((ws & EXECUTION_SPEED) != 0 ? "on" : "off"));
             allOk = false;
           } else {
@@ -716,7 +882,7 @@ namespace Mantle {
             allSame = false;
             pr["after"] = PrioName(before); pr["skipped"] = true;
             pr["why"] = "left at " + PrioName(before) + ": it was not " + onlyIf + " (the app or Owen set it)";
-          } else if (Program.Passive) {
+          } else if (passiveNo) {
             allSame = false;
             pr["why"] = FeatureTable.PassiveRefusal + ": it would have set priority " + wantPrio; allOk = false;
           } else {

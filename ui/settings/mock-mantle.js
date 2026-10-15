@@ -80,7 +80,7 @@
     : { ok: true, present: true, percent: 72, ac: false, charging: false, secondsLeft: 184 * 60, saver: false, low: false, onBattery: true, hasBattery: true, reason: null };
   let pm = FAIL ? { ok: false, mode: null, available: false, reason: 'Windows would not say which power plan is active (error 5)' }
     : { ok: true, mode: 'balanced', available: true, settable: true, plan: { guid: '381b4222-f694-41f0-9685-ff5bb260df2e', name: 'Balanced', balanced: true }, source: 'battery', saver: false, reason: null };
-  const gm = { on: false, how: null, game: null, busy: null, auto: true, liftSaver: false, dry: false, enabled: true, watching: true, reason: 'no game is running', actions: [], last: null };
+  const gm = { on: false, how: null, game: null, busy: null, auto: true, liftSaver: false, boost: true, dry: false, enabled: true, watching: true, reason: 'no game is running', actions: [], last: null };
 
   /* ---- sound ---- */
   const devices = [
@@ -158,6 +158,7 @@
     F('gamemode', 'Game mode (quick settings)', [], [
       opt({ key: 'auto', label: 'Turn on by itself when a game starts', type: 'bool', default: true, value: true }),
       opt({ key: 'liftSaver', label: 'Lift Energy saver while a game runs', type: 'bool', default: false, value: false }),
+      opt({ key: 'boost', label: 'Boost: free memory and power for the game', type: 'bool', default: true, value: true }),
     ]),
     F('timer', 'Timer and stopwatch (top bar)', [], [
       opt({ key: 'sound', label: 'When a timer ends', type: 'choice', choices: [{ value: 'chime', label: 'Chime' }, { value: 'bell', label: 'Bell' }, { value: 'none', label: 'Silent' }], default: 'chime', value: 'bell', isDefault: false }),

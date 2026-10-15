@@ -136,16 +136,17 @@
     const st = kit.status({ row: 'gaming.game-mode.mantle-status', label: 'Mantle game mode now', help: MANTLE_LINE, value: 'Reading…' });
     const feat = kit.toggle({ row: 'gaming.game-mode.mantle', label: 'Mantle game mode', help: 'Mantle\'s game mode feature, the same switch as in the Mantle section',
       onChange: (on) => kit.call('settings.enable', { feature: 'gamemode', on }).then((r) => (r.ok === false ? r : { ok: true, value: r.feature ? !!r.feature.enabled : on })).then((r) => { readMantle(); return r; }) });
-    const LABEL = { auto: 'Turn on by itself for games', liftSaver: 'Lift Energy saver while gaming on battery' };
+    const LABEL = { auto: 'Turn on by itself for games', liftSaver: 'Lift Energy saver while gaming on battery', boost: 'Boost: free memory and power for the game' };
     const opt = (key, row) => kit.toggle({ row, label: LABEL[key],
       onChange: (on) => kit.call('settings.option', { feature: 'gamemode', key, value: on }).then((r) => (r.ok === false ? r : { ok: true, value: r.option ? r.option.value === true : on })) });
     const auto = opt('auto', 'gaming.game-mode.mantle-auto');
     const saver = opt('liftSaver', 'gaming.game-mode.mantle-saver');
+    const boost = opt('boost', 'gaming.game-mode.mantle-boost');
     const acts = kit.list({ row: 'gaming.game-mode.mantle-actions', items: [], empty: 'Reading…' });
     const more = kit.button({ row: 'gaming.game-mode.mantle-more', label: 'All of Mantle\'s options', help: 'Mantle\'s other features and switches', text: 'Open', tone: 'quiet',
       onClick: () => { kit.open({ section: 'mantle', row: 'mantle.feature.gamemode' }); return { ok: true }; } });
     el.append(kit.group('Windows Game Mode'), kit.card(win.gameMode),
-      kit.group('Mantle game mode'), kit.card(st, feat, auto, saver),
+      kit.group('Mantle game mode'), kit.card(st, feat, auto, saver, boost),
       kit.group('What Mantle game mode is doing'), kit.card(acts), kit.card(more));
 
     let state = null, stWhy = null, fm = null, fmWhy = null;
@@ -160,10 +161,10 @@
             : g.rest && g.rest.on ? 'Resting for a game' : 'Off · ' + (g.auto ? 'waiting for a game' : 'turns on only by hand') });
       }
       if (!fm) {
-        [feat, auto, saver].forEach((t) => t.set({ disabled: true, reason: fmWhy || 'Mantle did not list its game mode feature' }));
+        [feat, auto, saver, boost].forEach((t) => t.set({ disabled: true, reason: fmWhy || 'Mantle did not list its game mode feature' }));
       } else {
         feat.set({ value: !!fm.enabled, disabled: fm.ok === false && !fm.enabled, reason: fm.ok === false ? 'Mantle game mode did not load: ' + (fm.reason || 'no reason came back') : null });
-        for (const [t, key] of [[auto, 'auto'], [saver, 'liftSaver']]) {
+        for (const [t, key] of [[auto, 'auto'], [saver, 'liftSaver'], [boost, 'boost']]) {
           const o = (fm.options || []).find((x) => x.key === key);
           if (!o) { t.set({ disabled: true, reason: 'Mantle game mode has no "' + key + '" option in this build' }); continue; }
           t.set({ label: o.label || LABEL[key], help: o.help || '', value: o.value === true, disabled: false,
@@ -226,6 +227,7 @@
           { row: 'gaming.game-mode.mantle', label: 'Mantle game mode', keywords: 'mantle game mode feature performance' },
           { row: 'gaming.game-mode.mantle-auto', label: 'Turn on by itself for games', keywords: 'mantle game mode automatic auto' },
           { row: 'gaming.game-mode.mantle-saver', label: 'Lift Energy saver while gaming on battery', keywords: 'mantle game mode energy saver battery' },
+          { row: 'gaming.game-mode.mantle-boost', label: 'Boost: free memory and power for the game', keywords: 'mantle game mode boost memory ram free trim efficiency background apps' },
           { row: 'gaming.game-mode.mantle-actions', label: 'What Mantle game mode is doing', keywords: 'mantle game mode actions power background apps' },
           { row: 'gaming.game-mode.mantle-more', label: 'All of Mantle\'s options', keywords: 'mantle options features' },
         ], render: renderGameMode },

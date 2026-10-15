@@ -9,6 +9,8 @@
  *   gamemode.set {on}         -> the same state (turn on / off by hand)
  *   gamemode.auto {on}        -> "Turn on by itself for games"
  *   gamemode.liftSaver {on}   -> "Lift Energy saver while gaming on battery"
+ *   gamemode.boost {on}       -> "Boost: free memory and power for the game" (state.boost; state.boostNow =
+ *                                {state, text, freed, trimmed, apps, warn} while on: the line under the switch)
  *   'gamemode.state' push     -> whenever it changes (a game starts or exits)
  *
  * THE SURFACE (Owen: "minimalistic and super easy to use and obvious"):
@@ -34,6 +36,7 @@
     ['Power mode', 'Best performance while you play; your own choice comes back after'],
     ['Background apps', 'Efficiency mode for your other apps. Never the game, anti-cheat, Discord, music, recording, mouse or keyboard software, or anything playing sound'],
     ['Mantle itself', 'its own windows slowed down the same way'],
+    ['Boost', 'a minute in, idle background apps hand their unused memory back to Windows, once. Nothing is closed; Helm, Claude, calls and music are left alone'],
     ['Wallpaper', 'paused, even for a windowed game'],
     ['Mantle resting', 'while a game runs, Mantle closes its hidden windows and hands their shortcuts back to Windows; all back when the game closes'],
   ];
@@ -45,14 +48,14 @@
   /** PURE: the state -> what the tile shows. */
   function view(st) {
     var v = { dead: false, on: false, pending: false, label: 'Turn on', tip: '', sub: '', why: '', warn: false, rows: [], plan: null,
-              last: '', crash: '', auto: true, liftSaver: false, rest: '' };
+              last: '', crash: '', auto: true, liftSaver: false, boost: true, rest: '' };
     if (!st || st.error) {
       v.dead = true; v.sub = 'Unavailable'; v.warn = true;
       v.why = "Game mode didn't answer. Close and reopen quick settings to try again";
       v.tip = 'Game mode is unavailable right now';
       return v;
     }
-    v.auto = st.auto !== false; v.liftSaver = !!st.liftSaver;
+    v.auto = st.auto !== false; v.liftSaver = !!st.liftSaver; v.boost = st.boost !== false;
     if (st.enabled === false) {
       v.dead = true; v.sub = 'Switched off';
       v.why = "Game mode is switched off in Mantle's tray menu. Turn it back on there to use it";
@@ -81,6 +84,8 @@
     if (!rest.on && rest.text) { v.why = cap(rest.text); v.warn = true; }
     else if (lo && lo.text) { v.why = cap(lo.text); v.warn = true; }
     else if (!v.on && st.watching === false && st.reason) { v.why = cap(st.reason); v.warn = true; }
+    // the boost: on, and what it did ("Boost: freed 1.2 GB and eased 4 background apps"), or why not
+    else if (v.on && st.boostNow && st.boostNow.text) { v.why = cap(st.boostNow.text); v.warn = !!st.boostNow.warn; }
     else if (st.fromCrash && st.fromCrash.text) { v.why = 'After Mantle restarted: ' + st.fromCrash.text; v.warn = st.fromCrash.ok === false; }
     else if (st.dry) v.why = 'Test run: everything is planned and shown, nothing on this PC is changed';
     if (st.fromCrash && st.fromCrash.text) v.crash = 'After Mantle restarted: ' + st.fromCrash.text;
@@ -188,6 +193,7 @@
       if (v.last && !v.on) list.appendChild(el('div', 'gmlast', v.last));
       opts.appendChild(opt('Turn on by itself for games', 'auto', 'gamemode.auto', 'Game mode starts when a known game starts and ends when it closes'));
       opts.appendChild(opt('Lift Energy saver while gaming on battery', 'liftSaver', 'gamemode.liftSaver', 'Energy saver forces Best power efficiency; this lifts it for the game and puts it back after'));
+      opts.appendChild(opt('Boost: free memory and power for the game', 'boost', 'gamemode.boost', 'Background apps get Efficiency mode, and a minute in, idle ones hand their unused memory back to Windows once. Nothing is ever closed; everything goes back when the game ends'));
     }
     function take(st) { if (!me.alive || !st) return; me.st = st; paint(); }
 

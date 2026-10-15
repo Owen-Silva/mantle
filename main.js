@@ -858,6 +858,7 @@ const PILL_RADIUS_DIP = 0;      // was 24 (30 physical). A window REGION on a tr
                                 // border off so no square outline sits outside the CSS corners.
 const PILL_START_W = 0.62;      // it grows out from 62 % of its width as it rises
 let hoverTimer = null;
+let hoverHeld = null;           // the game the hover poll is stopped for (hoverTick / hoverAfterRest)
 let barRevealed = false;
 let barLeftAt = null;          // when the cursor last left the bar, or null while it is in
 let rendererHoverAt = 0;       // last 'bar.hover' {inside:true} from lane B's page
@@ -2111,6 +2112,13 @@ async function hoverTick() {
   hoverTimer = null;
   if (shuttingDown || flags.dock) return;
   if (!barWin || barWin.isDestroyed()) return;   // nothing left to reveal; stop polling
+  // Resting for a GAME the edge never reveals the bar (gameQuiet), so this 80 ms poll only woke the CPU
+  // under the game (lane mantle-boost). It stops; hoverAfterRest starts it again once the game is over.
+  if (!barRevealed && !barPopover && gameQuiet()) {
+    hoverHeld = gameQuiet();
+    process.stdout.write(`mantle: hover poll: stopped while ${hoverHeld} (the edge does not reveal the bar over a game)\n`);
+    return;
+  }
 
   let pt = null;
   try {
@@ -3209,7 +3217,15 @@ function electronMB() {
 function mb(n) { return n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${n} MB`; }
 function restMantle(on, why) {
   restChain = restChain.then(() => (on ? restNow(why) : wakeNow(why))).catch((err) => ({ ok: false, reason: err && err.message ? err.message : String(err) }));
+  restChain.then(hoverAfterRest, hoverAfterRest);
   return restChain;
+}
+/** The hover poll stopped for a game (hoverTick) runs again once Mantle no longer rests for one. */
+function hoverAfterRest() {
+  if (!hoverHeld || gameQuiet()) return;
+  process.stdout.write(`mantle: hover poll: running again (${hoverHeld.replace(/ runs$/, '')} is over)\n`);
+  hoverHeld = null;
+  scheduleHoverTick();
 }
 async function restNow(why) {
   if (shuttingDown) return { ok: false, reason: 'Mantle is closing' };

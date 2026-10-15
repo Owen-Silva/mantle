@@ -17,7 +17,7 @@ v = G.view({ enabled: false, auto: true });
 check('tray switch off: dead, says where to turn it back on', v.dead && /tray/.test(v.why) && /Turn it back on/.test(v.why));
 v = G.view({ on: false, auto: true, watching: true, actions: [] });
 check('off + watching: the status says it starts with games, the switch says "Turn on"', !v.on && v.sub === 'Off · starts with your games' && v.label === 'Turn on' && !v.why, v.sub);
-check('off: Details shows what it does when on (5 rows, resting last)', v.plan.length === 5 && v.plan[4].label === 'Mantle resting');
+check('off: Details shows what it does when on (6 rows with the boost, resting last)', v.plan.length === 6 && v.plan.some((p) => p.label === 'Boost' && /once/.test(p.text)) && v.plan[5].label === 'Mantle resting');
 v = G.view({ on: false, auto: false, watching: true });
 check('off + automatic off', v.sub === 'Off · starts only by hand');
 v = G.view({ on: false, auto: true, watching: false, reason: "games are not being watched: Mantle's background helper is restarting" });
@@ -58,6 +58,19 @@ v = G.view({ on: false, auto: true, watching: true, rest: { on: false, text: 'Ma
 check('could not rest: said under the switch in warning ink', /could not rest/.test(v.why) && v.warn && v.sub === 'Off · starts with your games');
 v = G.view({ on: false, auto: true, watching: true, rest: { on: false, last: { text: 'Mantle rested 42 min (VALORANT runs) and is back: VALORANT exited' } } });
 check('after the game: the rest is in the last line', /Mantle rested 42 min .* is back: VALORANT exited\./.test(v.last) && !v.rest);
+// The boost (lane mantle-boost): on, what it did, or why not, in the one line under the switch.
+const ON = { on: true, how: 'auto', game: { file: 'VALORANT-Win64-Shipping.exe', why: 'a known game' }, actions: [], boost: true };
+v = G.view(Object.assign({}, ON, { boostNow: { state: 'done', text: 'Boost: freed 1.2 GB and eased 4 background apps; 2.8 GB of memory free now', freed: 1288490188, trimmed: 6, apps: 4 } }));
+check('boost: on and done -> the line says what it freed and eased (not a warning)', /^Boost: freed 1\.2 GB and eased 4 background apps/.test(v.why) && !v.warn && v.boost === true, v.why);
+v = G.view(Object.assign({}, ON, { boostNow: { state: 'waiting', text: 'Boost: eased 4 background apps; idle memory is handed back a minute in', apps: 4 } }));
+check('boost: waiting -> the line says it is on and when the memory comes', /idle memory is handed back a minute in/.test(v.why) && !v.warn, v.why);
+v = G.view(Object.assign({}, ON, { boostNow: { state: 'failed', warn: true, text: "Boost: eased 4 background apps, but idle memory was NOT handed back: Mantle's helper did not answer" } }));
+check('boost: a failure is said in warning ink, with the reason', v.warn && /NOT handed back: Mantle's helper did not answer/.test(v.why), v.why);
+v = G.view(Object.assign({}, ON, { boost: false, boostNow: { state: 'off', text: 'Boost is off: background apps are left as they are' } }));
+check('boost: switched off -> said, and the option reads off', /Boost is off/.test(v.why) && v.boost === false, v.why);
+v = G.view(Object.assign({}, ON, { leftover: { text: 'not put back yet: x' }, boostNow: { state: 'done', text: 'Boost: freed 1 GB' } }));
+check('boost: a leftover warning still wins the one line', /not put back yet/i.test(v.why) && v.warn, v.why);
+check('boost: off -> no boost line', !/Boost/.test(G.view({ on: false, auto: true, watching: true, boostNow: null }).why || ''));
 // No jargon in any state a person can see.
 const states = [null, { error: 'x' }, { enabled: false }, { on: false, auto: true, watching: true },
   { on: true, how: 'auto', game: { file: 'cs2.exe', why: 'cs2.exe is a known game' }, actions: [{ key: 'mantle', label: 'Mantle itself', status: 'done', text: '3 Mantle processes in Efficiency mode' }] },

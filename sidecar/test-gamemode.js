@@ -12,7 +12,7 @@ const T = require('./test-lib');
     const ping = await s.send('ping', {}, 6000);
     const cmds = (ping.result && ping.result.features && ping.result.features.commands) || [];
     t.check('no feature failed to register', ping.result && ping.result.features && ping.result.features.problems.length === 0, JSON.stringify(ping.result && ping.result.features && ping.result.features.problems));
-    for (const c of ['gamemode.scan', 'gamemode.apply', 'gamemode.power', 'gamemode.saver', 'gamemode.guard', 'gamemode.trim'])
+    for (const c of ['gamemode.scan', 'gamemode.apply', 'gamemode.power', 'gamemode.saver', 'gamemode.guard', 'gamemode.trim', 'gamemode.trimbg'])
       t.check(`${c} is registered`, cmds.includes(c), cmds.filter((x) => /^game/.test(x)).join(','));
 
     // ---- scan
