@@ -984,7 +984,7 @@
   els.q.addEventListener('input', function () {
     clearNext = false;
     disarm();                                     // typing is changing your mind
-    if (special()) { if (mode === 'run') { note = null; userMoved = false; queueRun(); } return; }
+    if (special()) { if (mode === 'run') { note = null; userMoved = false; runPrefill = false; queueRun(); } return; }
     queueSearch();
     queueFiles();
   });
@@ -1169,6 +1169,7 @@
   var runTimer = null;
   var runFooter = '';        // why the history could not be read, if it could not
   var reopen = null;         // { line, note }: a run failed after the launcher closed
+  var runPrefill = false;    // the box holds the last line Mantle put there, not something typed
   var quickSub = null;       // 'power' while the Shut down submenu is up
   var QUICK_GROUPS = { 1: 'Tools', 2: 'Open', 3: 'Power and desktop' };
   var POWER_GLYPH = { signout: 'signout', sleep: 'sleep', hibernate: 'hibernate', shutdown: 'power', restart: 'restart' };
@@ -1189,10 +1190,10 @@
   }
 
   function openSpecial() {
-    disarm(); note = null; userMoved = false; runFooter = '';
+    disarm(); note = null; userMoved = false; runFooter = ''; runPrefill = false;
     if (mode === 'quick') { quickSub = null; els.q.value = ''; quickRows(); return; }
     if (reopen) { els.q.value = reopen.line; runRows(); note = reopen.note; reopen = null; render(); return; }
-    if (!els.q.value && runHist.length) els.q.value = runHist[0];   // the last line, selected, as Windows' Run box
+    if (!els.q.value && runHist.length) { els.q.value = runHist[0]; runPrefill = true; }   // the last line, selected, as Windows' Run box
     runPaths = [];
     runRows();
     els.q.select();
@@ -1200,7 +1201,7 @@
       var first = !runHist.length;
       runHist = res && Array.isArray(res.items) ? res.items : [];
       if (mode !== 'run') return;
-      if (first && !els.q.value && runHist.length) { els.q.value = runHist[0]; els.q.select(); }
+      if (first && !els.q.value && runHist.length) { els.q.value = runHist[0]; runPrefill = true; els.q.select(); }
       runRows();
     }, function (err) {
       runFooter = 'Your Run history could not be read, so only what you type can run. (' + reasonOf(err) + ')';
@@ -1223,7 +1224,8 @@
     seen[t.toLowerCase()] = true;
     var groups = [];
     if (t) groups.push({ label: 'Run', rows: [{ kind: 'runline', id: 'run:line', name: t, line: t, subtitle: '' }] });
-    var hist = matchHist(t).filter(function (h) { var k = h.toLowerCase(); if (seen[k]) return false; seen[k] = true; return true; })
+    // the preselected last line is not a filter: the whole history shows until you type
+    var hist = matchHist(runPrefill ? '' : t).filter(function (h) { var k = h.toLowerCase(); if (seen[k]) return false; seen[k] = true; return true; })
       .map(function (h) { return { kind: 'hist', id: 'run:h:' + h.toLowerCase(), name: h, line: h, subtitle: '' }; });
     if (hist.length) groups.push({ label: 'Recent', rows: hist });
     var lowTyped = typed.toLowerCase();
@@ -1365,7 +1367,7 @@
     if (e.key === 'Tab' && !e.shiftKey) {
       e.preventDefault();
       var it = rows[sel];
-      if (it && it.kind !== 'runline') { els.q.value = it.line; userMoved = false; queueRun(); }
+      if (it && it.kind !== 'runline') { els.q.value = it.line; userMoved = false; runPrefill = false; queueRun(); }
       return true;
     }
     return false;

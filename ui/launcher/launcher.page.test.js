@@ -389,7 +389,7 @@ async function main() {
     await page.keyboard.press('m');
     await page.waitForTimeout(120);
     la = await lastArgs(page, 'quicklinks.open');
-    check('quick: M opens Device Manager (the id only goes to main)', la && la.link === 'devices' && Object.keys(la).join() === 'link' && (await whys(page)).includes('dry run: would open Device Manager'), JSON.stringify(la));
+    check('quick: M opens Device Manager (the id only goes to main)', la && la.link === 'devices' && Object.keys(la).join() === 'link' && (await whys(page)).includes('Dry run: would open Device Manager'), JSON.stringify(la));
     await page.keyboard.press('Shift+A');
     await page.waitForTimeout(120);
     la = await lastArgs(page, 'quicklinks.open');
