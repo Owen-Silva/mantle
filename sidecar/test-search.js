@@ -139,17 +139,19 @@ const TIER = { prefix: 0, word: 1, contains: 2 };
     ok(r.ok === false && want.test(r.error || ''), 'refused: ' + what);
   }
   let wildRows = 0, wildOk = 0;
+  const wildBad = [];   // which query was not answered ok, and the words it got (no path: a query + a reason)
   for (const q of ['__init__', 'img_', 'test_', 'my_', 'new_', '50%', '[1]', "o'", '"a"', '日本', 'é']) {
     const r = await call('search.files', { q, max: 12, ttl: 8000 });
     const res = r.result || {};
     if (r.ok === true && res.ok === true) wildOk++;
+    else wildBad.push(JSON.stringify(q) + ': ' + String(r.error || res.reason || res.error || 'no reason').slice(0, 160));
     const items = Array.isArray(res.items) ? res.items : [];
     wildRows += items.length;
     const lower = q.toLowerCase();
     ok(items.every(f => f.match !== 'prefix' || f.name.toLowerCase().startsWith(lower)), 'special q: prefix rows start with it LITERALLY');
     ok(items.every(f => f.match !== 'contains' || f.name.toLowerCase().includes(lower)), 'special q: contains rows contain it LITERALLY');
   }
-  ok(wildOk === 11, 'every special-character query is answered ok (' + wildOk + '/11)');
+  ok(wildOk === 11, 'every special-character query is answered ok (' + wildOk + '/11' + (wildBad.length ? ': ' + wildBad.join(' | ') : '') + ')');
   const under = await call('search.files', { q: 'test_', max: 24, ttl: 8000 });
   const underPrefix = ((under.result || {}).items || []).filter(f => f.match === 'prefix').length;
   console.log('  special queries: ' + wildRows + ' rows; "test_" prefix rows ' + underPrefix);
