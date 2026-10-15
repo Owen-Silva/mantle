@@ -90,6 +90,15 @@ const ACN = 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\ComputerName\\ActiveCompu
 const TCP = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters';
 const snapshot = () => ({ ux: regDump(UX), cn: regDump(CN), acn: regDump(ACN),
   tcp: [regValue(regDump(TCP), 'Hostname'), regValue(regDump(TCP), 'NV Hostname')].join('|') });
+/** Is this test (and so the sidecar it starts) running ELEVATED? Owen's PC: no. The GitHub runner:
+    yes, so the sidecar can walk C:\Windows\Temp and the Delivery Optimization cache itself and sizes
+    them in files, where a standard user gets words (Windows Temp) or the service's own number (DO).
+    "net session" answers only an administrator (zero-fail lane, 2026-10-14). */
+function elevated() {
+  const r = spawnSync('net', ['session'], { encoding: 'utf8', timeout: 15000, windowsHide: true });
+  return r.status === 0;
+}
+
 function doCacheBytes() {
   const r = spawnSync('powershell', ['-NoProfile', '-Command',
     '(Get-CimInstance -Namespace root/Microsoft/Windows/DeliveryOptimization -ClassName MSFT_DOCurrentStatus -ErrorAction Stop).CacheSizeBytes'],
@@ -267,16 +276,21 @@ async function main() {
     }, 120000, 500);
     check('storage: every cleanup kind finished measuring', !!filled);
     const sized = /\d[\d.,]*\s?(B|KB|MB|GB|TB|bytes)\b/;
+    const admin = elevated();
+    console.log(`sysrows: this test runs ${admin ? 'ELEVATED (an administrator, like the cloud runner): Windows Temp and the Delivery Optimization cache are walked and sized in files' : 'as a standard user (like Owen\'s PC): Windows Temp says why it has no size, Delivery Optimization is sized by its service'}`);
     (filled || []).forEach((t, i) => {
       const k = KINDS[i];
-      if (k === 'systemTemp') check('storage: Windows temporary files says in words why it has no size yet', /size not known yet/.test(t) && t.length > 60, t);
-      else if (k === 'deliveryOptimization') check('storage: Delivery Optimization files show a size from the Delivery Optimization service', sized.test(t) && /as the Delivery Optimization service reports it/.test(t), t);
-      else check(`storage: ${k} shows its size and count before a cleanup`, sized.test(t) && /in [\d,]+ (files|items)/.test(t), t);
+      if (k === 'systemTemp' && !admin) check('storage: Windows temporary files says in words why it has no size yet (a standard user cannot list it)', /size not known yet/.test(t) && t.length > 60, t);
+      else if (k === 'deliveryOptimization' && !admin) check('storage: Delivery Optimization files show a size from the Delivery Optimization service', sized.test(t) && /as the Delivery Optimization service reports it/.test(t), t);
+      else check(`storage: ${k} shows its size and count before a cleanup${admin && (k === 'systemTemp' || k === 'deliveryOptimization') ? ' (elevated: the folder itself is walked)' : ''}`, sized.test(t) && /in [\d,]+ (files|items)/.test(t), t);
     });
     const tr = await call(sc, 'settings.system.read', { what: 'storageTemp' });
     const dox = tr && tr.ok && (tr.kinds || []).find((x) => x.kind === 'deliveryOptimization');
-    const wmi = doCacheBytes();
-    if (wmi === null) skipped.push('Delivery Optimization size vs WMI (WMI did not answer here)');
+    const wmi = admin ? null : doCacheBytes();
+    if (admin) {
+      check('storage: elevated, Delivery Optimization is measured by walking its folder (not the service)', !!dox && dox.measured && dox.via !== 'service' && Number.isFinite(dox.files), dox);
+      skipped.push('Delivery Optimization size vs WMI: this test runs elevated, so the sidecar walks the cache folder itself and never asks the service (the service number is only used for a standard user)');
+    } else if (wmi === null) skipped.push('Delivery Optimization size vs WMI (WMI did not answer here)');
     else check('storage: the Delivery Optimization size is the service\'s own WMI number (within 1 MB: the cache moves)', !!dox && dox.via === 'service' && dox.files === null && Math.abs(dox.bytes - wmi) <= 1048576, { bytes: dox && dox.bytes, wmi, via: dox && dox.via });
     const stxt = await pageText(sc);
     check('storage: no error code on the page', !/0x[0-9a-f]{8}/i.test(stxt), (/0x[0-9a-f]{8}/i.exec(stxt) || [])[0]);

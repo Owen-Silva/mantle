@@ -191,8 +191,13 @@ async function main() {
     await page.close();
 
     /* 11. Win+S with a query already typed searches files for it (the reset used to cancel it) */
+    // Waits for what the user sees, the Files group or a file row (zero-fail lane, 2026-10-14): a
+    // blind 900 ms sleep failed on a loaded PC/runner while the mock's 50 ms open + 150 ms debounce
+    // + 90 ms answer were still landing. 4 s bounds a search that never runs.
     page = await open('?mode=search&q=report');
-    await page.waitForTimeout(900);
+    const seenFiles = await page.waitForFunction(() => [...document.querySelectorAll('#results .row')].some((r) => /file/.test(r.className) || r.dataset.kind === 'file')
+      || [...document.querySelectorAll('#results .grp')].some((g) => /file/i.test(g.textContent)), null, { timeout: 4000, polling: 50 }).then(() => true, () => false);
+    if (!seenFiles) console.log('launcher.page: the Files group did not appear within 4 s of a Win+S open with a query');
     const fileRows = await page.evaluate(() => [...document.querySelectorAll('#results .row')].filter((r) => /file/.test(r.className) || r.dataset.kind === 'file').length);
     const fileCalls = await page.evaluate(() => document.querySelectorAll('#results .row').length);
     check('Win+S query: rows shown', fileCalls > 0, fileCalls);
