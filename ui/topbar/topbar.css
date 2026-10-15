@@ -308,3 +308,118 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 .t.tm.pz { color: var(--lg-ink-2); }
 .t.tool.bad { color: var(--lg-warn); }
 .t.tool.bad::after { content: ''; width: 5px; height: 5px; margin-left: 3px; border-radius: 50%; background: var(--lg-warn); }
+/* APP POWER (lane mantle-power-ui, 2026-10-14): the top rows of the CPU / RAM / GPU dropdowns with their
+ * controls (ui/topbar/apppower.js). A row: the app's name, its state marks (a leaf for Efficiency mode,
+ * "CPU 25%" for a limit, "RAM ↓" for a lower priority...), the reading, a chevron (or a lock where Mantle
+ * may not act). The open row and its panel are one unit on the hover tint; the controls are Settings'
+ * own switch / chips / checkbox (ui/settings/settings.css) at the menu's type scale. The dropdown keeps
+ * ONE width while rows come and go and a panel opens, so it never jumps sideways under the pointer.
+ * Colours: --lg-* only (light + dark); tokens only the dark set has fall back to light tokens. */
+.dd.stat.ap-on { width: 364px; max-width: none; }
+.ap-head, .ap-tail { display: block; }
+.ap-item { border-radius: 6px; transition: background-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)); }
+.ap-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 12px; align-items: center; column-gap: 10px;
+  min-height: 22px; padding: 1px 6px 1px 8px; border-radius: 6px; outline: none;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ap-nm { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ap-n { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ap-m { display: flex; align-items: center; gap: 4px; flex: none; }
+.ap-m:empty { display: none; }
+.ap-x { text-align: right; color: var(--lg-ink-2); }
+.ap-c { display: flex; align-items: center; justify-content: center; color: var(--lg-ink-3); opacity: 0;
+  transition: opacity var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)), transform var(--lg-dur-ui-slow, 200ms) var(--lg-ease-ui, var(--lg-ease)); }
+.ap-c svg { width: 11px; height: 11px; display: block; }
+.ap-item.ctl .ap-c svg + svg, .ap-item:not(.ctl) .ap-c svg:first-child { display: none; }   /* the chevron, or the lock */
+.ap-item.hot > .ap-row { background: var(--lg-hover); }
+.ap-item.hot > .ap-row .ap-c, .ap-item.is-open > .ap-row .ap-c { opacity: 1; }
+.ap-item:not(.ctl) > .ap-row .ap-c { opacity: .75; }
+.ap-item.is-open > .ap-row .ap-c { transform: rotate(90deg); }
+.ap-item.is-open { background: var(--lg-hover); }
+.ap-item.is-open > .ap-row { background: transparent; }
+.ap-item:not(.ctl) .ap-n { color: var(--lg-ink-2); }
+.ap-item.stale .ap-x { color: var(--lg-ink-3); }
+/* the state marks */
+.ap-mk { display: inline-flex; align-items: center; height: 15px; padding: 0 5px; border-radius: 4px;
+  background: var(--lg-tile); color: var(--lg-ink-2); font-size: 10px; font-weight: 600; letter-spacing: .01em; }
+.ap-mk.cap { background: var(--lg-acc-soft); color: var(--lg-acc); }
+.ap-mk.eco { padding: 0 1px; background: none; color: var(--lg-ok, var(--lg-acc)); }
+.ap-mk svg, .ap-ic svg { width: 12px; height: 12px; display: block; }
+/* why / a refusal / a failed change: on the row itself */
+.ap-sub:empty { display: none; }
+.ap-s { padding: 0 8px 3px; font-size: 11px; line-height: 1.35; color: var(--lg-ink-3); white-space: normal; }
+.ap-s.bad { position: relative; padding-left: 26px; color: var(--lg-warn); }
+.ap-s.bad::before, .ap-warn::before { content: ''; position: absolute; top: 1px; width: 12px; height: 12px;
+  background: currentColor; -webkit-mask: var(--warn-glyph) center / 12px 12px no-repeat; }
+.ap-s.bad::before { left: 8px; }
+/* the panel: folds open under its row (the height animates through the grid row, the content fades) */
+.ap-p { display: grid; grid-template-rows: 0fr; opacity: 0;
+  transition: grid-template-rows var(--lg-dur-ui-slow, 200ms) var(--lg-ease-ui, var(--lg-ease)), opacity var(--lg-dur-ui-slow, 200ms) var(--lg-ease-ui, var(--lg-ease)); }
+.ap-item.open > .ap-p { grid-template-rows: 1fr; opacity: 1; }
+.ap-pi { min-height: 0; overflow: hidden; }
+.ap-pc { padding: 2px 8px 7px; white-space: normal; }
+.ap-ln { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 26px; }
+.ap-lt { display: flex; align-items: center; gap: 6px; }
+.ap-ic { color: var(--lg-ok, var(--lg-acc)); }
+.ap-h { margin: 0 0 4px; font-size: 11px; line-height: 1.35; color: var(--lg-ink-3); }
+.ap-h[hidden] { display: none; }
+.ap-lb { margin: 7px 0 4px; font-size: 11px; font-weight: 600; color: var(--lg-ink-2); }
+.ap-q { font-weight: 400; color: var(--lg-ink-3); }
+.ap-warn { position: relative; margin: -1px 0 5px; padding-left: 17px; font-size: 11px; line-height: 1.35; color: var(--lg-warn); }
+.ap-warn::before { left: 0; }
+.ap-p button { font: inherit; color: inherit; cursor: default; outline: none; }
+.ap-p button:focus-visible { box-shadow: var(--lg-focus, 0 0 0 2px var(--lg-acc)); }
+.ap-p button:disabled { opacity: .5; }
+/* switch: Settings' .sw at 32 x 18 */
+.ap-sw { position: relative; flex: 0 0 auto; width: 32px; height: 18px; padding: 0; border: 1px solid var(--lg-ink-3); border-radius: 9px; background: transparent;
+  transition: background-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)), border-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)); }
+.ap-sw i { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--lg-ink-2);
+  transition: transform var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)), background-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)); }
+.ap-sw:hover { background: var(--lg-hover); }
+.ap-sw[aria-checked="true"] { background: var(--lg-acc); border-color: var(--lg-acc); }
+.ap-sw[aria-checked="true"] i { transform: translateX(14px); background: var(--lg-acc-on); }
+/* choice chips: Settings' .seg, stretched to the panel */
+.ap-seg { display: flex; gap: 2px; padding: 2px; border-radius: var(--lg-r-ctl); background: var(--lg-sunk); }
+.ap-seg button { flex: 1 1 auto; height: 22px; padding: 0 7px; border: 0; border-radius: 4px; background: transparent; color: var(--lg-ink-2); font-size: 11.5px; white-space: nowrap;
+  transition: background-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)); }
+.ap-seg button:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.ap-seg button[aria-checked="true"] { background: var(--lg-fill-strong); box-shadow: 0 0 0 1px var(--lg-edge-out); color: var(--lg-ink); font-weight: 600; }
+.ap-seg button[aria-checked="true"]:focus-visible { box-shadow: 0 0 0 1px var(--lg-edge-out), var(--lg-focus, 0 0 0 2px var(--lg-acc)); }
+/* Free up memory: Settings' .btn, compact */
+.ap-act { justify-content: flex-start; margin-top: 2px; }
+.ap-btn { height: 24px; padding: 0 10px; border: 0; border-radius: var(--lg-r-ctl); background: var(--lg-tile); font-size: 11.5px; white-space: nowrap;
+  transition: background-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)); }
+.ap-btn:hover { background: var(--lg-press); }
+.ap-res { font-size: 11.5px; color: var(--lg-ink-2); }
+/* Remember + Back to normal */
+.ap-ft { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--lg-divider, var(--lg-tile)); }
+.ap-ck { display: inline-flex; align-items: center; gap: 7px; height: 22px; padding: 0 4px 0 0; border: 0; border-radius: 4px; background: none; font-size: 11.5px; }
+.ap-ck i { position: relative; width: 13px; height: 13px; flex: none; border: 1px solid var(--lg-ink-3); border-radius: 3px;
+  transition: background-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)), border-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)); }
+.ap-ck[aria-checked="true"] i { background: var(--lg-acc); border-color: var(--lg-acc); }
+.ap-ck[aria-checked="true"] i::after { content: ''; position: absolute; left: 3.5px; top: 0.5px; width: 3.5px; height: 7px; border: solid var(--lg-acc-on); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.ap-lnk { height: 22px; padding: 0 8px; border: 0; border-radius: var(--lg-r-ctl); background: none; color: var(--lg-ink-2); font-size: 11.5px; }
+.ap-lnk:hover { background: var(--lg-tile); color: var(--lg-ink); }
+.ap-lnk[hidden] { display: none; }
+.ap-test, .ap-honest { margin: 6px 0 0; }
+@media (prefers-reduced-motion: reduce) { .ap-p, .ap-c, .ap-sw, .ap-sw i, .ap-item { transition: none; } }
+/* dark: Helm's type scale (13 / 12) and the stat rows' 10 px sides */
+:root[data-theme="dark"] .dd.stat.ap-on { width: 384px; }
+:root[data-theme="dark"] .ap-row { min-height: 26px; padding: 2px 8px 2px 10px; border-radius: var(--lg-r-ctl); }
+:root[data-theme="dark"] .ap-item { border-radius: var(--lg-r-ctl); }
+:root[data-theme="dark"] .ap-item.is-open > .ap-row { box-shadow: none; }
+:root[data-theme="dark"] .ap-s { padding: 0 10px 4px; font-size: 12px; }
+:root[data-theme="dark"] .ap-s.bad { padding-left: 28px; }
+:root[data-theme="dark"] .ap-s.bad::before { left: 10px; top: 2px; }
+:root[data-theme="dark"] .ap-pc { padding: 2px 10px 8px; }
+:root[data-theme="dark"] .ap-h, :root[data-theme="dark"] .ap-lb, :root[data-theme="dark"] .ap-warn { font-size: 12px; }
+:root[data-theme="dark"] .ap-warn::before { top: 2px; }
+:root[data-theme="dark"] .ap-sw { border-color: var(--lg-edge-strong); background: var(--lg-press); }
+:root[data-theme="dark"] .ap-sw[aria-checked="true"] { background: var(--lg-acc); border-color: transparent; }
+:root[data-theme="dark"] .ap-seg { background: var(--lg-field); }
+:root[data-theme="dark"] .ap-seg button { height: 24px; border-radius: var(--lg-r-ctl); font-size: 12px; }
+:root[data-theme="dark"] .ap-seg button[aria-checked="true"] { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); font-weight: 500; }
+:root[data-theme="dark"] .ap-btn, :root[data-theme="dark"] .ap-ck, :root[data-theme="dark"] .ap-lnk, :root[data-theme="dark"] .ap-res { font-size: 12px; }
+:root[data-theme="dark"] .ap-btn { height: 26px; background: var(--lg-card); }
+:root[data-theme="dark"] .ap-btn:hover { background: var(--lg-press); }

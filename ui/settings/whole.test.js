@@ -52,7 +52,7 @@ check('no section is DOWN', nav.every((e) => !e.down), nav.filter((e) => e.down)
 
 /* ---- the sidebar: Home, then Windows 11's category order, then Mantle's own ---- */
 const WANT = ['home', 'system', 'devices', 'internet', 'personalization', 'applist', 'accounts', 'time', 'gaming',
-  'accessibility', 'privacy', 'update', 'mantle', 'shortcuts', 'about'];
+  'accessibility', 'privacy', 'update', 'mantle', 'apppower', 'shortcuts', 'about'];   // apppower: Power (App power's saved limits, lane mantle-power)
 const got = nav.map((e) => e.id);
 check('the sidebar is Home, the eleven Windows categories in Windows 11 order, then Mantle', JSON.stringify(got) === JSON.stringify(WANT), got.join(' '));
 const labels = nav.map((e) => e.label);

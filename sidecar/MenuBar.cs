@@ -604,8 +604,9 @@ namespace Mantle {
       string exe = Win32.GetProcessPath(pid) ?? "";
       string temp;
       try { temp = Path.GetFullPath(Path.GetTempPath()); } catch (Exception) { return false; }
+      // both in long form: %TEMP% can be an 8.3 short path (a GitHub runner's C:\Users\RUNNER~1)
       return string.Equals(Path.GetFileName(exe), FixtureExe, StringComparison.OrdinalIgnoreCase) &&
-             exe.StartsWith(temp, StringComparison.OrdinalIgnoreCase);
+             AppPower.LongPath(exe).StartsWith(AppPower.LongPath(temp), StringComparison.OrdinalIgnoreCase);
     }
 
     static string InvokeCmd(Dictionary<string, object> req, ref object result) {
