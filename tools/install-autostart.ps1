@@ -28,9 +28,17 @@ if ($Uninstall) {
     & (Join-Path $PSScriptRoot 'restore-banners.ps1') | ForEach-Object { Say "  $_" }
     $bannerCode = $LASTEXITCODE
   } catch { $bannerCode = 1; Say "  restore-banners.ps1 failed: $($_.Exception.Message)" }
+  # the Windows pieces Mantle turned off to save memory go back with it (tools\ramreclaim-undo.ps1;
+  # only values still Mantle's are written; no journal = no-op)
+  $piecesCode = 0
+  try {
+    & (Join-Path $PSScriptRoot 'ramreclaim-undo.ps1') | ForEach-Object { Say $_ }
+    $piecesCode = $LASTEXITCODE
+  } catch { $piecesCode = 1; Say "  ramreclaim-undo.ps1 failed: $($_.Exception.Message)" }
   if ($delCode -ne 0) { Fail "schtasks /Delete failed: $($out -join ' ')" }
   Say "removed the '$TaskName' logon task; Mantle will not start at logon any more (a running Mantle is untouched)"
   if ($bannerCode -ne 0) { Fail "the logon task is gone, but some notification pop-ups could not be put back (see above)" }
+  if ($piecesCode -ne 0) { Fail "the logon task is gone, but some Windows pieces could not be put back (see above)" }
   exit 0
 }
 
