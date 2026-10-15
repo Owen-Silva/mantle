@@ -190,7 +190,12 @@
         why: live ? null : !on ? 'switched off, so Windows handles it' : f.keys === false ? f.keysReason : f.reason || 'resting', toggle: { kind: 'feature', feature: own } };
     });
   }
-  const mantleView = () => ({ ok: true, features: JSON.parse(JSON.stringify(features)), switcher: Object.assign({}, switcher), shortcuts: shortcuts() });
+  // lib/keep-ready.js's rows (the same words), all off like a fresh profile
+  const keep = { settings: false, taskmgr: false, files: false };
+  const KEEP = { settings: ['Mantle Settings', 'Win+I', 45], taskmgr: ['Task Manager', 'Ctrl+Shift+Esc', 50], files: ['Files', 'Win+E', 35] };
+  const keepView = () => ({ ok: true, reason: null, rows: Object.keys(KEEP).map((s) => ({ surface: s, key: 'keepReady.' + s, on: keep[s], mb: KEEP[s][2], label: 'Keep ' + KEEP[s][0] + ' ready',
+    help: 'On: ' + KEEP[s][1] + ' opens it instantly, but it holds about ' + KEEP[s][2] + ' MB of memory all the time (let go while a game runs). Off: it opens fresh in well under a second and uses no memory while closed.' })) });
+  const mantleView = () => ({ ok: true, features: JSON.parse(JSON.stringify(features)), switcher: Object.assign({}, switcher), shortcuts: shortcuts(), keepReady: keepView() });
 
   const corners = { enabled: true, test: TEST, actions: { tl: 'taskview', tr: 'off', bl: 'off', br: 'desktop' }, corners: ['tl', 'tr', 'bl', 'br'],
     names: { tl: 'top-left', tr: 'top-right', bl: 'bottom-left', br: 'bottom-right' },
@@ -386,6 +391,10 @@
         if (TEST) return { ok: false, reason: 'refused in a test run: a folder dialog would wait for a person', cancelled: false, option: o ? Object.assign({}, o) : null };
         return later(300, { ok: true, reason: null, cancelled: true, option: o ? Object.assign({}, o) : null });
       }
+      case 'settings.keepReady':
+        if (!(a.surface in keep)) return { ok: false, reason: '"' + String(a.surface).slice(0, 40) + '" is not a window Mantle can keep ready (settings, taskmgr, files)', on: false, keepReady: keepView() };
+        keep[a.surface] = a.on === true;
+        return later(80, { ok: true, reason: null, on: keep[a.surface], keepReady: keepView() });
       case 'settings.switcher':
         if ('altTab' in a) switcher.altTab = !!a.altTab;
         if ('winKeys' in a) switcher.winKeys = !!a.winKeys;
