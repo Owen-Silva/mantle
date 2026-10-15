@@ -46,6 +46,7 @@ namespace Mantle {
     static int _gpus = -1; static int _gpusAt; static string _gpusWhy;
     static int _gpuLowState = -1;   // -1 not probed, 0 no, 1 yes
     static string _gpuLowWhy;
+    static string _gpuLowCode;   // the NTSTATUS behind _gpuLowWhy, for Mantle's log only (never on screen)
 
     static int CountGpus(out string why) {
       why = null;
@@ -85,13 +86,14 @@ namespace Mantle {
         IntPtr me = N.GetCurrentProcess();
         int rc = N.D3DKMTGetProcessSchedulingPriorityClass(me, out cur);
         if (rc == 0) rc = N.D3DKMTSetProcessSchedulingPriorityClass(me, cur);
-        if (rc == 0) { _gpuLowState = 1; _gpuLowWhy = null; }
+        if (rc == 0) { _gpuLowState = 1; _gpuLowWhy = null; _gpuLowCode = null; }
         else {
           _gpuLowState = 0;
           uint st = unchecked((uint)rc);
           _gpuLowWhy = st == 0xC0000061 || st == 0xC0000022 || st == 0xC0000005
             ? "Windows only lets administrators change graphics priority"
-            : "Windows would not change graphics priority on this PC (status 0x" + st.ToString("X8") + ")";
+            : "Windows would not change graphics priority on this PC";
+          _gpuLowCode = "0x" + st.ToString("X8");
         }
         return _gpuLowState == 1;
       }
@@ -101,9 +103,9 @@ namespace Mantle {
       string why;
       int gpus = CountGpus(out why);
       bool low = GpuLowWorks();
-      string lowWhy;
-      lock (_capsLock) lowWhy = _gpuLowWhy;
-      result = Json.Obj("ok", true, "gpus", gpus, "gpusWhy", why, "gpuLow", low, "gpuLowWhy", low ? null : lowWhy, "gpuPref", gpus >= 2);
+      string lowWhy, lowCode;
+      lock (_capsLock) { lowWhy = _gpuLowWhy; lowCode = _gpuLowCode; }
+      result = Json.Obj("ok", true, "gpus", gpus, "gpusWhy", why, "gpuLow", low, "gpuLowWhy", low ? null : lowWhy, "gpuLowCode", low ? null : lowCode, "gpuPref", gpus >= 2);
       return null;
     }
 
