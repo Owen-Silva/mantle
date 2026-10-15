@@ -273,6 +273,31 @@ async function main() {
     check('closed: the line goes with it', kb && kb.hidden, JSON.stringify(kb));
     await page.close();
 
+    /* the blur fails (lane pagewords, 2026-10-14): dark theme, and the browser refuses to draw the
+       backdrop picture the way Chromium does (InvalidStateError from drawImage). The footer says it in
+       true plain words (the picture arrived; it is the blur that failed), the browser's reason is the
+       line's tooltip and goes to the console (main copies it into mantle.log), never on screen. */
+    page = await open('', () => {
+      document.addEventListener('DOMContentLoaded', () => document.documentElement.setAttribute('data-theme', 'dark'));
+      const draw = CanvasRenderingContext2D.prototype.drawImage;
+      CanvasRenderingContext2D.prototype.drawImage = function (img) {
+        if (img && img.id === 'backdrop') throw new DOMException("Failed to execute 'drawImage' on 'CanvasRenderingContext2D': The HTMLImageElement provided is in the 'broken' state.", 'InvalidStateError');
+        return draw.apply(this, arguments);
+      };
+    });
+    const consoleLines = [];
+    page.on('console', (m) => { if (m.type() === 'warning' || m.type() === 'error') consoleLines.push(m.text()); });
+    const blurLine = () => page.evaluate(() => [...document.querySelectorAll('#srcErrors > div')].map((d) => ({ t: d.textContent, title: d.title })).find((x) => /see-through/.test(x.t)) || null);
+    let bl = null;
+    for (let i = 0; i < 20 && !bl; i++) { await page.waitForTimeout(100); bl = await blurLine(); }
+    check('blur fails: a true plain line in the footer', bl && bl.t === 'The see-through effect is off: the picture behind this window could not be blurred.', JSON.stringify(bl));
+    check('blur fails: no browser words on screen', bl && !/drawImage|InvalidStateError|HTMLImageElement|DOMException/.test(bl.t), bl && bl.t);
+    check('blur fails: the browser\'s reason is the tooltip', bl && /^no blur: the picture behind the launcher could not be blurred: InvalidStateError: Failed to execute 'drawImage'/.test(bl.title), bl && bl.title);
+    await page.waitForTimeout(100);
+    check('blur fails: the reason is logged once', consoleLines.filter((l) => /launcher: no blur: the picture behind the launcher could not be blurred: InvalidStateError/.test(l)).length === 1, consoleLines.join(' | '));
+    check('blur fails: no dark wall was claimed', await page.evaluate(() => !window.__launcherWall));
+    await page.close();
+
     check('no page errors', errors.length === 0, errors.join(' | '));
   } catch (e) {
     failures.push('crashed: ' + (e && e.stack ? e.stack.split('\n').slice(0, 3).join(' / ') : e));

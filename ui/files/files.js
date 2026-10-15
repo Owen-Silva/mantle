@@ -98,6 +98,13 @@
   /** A reply (or a reason string) in plain words: model.js plainReason is the one place (contract 3). */
   const plain = (r) => M.plainReason(r && typeof r === 'object' ? r.reason : r);
   const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+  /** A bug in this page's own code (lane pagewords, 2026-10-14): the toast says what it means in plain
+      words and never shows the browser's "TypeError: x is not a function"; that line, and where it was
+      thrown, goes to mantle.log (a page's console.error is copied there by main). */
+  function bug(text, e) {
+    console.error(`Mantle Files: ${text}: ${M.bugDetail(e)}`);
+    toast(text, { kind: 'err', sub: 'The operation itself is over. If the list looks out of date, press F5. The details are in Mantle\'s log.' });
+  }
   /** The one place replies are judged: a refusal or failure is loud, a test-mode dry run quiet. */
   function report(r, what) {
     if (!r || r.ok === false) { toast(what, { kind: 'err', sub: plain(r) }); return false; }
@@ -433,7 +440,10 @@
     const ev = opEarly.get(job);
     if (!ev) return false;
     opEarly.delete(job);
-    try { if (opDoneFn) opDoneFn(ev); } catch (e) { toast(`Mantle Files hit a bug handling files.opdone: ${e.message}`, { kind: 'err' }); }
+    try { if (opDoneFn) opDoneFn(ev); } catch (e) {
+      const w = M.opWords(ev.op);
+      bug(`Mantle Files hit a bug while showing how ${w === 'Working' ? 'a file operation' : w.toLowerCase()} went`, e);
+    }
     return true;
   }
   function early(ev) {
@@ -1834,7 +1844,7 @@
       // search results do not refresh by themselves: drop what moved away, rename what was renamed
       const moved = new Set(results.filter((x) => x && x.ok !== false && x.src && ['recycle', 'delete', 'move'].includes(ev.op)).map((x) => x.src.toLowerCase()));
       if (moved.size) for (const t of S.tabs) if (t.search) { const n = t.search.items.length; t.search.items = t.search.items.filter((it) => !moved.has(String(it.p).toLowerCase())); if (t.search.items.length !== n) arrange(t); }
-      if (info.after) { try { info.after(ev); } catch (e) { toast(`Mantle Files hit a bug after ${info.label}: ${e.message}`, { kind: 'err' }); } }
+      if (info.after) { try { info.after(ev); } catch (e) { bug(`Mantle Files hit a bug after ${info.label.charAt(0).toLowerCase()}${info.label.slice(1)}`, e); } }
     }
     on('files.changed', (ev) => {
       const dirs = (ev.dirs || []).map((d) => String(d).toLowerCase());

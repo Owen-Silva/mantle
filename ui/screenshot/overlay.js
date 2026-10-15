@@ -227,7 +227,8 @@
       // The screen shows plain words; main's log gets the browser's own reason (ready.problem).
       fail('Mantle could not show the picture of this screen. Press Esc and take the screenshot again.');
       send('ready', { seq: f.seq, monitor: S.mon.index, ms: Math.round(performance.now() - t0),
-        problem: 'the frozen frame of this screen could not be decoded (' + ((err && err.message) || 'unknown error') + ')' });
+        problem: 'the frozen frame of this screen could not be decoded (' +
+          (window.MantlePlain ? window.MantlePlain.forLog(err) : ((err && err.message) || 'no reason given')) + ')' });
     });
   }
 

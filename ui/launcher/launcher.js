@@ -78,7 +78,9 @@
   var note = null;      // { id, text, ok } — the line printed under one row
   var hideTimer = null;
   var indexError = '';    // why apps.index itself failed, if it did
-  var backdropNote = '';  // "no blur: …" — why there is nothing blurred under the tint
+  var backdropNote = '';  // "no blur: …" — why there is nothing blurred under the tint (the footer line's tooltip, and mantle.log)
+  var backdropWords = ''; // the footer line itself for that reason, when the default one would not be true
+  var backdropLogged = {}; // each distinct reason goes to mantle.log once
   /* WIN+S (2026-09-24). The rows are laid out in labelled groups by groups.js (Calculator, Apps,
      Commands, Settings, Power, Files, then "Search the web" last); rows is still the ONE flat list
      the arrow keys walk, in on-screen order. calc.js answers arithmetic on every keystroke with no
@@ -260,7 +262,9 @@
       window.__launcherWall = { at: at, offset: { x: at.x - x, y: at.y - y }, blur: f, bakes: (window.__launcherWall ? window.__launcherWall.bakes : 0) + 1 };
     } catch (err) {
       clearBackdrop();
-      noBlur('the picture behind the launcher could not be blurred: ' + (err && err.message));
+      // The picture DID arrive, so the default "could not picture the screen" would be untrue here.
+      noBlur('the picture behind the launcher could not be blurred: ' + (window.MantlePlain ? window.MantlePlain.forLog(err) : String((err && err.message) || err)),
+        'The see-through effect is off: the picture behind this window could not be blurred.');
     }
   }
   function dropDark() {
@@ -281,10 +285,12 @@
     document.body.classList.add('no-backdrop');
   }
 
-  function noBlur(reason) {
+  function noBlur(reason, words) {
     var text = 'no blur: ' + (reason || 'no reason given');
     if (backdropNote === text) return;
     backdropNote = text;
+    backdropWords = words || '';
+    if (!backdropLogged[text]) { backdropLogged[text] = 1; console.warn('launcher: ' + text); }
     renderFooter();
   }
 
@@ -531,7 +537,7 @@
       }
     }
     if (indexError) lines.unshift({ text: 'Your apps and settings could not be loaded. Files and the web can still be searched; close and reopen the launcher to try again.', detail: indexError });
-    if (backdropNote) lines.push({ text: 'The see-through effect is off: Mantle could not picture the screen behind this window.', detail: backdropNote });
+    if (backdropNote) lines.push({ text: backdropWords || 'The see-through effect is off: Mantle could not picture the screen behind this window.', detail: backdropNote });
 
     els.srcErrors.textContent = '';
     for (var j = 0; j < lines.length; j++) {

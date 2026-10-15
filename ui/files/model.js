@@ -482,6 +482,32 @@
     return it.cloud ? { key: 'local', label: 'On this device', rank: 1 } : null;
   };
 
+  /* A Find pattern the browser will not compile (Use regular expressions on). Its own message is
+     "Invalid regular expression: /<the pattern>/gi: Unterminated group": jargon on screen, and the
+     pattern is the person's own text. -> { words: what is wrong, in words; detail: the browser's reason
+     with the pattern cut out, for the log only } (lane pagewords, 2026-10-14). */
+  const RE_WORDS = [
+    [/unterminated group/i, 'a "(" is never closed'],
+    [/unmatched '?\)'?/i, 'a ")" has no "(" before it'],
+    [/unterminated character class/i, 'a "[" is never closed'],
+    [/nothing to repeat/i, 'a *, + or ? (or a {n}) has nothing before it to repeat; put a \\ in front to find the character itself'],
+    [/numbers out of order in \{\} quantifier/i, 'in a {n,m} the first number is bigger than the second'],
+    [/\\ at end of pattern/i, 'it ends with a lone \\; use \\\\ to find a backslash'],
+    [/range out of order in character class/i, 'a range in [ ] runs backwards, like [z-a]'],
+    [/duplicate capture group name/i, 'two groups have the same name'],
+    [/invalid (?:named capture referenced|named reference)/i, 'it refers to a group name that is not in the pattern'],
+    [/capture group name/i, 'a group name in (?<name>...) is not a valid name'],
+    [/invalid group/i, 'a "(?" is not followed by a kind of group Mantle knows'],
+    [/invalid escape|invalid unicode escape|invalid class escape/i, 'a \\ is followed by something that is not a valid escape'],
+    [/lone quantifier brackets|incomplete quantifier/i, 'a { or } is out of place; put a \\ in front to find the character itself'],
+  ];
+  M.patternProblem = function (err) {
+    const msg = String(err && err.message ? err.message : err || '');
+    const reason = msg.replace(/^Invalid regular expression:\s*\/[^]*\/[a-z]*:\s*/i, '').replace(/^Invalid regular expression:\s*/i, '');
+    for (const [re, words] of RE_WORDS) if (re.test(reason)) return { words, detail: `Invalid regular expression: ${reason}` };
+    return { words: 'Mantle cannot read it as a pattern; check the brackets and the \\ escapes', detail: `Invalid regular expression: ${reason || 'no reason given'}` };
+  };
+
   /* ---- rename many ---------------------------------------------------------------------------------- */
   /**
    * items: [{n, d}] in display order; spec: { mode:'number'|'replace', base, start, find, replace,
@@ -497,7 +523,7 @@
       if (!sp.find) return { rows: items.map((it) => ({ from: it.n, to: it.n, why: null })), ok: false, changed: 0, why: 'type what to find' };
       try {
         re = new RegExp(sp.regex ? sp.find : sp.find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), sp.matchCase ? 'g' : 'gi');
-      } catch (e) { return { rows: [], ok: false, changed: 0, why: `that pattern is not valid (${e.message})` }; }
+      } catch (e) { const p = M.patternProblem(e); return { rows: [], ok: false, changed: 0, why: `that pattern is not valid: ${p.words}`, detail: p.detail }; }
     }
     const start = Number.isFinite(Number(sp.start)) ? Math.max(0, Math.floor(Number(sp.start))) : 1;
     items.forEach((it, i) => {
@@ -556,39 +582,70 @@
   M.opWords = (op) => OP_WORDS[op] || 'Working';
   /* ---- errors in plain words (contract 3: the ONE place a reason becomes screen text) -------------- */
   /* The sidecar says "<words> (0xHHHHHHHH)" (the hex is for the call log) and node can say ENOENT.
-     Nothing on screen may show a code or jargon, and every message says what to do next. Known codes
-     and phrasings map to a written sentence; anything else keeps its words with the codes stripped. */
+     Nothing on screen may show a code or jargon, and every message says what to do next.
+     ONE TABLE WITH MAIN (lane pagewords, 2026-10-14): main already turns codes into words with
+     lib/plain-error.js before a reply reaches this page, and this page loads that same file
+     (window.MantlePlain), so a reason is first made plain HERE TOO, by the same table, and only then
+     matched below. The rows match plain-error's own WORDS (plus Windows' uncoded phrasings), never a
+     code: a raw "0x80070005" and main's "access was denied" land on the same sentence, so the two
+     converters cannot disagree. Anything else keeps plain-error's words. */
+  const PW = typeof module !== 'undefined' && module.exports && typeof require === 'function'
+    ? require('../../lib/plain-error.js') : (root.MantlePlain || null);
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  /** plain-error's words for these keys, plus extra uncoded phrasings, as one regex. */
+  const said = (keys, extra) => {
+    const parts = PW ? keys.map((k) => esc(PW.WORDS[k] || (k === 'INTERNAL' && PW.INTERNAL) || '')).filter(Boolean) : [];
+    if (extra) parts.push(extra);
+    return parts.length ? new RegExp(parts.join('|'), 'i') : /(?!)/;   // no words: a row that never matches, never one that matches everything
+  };
+  // A page that forgot <script src="../../lib/plain-error.js"> still works on the phrasings below, but says so in the log.
+  if (!PW && typeof console !== 'undefined') console.error('Mantle Files: lib/plain-error.js is not loaded, so error codes are not turned into words on this page');
+  const NO_ANSWER = 'Mantle did not answer. Try again; if it keeps happening, restart Mantle.';
+  const NO_REASON = 'Windows could not finish this and did not say why. Try again.';
   const PLAIN = [
-    [/0x80070005|\bEACCES\b|\bEPERM\b|access (is )?denied|permission denied/i, 'Windows did not allow this. It may need administrator rights, or the item is protected.'],
-    [/0x8007002[01]|\bEBUSY\b|sharing violation|being used by another process|\bin use\b|open in another (app|program)|locked by/i, 'It is open in another app. Close it there, then try again.'],
-    [/0x8007016a|0x8007017c|0x8007018[0-9a-f]|cloud file provider|cloud operation/i, 'This file is online-only and OneDrive is not running, so it cannot be downloaded. Start OneDrive, then try again.'],
-    [/0x80070015|device is not ready|drive is not ready|\bnot ready\b/i, 'The drive is not ready. Insert the disk or reconnect the drive, then try again.'],
-    [/0x80070070|0x80070027|\bENOSPC\b|not enough (disk )?space|disk is full/i, 'There is not enough free space. Free some space, then try again.'],
-    [/0x80070035|0x80070043|0x800704cf|0x80070040|network (path|name) (was )?not found|network location cannot be reached|\bunreachable\b/i, 'The network location cannot be reached. Check the connection, then try again.'],
-    [/0x800700ce|0x8007006f|\bENAMETOOLONG\b|(name|path) (is )?too long/i, 'The name or path is too long for Windows. Use a shorter name, or move it to a shorter folder.'],
-    [/0x80070013|write[- ]protected/i, 'The drive is write-protected. Remove the protection, then try again.'],
-    [/0x800700b7|0x80070050|\bEEXIST\b|already exists/i, 'An item with that name is already there. Pick another name.'],
-    [/0x80070002|0x80070003|\bENOENT\b|cannot find the (file|path)|no such file|not there any more|does not exist|was not found/i, 'It is not there any more: it may have been moved or deleted. Press F5 to refresh.'],
-    [/0x8007007b|0x800700a1|\bEINVAL\b|syntax is incorrect|invalid (file )?name/i, 'Windows does not allow that name. Try a different one.'],
-    [/0x80070091|\bENOTEMPTY\b|directory is not empty/i, 'The folder is not empty, so it was left alone.'],
-    [/0x80070570|corrupt(ed)? and unreadable/i, 'The disk reported damage here. Run a disk check on that drive, then try again.'],
-    [/0x800704c7|operation was cancel+ed|^cancel+ed$/i, 'Cancelled.'],
-    [/no (bridge|answer) (to|from) Mantle|\bsidecar\b|\bIPC\b|timed? ?out waiting/i, 'Mantle did not answer. Try again; if it keeps happening, restart Mantle.'],
+    [said(['denied', 'admin'], 'access (is )?denied|permission denied'), 'Windows did not allow this. It may need administrator rights, or the item is protected.'],
+    [said(['inUse', 'resInUse'], 'sharing violation|being used by another process|\\bin use\\b|open in another (app|program)|locked by'), 'It is open in another app. Close it there, then try again.'],
+    [said(['cloudOff'], 'cloud file provider is not running'), 'This file is online-only and OneDrive is not running, so it cannot be downloaded. Start OneDrive, then try again.'],
+    [said(['cloud'], 'cloud (file|operation)'), 'This file is online-only and could not be downloaded. Check that OneDrive is running and signed in, then try again.'],
+    [said(['notReady'], 'device is not ready|drive is not ready|\\bnot ready\\b'), 'The drive is not ready. Insert the disk or reconnect the drive, then try again.'],
+    [said(['diskFull'], 'not enough (disk )?space|disk is full'), 'There is not enough free space. Free some space, then try again.'],
+    [said(['netPath', 'dropped'], 'network (path|name) (was )?not found|network location cannot be reached|\\bunreachable\\b'), 'The network location cannot be reached. Check the connection, then try again.'],
+    [said(['tooLong'], '(name|path) (is )?too long'), 'The name or path is too long for Windows. Use a shorter name, or move it to a shorter folder.'],
+    [said(['writeProtected'], 'write[- ]protected'), 'The drive is write-protected. Remove the protection, then try again.'],
+    [said(['exists'], 'already exists'), 'An item with that name is already there. Pick another name.'],
+    [said(['notFound', 'fileNotFound', 'folderNotFound', 'driveNotFound'], 'cannot find the (file|path)|no such file|not there any more|does not exist|was not found'), 'It is not there any more: it may have been moved or deleted. Press F5 to refresh.'],
+    [said(['badName'], 'syntax is incorrect|invalid (file )?name'), 'Windows does not allow that name. Try a different one.'],
+    [said(['notEmpty'], 'directory is not empty'), 'The folder is not empty, so it was left alone.'],
+    [said(['damaged'], 'corrupt(ed)? and unreadable'), 'The disk reported damage here. Run a disk check on that drive, then try again.'],
+    [said(['cancelled'], 'operation was cancel+ed|^cancel+ed$'), 'Cancelled.'],
+    [said(['INTERNAL']), 'Mantle Files hit an internal error. Try again; if it keeps happening, restart Mantle.'],
+    [/no (bridge|answer) (to|from) Mantle|Mantle did not answer|\bsidecar\b|\bIPC\b|timed? ?out waiting/i, NO_ANSWER],
   ];
   const cap1 = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+  /** A page bug's log line: plain-error's forLog ("TypeError: x is not a function", no file address)
+      plus where it was thrown as Mantle's own path, "(at ui/files/files.js:812)". Log only, never screen. */
+  M.bugDetail = function (e) {
+    const what = PW ? PW.forLog(e) : String(e && e.message ? e.message : e);
+    const frame = String(e && e.stack ? e.stack : '').match(/[\\/](ui[\\/][^\s):]+?\.js):(\d+)/);
+    return frame ? `${what} (at ${frame[1].replace(/\\/g, '/')}:${frame[2]})` : what;
+  };
   /** Any reason (sidecar, main, node) -> one plain sentence with the next step. Empty -> "no answer". */
   M.plainReason = function (reason) {
     const raw = String(reason == null ? '' : reason).trim();
-    if (!raw) return PLAIN[PLAIN.length - 1][1];
-    for (const [re, words] of PLAIN) if (re.test(raw)) return words;
-    let s = raw
-      .replace(/\s*\(?\b0x[0-9a-f]{6,8}\b\)?/gi, '')              // (0x80004005)
+    if (!raw) return NO_ANSWER;
+    const words = PW ? PW.plain(raw) : raw;
+    for (const [re, sentence] of PLAIN) if (re.test(words)) return sentence;
+    let s = words
+      .replace(/\s*\(?\b0x[0-9a-f]{6,8}\b\)?/gi, '')              // a backstop: plain-error leaves no code
       .replace(/\s*\(?(HRESULT|hr|code|errno)[ :=]*-?\d+\)?/gi, '')
       .replace(/\bWindows error\b[:\s]*/gi, '')
       .replace(/\b(E[A-Z]{3,12})\b:?\s*/g, (m, c) => (/^E(NO|ACC|PERM|BUSY|EXIST|INVAL|IO|AGAIN|ISDIR|NOTDIR|MFILE)/.test(c) ? '' : m))
       .replace(/\b(dry ?run|sidecar|job \w+|undefined|null|NaN|\[object Object\])\b/gi, '')
       .replace(/\s{2,}/g, ' ').replace(/\s+([.,:;])/g, '$1').trim().replace(/^[:,.;\s]+|[:,;\s]+$/g, '');
-    if (!s) return 'Windows could not finish this and gave no reason. Try again.';
+    // nothing left but plain-error's "unexpected error" (or a word or two around it): say it as Files does
+    const generic = PW ? new RegExp(`\\(?${esc(PW.GENERIC)}\\)?`, 'i') : null;
+    const rest = generic ? s.replace(generic, '').replace(/[^\w\s]/g, ' ').trim() : s;
+    if (!s || !rest || (generic && generic.test(s) && rest.split(/\s+/).length < 2)) return NO_REASON;
     s = cap1(s);
     return /[.!?]$/.test(s) ? s : s + '.';
   };

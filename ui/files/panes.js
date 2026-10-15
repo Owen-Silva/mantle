@@ -393,6 +393,7 @@
     const first = items[0] || { n: '', d: 0 };
     const spec = { mode: 'number', base: first.n.slice(0, M.stemLength(first.n, first.d)), start: 1, find: '', replace: '', regex: false, matchCase: false, ext: 'keep' };
     let plan = null;
+    const logged = new Set();
     return dialog.show((d, ctl) => {
       d.classList.add('wide');
       d.appendChild(el('h2', null, `Rename ${M.plural(items.length, 'item')}`));
@@ -440,6 +441,9 @@
         if (plan.rows.length > 300) ul.appendChild(el('li', 'cmore', `and ${plan.rows.length - 300} more`));
         sum.textContent = plan.ok ? `${M.plural(plan.changed, 'item')} will be renamed. Ctrl+Z puts every one back.` : cap1(plan.why || 'nothing would change');
         sum.classList.toggle('bad', !plan.ok);
+        // a pattern the browser rejects: its own reason is the tooltip, and goes to mantle.log once per reason
+        sum.title = plan.detail || '';
+        if (plan.detail && !logged.has(plan.detail)) { logged.add(plan.detail); console.warn(`Mantle Files: rename: ${plan.detail}`); }
         if (!plan.ok) sum.insertAdjacentHTML('afterbegin', WARN(12));
         const b = ctl.btn('go');
         if (b) b.disabled = !plan.ok;

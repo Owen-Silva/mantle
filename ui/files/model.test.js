@@ -229,6 +229,19 @@ eq('sort by status', names(M.sortItems([it('a', { a: 0x400000 }), it('b', { a: 0
   const swap = M.renamePlan([it('a.txt'), it('b.txt')], { mode: 'replace', find: 'a', replace: 'b' }, ['a.txt', 'b.txt']);
   eq('replace: onto another selected item\'s current name is refused (no order games)', swap.rows[0].why, 'another selected item has this name now');
   eq('replace: a bad regex says why', /not valid/.test(M.renamePlan(sel, { mode: 'replace', find: '(', regex: true }, taken).why), true);
+  // REAL patterns this node's V8 refuses (the same engine as the page): plain words on screen, the
+  // engine's reason (without the person's pattern) kept as detail for the log (lane pagewords).
+  const RE_CASES = [['(', 'a "(" is never closed'], ['a)', 'a ")" has no "(" before it'], ['[abc', 'a "[" is never closed'], ['*x', 'nothing before it to repeat'],
+    ['a{3,1}', 'first number is bigger'], ['x\\', 'ends with a lone \\'], ['[z-a]', 'runs backwards'], ['(?<n>a)(?<n>b)', 'same name'], ['(?<1x>a)', 'not a valid name']];
+  for (const [pat, words] of RE_CASES) {
+    const pl = M.renamePlan(sel, { mode: 'replace', find: pat, regex: true }, taken);
+    eq(`bad regex ${pat}: plain words`, pl.ok === false && pl.why.startsWith('that pattern is not valid: ') && pl.why.includes(words), true);
+    if (!pl.why.includes(words)) console.log('   why was:', pl.why, '| detail:', pl.detail);
+    eq(`bad regex ${pat}: no engine jargon on screen`, /Invalid regular expression|quantifier|\/gi?:/i.test(pl.why), false);
+    eq(`bad regex ${pat}: the engine's reason kept for the log, without the pattern`, /^Invalid regular expression: \S/.test(pl.detail) && !pl.detail.includes(`/${pat}/`), true);
+  }
+  const odd = M.patternProblem(new SyntaxError('Invalid regular expression: /x/: Something new from V8'));
+  eq('bad regex: an unknown reason still says what to check', [/brackets/.test(odd.words), odd.detail], [true, 'Invalid regular expression: Something new from V8']);
 }
 
 /* errors in plain words (contract 3): no code, no jargon, each says what to do next (lane files-ui) */
@@ -244,7 +257,22 @@ eq('sort by status', names(M.sortItems([it('a', { a: 0x400000 }), it('b', { a: 0
   eq('plain: network', /network location cannot be reached/.test(P('The network path was not found. (0x80070035)')), true);
   eq('plain: no answer', /Mantle did not answer/.test(P('')), true);
   eq('plain: sidecar jargon never shows', /Mantle did not answer/.test(P('the sidecar is not running')), true);
-  eq('plain: unknown words keep their words, lose the code', P('The media is sealed by policy X (0x80071234)'), 'The media is sealed by policy X.');
+  // Unknown words keep their words; the code becomes plain-error's sentence, exactly as main already sends it.
+  eq('plain: unknown words keep their words, lose the code', P('The media is sealed by policy X (0x80071234)'), 'The media is sealed by policy X (Windows reported an unexpected error).');
+  // ONE TABLE (lane pagewords): Files' sentence for a raw reason == its sentence for main's plain version of it
+  const PW = require('../../lib/plain-error.js');
+  const RAWS = ['Access is denied. (0x80070005)', '(0x80070020)', 'The cloud file provider is not running. (0x8007016A)', '(0x80070187)', '(0x80070015)', '(0x80070070)', '(0x80070035)',
+    '(0x800700CE)', '(0x80070013)', '(0x800700B7)', '(0x80070002)', '(0x80070003)', '(0x8007007B)', '(0x80070091)', '(0x80070570)', '(0x800704C7)', 'EBUSY: resource busy', 'EACCES: permission denied',
+    "ENOENT: no such file or directory, open 'x'", 'ENOSPC: no space left', '(0x80004005)', 'job fo12 failed (0x80004005)', 'COMException (0x8024402C)', 'they are already in this folder', ''];
+  const disagree = RAWS.filter((r) => P(r) !== P(PW.plain(r))).map((r) => `${r} -> ${P(r)} | ${P(PW.plain(r))}`);
+  eq('one table: a raw reason and main\'s plain version of it land on the same sentence', disagree, []);
+  const codeLike = (s) => /0x[0-9a-f]{4,}/i.test(s) || /\bE[A-Z]{3,}\b/.test(s) || /Windows error|sidecar|dry ?run|undefined|NaN/i.test(s);
+  eq('one table: every Files sentence is code-free', RAWS.map(P).filter(codeLike), []);
+  eq('one table: main\'s internal error reads as Files\' own', P(PW.INTERNAL), 'Mantle Files hit an internal error. Try again; if it keeps happening, restart Mantle.');
+  eq('preload: a lost bridge reads as no answer', P('Mantle did not answer. Try again; if it keeps happening, restart Mantle.'), 'Mantle did not answer. Try again; if it keeps happening, restart Mantle.');
+  let bugE = null; try { null.f(); } catch (e) { bugE = e; }
+  const bd = M.bugDetail(Object.assign(bugE, { stack: 'TypeError: x\n    at go (file:///C:/Users/Robin/mantle/ui/files/files.js:812:9)' }));
+  eq('bug detail: Name: message and Mantle\'s own path, no home folder', [/^TypeError: Cannot read properties of null/.test(bd), /\(at ui\/files\/files\.js:812\)$/.test(bd), /Robin|file:/.test(bd)], [true, true, false]);
   eq('plain: a bare unknown code says something useful', noCode(P('(0x80004005)')) && P('(0x80004005)').length > 20, true);
   eq('plain: already plain stays', P('they are already in this folder'), 'They are already in this folder.');
   const all = ['Access is denied. (0x80070005)', 'x (0x80070002)', 'EBUSY: resource busy', 'Windows error 0x80070570', 'hr -2147024864', 'job fo12 failed (0x80004005)', 'dry run: nothing'];

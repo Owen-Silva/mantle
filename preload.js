@@ -126,8 +126,15 @@ async function call(name, args) {
     res = await ipcRenderer.invoke(CALL, name, args === undefined ? {} : args);
   } catch (err) {
     // An invoke that throws means main's handler threw outside our own try/catch,
-    // or the channel is gone. Either way the page gets a sentence, not [object].
-    throw new Error(`"${name}" could not reach Mantle: ${err && err.message ? err.message : String(err)}`);
+    // or the channel is gone, or the page passed something that cannot cross
+    // (a function, a DOM node). The page gets a plain sentence it can put on
+    // screen; Electron's own words ("Error invoking remote method...") go to the
+    // page's console, which main copies into mantle.log (lane pagewords, 2026-10-14).
+    const raw = err && err.message ? err.message : String(err);
+    console.error(`mantle.call("${name}") could not reach Mantle: ${raw}`);
+    throw new Error(/could not be cloned/i.test(raw)
+      ? 'This page asked Mantle for something in a form it cannot send, so nothing was done. The details are in Mantle\'s log.'
+      : 'Mantle did not answer. Try again; if it keeps happening, restart Mantle.');
   }
   if (res && res.ok) return res.result;
   throw new Error(res && res.error ? res.error : `"${name}" failed and did not say why`);

@@ -133,6 +133,44 @@ async function main() {
     await page.keyboard.press('Control+v');
     check('Paste with nothing copied says what to do', await until(() => [...document.querySelectorAll('.toast')].some((t) => /Nothing to paste: copy or cut some files first/.test(t.textContent))));
 
+    // 5b. (lane pagewords, 2026-10-14) a pattern the browser will not compile, in Rename many: plain
+    // words on screen, the engine's reason as the tooltip and in the console (main copies it into mantle.log)
+    const warns = [];
+    page.on('console', (m) => { if (m.type() === 'warning' || m.type() === 'error') warns.push(m.text()); });
+    await go(HOME + '\\Documents');
+    await q(() => { const t = MF.app.cur(); const idx = t.shown.map((x, i) => (x.d ? -1 : i)).filter((i) => i >= 0).slice(0, 2); MF.app.list.selectOnly(idx[0]); t.sel.add(MF.keyOf(t.shown[idx[1]])); MF.app.list.render(); });
+    await q(() => MF.app.runCmd('rename'));
+    check('rename many: the dialog opens', await until(() => !!document.querySelector('.rn-sum')));
+    await page.click('.segb[data-mode="replace"]');
+    await page.click('label.fck:has-text("Regular expression")');
+    await page.fill('.rn-find', '(');
+    await until(() => /not valid/.test(document.querySelector('.rn-sum').textContent));
+    const rs = await q(() => { const s = document.querySelector('.rn-sum'); return { t: s.textContent, title: s.title }; });
+    check('bad pattern: plain words', rs.t === 'That pattern is not valid: a "(" is never closed', JSON.stringify(rs));
+    check('bad pattern: no engine jargon on screen', !/Invalid regular expression|\/gi?:|SyntaxError/.test(rs.t), rs.t);
+    check('bad pattern: the engine\'s reason is the tooltip', /^Invalid regular expression: Unterminated group/.test(rs.title), rs.title);
+    await page.fill('.rn-find', '((');
+    await page.fill('.rn-find', '(');
+    check('bad pattern: the reason is logged once', warns.filter((w) => /Mantle Files: rename: Invalid regular expression: Unterminated group/.test(w)).length === 1, warns.join(' | '));
+    await page.fill('.rn-find', '(a)');
+    check('a good pattern clears the tooltip', await until(() => !document.querySelector('.rn-sum').title));
+    await page.keyboard.press('Escape');
+    await until(() => !document.querySelector('.rn-sum'));
+
+    // 5c. (lane pagewords) a bug in the page's own code after an operation: the toast says it in plain
+    // words, the browser's "TypeError: ..." and where it was thrown go to the console only
+    await go(HOME + '\\Documents');
+    await q(() => { MF.app.list.selectOnly = () => { null.f(); }; });
+    await q(() => MF.app.runCmd('newfolder'));
+    check('page bug: a plain toast', await until(() => [...document.querySelectorAll('.toast.err')].some((t) => /Mantle Files hit a bug after creating a folder/.test(t.textContent))));
+    const bt = await q(() => ([...document.querySelectorAll('.toast.err')].find((t) => /hit a bug/.test(t.textContent)) || {}).textContent || '');
+    check('page bug: says what to do, no browser words on screen', /press F5/.test(bt) && /Mantle's log/.test(bt) && !/TypeError|Cannot read|null|\.js/.test(bt), bt);
+    check('page bug: the browser\'s words and where are logged', warns.some((w) => /Mantle Files: Mantle Files hit a bug after creating a folder: TypeError: Cannot read properties of null.*\(at ui\/files\/(?:files|page)\b/.test(w) || /hit a bug after creating a folder: TypeError: Cannot read properties of null/.test(w)), warns.join(' | '));
+    check('page bug: no file address in the log line', !warns.some((w) => /hit a bug/.test(w) && /file:\/\//.test(w)), warns.filter((w) => /hit a bug/.test(w)).join(' | '));
+    await page.reload();
+    await until(() => document.documentElement.dataset.ready === '1', null, 8000);
+    await q(() => document.querySelectorAll('.toast').forEach((t) => t.remove()));
+
     // 7. every icon-only button says what it is
     const bare = await q(() => [...document.querySelectorAll('button')].filter((b) => !b.closest('#menus,#toasts,.hidden') && b.offsetParent && !b.textContent.trim() && !b.title).map((b) => b.id || b.className));
     check('every icon-only button has a tooltip', !bare.length, bare.join(', '));
