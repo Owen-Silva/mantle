@@ -205,6 +205,15 @@ namespace Mantle {
       } finally { N.CloseHandle(q); }
     }
 
+    /// A path with its 8.3 short names written out (C:\Users\RUNNER~1 -> C:\Users\runneradmin); the path as
+    /// it was when it does not exist or cannot be read.
+    internal static string LongPath(string p) {
+      if (string.IsNullOrEmpty(p)) return p;
+      var lb = new StringBuilder(1024);
+      uint ln = N.GetLongPathNameW(p, lb, (uint)lb.Capacity);
+      return ln > 0 && ln < lb.Capacity ? lb.ToString() : p;
+    }
+
     /// The test burner, and only it, may be WRITTEN by a passive (--test) sidecar: an exe that lives
     /// under %TEMP% AND is named mpburn-* (sidecar/apppower-burner.js) or MANTLE_APPPOWER_TEST_EXE.
     internal static bool IsTestTarget(PInfo p) {
@@ -212,10 +221,9 @@ namespace Mantle {
       if (path == null) return false;
       string temp;
       try { temp = System.IO.Path.GetFullPath(System.IO.Path.GetTempPath()); } catch (Exception) { return false; }
-      // %TEMP% can be an 8.3 short path (C:\Users\RUNNER~1\... on a GitHub runner) while the image path
-      // Windows reports is always the long one: compare the long forms
-      { var lb = new StringBuilder(1024); uint ln = N.GetLongPathNameW(temp, lb, (uint)lb.Capacity); if (ln > 0 && ln < lb.Capacity) temp = lb.ToString(); }
-      if (!path.StartsWith(temp, StringComparison.OrdinalIgnoreCase)) return false;
+      // %TEMP% can be an 8.3 short path (C:\Users\RUNNER~1\... on a GitHub runner), and an image path keeps
+      // the form the process was started with: compare the long forms of both
+      if (!LongPath(path).StartsWith(LongPath(temp), StringComparison.OrdinalIgnoreCase)) return false;
       string file = ExeOf(System.IO.Path.GetFileName(path));
       if (file.StartsWith("mpburn-", StringComparison.OrdinalIgnoreCase)) return true;
       string env = ExeOf(Environment.GetEnvironmentVariable("MANTLE_APPPOWER_TEST_EXE") ?? "");
