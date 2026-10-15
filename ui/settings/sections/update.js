@@ -16,7 +16,8 @@
 (function () {
   'use strict';
   const C = (kit, name, args) => kit.call('settings.update.' + name, args || {});
-  const bad = (r, what) => (r && r.ok === false ? what + ': ' + (r.reason || 'no reason came back') : null);
+  // a reason that already starts with the same words is not said twice ("...could not be read: ...could not be read: ...")
+  const bad = (r, what) => (r && r.ok === false ? (r.reason && r.reason.toLowerCase().startsWith(what.toLowerCase()) ? r.reason : what + ': ' + (r.reason || 'no reason came back')) : null);
   const PAUSE_DOES = 'pause or resume Windows Update for this PC';
   const HOURS_DOES = 'change the active hours Windows Update keeps for this PC';
   const SMART_DOES = 'change how Windows Update sets the active hours for this PC';
