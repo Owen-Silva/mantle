@@ -297,6 +297,14 @@
   });
 
   M.on('clipboard.changed', function (p) { if (p && p.list) apply(p.list); });
+  /* THE WARM-UP (main, once, a few seconds after start): the real list drawn once in this HIDDEN
+     window and its layout forced, so the first Win+V does not pay for the first drawing. Nothing is
+     shown; the next clipboard.show draws its own list over it. */
+  M.on('clipboard.warm', function (p) {
+    if (p && p.list && p.list.items) { S.list = p.list; render(null); }
+    void listEl.offsetHeight;                // style and layout, now, while nobody is waiting
+    M.call('clipboard.warmed', { count: S.shown ? S.shown.length : 0 }).catch(function () { /* main logs a warm-up it never heard back from as not drawn */ });
+  });
   M.on('clipboard.notice', function (p) {
     if (!p) return;
     notice(p);
