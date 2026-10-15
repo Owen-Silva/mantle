@@ -100,6 +100,8 @@
   var PLACEHOLDER = {
     apps: 'Apps, files, settings, commands, or a URL',
     search: 'Search apps, files, settings and the web',
+    run: 'Type a program, folder, document or website',
+    quick: 'Quick links: press a letter',
   };
 
   /* ONE ACTION PER DECISION (lane launch-ui, 2026-09-29). A held Enter auto-repeats and a
@@ -388,7 +390,8 @@
       var blank = document.createElement('div');
       blank.className = 'empty' + (answered ? '' : ' is-loading');
       blank.setAttribute('role', 'status');
-      blank.textContent = !answered ? 'Getting your apps ready…'
+      blank.textContent = mode === 'run' ? 'Type the name of a program, folder, document or website, and Windows opens it.'
+        : !answered ? 'Getting your apps ready…'
         : !typed ? (mode === 'search' ? 'Type to search apps, files, settings and the web.' : 'No apps to show yet. Type to search files, settings and the web.')
         : filePending ? 'Nothing matches ‘' + typed + '’ yet. Searching your files…'
         : 'Nothing matches ‘' + typed + '’';
@@ -466,6 +469,15 @@
       name.className = 'name';
       // armed: the row itself says what the next Enter does, in the place the eye already is
       name.textContent = isArmed ? item.confirm : (item.name || '(unnamed)');
+      if (!isArmed && item.parts && item.parts.letter) {
+        // Quick links: Windows' underlined access letter
+        name.textContent = item.parts.before;
+        var u = document.createElement('u');
+        u.className = 'ak';
+        u.textContent = item.parts.letter;
+        name.appendChild(u);
+        name.appendChild(document.createTextNode(item.parts.after));
+      }
       main.appendChild(name);
 
       var sub = document.createElement('div');
@@ -538,6 +550,7 @@
     }
     if (indexError) lines.unshift({ text: 'Your apps and settings could not be loaded. Files and the web can still be searched; close and reopen the launcher to try again.', detail: indexError });
     if (backdropNote) lines.push({ text: backdropWords || 'The see-through effect is off: Mantle could not picture the screen behind this window.', detail: backdropNote });
+    if (mode === 'run' && runFooter) lines.push({ text: runFooter, detail: runFooter });
 
     els.srcErrors.textContent = '';
     for (var j = 0; j < lines.length; j++) {
@@ -559,7 +572,13 @@
     var item = rows[sel];
     var keys = [];
     if (armed && item && armed.id === item.id) keys = [['Enter', 'Confirm'], ['Esc', 'Cancel']];
-    else {
+    else if (mode === 'run') {
+      if (item) keys = [['Enter', item.kind === 'path' ? 'Open' : 'Run'], ['Ctrl+Shift+Enter', 'As administrator']];
+      if (item && item.kind !== 'runline') keys.push(['Tab', 'Complete']);
+      keys.push(['Esc', 'Close']);
+    } else if (mode === 'quick') {
+      keys = [['Letter', 'Open'], ['Enter', 'Open'], ['Esc', quickSub ? 'Back' : 'Close']];
+    } else {
       if (item) {
         if (item.kind === 'calc') { if (!item.bad) keys.push(['Enter', 'Copy answer']); }
         else if (item.kind === 'power') keys.push(['Enter', item.name]);
@@ -765,6 +784,7 @@
      "repo" after "rep" narrows the list instead of blanking it). The selection follows its ROW
      when the person has moved it by hand; otherwise it stays on the first row. */
   function mergeRows() {
+    if (special()) return;                    // a late apps/files answer never replaces Run or Quick links rows
     var typed = els.q.value;
     var q = typed.trim().toLowerCase();
     var keepId = userMoved && rows[sel] ? rows[sel].id : null;
@@ -929,6 +949,8 @@
     var item = rows[sel];
     if (!item) return;
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    if (item.kind === 'runline' || item.kind === 'hist' || item.kind === 'path') { activateRun(item, false); return; }
+    if (item.kind === 'quick') { activateQuick(item); return; }
     if (item.kind === 'power') { activatePower(item); return; }
     if (item.kind === 'file') { activateFile(item, alt); return; }
     if (item.kind === 'calc') { activateCalc(item); return; }
@@ -962,12 +984,14 @@
   els.q.addEventListener('input', function () {
     clearNext = false;
     disarm();                                     // typing is changing your mind
+    if (special()) { if (mode === 'run') { note = null; userMoved = false; runPrefill = false; queueRun(); } return; }
     queueSearch();
     queueFiles();
   });
   // the focused underline is CSS (.slot:focus-within), not a class toggled here
 
   document.addEventListener('keydown', function (e) {
+    if (special() && specialKey(e)) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       // the first Esc takes back an armed Shut down; only the next one closes the launcher
@@ -1031,7 +1055,8 @@
       // shown: a clean slate, except what you typed if you closed it without acting a moment ago
       if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
       if (pendingOpen && Date.now() - pendingOpen.at > 2000) pendingOpen = null;
-      var kept = !pendingOpen && !clearNext && closedAt && Date.now() - closedAt < KEEP_MS ? els.q.value : '';
+      // a Win tap after Run or Quick links opens the plain launcher: only a search's text is kept
+      var kept = !pendingOpen && !clearNext && !special() && closedAt && Date.now() - closedAt < KEEP_MS ? els.q.value : '';
       clearNext = false;
       els.q.value = kept;
       applyMode(pendingOpen ? pendingOpen.mode : (kept ? mode : 'apps'));
@@ -1047,6 +1072,14 @@
       filePending = false;
       fileRows = []; fileQ = '';
       fileState = { status: 'idle', reason: '', ms: 0, n: 0 };
+      if (special()) {            // Win+R / Win+X: no index, search or file query on the way up
+        renderFooter();
+        openSpecial();
+        els.q.focus();
+        els.results.scrollTop = 0;
+        panelUp();
+        return;
+      }
       /* AFTER the reset above (it used to run before it, and the reset cancelled it: Win+S with a
          query already typed never searched files for it) */
       if (els.q.value.trim().length >= FILE_MIN) queueFiles();
@@ -1069,8 +1102,18 @@
     mantle.on('launcher.open', function (p) {
       pendingOpen = { mode: (p && p.mode) || 'apps', query: (p && p.query) || '', at: Date.now() };
       if (!shownNow) return;
+      // Win+X over Quick links closes it, as Windows' Win+X menu does
+      if (pendingOpen.mode === 'quick' && mode === 'quick') { pendingOpen = null; mantle.call('launcher.hide'); return; }
       // already up: main shows it again without a new launcher:visible, so the mode lands here
       applyMode(pendingOpen.mode);
+      if (special()) {
+        els.q.value = pendingOpen.query || '';
+        pendingOpen = null;
+        renderFooter();
+        openSpecial();
+        els.q.focus();
+        return;
+      }
       if (pendingOpen.query) { els.q.value = pendingOpen.query; queueFiles(); }
       pendingOpen = null;
       disarm();
@@ -1101,9 +1144,233 @@
   }
 
   function applyMode(m) {
-    mode = m === 'search' ? 'search' : 'apps';
+    mode = m === 'search' || m === 'run' || m === 'quick' ? m : 'apps';
     document.body.dataset.mode = mode;
     els.q.placeholder = PLACEHOLDER[mode];
+    els.q.readOnly = mode === 'quick';          // Quick links takes letters as keys, not text
+    if (mode !== 'quick') quickSub = null;
+  }
+
+  /* ---- Run (Win+R) and Quick links (Win+X) (lane keysrun, 2026-10-15) ----------------------
+     Two more modes of this same window, so neither adds a window or RAM, and nothing on the open
+     path waits: the rows are drawn from what the page already has, then refreshed.
+     RUN: the box takes what Windows' Run box takes. Main (lib/features/run.js + lib/run-line.js)
+     parses and runs the line; the page only sends it. Row 0 is what you typed, then your history
+     (Mantle's, then Windows' RunMRU) and the folder you are typing in. Enter runs the selected row,
+     Ctrl+Shift+Enter as administrator (Windows' UAC prompt), Tab copies the row into the box.
+     A failure the launcher was not up to see (the UAC prompt took the screen) brings it back with why.
+     QUICK: Windows' Win+X rows and underlined letters (lib/quick-links.js); a letter runs its row,
+     Shut down or sign out opens its submenu (Esc or Left goes back, the ask-first rows arm on the
+     first press), and Win+X again closes it, as Windows' does. The page sends a row's id only. */
+  var QL = window.MantleQuickLinks;
+  var runHist = [];          // the last run.history answer, drawn at once on the next open
+  var runPaths = [];         // folder completion for what is typed now
+  var runSeq = 0;
+  var runTimer = null;
+  var runFooter = '';        // why the history could not be read, if it could not
+  var reopen = null;         // { line, note }: a run failed after the launcher closed
+  var runPrefill = false;    // the box holds the last line Mantle put there, not something typed
+  var quickSub = null;       // 'power' while the Shut down submenu is up
+  var QUICK_GROUPS = { 1: 'Tools', 2: 'Open', 3: 'Power and desktop' };
+  var POWER_GLYPH = { signout: 'signout', sleep: 'sleep', hibernate: 'hibernate', shutdown: 'power', restart: 'restart' };
+
+  function special() { return mode === 'run' || mode === 'quick'; }
+
+  function setView(groups) {
+    var flat = [];
+    for (var g = 0; g < groups.length; g++) flat = flat.concat(groups[g].rows);
+    var keepId = userMoved && rows[sel] ? rows[sel].id : null;
+    view = { groups: groups, flat: flat };
+    rows = flat;
+    sel = 0;
+    if (keepId) for (var i = 0; i < rows.length; i++) if (rows[i].id === keepId) { sel = i; break; }
+    if (armed && !rows.some(function (r) { return r.id === armed.id; })) disarm();
+    answered = true;
+    render();
+  }
+
+  function openSpecial() {
+    disarm(); note = null; userMoved = false; runFooter = ''; runPrefill = false;
+    if (mode === 'quick') { quickSub = null; els.q.value = ''; quickRows(); return; }
+    if (reopen) { els.q.value = reopen.line; runRows(); note = reopen.note; reopen = null; render(); return; }
+    if (!els.q.value && runHist.length) { els.q.value = runHist[0]; runPrefill = true; }   // the last line, selected, as Windows' Run box
+    runPaths = [];
+    runRows();
+    els.q.select();
+    mantle.call('run.history').then(function (res) {
+      var first = !runHist.length;
+      runHist = res && Array.isArray(res.items) ? res.items : [];
+      if (mode !== 'run') return;
+      if (first && !els.q.value && runHist.length) { els.q.value = runHist[0]; runPrefill = true; els.q.select(); }
+      runRows();
+    }, function (err) {
+      runFooter = 'Your Run history could not be read, so only what you type can run. (' + reasonOf(err) + ')';
+      renderFooter();
+    });
+  }
+
+  function matchHist(t) {
+    var q = t.toLowerCase();
+    if (!q) return runHist.slice(0, 8);
+    var starts = runHist.filter(function (h) { return h.toLowerCase().indexOf(q) === 0; });
+    var has = runHist.filter(function (h) { return h.toLowerCase().indexOf(q) > 0; });
+    return starts.concat(has).slice(0, 8);
+  }
+
+  function runRows() {
+    var typed = els.q.value;
+    var t = typed.trim();
+    var seen = {};
+    seen[t.toLowerCase()] = true;
+    var groups = [];
+    if (t) groups.push({ label: 'Run', rows: [{ kind: 'runline', id: 'run:line', name: t, line: t, subtitle: '' }] });
+    // the preselected last line is not a filter: the whole history shows until you type
+    var hist = matchHist(runPrefill ? '' : t).filter(function (h) { var k = h.toLowerCase(); if (seen[k]) return false; seen[k] = true; return true; })
+      .map(function (h) { return { kind: 'hist', id: 'run:h:' + h.toLowerCase(), name: h, line: h, subtitle: '' }; });
+    if (hist.length) groups.push({ label: 'Recent', rows: hist });
+    var lowTyped = typed.toLowerCase();
+    var paths = runPaths.filter(function (p) { var k = p.text.toLowerCase(); if (seen[k] || k.indexOf(lowTyped) !== 0) return false; seen[k] = true; return true; })
+      .map(function (p) { return { kind: 'path', id: 'run:p:' + p.text.toLowerCase(), name: p.text, line: p.text, subtitle: p.dir ? 'Folder' : 'File' }; });
+    if (paths.length) groups.push({ label: 'In this folder', rows: paths });
+    setView(groups);
+  }
+
+  function queueRun() {
+    if (runTimer) clearTimeout(runTimer);
+    runSeq++;
+    var typed = els.q.value;
+    if (typed.indexOf('\\') < 0) runPaths = [];
+    runRows();                                  // the history filters at once, with no round trip
+    if (typed.indexOf('\\') < 0) return;
+    var mine = runSeq;
+    runTimer = setTimeout(function () {
+      mantle.call('run.complete', { typed: typed }).then(function (res) {
+        if (mine !== runSeq || mode !== 'run') return;
+        runPaths = res && Array.isArray(res.items) ? res.items : [];
+        runRows();
+      }, function () { if (mine === runSeq) { runPaths = []; runRows(); } });
+    }, 60);
+  }
+
+  function activateRun(item, admin) {
+    var line = item.line;
+    if (!line) return;
+    if (item.kind !== 'runline') els.q.value = line;
+    once(item, admin ? 'runas' : 'run', function () { return mantle.call('run.exec', { line: line, admin: !!admin }).then(function (res) {
+      if (res && res.ok) {
+        runHist = [line].concat(runHist.filter(function (h) { return h.toLowerCase() !== line.toLowerCase(); }));
+        if (res.dryRun || res.reason) {
+          note = { id: item.id, text: res.reason, ok: true };
+          render();
+          if (!res.dryRun) hideTimer = setTimeout(function () { hideAfterAction(); }, 1400);
+          return;
+        }
+        hideAfterAction();
+        return;
+      }
+      runFailed(item, line, (res && res.reason) || 'It didn\'t run, and no reason came back.');
+    }, function (err) { runFailed(item, line, 'The run request failed: ' + reasonOf(err)); }); });
+  }
+
+  function runFailed(item, line, text) {
+    var n = { id: item.kind === 'runline' ? item.id : 'run:line', text: text, ok: false };
+    if (!shownNow) {                            // the UAC prompt took the screen and the launcher closed
+      reopen = { line: line, note: n };
+      pendingOpen = { mode: 'run', query: '', at: Date.now() };
+      mantle.call('launcher.show');
+      return;
+    }
+    els.q.value = line;
+    runRows();
+    note = n;
+    render();
+  }
+
+  function quickRows() {
+    if (!QL) { showProblem('The launcher is missing part of itself (quick-links.js), so Quick links cannot be shown. Reinstalling Mantle fixes this.'); return; }
+    var list = quickSub === 'power' ? QL.POWER : QL.LINKS;
+    var groups = [];
+    for (var i = 0; i < list.length; i++) {
+      var l = list[i];
+      var p = QL.parse(l.label);
+      var row = quickSub === 'power'
+        ? { kind: 'power', id: 'qp:' + l.id, name: p.text, parts: p, path: l.action, glyph: POWER_GLYPH[l.action],
+          confirm: l.confirm ? 'Press ' + p.letter.toUpperCase() + ' again to ' + p.text.toLowerCase() : undefined, subtitle: '' }
+        : { kind: 'quick', id: 'q:' + l.id, name: p.text, parts: p, link: l, subtitle: l.sub || '' };
+      var label = quickSub === 'power' ? 'Shut down or sign out' : QUICK_GROUPS[l.group];
+      var g = groups[groups.length - 1];
+      if (!g || g.label !== label) { g = { label: label, rows: [] }; groups.push(g); }
+      g.rows.push(row);
+    }
+    setView(groups);
+  }
+
+  function quickBack() { quickSub = null; disarm(); userMoved = false; note = null; quickRows(); }
+
+  function quickKey(k) {
+    if (!QL) return;
+    var l = QL.byKey(quickSub === 'power' ? QL.POWER : QL.LINKS, k);
+    if (!l) return;
+    var id = (quickSub === 'power' ? 'qp:' : 'q:') + l.id;
+    for (var i = 0; i < rows.length; i++) if (rows[i].id === id) { select(i); break; }
+    activate(false);
+  }
+
+  function activateQuick(item) {
+    var l = item.link;
+    if (l.page === 'power') { quickSub = 'power'; userMoved = false; note = null; quickRows(); return; }
+    if (l.page === 'search' || l.page === 'run') {
+      applyMode(l.page);
+      els.q.value = '';
+      note = null; userMoved = false;
+      if (l.page === 'run') openSpecial(); else runSearch();
+      els.q.focus();
+      return;
+    }
+    once(item, 'open', function () { return mantle.call('quicklinks.open', { link: l.id }).then(function (res) {
+      if (res && res.ok) {
+        if (res.dryRun || res.reason) {
+          note = { id: item.id, text: res.reason, ok: true };
+          render();
+          if (!res.dryRun) hideTimer = setTimeout(function () { hideAfterAction(); }, 1400);
+          return;
+        }
+        hideAfterAction();
+        return;
+      }
+      note = { id: item.id, text: (res && res.reason) || item.name + ' didn\'t open, and no reason came back.', ok: false };
+      render();
+    }, function (err) {
+      note = { id: item.id, text: 'The quick link request failed: ' + reasonOf(err), ok: false };
+      render();
+    }); });
+  }
+
+  /* Keys of the two modes, asked first by the page's keydown. true = handled. */
+  function specialKey(e) {
+    if (mode === 'quick') {
+      if (e.key === 'Escape' && !armed && quickSub) { e.preventDefault(); quickBack(); return true; }
+      if (e.key === 'ArrowLeft' && quickSub) { e.preventDefault(); quickBack(); return true; }
+      if (e.key === 'ArrowRight' && !quickSub && rows[sel] && rows[sel].id === 'q:shutdown') { e.preventDefault(); activate(false); return true; }
+      if (e.key && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        if (!e.repeat) quickKey(e.key);
+        return true;
+      }
+      return false;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!e.repeat && rows[sel]) activateRun(rows[sel], e.ctrlKey && e.shiftKey);
+      return true;
+    }
+    if (e.key === 'Tab' && !e.shiftKey) {
+      e.preventDefault();
+      var it = rows[sel];
+      if (it && it.kind !== 'runline') { els.q.value = it.line; userMoved = false; runPrefill = false; queueRun(); }
+      return true;
+    }
+    return false;
   }
 
   /* ---- boot ---------------------------------------------------------------- */

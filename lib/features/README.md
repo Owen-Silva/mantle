@@ -51,7 +51,8 @@ module.exports = {
 
 Chord names: `Win+S` `Win+V` `Win+Tab` `Win+Left` `Win+Right` `Win+Up` `Win+Down` `Win+Z`
 `Win+Shift+S` `PrintScreen` `Win+I` (Mantle Settings; exactly Win+I, so Win+Shift+I / Win+Ctrl+I / Win+Alt+I stay
-Windows'), `Win+E` (Mantle Files, the same exact rule), and the bare volume keys `VolumeUp` `VolumeDown` `VolumeMute` (any
+Windows'), `Win+E` (Mantle Files, the same exact rule), `Win+R` / `Win+X` (the launcher's Run and Quick links
+modes, the same exact rule), and the bare volume keys `VolumeUp` `VolumeDown` `VolumeMute` (any
 modifier held leaves them Windows'). Observed keys (seen, never taken): the same three volume keys;
 one feature may not list a key both as a chord and as observed.
 With a modifier IN the chord: `Win+Alt+T` (top bar hide/show), `Win+Alt+N` (quick notes) and

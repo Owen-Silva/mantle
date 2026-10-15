@@ -35,6 +35,8 @@
   var flags = new URLSearchParams(location.search);
   var SIDECAR_DOWN = flags.get('state') === 'down';
   var ALWAYS_FAIL = flags.get('fail') === '1';
+  var RUN_HIST = flags.get('runhist') === '0' ? [] : ['perfmon /report', '%appdata%\\.minecraft', 'SystemPropertiesPerformance.exe', 'git', '%appdata%'];
+  var RUN_DIR = [{ text: '%appdata%\\.minecraft\\', dir: true }, { text: '%appdata%\\Microsoft\\', dir: true }, { text: '%appdata%\\npm\\', dir: true }];
   var NO_BLUR = flags.get('blur') === '0';
   var FILES_DOWN = flags.get('files') === 'down';
   // ?files=slow  the index takes 6 s, so the Files group's "Searching your files" line can be seen
@@ -373,6 +375,30 @@
         case 'launcher.openFile':
           return Promise.resolve({ ok: true, dryRun: true,
             reason: 'dry run: would ' + (args.reveal ? 'show ' + args.path + ' in its folder' : 'open ' + args.path) });
+        /* Win+R / Win+X (lane keysrun): main's run.* and quicklinks.open, ALWAYS dry runs. ?runcancel=1:
+           an admin run comes back as a refused UAC prompt; ?runhist=0: no history yet. */
+        case 'run.history': return Promise.resolve({ items: RUN_HIST.slice() });
+        case 'run.complete': {
+          var tl = String(args.typed || '').toLowerCase();
+          return Promise.resolve({ typed: args.typed, items: RUN_DIR.filter(function (p) { return p.text.toLowerCase().indexOf(tl) === 0; }) });
+        }
+        case 'run.exec': {
+          var line = String(args.line || '').trim();
+          if (!line) return Promise.resolve({ ok: false, reason: 'Type a program, folder, document or website.' });
+          if (/^notarealprogram\b/i.test(line)) return Promise.resolve({ ok: false, how: 'exec', reason: 'Windows can\'t find "notarealprogram". Check the spelling, then try again.' });
+          if (args.admin && flags.get('runcancel') === '1') return Promise.resolve({ ok: false, how: 'exec', reason: 'You said no to the administrator prompt, so "' + line.split(' ')[0] + '" didn\'t run.' });
+          RUN_HIST = [line].concat(RUN_HIST.filter(function (h) { return h.toLowerCase() !== line.toLowerCase(); }));
+          var isDir = /^%appdata%|^[a-z]:\\$/i.test(line) && line.indexOf(' ') < 0;
+          return Promise.resolve({ ok: true, dryRun: true, how: isDir ? 'folder' : 'exec',
+            reason: 'dry run: would ' + (isDir ? 'open Mantle Files at ' : args.admin ? 'run as administrator ' : 'open ') + line });
+        }
+        case 'quicklinks.open': {
+          var QLm = window.MantleQuickLinks;
+          var ql = QLm && QLm.byId(args.link);
+          if (!ql || !ql.run) return Promise.resolve({ ok: false, reason: 'That quick link isn\'t one Mantle knows.' });
+          return Promise.resolve({ ok: true, dryRun: true, link: ql.id, reason: 'dry run: would open ' + QLm.parse(ql.label).text });
+        }
+        case 'launcher.show': emit('launcher:visible', true); return Promise.resolve({ visible: true });
         default: return Promise.reject(new Error('the mock bridge has no "' + name + '"'));
       }
     },
