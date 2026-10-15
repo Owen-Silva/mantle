@@ -2119,6 +2119,7 @@ popwatch.configure({
   },
   test: !!flags.test,
   testArm: !!flags.test && ARGV.some((a) => a === '--test-popwatch'),
+  testAway: !!flags.test && ARGV.some((a) => a === '--test-popwatch-away'),
 });
 
 /**

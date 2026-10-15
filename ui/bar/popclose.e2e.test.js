@@ -129,6 +129,23 @@ async function main() {
     check('Esc from another app goes to the bar\'s pop-up', s && s.result === 'bar', s);
     check('and closes it', !!(await until(async () => !(await popOpen()), 3000, 50)));
 
+    // ---- switching away (lane mantle-m6): Alt+Tab is no click. The real foreground is never read in
+    // a --test run (Owen's own switching would close it mid-test); made-up readings take the same road.
+    second(['--test-click=more']);
+    await until(popOpen, 5000, 50);
+    await until(async () => { const x = await pw(); return x && x.state.open.includes('bar') ? x : null; }, 5000, 100);
+    s = await pw();
+    check('a --test run does not read the real foreground', !!s && s.state.watchingAway === false, s);
+    s = await pw({ ev: { op: 'foreground', hwnd: 9101 } });          // the app in front when it opened
+    check('the app that was in front: still open', s && s.result === 0 && await popOpen(), s);
+    s = await pw({ ev: { op: 'foreground', hwnd: 9102, mine: true } });   // a Mantle window (Wi-Fi box, switcher)
+    check('a Mantle window taking the keyboard: still open', s && s.result === 0 && await popOpen(), s);
+    s = await pw({ ev: { op: 'foreground', hwnd: 9101 } });          // handed back
+    check('the keyboard handed back to that app: still open', s && s.result === 0 && await popOpen(), s);
+    s = await pw({ ev: { op: 'foreground', hwnd: 9103 } });          // Alt+Tab to another app
+    check('a switch to another app closes the bar\'s pop-up', s && s.result === 1 && s.state.away >= 1, s);
+    check('and it is gone, the watch off again', !!(await until(async () => { if (await popOpen()) return null; const x = await pw(); return x && x.state.open.length === 0 ? x : null; }, 3000, 50)));
+
     // ---- quick settings, the panel Owen opens most
     second(['--test-click=qs']);
     check('quick settings opens (the same test hook)', !!(await until(popOpen, 5000, 50)));
