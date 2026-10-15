@@ -663,6 +663,26 @@ const SIDECAR_EXE_OVERRIDE = (() => {
   return abs;
 })();
 
+/*
+ * CRASH RECOVERY (lane mantle-supervisor, 2026-10-15; the whole design is at the top of lib/supervisor.js).
+ * A detached `Mantle.Sidecar.exe --supervise=<this pid>` outlives this process and starts it again if it
+ * dies without saying it quit on purpose. Started here, as early as the sidecar exe is known and the lock is
+ * ours (a second instance never got this far), so a crash during the rest of the start is caught too.
+ * Every deliberate way out calls supervisor.standDown(why) FIRST: shutdown(), the kill switch, and both
+ * "Restore Windows taskbar" roads.
+ */
+const supervisor = require('./lib/supervisor').makeSupervisor({
+  fs, path, spawn: require('child_process').spawn,
+  alive: (pid) => { try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; } },
+  kill: (pid) => process.kill(pid),
+  now: Date.now,
+  log: (line) => process.stdout.write(`mantle: ${line}\n`),
+  setInterval, clearInterval,
+  pid: process.pid, execPath: process.execPath, argv: process.argv.slice(1), cwd: process.cwd(), root: ROOT,
+  userData: app.getPath('userData'), exePath: SIDECAR_EXE_OVERRIDE || SIDECAR_EXE_DEFAULT, flags, env: process.env,
+});
+supervisor.start();
+
 const sidecar = new Sidecar({
   exePath: SIDECAR_EXE_OVERRIDE || SIDECAR_EXE_DEFAULT,
   // null = never build: an override path is someone else's build output, not build.ps1's
@@ -1059,8 +1079,9 @@ function lookFallbackSaid(s) {
   lookToastShow({ text, reason: s.reason || 'the shared look cannot be used, and no reason was given', tone: 'warn', did: 'failed' });
 }
 
-function lookToastShow(payload) {
-  if (!app.isReady()) { app.whenReady().then(() => lookToastShow(payload)); return; }
+function lookToastShow(payload, label) {   // label: who the log lines name (default look sync)
+  const who = label || 'look sync';
+  if (!app.isReady()) { app.whenReady().then(() => lookToastShow(payload, label)); return; }
   const W = 360 + 36, H = 44 + 36;   // the ontop pop-up's own size (lib/features/ontop.js, MARGIN 18)
   try {
     if (!lookToastWin || lookToastWin.isDestroyed()) {
@@ -1076,7 +1097,7 @@ function lookToastShow(payload) {
       lw.webContents.on('will-navigate', (e) => e.preventDefault());
       lw.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       lw.webContents.on('render-process-gone', (_e, d) => {
-        process.stdout.write(`mantle: look sync: the pop-up page crashed (${d && d.reason}); the reason is still in Settings\n`);
+        process.stdout.write(`mantle: ${who}: the pop-up page crashed (${d && d.reason})${who === 'look sync' ? '; the reason is still in Settings' : ''}\n`);
         if (lookToastWin === lw) lookToastWin = null;
         try { lw.destroy(); } catch (_) { /* gone */ }
       });
@@ -1089,8 +1110,8 @@ function lookToastShow(payload) {
     if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
     if (!flags.test) {
       w.showInactive();
-      raiseWin.up(w, { what: 'the look sync pop-up', log: (line) => process.stdout.write(`mantle: ${line}\n`), wanted: () => lookToastWin === w && !w.isDestroyed() && w.isVisible() });
-      if (w.isVisible()) process.stdout.write('mantle: look sync: the pop-up is shown\n');
+      raiseWin.up(w, { what: `the ${who} pop-up`, log: (line) => process.stdout.write(`mantle: ${line}\n`), wanted: () => lookToastWin === w && !w.isDestroyed() && w.isVisible() });
+      if (w.isVisible()) process.stdout.write(`mantle: ${who}: the pop-up is shown\n`);
     }
     clearTimeout(lookToastTimer);
     lookToastTimer = setTimeout(() => {
@@ -1100,7 +1121,7 @@ function lookToastShow(payload) {
     }, flags.test ? 30000 : 9000);   // a --test run keeps the page a while so a test can read it
     if (lookToastTimer.unref) lookToastTimer.unref();
   } catch (err) {
-    process.stdout.write(`mantle: look sync: the pop-up could not show (${err && err.message}); the reason is still in Settings\n`);
+    process.stdout.write(`mantle: ${who}: the pop-up could not show (${err && err.message})${who === 'look sync' ? '; the reason is still in Settings' : ''}\n`);
   }
 }
 /**
@@ -5009,8 +5030,8 @@ function needHwnd(args) {
  *   LIVE, started by the "Mantle" logon task -> via 'task': a DETACHED PowerShell waits for this
  *     process to exit AND for the task to stop saying Running, then runs the task (once more if
  *     nothing is up 5 s later). Not app.relaunch(): the relaunched
- *     Mantle would be OUR child rather than the Task Scheduler's, so it would lose the task's
- *     crash restarts and could be reaped along with whatever session it ended up under. And it
+ *     Mantle would be OUR child rather than the Task Scheduler's, so it would not be the
+ *     task's own process and could be reaped along with whatever session it ended up under. And it
  *     has to WAIT for the pid: the task is MultipleInstancesPolicy IgnoreNew
  *     (tools/mantle-logon-task.xml), so a /Run while this instance is still alive is ignored.
  *   LIVE otherwise (`npm run live`, or no task registered) -> via 'relaunch', same argv.
@@ -5639,6 +5660,8 @@ const COMMANDS = {
 
   'shell.restore': async () => {
     shellPaused = { at: Date.now(), why: 'a window asked for it' };
+    // Windows was asked back: a crash while paused must not start Mantle (and its taskbar hiding) again.
+    supervisor.standDown('Windows was put back ("Restore Windows taskbar")');
     await restoreShell('a window asked for it');
     updateTray();
     return state.get();
@@ -7758,6 +7781,9 @@ function restoreShell(why) {
 function shutdown(why, opts) {
   if (shuttingDown) return;
   shuttingDown = true;
+  // Before anything else: a quit that crashes half way out is still a quit (lib/supervisor.js).
+  // opts.crash: the uncaught-exception road, which wants the supervisor to bring Mantle back.
+  if (!(opts && opts.crash)) supervisor.standDown(why);
   const exitCode = opts && Number.isInteger(opts.exitCode) ? opts.exitCode : 0;
   const before = opts && opts.before ? Promise.resolve(opts.before).catch(() => {}) : Promise.resolve();
   process.stdout.write(`mantle: shutting down (${why})\n`);
@@ -7934,6 +7960,9 @@ app.on('window-all-closed', () => shutdown('every window was closed'));
  * (arrangeRestart), and exits with code 1 so the task records the failure too. At most 3 of those
  * in 10 minutes: the 4th crash stays down, and says why, rather than flicker the taskbar forever.
  * The next start says it happened, on the tray menu and in the diagnostic report (recoveryLine).
+ * 2026-10-15 (lane mantle-supervisor): that RestartOnFailure never fires for a crash (it only retries a task
+ * that failed to START). A supervisor process now brings Mantle back after ANY death, native crashes and kills
+ * included (lib/supervisor.js); arrangeRestart is only the fallback when no supervisor is running.
  */
 const CRASH_WINDOW_MS = 10 * 60 * 1000;
 const CRASH_MAX_RESTARTS = 3;
@@ -7994,10 +8023,17 @@ process.on('uncaughtException', (err) => {
     plan = { restart: false, why: `stopped with an error, and the crash could not be written down (${e.message}), so it was not started again` };
   }
   process.stderr.write(`mantle: Mantle ${plan.why}\n`);
-  const back = plan.restart
+  // With a supervisor watching (lib/supervisor.js) IT is the way back: arranging a restart here as well
+  // would start two. It gets the error's words; a 4th error in 10 minutes still stays down (standDown).
+  const supervised = supervisor.status().on;
+  if (supervised) {
+    if (plan.restart) supervisor.crashNote(crashWhat(err));
+    else supervisor.standDown(`Mantle ${plan.why}`);
+  }
+  const back = plan.restart && !supervised
     ? arrangeRestart().then((r) => { if (!r.ok) process.stderr.write(`mantle: ${r.reason}\n`); }, (e) => process.stderr.write(`mantle: the restart after the error could not be arranged: ${e && e.message}\n`))
     : null;
-  shutdown('an uncaught exception', { exitCode: 1, before: back });
+  shutdown('an uncaught exception', { exitCode: 1, before: back, crash: true });
 });
 const rejectionLog = makeRejectionLog((line) => process.stderr.write(line));
 process.on('unhandledRejection', (err) => {
@@ -8245,6 +8281,8 @@ const TRAY_ACTIONS = {
   },
   restore: () => {
     shellPaused = { at: Date.now(), why: 'the tray menu' };
+    // Windows was asked back: a crash while paused must not start Mantle (and its taskbar hiding) again.
+    supervisor.standDown('Windows was put back from the tray menu ("Restore Windows taskbar")');
     restoreShell('the tray menu asked for it').finally(() => updateTray());
   },
   retry: () => {
@@ -8427,6 +8465,7 @@ function registerShortcuts() {
   let launcher = false;
   try {
     killSwitch = globalShortcut.register('Ctrl+Alt+Shift+Backspace', () => {
+      supervisor.standDown('the kill switch');   // first: a crash during the restore must not bring it back
       restoreShell('the kill switch').finally(() => shutdown('the kill switch'));
     });
   } catch (err) {
@@ -9373,6 +9412,19 @@ app.whenReady().then(() => {
   if (flags.test) testShellBaseline();
   recoveryNote = loadRecoveryNote();
   if (recoveryNote) process.stdout.write(`mantle: ${recoveryNote} (the tray menu says so for the next hour)\n`);
+  // The supervisor brought this process back after a crash (or had given up on a crash loop): say it ONCE,
+  // in words: the log gets the codes, the tray menu a line for the next hour, Owen a pop-up once the
+  // desktop is up (start/wake holds the layer ~3 s). A --test run draws the pop-up but never shows it.
+  const crashNotice = supervisor.takeNotice();
+  if (crashNotice) {
+    process.stdout.write(`mantle: ${crashNotice.log}\n`);
+    process.stdout.write(`mantle: tells Owen once: ${crashNotice.title}: ${crashNotice.words}\n`);
+    recoveryNote = crashNotice.tray;
+    setTimeout(() => {
+      if (shuttingDown) return;
+      lookToastShow({ text: crashNotice.title, reason: crashNotice.words, tone: 'warn', did: 'failed' }, 'crash recovery');
+    }, 4000);
+  }
   registerShortcuts();
   createTray();
   apps.startRefresh();

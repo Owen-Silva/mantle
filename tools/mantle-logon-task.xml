@@ -54,8 +54,13 @@
     <WakeToRun>false</WakeToRun>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
     <Priority>4</Priority>
-    <!-- A crash (non-zero exit) brings Mantle back within a minute, three times
-         at most; a clean `npm run quit` exits 0 and stays quit. -->
+    <!-- This only retries a task that FAILED TO START (electron.exe missing,
+         say). It does NOT bring Mantle back after a crash: Task Scheduler never
+         treats a later non-zero exit as a failure to retry (10-14 20:11, Mantle
+         stayed down 14 minutes). Crashes are the supervisor's job: a detached
+         Mantle.Sidecar.exe in its supervise mode that main starts itself
+         (lib/supervisor.js, sidecar/Supervisor.cs), so nothing here has to
+         change for it. -->
     <RestartOnFailure>
       <Interval>PT1M</Interval>
       <Count>3</Count>
