@@ -105,17 +105,25 @@ namespace Mantle {
     //
     // WIN+E (lane files, 2026-09-28): Mantle Files, in place of File Explorer. A plain Win chord
     // like Win+I (VK 0x45), so Win+Shift+E, Win+Ctrl+E and Win+Alt+E stay Windows'.
+    //
+    // WIN+R and WIN+X (lane keysrun, 2026-10-15): the launcher's Run mode (in place of Windows' Run
+    // box) and its Quick links mode (in place of Windows' Win+X menu), lib/features/run.js and
+    // quicklinks.js. Plain Win chords like Win+E (VK 0x52, 0x58): Win+Shift/Ctrl/Alt+R and +X stay
+    // Windows', and the Win-up gets the partner key so Start stays shut. FAIL-OPEN as every chord:
+    // main lists them only while their feature is on, healthy and Mantle is not resting, and the
+    // hook is this process's, so a dead or quit Mantle (stdin EOF / parent death -> exit) leaves
+    // Windows' own Run box and Win+X menu working. No registry is touched.
     public static readonly string[] ChordNames = {
       "Win+S", "Win+V", "Win+Tab", "Win+Left", "Win+Right", "Win+Up", "Win+Down", "Win+Z",
       "Win+Shift+S", "PrintScreen", "VolumeUp", "VolumeDown", "VolumeMute", "Win+Alt+T", "Win+Ctrl+T", "Win+Alt+N", "Win+I",
-      "Ctrl+Shift+Esc", "Win+E"
+      "Ctrl+Shift+Esc", "Win+E", "Win+R", "Win+X"
     };
-    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD, 0x54, 0x54, 0x4E, 0x49, 0x1B, 0x45 };
-    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false, true, true, true, true, false, true };
-    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, true, false };
-    static readonly bool[] ChordAlt = { false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, true, false, false, false };
-    static readonly bool[] ChordCtrl = { false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false };
-    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false };
+    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD, 0x54, 0x54, 0x4E, 0x49, 0x1B, 0x45, 0x52, 0x58 };
+    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false, true, true, true, true, false, true, true, true };
+    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, true, false, false, false };
+    static readonly bool[] ChordAlt = { false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, true, false, false, false, false, false };
+    static readonly bool[] ChordCtrl = { false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false, false, false };
+    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false };
     /// Observed keys are REPORTED on every keydown (auto-repeat included: a held Volume Up keeps
     /// stepping) and NEVER swallowed: Windows still changes the volume itself. A volume key that
     /// is also a TAKEN chord is the chord's (swallowed, a chord event); untaken, it is observed.
