@@ -182,11 +182,12 @@ function parseArgs(argv) {
   const slack = Number(opt('slack', 1.5)) > 0 ? Number(opt('slack', 1.5)) : 1.5;
   const only = String(opt('surfaces', '') || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
   return { n, slack, only, strict: !!opt('strict', false), lock: !opt('no-lock', false), rerun: !opt('no-rerun', false),
-    settleS: Number(opt('settle', 15)) || 15, out: opt('out', ''), json: !!opt('json', false), lockWaitMin: Number(opt('lock-wait', 90)) || 90 };
+    settleS: Number(opt('settle', 15)) || 15, out: opt('out', ''), json: !!opt('json', false), lockWaitMin: Number(opt('lock-wait', 240)) || 240 };
 }
 
 module.exports = { BUDGET, SURFACES, quantile, stats, budgets, parseOpenLine, judgeOpens, cpuPct, summaryLine, parseArgs,
-  takeFileLock: (...a) => takeFileLock(...a), dropFileLock: (...a) => dropFileLock(...a) };
+  takeFileLock: (...a) => takeFileLock(...a), dropFileLock: (...a) => dropFileLock(...a),
+  joinQueue: (...a) => joinQueue(...a), myTurn: (...a) => myTurn(...a), leaveQueue: (...a) => leaveQueue(...a) };
 
 // ------------------------------------------------------------------ the probe (inside the test copy's main)
 function installProbe() {
@@ -316,6 +317,36 @@ function takeDirLock(dir, owner) {
 function dropDirLock(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* someone else's now */ } }
 function lockOwner(dir) { try { return fs.readFileSync(path.join(dir, 'owner.txt'), 'utf8').trim().slice(0, 160); } catch (_) { return '?'; } }
 
+/* The heavy-test queue (the lanes' protocol): %TEMP%\claude-heavytest.queue\<n>-<lane>, holding "<n>-queued
+   HH:MM:SS". Join with the next number; take the mutex only when no live ticket has a lower number; leave the
+   queue once the mutex is ours. A ticket untouched for 3 h is a dead lane's and is not waited for. */
+const QUEUE_STALE_MS = 3 * 3600 * 1000;
+function queueDir() { return path.join(os.tmpdir(), 'claude-heavytest.queue'); }
+function queueTickets(dir) {
+  const q = dir || queueDir();
+  let names = [];
+  try { names = fs.readdirSync(q); } catch (_) { return []; }
+  return names.map((name) => {
+    const m = /^(\d+)-/.exec(name);
+    if (!m) return null;
+    let age = 0;
+    try { age = Date.now() - fs.statSync(path.join(q, name)).mtimeMs; } catch (_) { return null; }
+    return { n: Number(m[1]), name, age };
+  }).filter(Boolean);
+}
+function joinQueue(label, dir) {
+  const q = dir || queueDir();
+  try { fs.mkdirSync(q, { recursive: true }); } catch (_) { return null; }
+  for (let k = 0; k < 20; k++) {
+    const n = Math.max(0, ...queueTickets(q).map((t) => t.n)) + 1;
+    const name = `${n}-${label}`;
+    try { fs.writeFileSync(path.join(q, name), `${n}-queued ${new Date().toTimeString().slice(0, 8)}\n`, { flag: 'wx' }); return { n, name, dir: q }; } catch (_) { /* raced: next number */ }
+  }
+  return null;
+}
+function myTurn(t) { return !queueTickets(t.dir).some((x) => x.n < t.n && x.age < QUEUE_STALE_MS); }
+function leaveQueue(t) { try { fs.rmSync(path.join(t.dir, t.name), { force: true }); } catch (_) { /* gone */ } }
+
 /* The browser lock is a FILE, created exclusively, holding {"pid","time","label"} (the protocol the other
    lanes' headless runs use). A lock whose pid is gone is stale and is taken over. */
 function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
@@ -372,12 +403,16 @@ async function cli() {
     const owner = `perf-budget pid ${process.pid} (${ROOT}) at ${new Date().toISOString()}`;
     const until = Date.now() + A.lockWaitMin * 60000;
     const mutex = path.join(os.tmpdir(), 'claude-heavytest.mutex');
+    // the lanes' queue: a ticket "<n>-<lane>" in %TEMP%\claude-heavytest.queue; the lowest live ticket goes next
+    const ticket = joinQueue('perfgate-' + LANE);
+    if (ticket) locks.push(() => leaveQueue(ticket));
     let said = 0;
-    while (!takeDirLock(mutex, owner)) {
+    while (!((!ticket || myTurn(ticket)) && takeDirLock(mutex, owner))) {
       if (Date.now() > until) return finish(2, `claude-heavytest.mutex stayed held for ${A.lockWaitMin} min (owner: ${lockOwner(mutex)})`);
-      if (said++ % 10 === 0) say(`perf-budget: waiting for claude-heavytest.mutex (held by: ${lockOwner(mutex)}); checking every 60 s`);
+      if (said++ % 10 === 0) say(`perf-budget: waiting for claude-heavytest.mutex (held by: ${lockOwner(mutex)}; queue ticket ${ticket ? ticket.name : 'none'}); checking every 60 s`);
       await sleep(60000);
     }
+    if (ticket) leaveQueue(ticket);
     locks.push(() => dropDirLock(mutex));
     const blk = path.join(os.tmpdir(), 'claude-headless-browser.lock');
     said = 0;

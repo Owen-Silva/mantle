@@ -97,6 +97,21 @@ P.dropFileLock(lf);
 check('lock: never drops someone else\'s', fs.existsSync(lf));
 try { fs.rmSync(lf, { force: true }); } catch (_) { /* done */ }
 
+// ---- the heavy-test queue: next number, lowest live ticket goes first, stale tickets are not waited for
+const qd = path.join(os.tmpdir(), `perf-budget-test-queue-${process.pid}`);
+fs.rmSync(qd, { recursive: true, force: true });
+fs.mkdirSync(qd);
+fs.writeFileSync(path.join(qd, '4-other-lane'), '4-queued 14:39:16\n');
+const tk = P.joinQueue('perfgate-x', qd);
+check('queue: joins with the next number', tk && tk.n === 5 && fs.existsSync(path.join(qd, '5-perfgate-x')), JSON.stringify(tk));
+check('queue: waits behind a lower live ticket', P.myTurn(tk) === false);
+const old = new Date(Date.now() - 4 * 3600 * 1000);
+fs.utimesSync(path.join(qd, '4-other-lane'), old, old);
+check('queue: a 4 h old ticket is not waited for', P.myTurn(tk) === true);
+P.leaveQueue(tk);
+check('queue: leaves', !fs.existsSync(path.join(qd, '5-perfgate-x')));
+fs.rmSync(qd, { recursive: true, force: true });
+
 // ---- arguments
 const a = P.parseArgs(['--n=5', '--slack=2', '--surfaces=settings,Files', '--no-lock', '--strict']);
 check('args', a.n === 5 && a.slack === 2 && a.only.join() === 'settings,files' && a.lock === false && a.strict === true && a.rerun === true, JSON.stringify(a));
