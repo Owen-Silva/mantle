@@ -403,7 +403,8 @@
   const ddBottom = (dd) => dd.offsetTop + dd.offsetHeight;
   function notifyMain() {
     let bottom = 28;
-    for (const dd of menusEl.children) bottom = Math.max(bottom, ddBottom(dd) + DD_GAP);
+    // dd._growTo: an app-power panel about to unfold asks for its room first (apppower.js)
+    for (const dd of menusEl.children) bottom = Math.max(bottom, ddBottom(dd) + DD_GAP, dd._growTo ? dd.offsetTop + dd._growTo + DD_GAP : 0);
     if (reveal() && !S.waitT) S.waitT = setTimeout(waitedTooLong, WAIT_MS);
     if (bottom === S.asked) return;          // hover and the 1 s sample re-render at the same height
     S.asked = bottom;
@@ -540,22 +541,25 @@
     const s = S.stats || {};
     const d = s[o.stat] || {};
     const row = (n, x) => `<div class="row2"><span class="n">${esc(n)}</span><span class="x">${esc(x)}</span></div>`;
+    // APP POWER (lane mantle-power-ui, apppower.js): with main's app rows, the top processes are its kept
+    // element (controls under each row) and only the parts above and below it are html here
+    const AP = window.AppPower, ap = !!(AP && AP.owns(o.stat, d)), CUT = '\u0001';
     let html = '';
     if (o.stat === 'cpu') {
       html += `<h4>CPU · ${M.pct(d.pct)}</h4>`;
       // the fills' heights go in through the CSSOM below: the CSP drops a style="" attribute
       if (d.cores && d.cores.length) html += '<div class="cores">' + d.cores.map((c) => `<div class="core" title="${M.pct(c)}"><i></i></div>`).join('') + '</div>';
-      if (d.top) html += '<h4>Top processes</h4>' + d.top.map((p) => row(p.name, M.pct(p.pct))).join('');
+      if (d.top) html += '<h4>Top processes</h4>' + (ap ? CUT : d.top.map((p) => row(p.name, M.pct(p.pct))).join(''));
     } else if (o.stat === 'mem') {
       html += `<h4>Memory · ${M.gb(d.used)} of ${M.gb(d.total)} GB</h4>`;
       if (d.commit != null) html += row('Committed', `${M.gb(d.commit)} of ${M.gb(d.commitLimit)} GB`);
-      if (d.top) html += '<h4>Top processes</h4>' + d.top.map((p) => row(p.name, M.gb(p.bytes) + ' GB')).join('');
+      if (d.top) html += '<h4>Top processes</h4>' + (ap ? CUT : d.top.map((p) => row(p.name, M.gb(p.bytes) + ' GB')).join(''));
     } else if (o.stat === 'gpu') {
       html += `<h4>GPU · ${M.pct(d.pct)}${d.name ? ' · ' + esc(d.name) : ''}</h4>`;
       (d.engines || []).forEach((e) => { html += row(e.type, M.pct(e.pct)); });
       if (d.dedicated != null) html += row('Dedicated memory', M.gb(d.dedicated) + ' GB');
       if (d.shared != null) html += row('Shared memory', M.gb(d.shared) + ' GB');
-      if (d.top) html += '<h4>Top processes</h4>' + d.top.map((p) => row(p.name, M.pct(p.pct))).join('');
+      if (d.top) html += '<h4>Top processes</h4>' + (ap ? CUT : d.top.map((p) => row(p.name, M.pct(p.pct))).join(''));
     } else if (o.stat === 'net') {
       html += `<h4>Network · ↓${M.rate(d.down)} ↑${M.rate(d.up)}</h4>`;
       (d.adapters || []).forEach((a) => { html += row(a.name, `↓${M.rate(a.down)} ↑${M.rate(a.up)}`); });
@@ -584,7 +588,8 @@
     }
     const scroll = dd.scrollTop;
     dd.style.maxHeight = '';
-    dd.innerHTML = html;
+    if (ap) { const [head, tail] = html.split(CUT); AP.render(dd, o.stat, head, tail, d.top, s.apppower, o.stat === 'mem' ? (p) => M.gb(p.bytes) + ' GB' : (p) => M.pct(p.pct)); }
+    else dd.innerHTML = html;
     if (ping && window.PingTest) window.PingTest.after(dd);   // the ping test's name box keeps its text and focus
     if (d.cores) dd.querySelectorAll('.core i').forEach((el, k) => { el.style.height = Math.max(0, Math.min(100, d.cores[k] || 0)) + '%'; });
     const b = rightEl.querySelector(`[data-k="${o.stat}"]`);
@@ -654,6 +659,7 @@
     const o = S.open;
     if (!o) return;
     if (window.PingTest && window.PingTest.key(e)) return;   // typing into the ping test's name box (pingtest.js)
+    if (o.stat && window.AppPower && window.AppPower.key(e)) return;   // the app rows and their panels (apppower.js)
     if (S.edit && e.target && e.target.classList && e.target.classList.contains('lbi')) {
       if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
       else if (e.key === 'Escape') { e.preventDefault(); S.edit = null; renderMenus(); }
@@ -1244,5 +1250,7 @@
   function setPeek(on) { M.peekMenu(M.MANTLE_MENU, on); }
   // the ping test (lane pingtest, pingtest.js): its events redraw the PING dropdown while it is open
   if (window.PingTest) window.PingTest.init({ call, on: (ev, fn) => mantle.on(ev, fn), rerender: () => { if (S.open && S.open.stat === 'ping') renderMenus(); } });
+  // app power (lane mantle-power-ui, apppower.js): a panel opening or folding lays the dropdown out again
+  if (window.AppPower) window.AppPower.init({ call, rerender: () => { if (S.open && S.open.stat) renderStatMenu(S.open); } });
   window.__topbar = S;   // for shoot.js and the --test harness: read-only inspection
 }());
