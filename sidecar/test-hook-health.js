@@ -8,6 +8,7 @@
 //      the way Windows drops it (unhooked, handle kept), then raw key events with no hook call:
 //      re-installed, one plain log line, backoff, a failed re-install shown as a state reason
 //      (and main's lib/hook-health.js turning it into the Win key's state piece), and the wake rearm;
+//      keys typed on the lock screen (secure desktop, never sent to a hook) are not a dead hook;
 //   3. the pop-up watch's mouse hook dropped the same way: re-installed once per pop-up, plus rearm;
 //   4. idle CPU with the hook and its raw-input check on: nothing runs while nobody types.
 // It never injects a key and never touches a live Mantle. Prints "hook-health: N passed, M failed".
@@ -81,6 +82,22 @@ async function keyboard(s) {
   r = await hk({ op: 'hooktest', on: true });
   check('test hook re-made: the count starts at 0', r.ok && r.result.installed === true && r.result.rawSinceHook === 0, J(r));
 
+  // A PIN typed on the lock screen (lane truthlog, 2026-10-15): the secure desktop has the input, so
+  // the hook is never called for those keys. The live log said "Windows stopped calling it ... it was
+  // re-installed" after each lock or sleep; that was a false alarm. Pretended here with locked:true
+  // (the same InputAway rung the real secure desktop answers, not the hook being dropped).
+  let from = s.events.length;
+  await T.sleep(1700);
+  r = await hk({ op: 'rawkeys', n: 6, trust: true, locked: true });
+  let line = await nextEvent(s, from, logLike(/^keyboard hook:/), 600);
+  r = await hk({ op: 'status' });
+  check('keys on the lock screen: no re-install, no log line, counted as the lock screen\'s',
+    !line && r.ok && r.result.heals === 0 && r.result.rehooks === 0 && r.result.lockKeys === 1 &&
+    r.result.healthy === true && r.result.rawSinceHook < 4, J({ line, st: r.result }));
+  await hk({ op: 'hooktest', on: false });
+  r = await hk({ op: 'hooktest', on: true });
+  check('test hook re-made after the lock screen: the count starts at 0', r.ok && r.result.rawSinceHook === 0, J(r));
+
   // Windows drops it.
   r = await hk({ op: 'hookdrop' });
   check('hookdrop: unhooked behind the sidecar\'s back', r.ok && r.result.dropped === true, J(r));
@@ -89,9 +106,9 @@ async function keyboard(s) {
   await T.sleep(150);
   r = await hk({ op: 'status' });
   check('3 events with no call (below the threshold): still waiting', r.ok && r.result.heals === 0, J(r));
-  let from = s.events.length;
+  from = s.events.length;
   r = await hk({ op: 'rawkeys', n: 3, trust: true });
-  let line = await nextEvent(s, from, logLike(/^keyboard hook: Windows stopped calling it/), 2000);
+  line = await nextEvent(s, from, logLike(/^keyboard hook: Windows stopped calling it/), 2000);
   check('keys with no call: one plain log line saying it was re-installed',
     !!line && /re-installed \(1 time this run\)/.test(line.message) && line.level === 'warn' && !/\\|[A-Z]:\//.test(line.message), J(line));
   r = await hk({ op: 'status' });

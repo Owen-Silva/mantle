@@ -76,6 +76,9 @@ namespace Mantle {
     static int _healedAt;                      // tick of the last re-install for a dead hook
     static bool _healedOnce;
     static int _heals, _outranked;             // dead hooks re-installed; suspicions an elevated window explained
+    static int _awayKeys;                      // suspicions the secure desktop explained (PIN entry, UAC)
+    static string _runAway;                    // where the input was when this run of uncalled keys began
+    static bool _testAway;                     // TEST ONLY: pretend the secure desktop has the input
     static IntPtr _sink = IntPtr.Zero;         // the raw-input window, on the hook thread
     static string _sinkWhy;                    // why there is no raw-input check, when there is none
     static volatile string _health;            // null, or why the hook is gone and could not be put back
@@ -198,7 +201,7 @@ namespace Mantle {
                       "reason", _lastReason,
                       "healthy", _health == null, "health", _health, "heals", _heals,
                       "rawCheck", _sink != IntPtr.Zero, "rawCheckWhy", _sinkWhy, "rawSeen", _rawSeen,
-                      "rawSinceHook", _rawSinceHook, "outranked", _outranked,
+                      "rawSinceHook", _rawSinceHook, "outranked", _outranked, "lockKeys", _awayKeys,
                       "lastCallbackAgoMs", Installed ? (object)unchecked(Environment.TickCount - _lastCallback) : null);
     }
 
@@ -321,9 +324,11 @@ namespace Mantle {
               long tf = msg.lParam.ToInt64();
               _rawTestTrust = (tf & 1) != 0;
               _testFailRehook = (tf & 2) != 0;
+              _testAway = (tf & 4) != 0;
               for (int i = (int)msg.wParam.ToInt64(); i > 0; i--) OnRawKey();
               _rawTestTrust = false;
               _testFailRehook = false;
+              _testAway = false;
               continue;
             }
             try {
@@ -413,11 +418,27 @@ namespace Mantle {
     /// Cheap until the count passes MissedKeys: one add and a compare.
     static void OnRawKey() {
       _rawSeen++;
-      if (++_rawSinceHook < HookHealth.MissedKeys) return;
+      int c = ++_rawSinceHook;
+      // Two events with no call between: the run of missed keys starts. Note where the input was
+      // then (one look per run, while typing to a live hook it is next to never reached), so a
+      // PIN typed on the lock screen still counts as the lock screen's when the 4th event is read
+      // just after the switch back.
+      if (c == 2) _runAway = InputAway();
+      if (c < HookHealth.MissedKeys) return;
       int now = Environment.TickCount;
       int quiet = unchecked(now - _lastCallback);
       int v = HookHealth.KeyVerdict(_rawSinceHook, quiet, _healedOnce ? unchecked(now - _healedAt) : -1);
       if (v != 1) return;   // alive, or re-installed a moment ago: give it the backoff first
+      if ((_runAway ?? InputAway()) != null) {
+        // The lock screen's PIN box or a UAC prompt had the keys (Windows' secure desktop, where
+        // low-level hooks are never called; after sleep the lock screen comes first): the hook was
+        // not asked, so its silence says nothing. Start counting again from here, no log line.
+        _awayKeys++;
+        _rawSinceHook = 0;
+        _lastCallback = now;
+        _runAway = null;
+        return;
+      }
       if (!_rawTestTrust && HookHealth.ForegroundOutranksUs()) {
         // An admin program's window is in front: its keys never reach a normal process's hook.
         _outranked++;
@@ -431,6 +452,14 @@ namespace Mantle {
       _heals++;
       RehookHere("Windows stopped calling it (" + missed + " key presses and releases reached Windows in " +
                  ((quiet / 100) / 10.0).ToString(System.Globalization.CultureInfo.InvariantCulture) + " s with no call; Windows drops a hook that answers too slowly, without saying so)", true);
+    }
+
+    /// Null when Mantle's desktop has the input; else why not (WindowList.InputElsewhere). A test
+    /// run with trust skips the real look, so a runner's own desktop cannot change its verdicts.
+    static string InputAway() {
+      if (_testAway) return "the sign-in or lock screen has the keyboard (pretend, for a test)";
+      if (_rawTestTrust) return null;
+      try { return WindowList.InputElsewhere(); } catch (Exception) { return null; }
     }
 
     // ------------------------------------------------------------ late keys
@@ -740,7 +769,9 @@ namespace Mantle {
         object t;
         bool trust = Json.TryGet(req, "trust", out t) && t is bool && (bool)t;
         bool fail = Json.TryGet(req, "failRehook", out t) && t is bool && (bool)t;
-        bool posted = KeysNative.PostThreadMessageW(_tid, MSG_RAWKEYS, new IntPtr(n), new IntPtr((trust ? 1 : 0) | (fail ? 2 : 0)));
+        bool away = Json.TryGet(req, "locked", out t) && t is bool && (bool)t;
+        bool posted = KeysNative.PostThreadMessageW(_tid, MSG_RAWKEYS, new IntPtr(n),
+                                                    new IntPtr((trust ? 1 : 0) | (fail ? 2 : 0) | (away ? 4 : 0)));
         result = Json.Obj("posted", posted);
         return null;
       }
