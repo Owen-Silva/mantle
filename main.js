@@ -3119,6 +3119,24 @@ function startFeatures() {
         media: () => lastMedia, onMedia: (fn) => { mediaListeners.add(fn); return () => mediaListeners.delete(fn); },
         // lane mantle-crash: Explorer started again (TaskbarCreated): the top bar registers its strip again
         onShellRestart,
+        // lane mantle-toasts: Mantle's own notification banners (lib/features/toasts.js) ride the
+        // notification centre's list, and a click reaches the app's window or the bell's list
+        toasts: {
+          onList: (fn) => notifications.onPublish(fn),
+          last: () => notifications.lastPayload(),
+          // the app's window, through the bar's own grouping (AUMID first, exe second: groupRunning)
+          targetFor: (aumid) => {
+            const want = String(aumid || '').toLowerCase();
+            if (!want || !lastPinned || !Array.isArray(lastPinned.items)) return null;
+            const item = lastPinned.items.find((i) => i && i.aumid && String(i.aumid).toLowerCase() === want && Array.isArray(i.windows) && i.windows.length);
+            if (!item) return null;
+            const w = item.windows.find((x) => !x.minimized) || item.windows[0];
+            return { hwnd: String(w.hwnd) };
+          },
+          focus: (hwnd) => COMMANDS['bar.window']({ hwnd, action: 'focus' }),
+          open: (id) => COMMANDS['notifs.open']({ id }),
+          openList: () => { broadcast('bar.winkey', { key: 'n', only: 'open' }); return { ok: true }; },
+        },
         // lane settings: Mantle Settings shows and flips the tray's Alt+Tab and Win+N / Win+A switches
         switcher: { get: () => switcher.settingsView(), set: (patch, who) => { switcher.setSettings(patch, who); return switcher.settingsView(); } },
         // lane dm-core: Mantle's appearance for main-drawn colours (window grounds, DWM frames)

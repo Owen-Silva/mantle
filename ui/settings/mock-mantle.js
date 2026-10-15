@@ -344,6 +344,7 @@
     return lookView();
   }
 
+  const TOASTS = { mode: q.get('toasts') || 'on', on: q.get('toasts') !== 'off' };
   function answer(name, a) {
     a = a || {};
     switch (name) {
@@ -356,7 +357,16 @@
         : { id, file: 'test-sections/' + id + '.js', down: null, main: null })) };
       case 'settings.pickPath': return TEST ? { ok: false, reason: 'a test run never opens a folder dialog', path: null, cancelled: false } : later(200, { ok: true, cancelled: false, reason: null, path: 'D:\\Made-up folder' });
       case 'settings.mantle': return FAIL ? boom('settings.mantle: the settings feature is not running (it failed to start: the feature seam threw)') : mantleView();
+      // Mantle's banners (lib/features/toasts.js): ?toasts=off|denied|failing plays the other states
+      case 'toasts.state': {
+        if (FAIL || TOASTS.mode === 'failing') return later(40, { ok: false, reason: 'toasts.state: the banners feature is not running (made up)' });
+        const denied = TOASTS.mode === 'denied';
+        return later(40, { ok: true, on: TOASTS.on, access: denied ? 'Denied' : 'Allowed', accessOk: !denied,
+          accessWhy: denied ? 'Windows is not letting Mantle read notifications, so Windows keeps showing its own pop-ups. Allow it in Windows Settings > Privacy > Notifications.' : null,
+          fixUri: 'ms-settings:privacy-notifications', covered: denied || !TOASTS.on ? 0 : 4, released: 0, recordWhy: null, quiet: null, reason: null });
+      }
       case 'settings.enable': {
+        if (a.feature === 'toasts') { TOASTS.on = !!a.on; return later(120, { ok: true, reason: null, feature: { name: 'toasts', enabled: TOASTS.on, ok: true, reason: null } }); }
         const f = featureOf(a.feature);
         if (!f) return { ok: false, reason: 'there is no feature named "' + a.feature + '"' };
         f.enabled = !!a.on; f.running = !!a.on;

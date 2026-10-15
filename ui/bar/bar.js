@@ -3999,7 +3999,8 @@
     var key = p && p.key;
     if (key === 'a') { openQs(); return; }
     if (key !== 'n') return;
-    if (popKey === 'notifs') { closePop(); return; }
+    // only:'open' = a click on a Mantle notification banner (lib/features/toasts.js): open, never toggle shut
+    if (popKey === 'notifs') { if (!(p && p.only === 'open')) closePop(); return; }
     if (window.MantleNotifs) MantleNotifs.open();
     else keys('win+n', 'notifications');
   });

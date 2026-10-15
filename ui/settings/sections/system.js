@@ -163,6 +163,16 @@
     const panels = kit.toggle({ row: 'notifications.panels', label: 'Mantle\'s notification and quick settings panels',
       help: 'Win+N opens the notification center and Win+A quick settings, both drawn by Mantle',
       onChange: (on) => kit.call('settings.switcher', { winKeys: on }).then((r) => r && r.ok ? { ok: true, value: !!(r.switcher && r.switcher.winKeys) } : r) });
+    // Mantle's banners (lib/features/toasts.js): its own pop-ups, Windows' banner off app by app
+    const banners = kit.toggle({ row: 'notifications.banners', label: 'Show notifications in Mantle\'s style',
+      help: 'New notifications pop up as Mantle banners; Windows\' own pop-up is turned off for each app and put back when Mantle stops',
+      onChange: (on) => kit.call('settings.enable', { feature: 'toasts', on }).then((r) => { setTimeout(update, 400); return r && r.ok ? { ok: true, value: !!(r.feature && r.feature.enabled) } : r; }) });
+    const bannersNow = kit.status({ row: 'notifications.banners.state', label: 'Mantle\'s banners now', value: 'Reading…' });
+    let fixUri = 'ms-settings:privacy-notifications';
+    const bannersFix = kit.button({ row: 'notifications.banners.access', label: 'Notification access',
+      help: 'Mantle can only show banners once Windows lets it read notifications', text: 'Open Windows\' setting',
+      onClick: () => kit.call('settings.openWindows', { uri: fixUri }) });
+    bannersFix.el.style.display = 'none';
     const apps = kit.list({ row: 'system.notifications.apps', items: [], empty: 'Reading…',
       onAction: (key, act, item) => {
         const a = byApp[key];
@@ -174,14 +184,36 @@
       kit.group('Notifications'), kit.card(G.toasts, dnd, rules),
       kit.group('Focus'), kit.card(focusLen, focus),
       kit.group('Sounds and lock screen'), kit.card(G.sound, G.lockScreen, G.criticalLock),
-      kit.group('Mantle'), kit.card(panels),
+      kit.group('Mantle'), kit.card(panels, banners, bannersNow, bannersFix),
       kit.group('Notifications from apps and other senders', { aside: 'Sound and lock screen per app are Windows-only; see each app\'s note' }), kit.card(apps));
     let byApp = {};
     const PRI = { 0: 'Normal', 1: 'High', 99: 'Top' };
+    function paintBanners(t) {
+      // the value stays short (it shares the row with its label); the words go in the help line
+      if (!t || !t.ok) {
+        banners.set({ reason: fail('Mantle\'s banners', t), disabled: true });
+        bannersNow.set({ value: 'Not running', tone: 'warn', help: `Windows shows its own pop-ups. ${fail('Mantle\'s banners', t)}` });
+        bannersFix.el.style.display = 'none';
+        return;
+      }
+      if (t.fixUri) fixUri = t.fixUri;
+      const blocked = !t.accessOk;
+      banners.set({ value: !!t.on, reason: null, disabled: false });
+      bannersFix.el.style.display = t.on && blocked ? '' : 'none';
+      const n = t.covered | 0;
+      const quiet = t.quiet ? ` The last one waited because ${t.quiet}.` : '';
+      const [value, help, tone] = !t.on ? ['Off', 'Windows shows its own pop-ups', 'info']
+        : blocked ? ['Waiting for access', t.accessWhy || 'Windows is not letting Mantle read notifications, so Windows keeps showing its own pop-ups', 'warn']
+        : t.reason ? ['Needs a look', t.reason, 'warn']
+        : n ? [`On for ${n} app${n === 1 ? '' : 's'}`, `Mantle shows their pop-ups; Windows' own are off for them and come back when Mantle stops.${quiet}`, 'ok']
+        : ['On', `Mantle shows the pop-ups; an app is covered from its first notification on.${quiet}`, 'ok'];
+      bannersNow.set({ value, help, tone });
+    }
     async function update() {
-      const [n, m] = await Promise.all([R(kit, 'notify'), kit.call('settings.mantle')]);
+      const [n, m, t] = await Promise.all([R(kit, 'notify'), kit.call('settings.mantle'), kit.call('toasts.state').catch((e) => ({ ok: false, reason: e && e.message }))]);
       const sw = m && m.switcher;
       panels.set(sw ? { value: !!sw.winKeys, reason: sw.winKeysReason || null } : { reason: fail('Mantle\'s switches', m), disabled: true });
+      paintBanners(t);
       if (!n || !n.ok) { for (const c of [G.toasts, dnd, focus, G.sound, G.lockScreen, G.criticalLock]) c.set({ reason: fail('This setting', n), disabled: true }); return; }
       for (const k of Object.keys(G)) G[k].set({ value: !!(n.globals[k] && n.globals[k].on), reason: null, disabled: false });
       dnd.set({ value: !!n.dnd.on, disabled: !n.dnd.writable, reason: n.dnd.writable ? null : n.dnd.why });
@@ -1415,6 +1447,7 @@
           { row: 'system.notifications.sound', label: 'Allow notifications to play sounds', keywords: 'sound chime' },
           { row: 'system.notifications.lockScreen', label: 'Show notifications on the lock screen', keywords: 'lock screen' },
           { row: 'notifications.panels', label: 'Mantle\'s notification panel', keywords: 'win+n win+a quick settings' },
+          { row: 'notifications.banners', label: 'Show notifications in Mantle\'s style', keywords: 'toasts pop-ups popups banners style theme' },
         ],
         render: renderNotifications },
       { id: 'power', title: 'Power & battery', icon: 'power', help: 'Sleep, battery usage, energy saver',

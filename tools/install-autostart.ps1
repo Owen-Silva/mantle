@@ -19,8 +19,18 @@ function Fail([string]$text) { Write-Output "install-autostart: $text"; exit 1 }
 
 if ($Uninstall) {
   $out = & schtasks.exe /Delete /TN $TaskName /F 2>&1
-  if ($LASTEXITCODE -ne 0) { Fail "schtasks /Delete failed: $($out -join ' ')" }
+  $delCode = $LASTEXITCODE
+  # Windows' own notification pop-ups back for every app Mantle covered, whether or not the task
+  # was there (restore-banners.ps1 only writes where the value is still Mantle's 0; no record = no-op).
+  # A Mantle still running takes them again on its next pass, as it should while it runs.
+  $bannerCode = 0
+  try {
+    & (Join-Path $PSScriptRoot 'restore-banners.ps1') | ForEach-Object { Say "  $_" }
+    $bannerCode = $LASTEXITCODE
+  } catch { $bannerCode = 1; Say "  restore-banners.ps1 failed: $($_.Exception.Message)" }
+  if ($delCode -ne 0) { Fail "schtasks /Delete failed: $($out -join ' ')" }
   Say "removed the '$TaskName' logon task; Mantle will not start at logon any more (a running Mantle is untouched)"
+  if ($bannerCode -ne 0) { Fail "the logon task is gone, but some notification pop-ups could not be put back (see above)" }
   exit 0
 }
 

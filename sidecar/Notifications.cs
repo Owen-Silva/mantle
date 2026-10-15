@@ -678,7 +678,7 @@ namespace Mantle {
       var d = Json.Obj("id", id, "aumid", aumid, "app", name ?? FallbackName(aumid), "timeMs", timeMs,
                        "title", null, "body", null, "attribution", null,
                        "logo", null, "logoCircle", false, "hero", null, "image", null, "imageNotes", null,
-                       "opens", "app", "textFrom", "listener");
+                       "opens", "app", "textFrom", "listener", "scenario", null);
       if (aumid.StartsWith("NotifyIconGeneratedAumid_", StringComparison.OrdinalIgnoreCase)) d["opens"] = "none";
 
       var lines = new List<string>();
@@ -748,6 +748,10 @@ namespace Mantle {
       _launchOf[id] = new[] { launch, activation };
       if (string.Equals(activation, "protocol", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(launch))
         d["opens"] = "protocol";
+      // alarm / reminder / incomingCall / urgent: Windows keeps those on screen until they are answered,
+      // and so do Mantle's own banners (lib/features/_toasts-core.js)
+      string scenario = Attr(root, "scenario");
+      if (!string.IsNullOrEmpty(scenario) && scenario.Length <= 40) d["scenario"] = scenario;
 
       // The app's own timestamp, when it set one, is what Windows shows.
       DateTimeOffset shown;
