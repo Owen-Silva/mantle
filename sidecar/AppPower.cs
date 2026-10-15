@@ -479,7 +479,7 @@ namespace Mantle {
     }
 
     // ================================================================ JOBS
-    const uint JOB_ALL_ACCESS = 0x1F003F, SYNCHRONIZE = 0x00100000;
+    const uint JOB_ALL_ACCESS = 0x1F003F, JOB_QUERY = 0x0004, SYNCHRONIZE = 0x00100000;
     const int JobCpuRateControl = 15, JobExtendedLimit = 9;
     const uint CPU_ENABLE = 0x1, CPU_HARD_CAP = 0x4, LIMIT_JOB_MEMORY = 0x200, LIMIT_BREAKAWAY_OK = 0x800;
 
@@ -540,20 +540,20 @@ namespace Mantle {
     /// longer in the table (Mantle restarted after "Reset", or a setting that was not remembered) is
     /// cleared - every Mantle.AppPower job in this session's object directory whose key is not in the
     /// table. Nothing else is touched; a job of a rule still in the table is adopted by AdoptJob instead.
-    static void SweepOrphanJobs(List<Rule> rules) {
-      var keep = new HashSet<string>(StringComparer.Ordinal);
-      foreach (Rule r in rules) { string n = JobName(r.Key, 0); keep.Add(n.Substring(0, n.LastIndexOf('.') + 1)); }
+    /// Every Mantle App power job in this session, by name ("Local\Mantle.AppPower.<hash>.<pid>"), from the
+    /// session's object directory: the jobs outlive the sidecar that made them (each is held by its app).
+    static List<string> MantleJobNames() {
+      var found = new List<string>();
       string dir = OwnSession == 0 ? "\\BaseNamedObjects" : "\\Sessions\\" + OwnSession + "\\BaseNamedObjects";
       IntPtr name = Marshal.StringToHGlobalUni(dir);
       IntPtr us = Marshal.AllocHGlobal(16), buf = IntPtr.Zero, hd = IntPtr.Zero;
       try {
         Marshal.WriteInt16(us, 0, (short)(dir.Length * 2)); Marshal.WriteInt16(us, 2, (short)(dir.Length * 2 + 2)); Marshal.WriteIntPtr(us, 8, name);
         var oa = new OBJECT_ATTRIBUTES { Length = Marshal.SizeOf(typeof(OBJECT_ATTRIBUTES)), ObjectName = us, Attributes = 0x40 /* OBJ_CASE_INSENSITIVE */ };
-        if (NtOpenDirectoryObject(out hd, 0x0001 /* DIRECTORY_QUERY */, ref oa) != 0) return;
+        if (NtOpenDirectoryObject(out hd, 0x0001 /* DIRECTORY_QUERY */, ref oa) != 0) return found;
         const int len = 64 * 1024;
         buf = Marshal.AllocHGlobal(len);
         uint ctx = 0; int ret;
-        var found = new List<string>();
         bool first = true;
         for (int rounds = 0; rounds < 256; rounds++) {
           int st = NtQueryDirectoryObject(hd, buf, len, false, first, ref ctx, out ret);
@@ -571,6 +571,19 @@ namespace Mantle {
           }
           if (st == 0) break;
         }
+      } finally {
+        if (hd != IntPtr.Zero) N.CloseHandle(hd);
+        if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf);
+        Marshal.FreeHGlobal(us); Marshal.FreeHGlobal(name);
+      }
+      return found;
+    }
+
+    static void SweepOrphanJobs(List<Rule> rules) {
+      var keep = new HashSet<string>(StringComparer.Ordinal);
+      foreach (Rule r in rules) { string n = JobName(r.Key, 0); keep.Add(n.Substring(0, n.LastIndexOf('.') + 1)); }
+      List<string> found = MantleJobNames();
+      {
         // a passive (--test) sidecar shares this session with the real one: it clears only the jobs of
         // the test burner, never a limit Owen's Mantle set on a real app
         Dictionary<uint, PInfo> live = null;
@@ -591,10 +604,6 @@ namespace Mantle {
           SetLimits(j, 0, 0);
           N.CloseHandle(hj);
         }
-      } finally {
-        if (hd != IntPtr.Zero) N.CloseHandle(hd);
-        if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf);
-        Marshal.FreeHGlobal(us); Marshal.FreeHGlobal(name);
       }
     }
 
@@ -740,6 +749,19 @@ namespace Mantle {
             bool injob;
             if (!N.IsProcessInJob(ph, j.H, out injob) || !injob) continue;
             if (jobName == null || j.Name.EndsWith("." + pid.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)) { jobName = j.Name; existed = j.Existed; JobLimits(j.H, out cpuRate, out memLimit); }
+          }
+        }
+        if (jobName == null && inJob) {
+          // not in one of THIS sidecar's jobs: a job Mantle made before the sidecar restarted, or another
+          // sidecar's (the e2e test reads with a second one). Found by name and only queried, never changed.
+          foreach (string jn in MantleJobNames()) {
+            IntPtr hj = N.OpenJobObjectW(JOB_QUERY, false, jn);
+            if (hj == IntPtr.Zero) continue;
+            try {
+              bool injob;
+              if (!N.IsProcessInJob(ph, hj, out injob) || !injob) continue;
+              if (jobName == null || jn.EndsWith("." + pid.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)) { jobName = jn; existed = true; JobLimits(hj, out cpuRate, out memLimit); }
+            } finally { N.CloseHandle(hj); }
           }
         }
         int g;

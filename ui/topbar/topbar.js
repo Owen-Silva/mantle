@@ -404,7 +404,8 @@
   function notifyMain() {
     let bottom = 28;
     // dd._growTo: an app-power panel about to unfold asks for its room first (apppower.js)
-    for (const dd of menusEl.children) bottom = Math.max(bottom, ddBottom(dd) + DD_GAP, dd._growTo ? dd.offsetTop + dd._growTo + DD_GAP : 0);
+    // dd._room: spare height under a dropdown whose rows can grow by a line on their own (apppower.js ROOM_PX)
+    for (const dd of menusEl.children) bottom = Math.max(bottom, ddBottom(dd) + DD_GAP + (dd._room || 0), dd._growTo ? dd.offsetTop + dd._growTo + DD_GAP + (dd._room || 0) : 0);
     if (reveal() && !S.waitT) S.waitT = setTimeout(waitedTooLong, WAIT_MS);
     if (bottom === S.asked) return;          // hover and the 1 s sample re-render at the same height
     S.asked = bottom;
@@ -607,7 +608,7 @@
     const scroll = dd.scrollTop;
     dd.style.maxHeight = '';
     if (ap) { const [head, tail] = html.split(CUT); AP.render(dd, o.stat, head, tail, d.top, s.apppower, o.stat === 'mem' ? (p) => M.gb(p.bytes) + ' GB' : (p) => M.pct(p.pct)); }
-    else dd.innerHTML = html;
+    else { dd._room = 0; dd.innerHTML = html; }
     if (ping && window.PingTest) window.PingTest.after(dd);   // the ping test's name box keeps its text and focus
     if (d.cores) dd.querySelectorAll('.core i').forEach((el, k) => { el.style.height = Math.max(0, Math.min(100, d.cores[k] || 0)) + '%'; });
     const b = rightEl.querySelector(`[data-k="${o.stat}"]`);

@@ -36,6 +36,12 @@
   const FIELDS = Object.keys(DEF);
   const NO_ANSWER = 'Mantle didn’t answer, so nothing changed';
   const GROW_WAIT_MS = 160, OPEN_MS = 200, NOTE_MS = 20000, OVER_MS = 3000;
+  // The rows change height on their own while the dropdown is open: a protected app entering the list brings
+  // its "why" line, a reply its note. A dropdown taller than the window waits hidden until main has grown it
+  // (topbar.js reveal), which blinked the whole menu for a frame (lane mantle-power2, 2026-10-14: +20 px, one
+  // protected row in place of a plain one). The window keeps two lines spare under it instead; that strip is
+  // see-through and a click there is a click-away, as anywhere else beside the menu.
+  const ROOM_PX = 44;
 
   const SVG = (d, w) => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="${w || 1.4}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
   const LEAF = SVG('<path d="M13.25 2.75C7.5 2.75 3.25 5.1 3.25 9.6c0 2.15 1.5 3.65 3.6 3.65 4.6 0 6.4-4.6 6.4-10.5z"/><path d="M2.75 13.75c1.6-3.2 4-5.6 7.25-7.25"/>');
@@ -267,6 +273,7 @@
     if (!P.els || P.els.dd !== dd || P.els.list.parentNode !== dd || P.kind !== kind) build(dd, kind);
     const E = P.els;
     dd.classList.add('ap-on');   // one width while rows come and go and panels open (topbar.css)
+    dd._room = ROOM_PX;          // and two lines of spare height under it (topbar.js notifyMain)
     P.caps = caps || {};
     if (E.headH !== headHtml) { E.headH = headHtml; E.head.innerHTML = headHtml; }
     if (E.tailH !== tailHtml) { E.tailH = tailHtml; E.tail.innerHTML = tailHtml; }
