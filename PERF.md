@@ -161,8 +161,9 @@ The full numbers go to a JSON file and the test copy's log goes beside it (paths
 mutex, as run-suite does):
 - It takes `%TEMP%\claude-heavytest.mutex` (an atomic `mkdir`, with `owner.txt` inside), then
   `%TEMP%\claude-headless-browser.lock` (an exclusive file holding `{"pid","time","label"}`; a lock whose
-  pid is gone is stale). It waits its turn in the lanes' queue (`%TEMP%aude-heavytest.queue`, one ticket per lane, lowest number
-  first) and checks every 60 s.
+  pid is gone is stale).
+- While waiting, it holds a ticket in the lanes' queue (`%TEMP%\claude-heavytest.queue`, one ticket per
+  lane, lowest number first) and checks every 60 s.
 - It waits for 2.5 GB of free RAM.
 - It refuses to run while a game is running.
 - It runs at Below Normal, and waits up to ~3.5 min for the machine's CPU to drop under 45 %.
