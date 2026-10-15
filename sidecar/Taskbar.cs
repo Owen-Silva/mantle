@@ -195,6 +195,9 @@ namespace Mantle {
     /// hwnd -> registered. ABM_NEW exactly once per window; every later call
     /// for the same window is a re-position (ABM_QUERYPOS + ABM_SETPOS).
     static readonly Dictionary<long, bool> _registered = new Dictionary<long, bool>();
+    /// hwnd -> the shell window (Progman) when it registered: a different one now = Explorer restarted.
+    static readonly Dictionary<long, IntPtr> _shellAt = new Dictionary<long, IntPtr>();
+    [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
 
     public static List<string> Hwnds() {
       var list = new List<string>();
@@ -255,10 +258,23 @@ namespace Mantle {
       abd.uCallbackMessage = Win32.WM_APPBAR_CALLBACK;
       abd.uEdge = uEdge;
 
+      // EXPLORER RESTARTED since this window registered (lane mantle-crash, 2026-10-15): the new Explorer
+      // has no record of it, so QUERYPOS/SETPOS alone would reserve nothing and maximised windows would
+      // slide under the bar. The shell window (Progman) is new after every Explorer start: register again.
+      IntPtr shellNow = GetShellWindow();
+      IntPtr shellThen;
+      if (_registered.ContainsKey(key) && _shellAt.TryGetValue(key, out shellThen) &&
+          shellNow != IntPtr.Zero && shellThen != shellNow) {
+        _registered.Remove(key);
+        _shellAt.Remove(key);
+        Program.EmitLog("info", "app bar " + key + ": Explorer restarted since it was registered (the shell window changed), so it is registered again");
+      }
+
       if (!_registered.ContainsKey(key)) {
         if (Win32.SHAppBarMessage(Win32.ABM_NEW, ref abd) == IntPtr.Zero)
           return "Windows refused to register the bar as an app bar (ABM_NEW failed), so no screen space is reserved";
         _registered[key] = true;
+        _shellAt[key] = shellNow;
         isNew = true;
         ShellState.AddAppBar(key);
       }
@@ -293,6 +309,7 @@ namespace Mantle {
       abd.hWnd = hwnd;
       Win32.SHAppBarMessage(Win32.ABM_REMOVE, ref abd);
       _registered.Remove(key);
+      _shellAt.Remove(key);
       ShellState.RemoveAppBar(key);
       removed = true;
       return null;
@@ -312,6 +329,7 @@ namespace Mantle {
             n++;
           } catch (Exception) { failed++; }
           _registered.Remove(key);
+          _shellAt.Remove(key);
           ShellState.RemoveAppBar(key);
         }
       } catch (Exception ex) {

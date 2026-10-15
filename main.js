@@ -31,6 +31,16 @@ const raiseWin = require('./lib/raise');   // every pop-up on top, every time it
 // The hover flyout's live window previews (DWM thumbnails through koffi). Requiring it is free:
 // koffi itself is only loaded the first time a flyout asks for a picture. See lib/thumbs.js.
 const thumbs = require('./lib/thumbs');
+// A PARENT DYING IN ANOTHER PROCESS (lane mantle-crash, 2026-10-15). The desktop layer is a child of
+// Explorer's Progman, and Explorer dying took Mantle's main down with it in the same second (0xc000041d,
+// 10-11 and 10-14): Windows sends the orphan WM_NCDESTROY with no WM_DESTROY and Electron trips its own
+// CHECK. Every window is guarded from the moment it exists, and every top-level one hears Explorer's
+// TaskbarCreated when it comes back (lib/foreign-parent.js; shellRestarted below re-attaches).
+const foreignParent = require('./lib/foreign-parent');
+app.on('browser-window-created', (_e, w) => {
+  foreignParent.guardWindow(w);
+  foreignParent.hookShellRestart(w, (how) => shellRestarted(how));
+});
 // The bar window's shape: the part of an always-tall window that is the bar (see barTall).
 const barShape = require('./lib/bar-shape');
 // Mantle plays the desktop wallpaper itself (2026-09-22; Lively's player sat under the desktop
@@ -3086,6 +3096,8 @@ function startFeatures() {
       broadcast,
       host: { openLauncher: openLauncherFor, barRect: () => barRect(), display: featureDisplay, rest: (on, why) => restMantle(on, why),
         media: () => lastMedia, onMedia: (fn) => { mediaListeners.add(fn); return () => mediaListeners.delete(fn); },
+        // lane mantle-crash: Explorer started again (TaskbarCreated): the top bar registers its strip again
+        onShellRestart,
         // lane settings: Mantle Settings shows and flips the tray's Alt+Tab and Win+N / Win+A switches
         switcher: { get: () => switcher.settingsView(), set: (patch, who) => { switcher.setSettings(patch, who); return switcher.settingsView(); } },
         // lane dm-core: Mantle's appearance for main-drawn colours (window grounds, DWM frames)
@@ -7276,6 +7288,21 @@ function desktopRemakeVerdict(o) {
   }
   return { remake: true, at: at.concat([now]), reason: 'the desktop layer closed (Explorer restarted?); Mantle is making a new one' };
 }
+/**
+ * Explorer came back (TaskbarCreated, or Progman found by the poll): what happens to the desktop layer?
+ * o: {test, shuttingDown, paused, pending (a try is waiting on its back-off timer), layer (a live window),
+ * held (that window is still hidden, waiting to go under the icons: a try is on its way)}.
+ * -> 'none' | 'try-now' (run the waiting try at once) | 'make' (it was given up on: make it again) |
+ *    'wait' (a try is in flight; it retries by itself) |
+ *    'recheck' (it is still there: the sidecar's recheck rejoins it if it was orphaned). (lane mantle-crash)
+ */
+function shellBackAction(o) {
+  if (o.test || o.shuttingDown || o.paused) return 'none';
+  if (o.pending) return 'try-now';
+  if (!o.layer) return 'make';
+  if (o.held) return 'wait';
+  return 'recheck';
+}
 /** After attach attempt n (0-based) on a layer made again: 'done', 'retry' or 'give-up'. Never "show it anyway". */
 function desktopAttachNext(ok, n) {
   if (ok) return 'done';
@@ -7304,7 +7331,7 @@ function desktopGiveUp(d) {
   return { closed, reason };
 }
 // </mainrel:desktopremake>
-const desktopRemake = { at: [], timer: null, made: 0 };
+const desktopRemake = { at: [], timer: null, made: 0, pending: null };
 let desktopShowGate = null;   // {win, ready, cleared, why}: the layer is shown once ready AND cleared
 
 /** Make the desktop layer's window. holdShow: stay hidden until showDesktopWhenReady(win) clears it. */
@@ -7367,10 +7394,75 @@ function desktopGone(win) {
 /** when: null after an Explorer restart, 'at start' for the start-up layer held hidden (applyLive 0b). */
 function scheduleDesktopAttach(n, make, when) {
   if (desktopRemake.timer) clearTimeout(desktopRemake.timer);
+  desktopRemake.pending = { n, make, when: when || null };   // what shellRestarted runs at once instead of waiting
   desktopRemake.timer = setTimeout(() => {
     desktopRemake.timer = null;
+    desktopRemake.pending = null;
     remakeDesktop(n, make, when || null).catch((err) => process.stderr.write(`mantle: desktop layer: making it again failed: ${err.message}\n`));
   }, DESKTOP_ATTACH_BACKOFF_MS[Math.min(n, DESKTOP_ATTACH_BACKOFF_MS.length - 1)]);
+}
+
+// ---------------------------------------------------------------------------
+// EXPLORER CAME BACK (lane mantle-crash, 2026-10-15).
+//
+// Explorer broadcasts TaskbarCreated to every top-level window when it starts (lib/foreign-parent.js
+// hookShellRestart). Then: a layer waiting for its next attach try goes NOW instead of after the
+// back-off; a layer that was given up on (Explorer took longer than the ~50 s of tries) is made again;
+// a layer still there is re-checked (Desktop.cs Recheck rejoins an orphan); and the features hear it
+// (the top bar takes its strip again: ctx.host.onShellRestart). Every top-level Mantle window hears the
+// same broadcast, so one per 3 s. If the tries ran out because there was NO Progman at all, a slow poll
+// (every 5 s, FindWindow) stands in for a TaskbarCreated that never reached us.
+// ---------------------------------------------------------------------------
+const shellBack = { at: 0, count: 0, listeners: new Set(), poll: null };
+function shellRestarted(how) {
+  const now = Date.now();
+  if (now - shellBack.at < 3000) return;
+  shellBack.at = now;
+  shellBack.count++;
+  stopShellPoll();
+  process.stdout.write(`mantle: Explorer is back (${how}, ${shellBack.count} this run): ${flags.test
+    ? 'a test run never touches the shell, so nothing is re-attached'
+    : 'putting the desktop layer back under the icons and taking the top bar\'s strip again'}\n`);
+  for (const fn of shellBack.listeners) {
+    try { fn(how); } catch (err) { process.stderr.write(`mantle: Explorer is back: a listener failed: ${err.message}\n`); }
+  }
+  const act = shellBackAction({ test: flags.test, shuttingDown, paused: !!shellPaused,
+    pending: !!(desktopRemake.timer && desktopRemake.pending), layer: !!(desktopWin && !desktopWin.isDestroyed()), held: desktopHeld(desktopWin) });
+  if (act === 'none') return;
+  if (act === 'wait') { process.stdout.write('mantle: desktop layer: Explorer is back and a try to put it under the icons is already on its way\n'); return; }
+  if (act === 'try-now') {   // waiting for its next try: try now
+    const p = desktopRemake.pending;
+    clearTimeout(desktopRemake.timer);
+    desktopRemake.timer = null;
+    desktopRemake.pending = null;
+    remakeDesktop(p.n, p.make, p.when).catch((err) => process.stderr.write(`mantle: desktop layer: making it again failed: ${err.message}\n`));
+    return;
+  }
+  if (act === 'make') {      // given up on (or never made again): make it now
+    const v = desktopRemakeVerdict({ shuttingDown, paused: !!shellPaused, at: desktopRemake.at, now });
+    desktopRemake.at = v.at;
+    if (!v.remake) { process.stderr.write(`mantle: desktop layer: Explorer is back but it is not made again: ${v.reason}\n`); return; }
+    process.stdout.write(`mantle: desktop layer: making it again now that Explorer is back (${v.at.length} of ${DESKTOP_REMAKE_MAX} in ten minutes)\n`);
+    state.set('desktop', { attached: false, mode: null, reason: 'Explorer is back; Mantle is making the desktop layer again' });
+    scheduleDesktopAttach(0, true);
+    return;
+  }
+  // still there (a layer that was not inside the old Progman): the recheck puts it back if it is orphaned
+  sidecar.call('desktop', { hwnd: hwndOf(desktopWin), recheck: true }, 4000)
+    .then((r) => process.stdout.write(`mantle: desktop layer: re-checked after Explorer came back: ${r && r.moved ? `put back (${r.covering || 'it had moved'})` : 'still in place'}\n`))
+    .catch((err) => process.stderr.write(`mantle: desktop layer: re-check after Explorer came back failed: ${err.message}\n`));
+}
+function onShellRestart(fn) { shellBack.listeners.add(fn); return () => shellBack.listeners.delete(fn); }
+function stopShellPoll() { if (shellBack.poll) clearInterval(shellBack.poll); shellBack.poll = null; }
+/** The layer's tries ran out with NO Progman: look for one every 5 s until Explorer is back. */
+function startShellPoll(why) {
+  if (shellBack.poll || flags.test) return;
+  process.stdout.write(`mantle: desktop layer: waiting for Explorer's desktop to come back (${why}); looking every 5 s\n`);
+  shellBack.poll = setInterval(() => {
+    if (shuttingDown || shellPaused) { stopShellPoll(); return; }
+    if (foreignParent.progmanThere()) shellRestarted('Explorer\'s desktop window is there again');
+  }, 5000);
+  if (shellBack.poll.unref) shellBack.poll.unref();
 }
 async function remakeDesktop(n, make, when) {
   if (shuttingDown || shellPaused) return;
@@ -7407,6 +7499,11 @@ async function remakeDesktop(n, make, when) {
     why: r.reason,
     when,
   });
+  // No Progman at all = Explorer is not running yet: not "restart Mantle" but "it comes back with Explorer"
+  if (/no Progman window/.test(r.reason || '')) {
+    state.set('desktop', { attached: false, mode: null, reason: `Explorer's desktop is not there (${r.reason}), so Windows' own wallpaper shows; the desktop layer comes back by itself when Explorer does` });
+    startShellPoll(r.reason);
+  }
 }
 
 /* TEST ONLY: --test-apps-icons rebuilds the index 25 s after start and logs how many rows have a picture, Store
