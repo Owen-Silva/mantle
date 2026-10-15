@@ -4,9 +4,10 @@
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
-<title>Mantle Screenshot saved</title>
-<!-- The ~5 s card after a capture, bottom right above the bar: what was saved and copied (or, in
-     plain words, what was not and why), a click opens the file, Copy path / Open folder. -->
+<title>Mantle Screenshot</title>
+<!-- The ~7 s card after a capture, bottom right above the bar: "Screenshot copied" and its Save
+     button (lane shot-save: nothing is saved unless asked); once saved, where it went, a click on
+     the picture opens the file, Show in folder / Copy path. Plain words for whatever failed. -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="card.css">
 <link rel="stylesheet" href="../shared/hud-backdrop.css">
@@ -14,6 +15,7 @@
 <body>
 <div id="card" hidden>
   <button type="button" id="open" class="thumb" title="Open the screenshot" aria-label="Open the screenshot">
+    <canvas id="pic" width="1" height="1"></canvas>
     <img id="thumb" alt="">
     <svg class="open-glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.2 2.8L8 8M6.5 3.5h-3v9h9v-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </button>
@@ -23,8 +25,9 @@
     <div id="status" class="status"></div>
     <div id="warn" class="warn" hidden></div>
     <div class="actions">
-      <button type="button" id="copy-path" class="act" title="Copy the file's full path, to paste into a chat or a terminal">Copy path</button>
-      <button type="button" id="folder" class="act" title="Show the screenshot in its folder">Open folder</button>
+      <button type="button" id="save" class="act primary" title="Save it as a PNG in your screenshots folder (Ctrl+S)">Save</button>
+      <button type="button" id="folder" class="act" title="Show the screenshot in its folder" hidden>Show in folder</button>
+      <button type="button" id="copy-path" class="act" title="Copy the file's full path, to paste into a chat or a terminal" hidden>Copy path</button>
     </div>
   </div>
   <button type="button" id="dismiss" class="x" title="Close" aria-label="Close">
