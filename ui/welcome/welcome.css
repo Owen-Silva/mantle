@@ -129,7 +129,7 @@ svg .hot-line { fill: none; stroke: var(--lg-acc); stroke-width: 1.25; }
 .csub { font-weight: 600; }
 .clist { display: flex; flex-direction: column; gap: 1px; }
 .cline { display: flex; gap: 6px; color: var(--lg-ink-2); }
-.cline .cname::after { content: ":"; }
+/* the colon is TEXT in .cname (welcome.js cornerName), never a ::after: both at once read "Top-left::" */
 .cline .cact { color: var(--lg-ink); }
 .cline.off { color: var(--lg-ink-2); }
 .chow { color: var(--lg-ink-3); font-size: 12px; }

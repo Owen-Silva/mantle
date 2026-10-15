@@ -2066,7 +2066,8 @@ function beginHide(why) {
 
 /*
  * POP-UPS CLOSE LIKE macOS MENUS (lane mn-pop, 2026-10-12, audit #1): on a click anywhere outside
- * them and on Esc, whichever app has the keyboard. lib/popwatch.js holds the list of open pop-ups
+ * them and on Esc, whichever app has the keyboard; the bar's and the app-volumes panel also on a switch
+ * to another app (Alt+Tab, Win+Tab, Win+D: lane mantle-m6). lib/popwatch.js holds the list of open pop-ups
  * (the bar's, the timer's done card, the app-volumes panel) and the sidecar's mouse/Esc watch,
  * which exists only while one is open. The bar's pop-up joins it with barPopover (bar.popover).
  * The cursor's intent band (audit #6) is lib/bar-intent.js, used by hoverTick below.
@@ -2110,6 +2111,7 @@ function popWatchBar() {
         contains: (pt) => pointIn(barRect(), pt),
         outside: (how) => closeBarPop(how),
         esc: (how) => closeBarPop(how),
+        away: (how) => closeBarPop(how),   // Alt+Tab / Win+Tab / Win+D to another app (lane mantle-m6)
       });
     }
   } else popwatch.close('bar');
@@ -2126,6 +2128,7 @@ popwatch.configure({
   toDip: (pt) => screen.screenToDipPoint(pt),        // the hook's point is per-monitor physical
   cursor: () => screen.getCursorScreenPoint(),
   keys: () => raiseWin.keyStates(popwatch.VK),          // the fallback's buttons and Esc
+  foreground: () => raiseWin.foreground(),              // a switch to another app closes a pop-up (Alt+Tab is no click)
   // The window whose own page handles Esc while it holds the keyboard: the sidecar leaves Esc to it.
   // The bar's (its Wi-Fi box), or any other Mantle window Owen is typing in (the launcher, notes,
   // Settings) -- but not the desktop: a click on it already closed the pop-up, and an Esc there
@@ -2137,6 +2140,7 @@ popwatch.configure({
   },
   test: !!flags.test,
   testArm: !!flags.test && ARGV.some((a) => a === '--test-popwatch'),
+  testAway: !!flags.test && ARGV.some((a) => a === '--test-popwatch-away'),
 });
 
 /**

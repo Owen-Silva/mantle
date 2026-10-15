@@ -77,6 +77,9 @@
     var live = S.corners && S.corners.actions ? S.corners.actions : null;
     return { actions: live || k.actions, off: !!(S.corners && S.corners.enabled === false), live: !!live };
   }
+  // exactly ONE colon after a corner name, whatever the name already ends with ("Top-left", "Top-left:" or
+  // "Top-left: "); the colon is text so a screen reader says it, and the CSS adds none of its own
+  function cornerName(n) { return String(n).replace(/[\s:\uFF1A]+$/, '') + ':'; }
   function cornersBlock(k) {
     var v = cornerView(k);
     var on = ['tl', 'tr', 'bl', 'br'].filter(function (c) { return v.actions[c] && v.actions[c] !== 'off'; });
@@ -86,7 +89,7 @@
     var lines = v.off || !on.length
       ? [h('li', { class: 'cline off', 'data-k': 'off', text: k.off })]
       : on.map(function (c) {
-        return h('li', { class: 'cline', 'data-k': c }, h('span', { class: 'cname', text: k.names[c] + ':' }), h('span', { class: 'cact', text: k.labels[v.actions[c]] || v.actions[c] }));
+        return h('li', { class: 'cline', 'data-k': c }, h('span', { class: 'cname', text: cornerName(k.names[c] || c) }), h('span', { class: 'cact', text: k.labels[v.actions[c]] || v.actions[c] }));
       });
     return h('div', { class: 'corners', 'data-live': v.live ? '1' : '0' },
       h('span', { class: 'cpic' }, svg(88, 56, parts)),
