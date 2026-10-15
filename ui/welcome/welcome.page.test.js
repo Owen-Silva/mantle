@@ -177,6 +177,20 @@ async function main() {
       const v = await p.evaluate(() => ({ live: document.querySelector('.corners').getAttribute('data-live'), lines: [...document.querySelectorAll('.cline')].map((l) => l.textContent), keys: [...document.querySelectorAll('.krow')].map((r) => r.getAttribute('data-k')) }));
       check('keys card: the five keys', v.keys.join(',') === 'Win,Alt+Tab,Win+Shift+S,Win+Tab,Win+I', v.keys);
       check('keys card: the live default corners', v.live === '1' && v.lines.join('|') === 'Top-left:Task view|Bottom-right:Show desktop', v);
+      // what is PAINTED, not just the text: the name's text plus any ::before/::after content carries exactly one
+      // colon (the live welcome once read "Top-left::" = a text colon AND a CSS ::after colon)
+      const painted = await p.evaluate(() => [...document.querySelectorAll('.cline .cname, .cline .cact')].map((el) => {
+        const pseudo = (w) => { const c = getComputedStyle(el, w).content; return c && c !== 'none' && c !== 'normal' ? c.replace(/^["']|["']$/g, '') : ''; };
+        return pseudo('::before') + el.textContent + pseudo('::after');
+      }));
+      const colons = (s) => (s.match(/[:：]/g) || []).length;
+      check('corner names paint exactly one colon (no "Top-left::")', painted.length === 4 && painted.every((s, i) => colons(s) === (i % 2 === 0 ? 1 : 0)) && !painted.some((s) => /::/.test(s)), painted);
+      // and no rule anywhere can bring the CSS colon back
+      const trimmed = await p.evaluate(() => {
+        const name = document.querySelector('.cline .cname');
+        return { css: [...document.styleSheets].some((sh) => { try { return [...sh.cssRules].some((r) => /\.cname::?(after|before)/.test(r.selectorText || '') && /content/.test(r.cssText)); } catch (e) { return false; } }), first: name.textContent };
+      });
+      check('no stylesheet adds content to a corner name', trimmed.css === false && trimmed.first === 'Top-left:', trimmed);
       await p.close();
       const q = await open('theme=light&mock=cornerschanged');
       await q.click('#next');
