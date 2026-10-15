@@ -318,13 +318,20 @@ namespace Mantle {
     static Dictionary<int, long> _prevCpu = new Dictionary<int, long>();
     static long _prevAt;
 
+    // Per pid, from the same snapshot: start time and session, for the App power fields of the top
+    // entries (the per-run cache in sidecar/AppPowerProc.cs is keyed by pid + start time).
+    static Dictionary<int, long> _pCreated = new Dictionary<int, long>();
+    static Dictionary<int, uint> _pSession = new Dictionary<int, uint>();
+
     /// One NtQuerySystemInformation(SystemProcessInformation) snapshot. x64 offsets of
-    /// SYSTEM_PROCESS_INFORMATION: WorkingSetPrivateSize 0x08, UserTime 0x28, KernelTime 0x30,
-    /// ImageName 0x38 (Length) / 0x40 (Buffer), UniqueProcessId 0x50.
+    /// SYSTEM_PROCESS_INFORMATION: WorkingSetPrivateSize 0x08, CreateTime 0x20, UserTime 0x28, KernelTime 0x30,
+    /// ImageName 0x38 (Length) / 0x40 (Buffer), UniqueProcessId 0x50, SessionId 0x64.
     static void Processes(out Dictionary<int, double> cpu, out Dictionary<int, long> mem, out Dictionary<int, string> names) {
       cpu = new Dictionary<int, double>();
       mem = new Dictionary<int, long>();
       names = new Dictionary<int, string>();
+      _pCreated = new Dictionary<int, long>();
+      _pSession = new Dictionary<int, uint>();
       if (IntPtr.Size != 8) return;
       int ret = 0, st = 0;
       for (int tries = 0; tries < 4; tries++) {
@@ -348,6 +355,8 @@ namespace Mantle {
           string n = nb == IntPtr.Zero ? "System" : Marshal.PtrToStringUni(nb, len / 2);
           if (n.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) n = n.Substring(0, n.Length - 4);
           names[pid] = n;
+          _pCreated[pid] = Marshal.ReadInt64(p, 0x20);
+          _pSession[pid] = (uint)Marshal.ReadInt32(p, 0x64);
           mem[pid] = Marshal.ReadInt64(p, 0x08);
           cur[pid] = t;
           long pt;
@@ -361,40 +370,81 @@ namespace Mantle {
       _prevAt = now;
     }
 
-    /// Top n by NAME (Task Manager groups chrome's 20 processes as one app; so does this).
+    /// Top n by NAME (Task Manager groups chrome's 20 processes as one app; so does this), EXCEPT the
+    /// generic hosts, grouped by name + full path: Mantle's electron, Helm's and a test instance's are
+    /// separate rows (lane mantle-power-sidecar, 2026-10-14, the App power contract section 1). Every
+    /// row also carries exe (the name as Windows reports it, no ".exe"), n (processes in the group),
+    /// path (the group's full image path, or null) and access (sidecar/AppPowerProc.cs: "ok" when
+    /// Mantle can change at least one of its processes). The path and the access are looked up once
+    /// per run of a process (cached by pid + start time) and only for the generic hosts' processes
+    /// and the processes of the rows returned, so a detail second stays cheap.
+    static readonly HashSet<string> Generic = new HashSet<string>(
+      new string[] { "electron", "node", "python", "pythonw", "py", "java", "javaw", "dotnet" }, StringComparer.OrdinalIgnoreCase);
+
+    sealed class Grp { public string Exe, Path; public double V; public List<int> Pids = new List<int>(4); }
+
     static List<object> Top(Dictionary<int, double> byPid, Dictionary<int, string> names, int n, bool clampSum) {
-      var byName = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-      var count = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-      foreach (var kv in byPid) {
-        string nm; if (names == null || !names.TryGetValue(kv.Key, out nm)) nm = "pid " + kv.Key;
-        if (nm == "Idle") continue;
-        double v; byName.TryGetValue(nm, out v); byName[nm] = v + kv.Value;
-        int c; count.TryGetValue(nm, out c); count[nm] = c + 1;
-      }
-      var list = new List<KeyValuePair<string, double>>(byName);
-      list.Sort(delegate (KeyValuePair<string, double> a, KeyValuePair<string, double> b) { return b.Value.CompareTo(a.Value); });
-      var o = new List<object>();
-      for (int i = 0; i < list.Count && i < n; i++)
-        o.Add(Json.Obj("name", list[i].Key + (count[list[i].Key] > 1 ? " (" + count[list[i].Key] + ")" : ""), "pct", Math.Round(Clamp(list[i].Value), 1)));
-      return o;
+      return Groups(byPid, names, n, false, true);
     }
 
     static List<object> TopBytes(Dictionary<int, long> byPid, Dictionary<int, string> names, int n) {
       var d = new Dictionary<int, double>();
       foreach (var kv in byPid) d[kv.Key] = kv.Value;
-      var byName = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-      var count = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-      foreach (var kv in d) {
-        string nm; if (!names.TryGetValue(kv.Key, out nm)) continue;
-        double v; byName.TryGetValue(nm, out v); byName[nm] = v + kv.Value;
-        int c; count.TryGetValue(nm, out c); count[nm] = c + 1;
+      return Groups(d, names, n, true, false);
+    }
+
+    static List<object> Groups(Dictionary<int, double> byPid, Dictionary<int, string> names, int n, bool bytes, bool unnamedToo) {
+      var groups = new Dictionary<string, Grp>(StringComparer.OrdinalIgnoreCase);
+      foreach (var kv in byPid) {
+        string nm;
+        bool named = names != null && names.TryGetValue(kv.Key, out nm);
+        if (!named) { if (!unnamedToo) continue; nm = "pid " + kv.Key; }
+        else nm = names[kv.Key];
+        if (nm == "Idle") continue;
+        string key = nm, path = null;
+        if (named && Generic.Contains(nm)) {
+          path = AppPower.PathOf((uint)kv.Key, CreatedOf(kv.Key), nm);
+          key = nm + "|" + (path ?? "");
+        }
+        Grp g;
+        if (!groups.TryGetValue(key, out g)) { g = new Grp { Exe = named ? nm : null, Path = path }; groups[key] = g; }
+        g.V += kv.Value;
+        g.Pids.Add(kv.Key);
       }
-      var list = new List<KeyValuePair<string, double>>(byName);
-      list.Sort(delegate (KeyValuePair<string, double> a, KeyValuePair<string, double> b) { return b.Value.CompareTo(a.Value); });
+      var list = new List<Grp>(groups.Values);
+      list.Sort(delegate (Grp a, Grp b) { return b.V.CompareTo(a.V); });
       var o = new List<object>();
-      for (int i = 0; i < list.Count && i < n; i++)
-        o.Add(Json.Obj("name", list[i].Key + (count[list[i].Key] > 1 ? " (" + count[list[i].Key] + ")" : ""), "bytes", list[i].Value));
+      for (int i = 0; i < list.Count && i < n; i++) {
+        Grp g = list[i];
+        string label = (g.Exe ?? ("pid " + g.Pids[0])) + (g.Pids.Count > 1 ? " (" + g.Pids.Count + ")" : "");
+        if (g.Exe != null && g.Path == null && !Generic.Contains(g.Exe))
+          for (int k = 0; k < g.Pids.Count && k < 3 && g.Path == null; k++) g.Path = AppPower.PathOf((uint)g.Pids[k], CreatedOf(g.Pids[k]), g.Exe);
+        string access = g.Exe == null ? "unknown" : GroupAccess(g);
+        o.Add(Json.Obj("name", label, bytes ? "bytes" : "pct", bytes ? (object)g.V : Math.Round(Clamp(g.V), 1),
+                       "exe", g.Exe, "n", g.Pids.Count, "path", g.Path, "access", access));
+      }
       return o;
+    }
+
+    static long CreatedOf(int pid) { long c; return _pCreated.TryGetValue(pid, out c) ? c : 0; }
+
+    /// "ok" when Mantle can change at least one process of the group; a group holding Mantle itself
+    /// (this sidecar or its electron) is "protected"; otherwise the strongest reason it can't.
+    static string GroupAccess(Grp g) {
+      int own = Program.OwnPid, parent = Program.ParentPid;
+      foreach (int pid in g.Pids) if (pid == own || (parent > 0 && pid == parent)) return "protected";
+      string best = null;
+      foreach (int pid in g.Pids) {
+        uint s; if (!_pSession.TryGetValue(pid, out s)) s = uint.MaxValue;
+        string a = AppPower.AccessOf((uint)pid, CreatedOf(pid), g.Exe, s);
+        if (a == "ok") return "ok";
+        if (a != "gone" && Rank(a) > Rank(best)) best = a;
+      }
+      return best ?? "unknown";
+    }
+    static int Rank(string a) {
+      switch (a) { case "protected": return 5; case "game": return 4; case "system": return 3; case "admin": return 2; case "unknown": return 1; }
+      return 0;
     }
 
     // ------------------------------------------------------------------ lock / display-off watch

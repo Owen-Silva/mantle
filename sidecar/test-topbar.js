@@ -266,6 +266,39 @@ function flat(items, out) {
       t.check('stats detail: private working sets are plausible (top one > 10 MB, top five < RAM in use)', dl.mem.top[0].bytes > 10 * 2 ** 20 && sum < dl.mem.used, `${Math.round(dl.mem.top[0].bytes / 2 ** 20)} MB, sum ${Math.round(sum / 2 ** 20)} MB`);
       t.check('stats detail: process CPU shares are percentages', dl.cpu.top.every((p) => p.pct >= 0 && p.pct <= 100));
     }
+    // App power fields on every top entry (lane mantle-power-sidecar, 2026-10-14): exe, n, path, access,
+    // and the generic hosts (electron, node, python, ...) split by path. Two throwaway burners both named
+    // python.exe, in two folders, spin one thread each: they must come back as two rows. Owen's own rows
+    // are only READ (and nothing of them is printed).
+    {
+      const B = require('./apppower-burner');
+      const run = B.runDir();
+      const pyA = B.build(path.join(run.dir, 'a'), 'python'), pyB = B.build(path.join(run.dir, 'b'), 'python');
+      const burners = [B.start(pyA, ['spin', '1'], { life: 60 }), B.start(pyB, ['spin', '1'], { life: 60 })];
+      try {
+        await T.sleep(800);
+        await s.call('topbar.stats', { detail: 'cpu' }, 4000);
+        await T.sleep(2600);
+        const de = s.collect('topbarstats').filter((e) => e.detail === 'cpu' && e.cpu && Array.isArray(e.cpu.top)).pop();
+        const rows = de ? [].concat(de.cpu.top, de.mem.top || [], de.gpu.top || []) : [];
+        const CODES = ['ok', 'admin', 'system', 'protected', 'game', 'unknown'];
+        t.check('top entries: every row has exe, n, path and an access code', rows.length >= 5 && rows.every((r) =>
+          (typeof r.exe === 'string' || r.exe === null) && Number.isInteger(r.n) && r.n >= 1 && (typeof r.path === 'string' || r.path === null) &&
+          CODES.includes(r.access) && r.name === (r.exe || r.name.split(' (')[0]) + (r.n > 1 ? ` (${r.n})` : '')),
+          JSON.stringify(rows.map((r) => [typeof r.exe, r.n, typeof r.path, r.access])));
+        const py = de ? de.cpu.top.filter((r) => r.exe === 'python' && (r.path === pyA || r.path === pyB)) : [];
+        t.check('top entries: two python.exe burners in two folders are two rows (generic host split by path)',
+          py.length === 2 && py[0].path !== py[1].path && py.every((r) => r.n === 1 && r.access === 'ok' && r.pct > 3),
+          JSON.stringify(py.map((r) => ({ n: r.n, pct: r.pct, access: r.access, mine: true }))));
+        const el = rows.filter((r) => /^electron$/i.test(r.exe || ''));
+        const cpuEl = de ? de.cpu.top.filter((r) => /^electron$/i.test(r.exe || '')) : [];
+        t.check('top entries: electron rows of one list never share a path (Mantle, Helm and test copies apart)',
+          new Set(cpuEl.map((r) => (r.path || '').toLowerCase())).size === cpuEl.length, `${cpuEl.length} electron rows`);
+        const own = rows.filter((r) => r.exe && /^Mantle\.Sidecar$/i.test(r.exe));
+        t.check('top entries: this sidecar\'s own row (if listed) is protected', own.every((r) => r.access === 'protected'), JSON.stringify(own.map((r) => r.access)));
+        console.log(`  top entries: ${rows.length} rows read; electron rows ${el.length}; access ${CODES.map((c) => c + ' ' + rows.filter((r) => r.access === c).length).join(', ')}`);
+      } finally { for (const b of burners) B.kill(b.pid); await B.cleanup(run.dir); }
+    }
     const soff = await s.call('topbar.stats', { on: false }, 4000);
     const nOff = s.collect('topbarstats').length;
     await T.sleep(2500);
