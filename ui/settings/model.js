@@ -69,6 +69,7 @@
     ['shortcuts.list', 'Keyboard shortcuts', 'hotkeys keys chords shortcuts rebinding'],
     ['about.version', 'Mantle version', 'about version build commit mantle'],
     ['about.uptime', 'Running since', 'uptime started running since restart'],
+    ['about.welcome', 'Welcome tour', 'welcome tour first run first start onboarding intro getting started show again keys switch back windows taskbar'],
     ['about.runtime', 'Electron, Chromium, Node and Windows', 'electron chrome chromium node windows versions'],
     ['about.logs', 'Log folder', 'logs log file diagnostics troubleshooting'],
     ['about.windows', 'All Windows settings', 'windows settings control panel'],

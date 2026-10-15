@@ -1,0 +1,180 @@
+/* welcome.css - Mantle's first-start cards (lane mantle-firstrun, 2026-10-15).
+ *
+ * ONE THEME: every colour, radius, shadow and curve is a glass-light --lg-* token, light and dark
+ * (the dark set re-values the same names; the few dark-only tokens are used under
+ * :root[data-theme="dark"] only, as Settings does). The window is frameless and CLEAR; .card is the
+ * island it draws: the popovers' face (--lg-fill-pop) laid over --lg-ground so it is OPAQUE (no blurred
+ * capture exists for this window, and the theme's rule for that is the flat fill of the same palette),
+ * the white lip inside, the hairline outside, Northwind's shadow. No glow; the accent marks state only
+ * (the step you are on, the primary button, the part of the screen each item is about).
+ *
+ * MOTION is short and always ends: the card comes in over 220 ms, a step's panel over 200 ms, the
+ * card leaves in 140 ms. Reduced motion: no movement at all.
+ */
+html, body { height: 100%; margin: 0; background: transparent; }
+body {
+  color: var(--lg-ink);
+  font: 13px/1.45 "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; cursor: default; }
+:focus { outline: none; }
+body.kb :focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 2px; }
+[hidden] { display: none !important; }
+svg { display: block; }
+ul, ol { list-style: none; margin: 0; padding: 0; }
+p { margin: 0; }
+
+/* ---------------------------------------------------------------- the island */
+.card {
+  position: absolute; top: 24px; left: 32px;
+  width: 560px; height: 500px; box-sizing: border-box;
+  display: flex; flex-direction: column;
+  padding: 18px 28px 20px;
+  border-radius: var(--lg-r-pop);
+  background: linear-gradient(var(--lg-fill-pop), var(--lg-fill-pop)), var(--lg-ground);
+  box-shadow: inset 0 1px 0 var(--lg-edge-in), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  opacity: 0; transform: translateY(8px) scale(.985);
+  -webkit-app-region: drag;
+}
+.card button, .card .panel { -webkit-app-region: no-drag; }
+.card.in { opacity: 1; transform: none; transition: opacity 220ms var(--lg-ease), transform 220ms var(--lg-ease); }
+.card.in.out { opacity: 0; transform: scale(.985); transition: opacity 140ms ease-in, transform 140ms ease-in; }
+
+/* ---------------------------------------------------------------- header: steps + Skip */
+.top { display: flex; align-items: center; gap: 10px; height: 30px; margin-bottom: 14px; }
+.steps { display: flex; gap: 2px; margin-left: -6px; }
+.step {
+  width: 34px; height: 24px; padding: 0; border: 0; border-radius: var(--lg-r-ctl);
+  background: transparent; display: grid; place-items: center;
+}
+.step:hover { background: var(--lg-hover); }
+.step .tick { width: 22px; height: 3px; border-radius: 2px; background: var(--lg-tile); transition: background-color 200ms var(--lg-ease); }
+.step.done .tick { background: var(--lg-ink-3); }
+.step.now .tick { background: var(--lg-acc); }
+.testchip { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: var(--lg-r-ctl); color: var(--lg-ink-2); background: var(--lg-sunk); }
+.skip { margin-left: auto; }
+
+/* ---------------------------------------------------------------- buttons (Settings' shapes) */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 14px; box-sizing: border-box;
+  border: 0; border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk); color: var(--lg-ink);
+  font-size: 13px; white-space: nowrap;
+  transition: background-color 120ms var(--lg-ease);
+}
+.btn:hover { background: var(--lg-tile); }
+.btn:active { background: var(--lg-press); }
+.btn.acc { background: var(--lg-acc); color: var(--lg-acc-on); min-width: 92px; font-weight: 600; }
+.btn.acc:hover { background: var(--lg-acc); filter: brightness(1.08); }
+.btn.acc:active { filter: brightness(.94); }
+.btn.quiet { background: transparent; color: var(--lg-ink-2); }
+.btn.quiet:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.btn.quiet:active { background: var(--lg-press); }
+.btn.small { height: 28px; padding: 0 12px; font-size: 12.5px; }
+.btn:disabled { opacity: .55; }
+
+/* ---------------------------------------------------------------- the stage */
+.stage { position: relative; flex: 1 1 auto; min-height: 0; }
+.panel { height: 100%; display: flex; flex-direction: column; }
+.panel.in-fwd { animation: in-fwd 200ms var(--lg-ease) both; }
+.panel.in-back { animation: in-back 200ms var(--lg-ease) both; }
+@keyframes in-fwd { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+@keyframes in-back { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+
+.title {
+  margin: 0 0 8px;
+  font: 600 21px/1.25 "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  letter-spacing: -.01em; color: var(--lg-ink);
+}
+.lead { color: var(--lg-ink-2); font-size: 13.5px; line-height: 1.5; }
+
+/* card 1: what changed */
+.items { margin-top: 28px; display: flex; flex-direction: column; gap: 22px; }
+.item { display: flex; align-items: flex-start; gap: 14px; }
+.pic {
+  flex: 0 0 56px; height: 44px; display: grid; place-items: center;
+  border-radius: var(--lg-r); background: var(--lg-sunk);
+}
+.itext { display: flex; flex-direction: column; gap: 2px; padding-top: 3px; }
+.iname { font-weight: 600; color: var(--lg-ink); }
+.idesc { color: var(--lg-ink-2); }
+svg .scr { fill: none; stroke: var(--lg-ink-3); stroke-width: 1.25; }
+svg .hot { fill: var(--lg-acc); }
+svg .hot-line { fill: none; stroke: var(--lg-acc); stroke-width: 1.25; }
+
+/* card 2: the keys */
+.keylist { margin-top: 10px; display: flex; flex-direction: column; }
+.krow { display: grid; grid-template-columns: 148px 1fr; align-items: center; min-height: 34px; border-bottom: 1px solid var(--lg-sunk); }
+.krow:last-child { border-bottom: 0; }
+.keys { display: inline-flex; gap: 4px; align-items: center; }
+.kc {
+  display: inline-block; min-width: 16px; padding: 1px 7px;
+  border: 1px solid var(--lg-edge-out); border-bottom-width: 2px; border-radius: 5px;
+  background: var(--lg-fill-strong); color: var(--lg-ink);
+  font: 12px/18px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; text-align: center; white-space: nowrap;
+}
+.kwhat { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.kname { color: var(--lg-ink); }
+.knote { color: var(--lg-ink-3); font-size: 12px; }
+.corners {
+  margin-top: 12px; display: flex; align-items: center; gap: 16px;
+  padding: 12px 14px; border-radius: var(--lg-r); background: var(--lg-sunk);
+}
+.cpic { flex: 0 0 88px; }
+.ctext { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.csub { font-weight: 600; }
+.clist { display: flex; flex-direction: column; gap: 1px; }
+.cline { display: flex; gap: 6px; color: var(--lg-ink-2); }
+.cline .cname::after { content: ":"; }
+.cline .cact { color: var(--lg-ink); }
+.cline.off { color: var(--lg-ink-2); }
+.chow { color: var(--lg-ink-3); font-size: 12px; }
+.fine { margin-top: auto; color: var(--lg-ink-3); font-size: 12px; }
+
+/* card 3: switching back */
+.ways { margin-top: 16px; display: flex; flex-direction: column; gap: 14px; }
+.way { display: flex; gap: 12px; align-items: flex-start; }
+.wnum {
+  flex: 0 0 22px; height: 22px; border-radius: 50%; margin-top: 1px;
+  display: grid; place-items: center;
+  background: var(--lg-sunk); color: var(--lg-ink-2); font-size: 11.5px; font-weight: 600;
+}
+.wbody { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wname { font-weight: 600; }
+.wtext { color: var(--lg-ink-2); }
+.wtext .keys { gap: 3px; vertical-align: 1px; }
+.wtext .kc { font-size: 11.5px; line-height: 16px; padding: 0 6px; }
+.wact { margin-top: 6px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.code {
+  font: 11.5px/16px var(--lg-mono, "Cascadia Mono", Consolas, monospace);
+  padding: 1px 5px; border-radius: 4px; background: var(--lg-sunk); color: var(--lg-ink); white-space: nowrap;
+}
+.status { font-size: 12.5px; }
+.status.ok { color: var(--lg-ink); }
+.status.warn { color: var(--lg-warn); }
+.saveerr { position: absolute; left: 0; right: 0; bottom: 0; }
+
+/* ---------------------------------------------------------------- footer */
+.foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.count { flex: 1; text-align: center; color: var(--lg-ink-3); font-size: 12px; }
+
+/* ---------------------------------------------------------------- dark: the same names, plus the dark-only tokens */
+:root[data-theme="dark"] .kc { background: var(--lg-field); border-color: var(--lg-edge-out); }
+:root[data-theme="dark"] .pic,
+:root[data-theme="dark"] .corners { background: var(--lg-card); box-shadow: inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .krow { border-bottom-color: var(--lg-divider); }
+:root[data-theme="dark"] .wnum { background: var(--lg-card); }
+:root[data-theme="dark"] body.kb :focus-visible { outline: none; box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] .btn.acc:hover { filter: brightness(1.06); }
+/* dark ink-3 is 4.1:1 on this card: small quiet words take ink-2 so they stay readable (>= 4.5:1) */
+:root[data-theme="dark"] :is(.knote, .chow, .fine, .count) { color: var(--lg-ink-2); }
+:root[data-theme="dark"] .code { background: var(--lg-field); }
+
+@media (prefers-reduced-motion: reduce) {
+  .card, .card.in, .card.in.out { transform: none; transition: opacity 80ms linear; }
+  .panel.in-fwd, .panel.in-back { animation: none; }
+}

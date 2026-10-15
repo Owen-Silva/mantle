@@ -385,6 +385,7 @@
         mode: TEST ? 'test' : 'live', logFile: 'C:\\Users\\you\\AppData\\Roaming\\Mantle\\logs\\mantle.log', logDir: 'C:\\Users\\you\\AppData\\Roaming\\Mantle\\logs',
         electron: '44.0.0', chrome: '146.0.7300.0', node: '24.4.0', windows: '10.0.26200', glass: GLASS };
       case 'settings.openLogs': return { ok: true, reason: null, dryRun: TEST };
+      case 'welcome.show': return { ok: true, opened: true };
       case 'settings.openWindows': return { ok: true, reason: null, dryRun: TEST };
       case 'settings.catalog': return FAIL ? { ok: false, reason: 'the launcher\'s settings catalog is not loaded yet' } : { ok: true, items: CAT.map((x) => Object.assign({}, x)) };
       case 'settings.displays': return FAIL ? { ok: false, reason: 'the displays could not be read: ' + SIDECAR, displays: [] } : { ok: true, reason: null, displays: [

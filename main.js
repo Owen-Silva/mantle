@@ -465,6 +465,11 @@ app.commandLine.appendSwitch('in-process-gpu');
 // printed at every point where a human might need it.
 const STATE_FILE = path.join(app.getPath('userData'), 'shell-state.json');
 
+// First start (lib/welcome.js): judged HERE, by READING what is already in the profile, before the
+// sidecar, the theme, the features or Chromium write anything this run. The flag is written later
+// (whenReady), once this process holds the single-instance lock.
+const welcomeVerdict = require('./lib/welcome').judge({ dir: app.getPath('userData'), test: flags.test, optIn: flags.firstRun });
+
 // ---------------------------------------------------------------------------
 // --quit: ask the RUNNING live Mantle to put Windows back and stop.
 //
@@ -9186,6 +9191,18 @@ app.whenReady().then(() => {
     reapplyGlass('the bar', barWin, 'off');
   });
   if (!bar.load.loaded) process.stderr.write(`mantle: ${bar.load.reason}\n`);
+
+  // First start (lib/welcome.js): the flag judged at the top is written now (the lock is ours), and
+  // the welcome comes in once the bar's page is up. Settings > About "Show again" uses welcome.show.
+  const welcome = require('./lib/welcome').host({
+    verdict: welcomeVerdict, dir: app.getPath('userData'), test: flags.test,
+    preload: path.join(ROOT, 'preload.js'), page: path.join(ROOT, 'ui', 'welcome', 'index.html'), BrowserWindow, screen,
+    log: (l) => process.stdout.write(`mantle: welcome: ${l}\n`), quitting: () => shuttingDown,
+    focusHelp: (w) => sidecar.call('focus', { hwnd: hwndOf(w) }, 2000),
+  });
+  Object.assign(COMMANDS, welcome.commands);
+  welcome.record();
+  barWin.webContents.once('did-finish-load', () => welcome.start());
 
   if (flags.test) {
     // TEST ONLY (lane ramdiet): how long each window takes from new BrowserWindow to its page loaded,

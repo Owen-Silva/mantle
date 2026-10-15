@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Welcome to Mantle</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette, light and dark -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="welcome.css">
+</head>
+<body>
+<!-- Mantle's first start (lib/welcome.js decides; this page shows three cards and answers
+     welcome.done). The window is frameless and clear; .card is the island it draws. Words live in
+     content.js, where lib/welcome.test.js checks each one against the code. -->
+<main class="card" id="card" role="dialog" aria-modal="true" aria-labelledby="title" aria-describedby="lead">
+  <header class="top">
+    <nav class="steps" id="steps" aria-label="Steps"></nav>
+    <span class="testchip" id="testchip" hidden>Test run</span>
+    <button class="btn quiet skip" id="skip" type="button" data-act="skip" title="Skip the welcome (Esc)">Skip</button>
+  </header>
+  <section class="stage" id="stage" aria-live="polite"></section>
+  <footer class="foot">
+    <button class="btn quiet" id="back" type="button" data-act="back" title="Back (Left arrow)">Back</button>
+    <span class="count" id="count"></span>
+    <button class="btn acc" id="next" type="button" data-act="next" title="Next (Right arrow or Enter)">Next</button>
+  </footer>
+</main>
+<script src="content.js"></script>
+<script src="mock-mantle.js"></script>
+<script src="../../lib/plain-error.js"></script>
+<script src="welcome.js"></script>
+</body>
+</html>

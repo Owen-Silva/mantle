@@ -330,6 +330,9 @@
       });
     },
     taskmgr: (t) => act(rowOf(t), call('taskmgr.open', { view: 'apps' })),
+    welcome: (t) => act(rowOf(t), call('welcome.show', { via: 'Settings' }), (r) => {
+      if (r && r.ok !== false && r.already) note(rowOf(t), 'info', 'The welcome is already open');
+    }),
     logs: (t) => act(rowOf(t), call('settings.openLogs'), (r) => {
       if (r.ok !== false && r.dryRun) { r.dryRun = false; note(rowOf(t), 'info', 'Test run: the log folder was not opened'); }
     }),
@@ -1199,7 +1202,9 @@
         help: v.commit ? 'Build ' + String(v.commit).slice(0, 7) : null, info: v.commit ? null : 'The exact build is unknown: ' + (v.commitReason || 'no reason came back') }),
       row({ id: 'about.uptime', label: 'Running since ' + (since || 'an unknown time'), tile: tile(icon('about')), help: up != null ? 'Up for ' + M.dur(up) : null }),
       row({ id: 'about.mode', label: v.mode === 'test' ? 'Test copy' : 'Running as your shell', tile: tile(icon('about')),
-        help: v.mode === 'test' ? 'A test copy of Mantle: switches here show what they would do and change nothing on this PC' : 'Mantle starts when you sign in and replaces the Windows taskbar, Start and Settings' })));
+        help: v.mode === 'test' ? 'A test copy of Mantle: switches here show what they would do and change nothing on this PC' : 'Mantle starts when you sign in and replaces the Windows taskbar, Start and Settings' }),
+      row({ id: 'about.welcome', label: 'Welcome tour', tile: tile(icon('about')), help: 'The three cards from Mantle’s first start: what changed, the keys, and how to switch back to Windows’ taskbar',
+        ctl: btn('Show again', { 'data-act': 'welcome' }) })));
     const gl = S.glass;
     const W = window.MantleWallBdrop;
     out.push(groupT('Window', 'about-w'));
