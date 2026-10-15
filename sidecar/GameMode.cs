@@ -352,7 +352,7 @@ namespace Mantle {
     // on, so no caller waits behind a stall and the log names the slow step. Once the read in flight
     // has been stuck past StaleLimitMs, the old answer is no longer passed off: that is an error
     // naming the step.
-    const int ScanBudgetMs = 400, StaleLimitMs = 10000;
+    const int ScanBudgetMs = 400, StaleLimitMs = 10000, FirstReadMs = 8000;
     const long ScanSlowLogMs = 1000, ScanSlowLogEveryMs = 60000;
 
     sealed class ScanRead {
@@ -492,6 +492,11 @@ namespace Mantle {
       if (Program.Passive && Json.HasKey(req, "testStallMs"))
         Interlocked.Exchange(ref _testStallMs, Math.Max(0, Math.Min(15000, Json.GetInt(req, "testStallMs", 0))));
       EnsureScanWorker();
+      // NOTHING TO ANSWER WITH YET (the sidecar's first read, cold: 0.1 s here, ~4 s on a 2-core CI
+      // runner): wait as long as the caller will (its ttl, less a margin), because an error there is
+      // worse than a late first answer. Once any read has finished, never more than ScanBudgetMs.
+      long ttl = Json.GetInt(req, "ttl", 0);
+      long firstMs = ttl > 0 ? Math.Max(ScanBudgetMs, ttl - 250) : FirstReadMs;
       ScanRead r;
       bool fresh;
       lock (_scanGate) {
@@ -499,12 +504,12 @@ namespace Mantle {
         Monitor.PulseAll(_scanGate);
         for (;;) {
           if (_last != null && _last.Taken >= seq) break;
-          long left = ScanBudgetMs - wait.ElapsedMilliseconds;
+          long left = (_last == null ? firstMs : ScanBudgetMs) - wait.ElapsedMilliseconds;
           if (left <= 0) break;
           // The worker is still in an OLDER read that has already run past the budget: it is stuck,
           // and this request's read cannot even start, so waiting is pointless. Answer now. (A second
           // caller queued behind the first one would otherwise pay the budget again.)
-          if (_takenSeq < seq && _scanStage != null && Lanes.AwakeMs() - Interlocked.Read(ref _readAt) >= ScanBudgetMs) break;
+          if (_last != null && _takenSeq < seq && _scanStage != null && Lanes.AwakeMs() - Interlocked.Read(ref _readAt) >= ScanBudgetMs) break;
           Monitor.Wait(_scanGate, (int)Math.Min(left, 50));
         }
         r = _last;

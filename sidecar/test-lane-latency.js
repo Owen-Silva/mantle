@@ -33,9 +33,14 @@ const ms = () => Number(process.hrtime.bigint() / 1000000n);
   const timed = async (cmd, args, to) => { const t0 = ms(); const r = await s.send(cmd, args, to || 15000); return { r, wall: ms() - t0 }; };
   const lanes = async () => { const p = await s.send('ping', {}, 6000); return (p.result && p.result.load && p.result.load.lanes) || []; };
   try {
-    await T.sleep(600);
-    // warm: the sidecar starts a read at start; one fresh answer
-    const w = await timed('gamemode.scan', { procs: true }, 3000);
+    // warm: the sidecar starts a read at start. The FIRST answer waits for it (cold: ~0.1 s here,
+    // ~4 s on a CI runner) rather than failing; then one fresh answer, so the stall below lands on a
+    // read of its own and not on that first one
+    const w0 = await timed('gamemode.scan', { procs: true }, 12000);
+    t.check('warm: the first game check after start is answered, not an error, even while the first read is cold',
+      w0.r.ok && Array.isArray(w0.r.result.procs), `${w0.wall} ms ${JSON.stringify(w0.r).slice(0, 200)}`);
+    let w = w0;
+    for (let i = 0; i < 20 && !(w.r.ok && !w.r.result.stale); i++) { await T.sleep(250); w = await timed('gamemode.scan', { procs: true }, 3000); }
     t.check('warm: a game check answers, fresh', w.r.ok && !w.r.result.stale && Array.isArray(w.r.result.procs), JSON.stringify(w.r).slice(0, 200));
     const nProcs = w.r.ok ? w.r.result.procs.length : 0;
 
