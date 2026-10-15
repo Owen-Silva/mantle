@@ -21,6 +21,12 @@
 //   * the header is BI_BITFIELDS with no alpha mask, so a browser ignores the fourth byte, which
 //     BitBlt leaves undefined (a layered window can leave it non-zero, which as alpha would punch
 //     holes in the frozen frame).
+//   * RAW PIXELS (lane speeddebt, 2026-10-15): the pixels are written in RGBA order with the fourth
+//     byte set to 255 (masks R 0xFF, G 0xFF00, B 0xFF0000), so the bytes after the 66-byte header
+//     are EXACTLY a canvas ImageData, top-down. The overlay page puts them on a canvas as they are
+//     (putImageData) instead of the browser decoding the BMP (46 ms median, 112 p95 live on this
+//     i3); the file is still a valid BMP for the card's <img> pieces. The reorder is one integer
+//     pass over each 1 MB chunk while it is written (`pixels` in the reply says the layout).
 // Measured timings are in the `ms` of every reply, and in lib/features/screenshot.js's header.
 //
 // PRIVACY. The frames ARE Owen's screen, so: they only ever go to a folder under %TEMP% (a grab
@@ -200,6 +206,8 @@ namespace Mantle {
             "work", Json.Obj("x", m.WX, "y", m.WY, "w", m.WW, "h", m.WH),
             "dpi", m.Dpi, "scale", Math.Round(m.Dpi / 96.0, 4), "dpiSource", m.DpiSource,
             "file", file, "bytes", bytes,
+            // RAW PIXELS: the bytes from offset on are an ImageData (RGBA, alpha 255, top-down).
+            "pixels", file != null ? Json.Obj("offset", BmpHead, "format", "rgba", "w", r - l, "h", b - tp) : null,
             "frame", Json.Obj("x", l, "y", tp, "w", Math.Max(0, r - l), "h", Math.Max(0, b - tp))));
         }
         writeMs = sw.Elapsed.TotalMilliseconds;
@@ -262,9 +270,12 @@ namespace Mantle {
       }
     }
 
+    /// Where a frame BMP's pixels start: 14 (file) + 40 (info) + 12 (the three masks).
+    const int BmpHead = 14 + 40 + 12;
+
     /// A top-down 32-bit BI_BITFIELDS BMP of one rect of the frame. Returns its size in bytes.
     static long WriteBmp(string path, Frame f, int sx, int sy, int w, int h) {
-      const int head = 14 + 40 + 12;
+      const int head = BmpHead;
       int rowBytes = w * 4;
       long size = head + (long)rowBytes * h;
       var hdr = new byte[head];
@@ -280,11 +291,12 @@ namespace Mantle {
       PutI32(hdr, 34, rowBytes * h);
       PutI32(hdr, 38, 3780);                            // 96 dpi in pixels per metre
       PutI32(hdr, 42, 3780);
-      PutI32(hdr, 54, 0x00FF0000);
-      PutI32(hdr, 58, 0x0000FF00);
-      PutI32(hdr, 62, 0x000000FF);
+      PutI32(hdr, 54, 0x000000FF);                      // R: the first byte (RGBA order, see RAW PIXELS)
+      PutI32(hdr, 58, 0x0000FF00);                      // G
+      PutI32(hdr, 62, 0x00FF0000);                      // B
       int stride = f.W * 4;
       int chunkRows = Math.Max(1, (1 << 20) / Math.Max(1, rowBytes));
+      var px = new int[chunkRows * w];
       var buf = new byte[chunkRows * rowBytes];
       using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 16)) {
         fs.Write(hdr, 0, head);
@@ -292,11 +304,18 @@ namespace Mantle {
         for (int y0 = 0; y0 < h; y0 += chunkRows) {
           int n = Math.Min(chunkRows, h - y0);
           if (sx == 0 && w == f.W) {
-            Marshal.Copy(new IntPtr(basePtr + (long)(sy + y0) * stride), buf, 0, n * rowBytes);
+            Marshal.Copy(new IntPtr(basePtr + (long)(sy + y0) * stride), px, 0, n * w);
           } else {
             for (int k = 0; k < n; k++)
-              Marshal.Copy(new IntPtr(basePtr + (long)(sy + y0 + k) * stride + (long)sx * 4), buf, k * rowBytes, rowBytes);
+              Marshal.Copy(new IntPtr(basePtr + (long)(sy + y0 + k) * stride + (long)sx * 4), px, k * w, w);
           }
+          // BGRX (the DIB, little-endian 0xXXRRGGBB) -> RGBA with alpha 255 (0xFFBBGGRR).
+          int count = n * w;
+          for (int i = 0; i < count; i++) {
+            uint v = (uint)px[i];
+            px[i] = unchecked((int)(0xFF000000u | (v & 0x0000FF00u) | ((v >> 16) & 0xFFu) | ((v & 0xFFu) << 16)));
+          }
+          Buffer.BlockCopy(px, 0, buf, 0, n * rowBytes);
           fs.Write(buf, 0, n * rowBytes);
         }
       }

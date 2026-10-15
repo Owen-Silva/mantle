@@ -180,6 +180,7 @@
     S.done = true;
     S.anchor = null; S.dragging = false; S.pressed = false; S.kbd = null; S.ptr = null; S.mon = null; S.windows = [];
     frame.removeAttribute('src');            // a parked window holds no picture of the screen
+    if (raw) { raw.width = 0; raw.height = 0; raw.hidden = true; }   // nor does the raw-pixels canvas
     showHole(null);
     showGuides(null);
     document.body.classList.remove('selecting', 'failed');
@@ -204,24 +205,29 @@
     }
     if (f.problem) { fail(f.problem); send('ready', { seq: f.seq, monitor: S.mon.index, ms: 0, problem: f.problem }); return; }
     var t0 = performance.now();
+    var rawWhy = null;
+    if (f.pixels && f.pixels.data) {
+      // RAW PIXELS (lane speeddebt): main sent the frame's bytes as they are an ImageData's (RGBA,
+      // opaque, top-down), so they go on a canvas with no decode at all; the <img> of the same file
+      // is the fallback, with the reason in the ready message.
+      try {
+        var px = f.pixels, c = rawCanvas();
+        var bytes = new Uint8ClampedArray(px.data.buffer, px.data.byteOffset, px.data.byteLength);
+        var data = new ImageData(bytes, px.w, px.h);
+        c.width = px.w; c.height = px.h;
+        c.getContext('2d', { alpha: false }).putImageData(data, 0, 0);
+        c.hidden = false;
+        afterPicture(f, t0, { w: px.w, h: px.h }, 'raw pixels');
+        return;
+      } catch (err) {
+        rawWhy = (err && err.message) || String(err);
+        if (raw) { raw.width = 0; raw.height = 0; raw.hidden = true; }
+      }
+    }
     frame.src = f.src;
     frame.decode().then(function () {
       if (S.seq !== f.seq) return;
-      var nat = { w: frame.naturalWidth, h: frame.naturalHeight };
-      var decodeMs = Math.round((performance.now() - t0) * 10) / 10;
-      redraw();
-      // Two frames: the decoded picture has to be PAINTED before main moves the window on screen.
-      // A window that is hidden (a --test run keeps it so) gets no animation frames at all, so a
-      // 250 ms timer stands in; whichever comes first says ready, once.
-      var said = false;
-      var ready = function (how) {
-        if (said || S.seq !== f.seq) return;
-        said = true;
-        send('ready', { seq: f.seq, monitor: S.mon.index, ms: Math.round((performance.now() - t0) * 10) / 10,
-          decodeMs: decodeMs, natural: nat, view: S.view, dpr: window.devicePixelRatio, how: how });
-      };
-      requestAnimationFrame(function () { requestAnimationFrame(function () { ready('painted'); }); });
-      setTimeout(function () { ready('timer (no animation frames: the window is hidden)'); }, 250);
+      afterPicture(f, t0, { w: frame.naturalWidth, h: frame.naturalHeight }, rawWhy ? 'BMP decode (raw pixels failed: ' + rawWhy + ')' : 'BMP decode');
     }, function (err) {
       if (S.seq !== f.seq) return;
       // The screen shows plain words; main's log gets the browser's own reason (ready.problem).
@@ -230,6 +236,36 @@
         problem: 'the frozen frame of this screen could not be decoded (' +
           (window.MantlePlain ? window.MantlePlain.forLog(err) : ((err && err.message) || 'no reason given')) + ')' });
     });
+  }
+
+  /** The raw-pixels canvas: made once, in the <img>'s place and with its layout (inline, so no
+   *  stylesheet change), emptied (0x0: no picture of the screen kept) whenever the page is parked. */
+  var raw = null;
+  function rawCanvas() {
+    if (raw) return raw;
+    raw = document.createElement('canvas');
+    raw.setAttribute('aria-hidden', 'true');
+    raw.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;display:block;pointer-events:none';
+    frame.parentNode.insertBefore(raw, frame);
+    return raw;
+  }
+
+  /** The frame's picture is in (canvas or <img>): draw the rest, and say ready once it is PAINTED. */
+  function afterPicture(f, t0, nat, path) {
+    var decodeMs = Math.round((performance.now() - t0) * 10) / 10;
+    redraw();
+    // Two frames: the picture has to be PAINTED before main moves the window on screen.
+    // A window that is hidden (a --test run keeps it so) gets no animation frames at all, so a
+    // 250 ms timer stands in; whichever comes first says ready, once.
+    var said = false;
+    var ready = function (how) {
+      if (said || S.seq !== f.seq) return;
+      said = true;
+      send('ready', { seq: f.seq, monitor: S.mon.index, ms: Math.round((performance.now() - t0) * 10) / 10,
+        decodeMs: decodeMs, natural: nat, view: S.view, dpr: window.devicePixelRatio, how: how, path: path });
+    };
+    requestAnimationFrame(function () { requestAnimationFrame(function () { ready('painted'); }); });
+    setTimeout(function () { ready('timer (no animation frames: the window is hidden)'); }, 250);
   }
 
   /* ---- input ----------------------------------------------------------------------------------- */
