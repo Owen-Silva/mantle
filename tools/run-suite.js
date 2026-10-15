@@ -4,7 +4,9 @@
  *
  *   node tools/run-suite.js [--only=<substring,...>] [--skip=<substring,...>] [--out=<dir>]
  *                           [--timeout=<seconds per file>] [--status=<file.md>] [--lane=<name>] [--list]
+ *                           [--perf]
  *
+ * --perf adds the OPT-IN budget gate, perf:budget (tools/perf-budget.js, PERF.md); a plain run never has it.
  * Run it from any worktree root (or anywhere: the root is this file's parent folder). It finds:
  *   - every *.test.js (never node_modules, .git, bin, obj),
  *   - every sidecar/test-*.js (the sidecar harnesses; test-lib.js is plumbing, test-search-bench.js a
@@ -56,6 +58,7 @@ const OUT = path.resolve(String(opt('out', path.join(os.tmpdir(), 'mantle-suite-
 const NIGHT = 'C:\\Users\\user\\mantle-notes';
 const STATUS = opt('status', fs.existsSync(NIGHT) ? path.join(NIGHT, 'suite-status.md') : '');
 const LIST_ONLY = !!opt('list', false);
+const PERF = !!opt('perf', false);        // add the opt-in budget gate (perf:budget) to this run
 
 // ------------------------------------------------------------------ known environment failures
 // Each: file (relative, forward slashes), fails = regexes that must cover EVERY failing check of that file,
@@ -128,8 +131,16 @@ function discover() {
     try { const m = fs.readFileSync(path.join(feat, x + '.js'), 'latin1').match(/MANTLE_[A-Z]+_SELFTEST(?!_)/); env = m && m[0]; } catch (_) { /* no feature file */ }
     entries.push({ id: 'selftest:' + x, kind: 'selftest', file: f, env, name: x });
   }
+  // OPT-IN (lane perfgate, 2026-10-15): the budget gate, tools/perf-budget.js (rules in PERF.md). One invisible
+  // --test copy for ~5-8 min, and its verdict is timing: never part of a plain run. Asked for with --perf, or
+  // by naming it in --only (--only=perf:budget). --no-lock: the suite's caller already holds
+  // %TEMP%\claude-heavytest.mutex (the gate would wait on its own caller otherwise); run it alone, not beside
+  // another Electron run, or its timings mean nothing.
+  const perfGate = path.join(ROOT, 'tools', 'perf-budget.js');
+  if (fs.existsSync(perfGate)) entries.push({ id: 'perf:budget', kind: 'node', file: perfGate, args: ['--no-lock'], optIn: true, minTimeoutS: 1200 });
   return entries.filter((e) => {
     const id = e.id.toLowerCase();
+    if (e.optIn && !PERF && !ONLY.some((s) => id.includes(s))) return false;
     if (ONLY.length && !ONLY.some((s) => id.includes(s))) return false;
     if (SKIP.some((s) => id.includes(s))) return false;
     return true;
@@ -305,7 +316,7 @@ async function runOne(e) {
   const exitP = new Promise((r) => child.on('exit', (c, sig) => { exited = true; code = c === null ? sig : c; r(); }));
   child.on('error', (err) => { text += '\n[run-suite] spawn error: ' + err.message; });
 
-  const limit = (e.kind === 'selftest' ? Math.min(TIMEOUT_S, 300) : TIMEOUT_S) * 1000;
+  const limit = (e.kind === 'selftest' ? Math.min(TIMEOUT_S, 300) : Math.max(TIMEOUT_S, e.minTimeoutS || 0)) * 1000;
   let timedOut = false; let selfDone = false; let chordSent = false;
   while (!exited) {
     await Promise.race([exitP, sleep(e.kind === 'selftest' ? 2000 : 1000)]);
