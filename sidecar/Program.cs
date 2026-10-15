@@ -152,6 +152,11 @@ namespace Mantle {
       // clears the taskbar region it may have left. Nothing below runs for it.
       foreach (string a in args)
         if (a.StartsWith("--taskbar-guard=", StringComparison.Ordinal)) return TaskbarHide.RunGuard(args);
+      // --supervise=<main pid>: this exe as the crash-recovery supervisor of Mantle's MAIN process
+      // (Supervisor.cs): waits on main, starts it again after a crash, stops after a crash loop.
+      // No protocol, no window, no hook; nothing below runs for it.
+      foreach (string a in args)
+        if (a.StartsWith("--supervise=", StringComparison.Ordinal)) return Supervisor.Run(args);
       // --elevated <request>: this exe as the administrator step (Elevate.cs), started through a
       // UAC prompt by elevate.run. It runs ONE whitelisted action, writes its answer and exits;
       // no protocol, no window, nothing below.

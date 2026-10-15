@@ -269,6 +269,23 @@ if ($NoKill) {
 } else {
   $needle = $repoRoot.ToLowerInvariant()
   $stopped = 0
+  # The crash-recovery supervisors FIRST (Mantle.Sidecar.exe --supervise=<pid>, lib/supervisor.js): one
+  # still running when Mantle is stopped below reads that as a crash and starts Mantle again.
+  try {
+    $supervisors = @(Get-CimInstance Win32_Process -Filter "Name='Mantle.Sidecar.exe'" -ErrorAction Stop |
+      Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--supervise=') })
+  } catch {
+    $supervisors = @()
+    Problem "could not list Mantle's crash-recovery supervisors: $($_.Exception.Message)"
+  }
+  foreach ($s in $supervisors) {
+    try {
+      Stop-Process -Id $s.ProcessId -Force -ErrorAction Stop
+      $stopped++
+    } catch {
+      Problem "could not stop Mantle's crash-recovery supervisor pid $($s.ProcessId): $($_.Exception.Message)"
+    }
+  }
   try {
     $electrons = @(Get-CimInstance Win32_Process -Filter "Name='electron.exe'" -ErrorAction Stop |
       Where-Object { $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($needle) })

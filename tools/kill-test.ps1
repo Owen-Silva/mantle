@@ -17,6 +17,19 @@ param([string]$Match = 'dev', [switch]$WhatIf)
 
 $needle = if ($Match.Contains('=')) { $Match } else { '--profile-name=' + $Match }
 
+# A test instance started with --supervise has a crash-recovery supervisor (Mantle.Sidecar.exe
+# --supervise=<pid> ... --profile-name=<x>, lib/supervisor.js). It goes FIRST: stopped after the
+# instance, it would read the kill as a crash and start the instance again.
+$sups = @(Get-CimInstance Win32_Process -Filter "Name='Mantle.Sidecar.exe'" |
+  Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--supervise=') -and $_.CommandLine.Contains($needle) })
+foreach ($s in $sups) {
+  if ($WhatIf) { "would stop supervisor pid $($s.ProcessId)" }
+  else {
+    try { Stop-Process -Id $s.ProcessId -Force -ErrorAction Stop; "stopped supervisor pid $($s.ProcessId)" }
+    catch { "could not stop supervisor pid $($s.ProcessId): $($_.Exception.Message)" }
+  }
+}
+
 $procs = @(Get-CimInstance Win32_Process -Filter "Name='electron.exe'" |
   Where-Object { $_.CommandLine -and $_.CommandLine.Contains($needle) })
 
