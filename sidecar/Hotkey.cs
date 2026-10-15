@@ -118,6 +118,8 @@ namespace Mantle {
     static readonly int _inputSize = Marshal.SizeOf(typeof(Win32.INPUT));
 
     public static bool Installed { get { return _hook != IntPtr.Zero; } }
+    /// The tick of this hook's last call (DeskClick's dead-hook check: was the last input a key?).
+    public static int LastKeyCallback { get { return _lastCallback; } }
 
     // ------------------------------------------------------------ switching
 
@@ -187,6 +189,8 @@ namespace Mantle {
       _proc = null;
       // The pop-up watch (PopWatch, below) has hooks of its own: every exit road takes them too.
       try { PopWatch.Shutdown(); } catch (Exception) { }
+      // So has the desktop right-click (DeskClick.cs).
+      try { DeskClick.Shutdown(); } catch (Exception) { }
     }
 
     public static IDictionary Status() {

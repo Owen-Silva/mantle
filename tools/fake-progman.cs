@@ -38,6 +38,7 @@ static class FakeProgman {
 
   static int Main(string[] a) {
     if (a.Length >= 2 && a[0] == "iswin") { Console.WriteLine(IsWindow(new IntPtr(Convert.ToInt64(a[1], 16))) ? "1" : "0"); return 0; }
+    if (a.Length >= 1 && a[0] == "desk") return Desk(a.Length > 1 && a[1] == "icons");
     if (a.Length < 3 || a[0] != "parent") { Console.Error.WriteLine("usage: fake-progman parent <hexHwnd> hold|exitthread|destroy [seconds] | iswin <hexHwnd>"); return 2; }
     IntPtr child = new IntPtr(Convert.ToInt64(a[1], 16));
     string mode = a[2];
@@ -51,6 +52,26 @@ static class FakeProgman {
     return 0;
   }
 
+  // fake-progman.exe desk [icons]   (lane mantle-deskmenu, lib/deskmenu.e2e.test.js + sidecar/test-deskclick.js)
+  // A stand-in DESKTOP for the right-click hook: MantleFakeProgman > SHELLDLL_DefView > SysListView32 (the
+  // icon list, shown only with "icons"), the shape of the live 26H2 desktop, off every monitor at
+  // DESK_X,DESK_Y, never activated. Prints "desk <progman> <defview> <list> at x,y wxh" (hex), pumps until killed.
+  public const int DESK_X = -30000, DESK_Y = -30000, DESK_W = 400, DESK_H = 300;
+  static WndProc _keepDesk;
+  static int Desk(bool icons) {
+    _keepDesk = DefWindowProcW;
+    foreach (var n in new[] { "MantleFakeProgman", "SHELLDLL_DefView", "SysListView32" }) {
+      var wc = new WNDCLASS { proc = _keepDesk, name = n };
+      RegisterClassW(ref wc);
+    }
+    IntPtr pm = CreateWindowExW(0x80 | 0x08000000, "MantleFakeProgman", "Program Manager", 0x90000000, DESK_X, DESK_Y, DESK_W, DESK_H, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+    IntPtr dv = CreateWindowExW(0, "SHELLDLL_DefView", "", 0x50000000, 0, 0, DESK_W, DESK_H, pm, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+    IntPtr lv = CreateWindowExW(0, "SysListView32", "FolderView", icons ? 0x50000000u : 0x40000000u, 0, 0, DESK_W, DESK_H, dv, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+    Console.WriteLine("desk " + pm.ToString("x") + " " + dv.ToString("x") + " " + lv.ToString("x") + " at " + DESK_X + "," + DESK_Y + " " + DESK_W + "x" + DESK_H);
+    Console.Out.Flush();
+    Pump(86400);
+    return 0;
+  }
   static void Pump(double seconds) {
     var until = DateTime.UtcNow.AddSeconds(seconds);
     while (DateTime.UtcNow < until) {
