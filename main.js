@@ -7652,7 +7652,8 @@ function shutdown(why, opts) {
   // DWM drops a dead process's thumbnails on its own, but the restore below can take seconds
   // and the bar is still on screen for all of them.
   clearThumbs('Mantle is shutting down');
-  switcher.stop('Mantle is shutting down');   // the Alt+Tab overlay's previews and timers
+  // the Alt+Tab overlay's previews and timers; from here the hook going away is said as quitting, not a fault
+  switcher.stop(`Mantle is quitting (${why})`);
   // ...and with it the capture loop, which is the one thing that can leave a
   // window excluded from Owen's screenshots if it is stopped carelessly.
   stopBackdrop('Mantle is shutting down');

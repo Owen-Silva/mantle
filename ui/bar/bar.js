@@ -3900,7 +3900,12 @@
       applyState(s);
     }, function (e) {
       // The brief's literal case: one chip, and the message in it.
-      fail('bridge', 'Not connected', 'this bar could not reach Mantle: ' + msg(e), 'warn', 'state.get');
+      // preload.js says a call that never reached Mantle as a whole sentence ("Mantle did not answer. Try
+      // again; ..."); glued on after a colon it read as two sentences (lane truthlog, 2026-10-15).
+      var m = msg(e);
+      fail('bridge', 'Not connected', /^Mantle did not answer\./.test(m)
+        ? 'this bar could not reach Mantle: it did not answer. Try again, and if it keeps happening, restart Mantle from this menu'
+        : 'this bar could not reach Mantle: ' + m, 'warn', 'state.get');
       renderTray([]);
     });
 

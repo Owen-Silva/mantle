@@ -22,6 +22,19 @@
   'use strict';
   const $ = (id) => document.getElementById(id);
   const call = (name, args) => (window.mantle ? window.mantle.call(name, args) : Promise.reject(new Error('no bridge to Mantle')));
+  // A call that never reached Mantle comes back from preload.js as a whole sentence ("Mantle did not answer.
+  // Try again; ..."). Wrapped in brackets it read "Mantle did not answer (Mantle did not answer. Try again...)"
+  // (lane truthlog, 2026-10-15): such a sentence is used whole, after the head, with the tail inside it.
+  const WHOLE = /^(Mantle did not answer\.|This page asked Mantle for something)/;
+  function failWords(head, e, tail) {
+    const m = String((e && e.message) || e || 'no reason given');
+    const t = tail && !/nothing was done/i.test(m) ? ` ${tail}` : '';
+    if (!WHOLE.test(m)) return `${head} (${m}).${tail ? ` ${tail}` : ''}`;
+    const cut = m.indexOf('. ') + 1 || m.length;
+    const one = m.slice(0, cut);
+    const lead = /^Mantle did not answer/.test(head) ? one : `${head}: ${one.replace(/^This /, 'this ')}`;
+    return `${lead}${t}${m.slice(cut)}`;
+  }
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const MB = 1048576;
   // thousands by hand: toLocaleString (ICU) was the page's top cost, ~37 ms a tick over ~200 rows
@@ -344,7 +357,7 @@
     try {
       const r = await call('taskmgr.act', Object.assign({ action, key }, extra || {}));
       P.note = r && r.ok === false && !r.needsConfirm && !rowOf(key) ? r.reason : null;
-    } catch (e) { P.note = `Mantle did not answer (${e.message}). Nothing was done.`; }
+    } catch (e) { P.note = failWords('Mantle did not answer', e, 'Nothing was done.'); }
     finally { P.busy.delete(key + action); }
     render();
   }
@@ -372,7 +385,7 @@
     if (b) b.focus();                                 // Enter would not force by accident: Cancel has focus
   }
   async function reveal(key) {
-    try { const r = await call('taskmgr.reveal', { key }); P.note = r && (r.ok === false || r.dryRun || r.reason) ? r.reason : null; } catch (e) { P.note = `The folder did not open (${e.message}).`; }
+    try { const r = await call('taskmgr.reveal', { key }); P.note = r && (r.ok === false || r.dryRun || r.reason) ? r.reason : null; } catch (e) { P.note = failWords('The folder did not open', e); }
     render();
   }
   function doItem(act0, key) {
@@ -433,11 +446,11 @@
     try {
       const r = await call('settings.open', { section: 'apps', row: 'apps.startup', via: 'the task manager' });
       P.note = r && r.ok === false ? `Mantle Settings did not open: ${r.reason}` : null;
-    } catch (e) { P.note = `Mantle Settings did not open (${e.message}).`; }
+    } catch (e) { P.note = failWords('Mantle Settings did not open', e); }
     render();
   }
   async function openWinTm() {
-    try { const r = await call('taskmgr.windowsTaskManager', {}); P.note = r && r.ok === false ? r.reason : r && r.dryRun ? r.reason : null; } catch (e) { P.note = `Windows Task Manager did not start (${e.message}).`; }
+    try { const r = await call('taskmgr.windowsTaskManager', {}); P.note = r && r.ok === false ? r.reason : r && r.dryRun ? r.reason : null; } catch (e) { P.note = failWords('Windows Task Manager did not start', e); }
     render();
   }
   const HEAD_MENU = [{ act: 'startup', label: 'Startup apps', hint: 'Choose which apps start with Windows (Mantle Settings)' }, { act: 'wintm', label: 'Windows Task Manager', hint: "Windows' own Task Manager, for details and services" }];
@@ -565,7 +578,7 @@
     P.freeing = true;
     $('free').disabled = true;
     $('free').textContent = 'Freeing…';
-    try { const r = await call('taskmgr.free', {}); P.note = r && r.ok === false ? r.reason : null; } catch (e) { P.note = `Free up RAM did not reach Mantle (${e.message}). Nothing was closed.`; }
+    try { const r = await call('taskmgr.free', {}); P.note = r && r.ok === false ? r.reason : null; } catch (e) { P.note = failWords('Free up RAM did not run', e, 'Nothing was closed.'); }
     P.freeing = false;
     $('free').textContent = 'Free up RAM';
     render();
@@ -592,6 +605,6 @@
   });
   window.mantle.on('taskmgr.view', (v) => { if (v && v.view) { P.view = v.view === 'game' ? 'game' : 'apps'; closeMenu(false); render(); } });
   P.m = { loaded: false };               // the list says it is reading until the first model
-  call('taskmgr.state').then((m) => { if (!P.got) { P.got = true; P.m = m; P.view = m.view === 'game' ? 'game' : 'apps'; P.seenView = true; render(); } }).catch((e) => { P.m = { loaded: false, error: `Mantle did not answer (${e.message}).` }; render(); });
+  call('taskmgr.state').then((m) => { if (!P.got) { P.got = true; P.m = m; P.view = m.view === 'game' ? 'game' : 'apps'; P.seenView = true; render(); } }).catch((e) => { P.m = { loaded: false, error: failWords('Mantle did not answer', e) }; render(); });
   render();
 }());

@@ -222,7 +222,9 @@
       if (r && r.saved) applySaved(r.saved, r.outside); else renderFoot();
     }, (e) => {
       settle();
-      S.saved = Object.assign({}, S.saved, { ok: false, reason: `Mantle did not answer (${e && e.message ? e.message : e})` });
+      // preload.js's own sentence for a call that never reached Mantle is whole: not "did not answer (did not answer...)"
+      const m = String(e && e.message ? e.message : e);
+      S.saved = Object.assign({}, S.saved, { ok: false, reason: /^(Mantle did not answer\.|This page asked Mantle)/.test(m) ? m : `Mantle did not answer (${m})` });
       renderFoot();
     });
   }

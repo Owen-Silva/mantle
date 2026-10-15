@@ -927,6 +927,18 @@ async function run() {
       try { require('fs').unlinkSync(SHOT); } catch (_) { /* a temp file */ }
       await pg.close();
     }
+
+    /* ---------------------------------------------------------------- the bridge (lane truthlog) */
+    /* state.get never reached Mantle: preload.js says so in a whole sentence. The chip read
+       "this bar could not reach Mantle: Mantle did not answer. Try again; ...": two sentences glued. */
+    if (t.want('bridge')) {
+      const pg = await open(PILL, Object.assign({}, W, { reply: "(ch) => ch === 'state.get' ? Promise.reject(new Error('Mantle did not answer. Try again; if it keeps happening, restart Mantle.')) : undefined" }));
+      const tip = await pg.eval(() => { const c = document.querySelector('#chips .chip.wide'); return c ? c.title : null; });
+      t.check('bridge: no answer -> one Not connected chip, one natural sentence',
+        !!tip && /^Not connected — This bar could not reach Mantle: it did not answer\. Try again, and if it keeps happening, restart Mantle from this menu/.test(tip) &&
+        !/Mantle: Mantle did not answer/.test(tip), tip);
+      await pg.close();
+    }
   });
 }
 

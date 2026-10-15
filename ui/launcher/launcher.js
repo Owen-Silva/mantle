@@ -685,7 +685,11 @@
     }, function (err) {
       if (mine !== searchSeq) return;
       answered = true;
-      showProblem('The search did not answer (' + reasonOf(err) + '). Type again to retry; files and the web may still work.');
+      // preload.js's own sentence for a call that never reached Mantle is whole: said after a colon, not in brackets
+      var why = reasonOf(err);
+      showProblem(/^Mantle did not answer\./.test(why)
+        ? 'The search did not run: Mantle did not answer. Type again to retry; if it keeps happening, restart Mantle.'
+        : 'The search did not answer (' + why + '). Type again to retry; files and the web may still work.');
     });
   }
 

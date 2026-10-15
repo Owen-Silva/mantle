@@ -224,6 +224,19 @@ function gaming() {
     await p.click('#free');
     await p.waitForTimeout(60);
     check('Free up RAM: asked of Mantle once', (await calls(p, 'taskmgr.free')).length === 1);
+    // A call that never reached Mantle: preload.js's whole sentence is used whole, not in brackets
+    // ("Free up RAM did not reach Mantle (Mantle did not answer. Try again...)", lane truthlog 2026-10-15).
+    await p.evaluate(() => {
+      const real = window.mantle.call;
+      window.mantle.call = (n, a) => (n === 'taskmgr.free'
+        ? Promise.reject(new Error('Mantle did not answer. Try again; if it keeps happening, restart Mantle.')) : real(n, a));
+    });
+    await p.click('#free');
+    await p.waitForTimeout(60);
+    const freeNote = (await p.textContent('#note')) || '';
+    check('Free up RAM, no answer: one natural sentence on the window',
+      /Free up RAM did not run: Mantle did not answer\. Nothing was closed\. Try again; if it keeps happening, restart Mantle\./.test(freeNote) &&
+      !/\(Mantle did not answer/.test(freeNote), freeNote);
     await p.click('.tab[data-view="apps"]');
     check('tabs: back to Apps', await p.isVisible('#v-apps') && await p.isHidden('#v-game'));
     await p.close();
