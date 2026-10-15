@@ -179,6 +179,21 @@ async function main() {
     const body = await q(() => document.body.innerText);
     check('no codes or jargon on screen', !HEX.test(body), (body.match(HEX) || [''])[0]);
     check('no page errors', !errors.length, errors.join(' | '));
+
+    // 9. (lane mantle-files) a COLD window draws the cached first view at once, then the live listing replaces it
+    await page.goto(PAGE + '?cache=1&path=' + encodeURIComponent(HOME + '\\Documents'));
+    check('cold + cache: the cached row shows before the live listing', await until(() => { const t = MF.app && MF.app.cur(); return !!(t && t.fromCache && t.items.some((x) => x.n === 'Only in the cache.txt')); }, null, 4000));
+    check('cold + cache: the live listing replaces it', await until(() => { const t = MF.app.cur(); return !t.fromCache && !t.items.some((x) => x.n === 'Only in the cache.txt') && t.items.length > 1; }, null, 5000));
+    check('cold + cache: painted (cached) then interactive told once each', await until(() => { const s = window.__openStages || []; return s.length === 2 && s[0].stage === 'painted' && s[0].cached && s[1].stage === 'interactive'; }, null, 4000), await q(() => JSON.stringify(window.__openStages || [])));
+    // ...and when the folder is gone by then, its error replaces the cached rows (no stale list left up)
+    await page.goto(PAGE + '?cache=1&path=' + encodeURIComponent(HOME + '\\Private'));
+    check('cold + cache, folder unreadable: the error replaces the cached rows', await until(() => { const t = MF.app && MF.app.cur(); return !!(t && !t.fromCache && t.error && !t.items.length && !document.getElementById('empty').hidden); }, null, 5000));
+    // 10. keepReady's spare: boots, waits, and only draws when an open takes it ('files.start')
+    await page.goto(PAGE + '?spare=1&startms=400&path=' + encodeURIComponent(HOME + '\\Documents'));
+    await new Promise((r) => setTimeout(r, 200));
+    check('spare: waits for its open (no folder yet)', await q(() => document.documentElement.dataset.ready !== '1' && !(window.__mockCalls || []).some((c) => c.name === 'files.list')));
+    check('spare: the open that takes it shows the folder', await until(() => document.documentElement.dataset.ready === '1' && MF.app.cur().path.endsWith('Documents') && !MF.app.cur().loading && MF.app.cur().items.length > 0, null, 5000));
+    check('spare: no page errors', !errors.length, errors.join(' | '));
   } catch (e) {
     check('ran to the end', false, e.message);
   } finally {

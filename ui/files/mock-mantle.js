@@ -287,9 +287,23 @@
   /* ---- the commands ------------------------------------------------------------------------------ */
   const later = (v, ms) => new Promise((res) => setTimeout(() => res(v), ms || 0));
   const dry = (what) => ({ ok: true, dryRun: true, reason: `test mode: ${what}` });
+  const bootNow = () => {
+    const b = { ok: true, w: 1, path: M.normPath(q.get('path') || HOME + '\\Documents'), select: q.get('select') || null, options, test: false, sandbox: null, home: HOME,
+      pins: pinRows(), undo: null, sep: '\\', notice: q.get('notice') || null, names: NAMES };
+    // ?cache=1 (lane mantle-files): main's cached first view of the start folder, with one row the live listing does not have
+    if (q.get('cache') === '1') b.cache = { path: b.path, count: 1, at: NOW, items: [{ n: 'Only in the cache.txt', d: 0, s: 10, m: NOW - DAY, c: NOW - DAY, a: 32 }] };
+    return b;
+  };
+  let spareWaits = q.get('spare') === '1';
   const C = {
-    boot: () => ({ ok: true, w: 1, path: M.normPath(q.get('path') || HOME + '\\Documents'), select: q.get('select') || null, options, test: false, sandbox: null, home: HOME,
-      pins: pinRows(), undo: null, sep: '\\', notice: q.get('notice') || null, names: NAMES }),
+    // ?spare=1: the keepReady spare's boot, then the open that takes it ('files.start') ?startms= later
+    boot: () => {
+      if (!spareWaits) return bootNow();
+      spareWaits = false;
+      setTimeout(() => emit('files.start', bootNow()), Number(q.get('startms')) || 150);
+      return { ok: true, spare: true, w: 1 };
+    },
+    painted: (a) => { (window.__openStages = window.__openStages || []).push({ stage: a.stage, cached: !!a.cached }); return { ok: true }; },
     roots: () => ({ ok: true, known: KNOWN, drives: DRIVES, network: NETWORK, pins: pinRows() }),
     home: () => ({ ok: true, pins: pinRows(), recent: [
       { path: HOME + '\\Documents\\Plan.docx', n: 'Plan.docx', d: 0, m: NOW - 0.1 * DAY }, { path: HOME + '\\Downloads\\Manual v3.pdf', n: 'Manual v3.pdf', d: 0, m: NOW - 0.3 * DAY },
