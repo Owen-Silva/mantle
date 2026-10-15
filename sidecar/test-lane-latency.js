@@ -81,6 +81,12 @@ const ms = () => Number(process.hrtime.bigint() / 1000000n);
     await T.sleep(1500);
     const back = await timed('gamemode.scan', { procs: true }, 3000);
     t.check('d: ... and fresh again once it finishes', back.r.ok && !back.r.result.stale, JSON.stringify(back.r).slice(0, 160));
+    // after a quiet 10.5 s the last answer is OLD, but one slow read then is only slow, not stuck
+    await T.sleep(10500);
+    const quiet = await timed('gamemode.scan', { procs: true, testStallMs: 1500 }, 3000);
+    t.check('d: after a quiet spell, a slow (not stuck) read is answered stale with its age, not as an error',
+      quiet.r.ok && quiet.r.result.stale === true && quiet.r.result.ageMs >= 10000 && quiet.wall < 500, `${quiet.wall} ms ${JSON.stringify(quiet.r).slice(0, 160)}`);
+    await T.sleep(1600);
 
     // ---- (e) incremental: a steady table opens nothing; a new process is opened once
     await s.send('gamemode.scan', { procs: true, detail: true }, 3000);

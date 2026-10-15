@@ -349,8 +349,9 @@ namespace Mantle {
     // Windows' full-screen state, the process list, a process open) was never logged. Now the read runs
     // on its own thread, and a request waits for it at most ScanBudgetMs: a read that is slower than that
     // is answered from the last finished read, marked stale with its age and what the worker is stuck
-    // on, so no caller waits behind a stall and the log names the slow step. A read older than
-    // StaleLimitMs is not passed off as current: that is an error with the same reason.
+    // on, so no caller waits behind a stall and the log names the slow step. Once the read in flight
+    // has been stuck past StaleLimitMs, the old answer is no longer passed off: that is an error
+    // naming the step.
     const int ScanBudgetMs = 400, StaleLimitMs = 10000;
     const long ScanSlowLogMs = 1000, ScanSlowLogEveryMs = 60000;
 
@@ -512,8 +513,11 @@ namespace Mantle {
       string stage = StageNow() ?? "finishing";
       if (r == null) return "gamemode.scan: the first look at the window in front and the processes is still running (" + stage + ")";
       long age = Math.Max(0, Lanes.AwakeMs() - r.AtAwake);
-      if (!fresh && age > StaleLimitMs)
-        return "gamemode.scan: the game check has been stuck for " + (age / 1000) + " s (" + stage + "), so there is no current answer";
+      // Stuck = the read in flight has run past StaleLimitMs (not "the last answer is old": after a
+      // quiet minute the last read IS old, and one slow read then is still just slow).
+      long running = _scanStage != null ? Math.Max(0, Lanes.AwakeMs() - Interlocked.Read(ref _readAt)) : 0;
+      if (!fresh && running > StaleLimitMs)
+        return "gamemode.scan: the game check has been stuck for " + (running / 1000) + " s (" + stage + "), so there is no current answer";
       if (r.Error != null) return "gamemode.scan: " + r.Error;
       var fg = new System.Collections.Specialized.OrderedDictionary();
       foreach (DictionaryEntry e in r.Fg) fg[e.Key] = e.Value;
