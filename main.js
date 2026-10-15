@@ -23,7 +23,7 @@ const { probe } = require('./lib/net-probe');
 const { createCallLog, createSetLog } = require('./lib/call-log');
 // lane mn-plainwords: raw codes ("COMException (0x8024402C)", "access denied (5)") become words where a
 // reply, a push or a replay crosses to a page; the codes themselves go to the log, once each
-const { toPage } = require('./lib/plain-error');
+const { toPage, plain } = require('./lib/plain-error');
 const { placeholderUrl } = require('./lib/placeholder');
 const { createTheme, windowsModeFrom } = require('./lib/theme');
 const { createBar, createLauncher, createDesktop, hwndOf, BAR_H } = require('./lib/windows');
@@ -8043,7 +8043,7 @@ let trayTipText = '';
 let shellPaused = null;        // {at, why} once "Put Windows back" ran and Mantle is still up
 function trayFeatureItems() {
   const out = [];
-  try { out.push(...switcher.trayItems()); } catch (err) { out.push({ label: `Alt+Tab switches could not be listed: ${err.message}`, enabled: false }); }
+  try { out.push(...switcher.trayItems()); } catch (err) { out.push({ label: `Alt+Tab switches could not be listed: ${plain(err.message)}`, enabled: false }); }
   if (features && features.size) {
     if (out.length) out.push({ type: 'separator' });
     try { out.push(...features.trayItems()); } catch (err) { out.push({ label: `The features could not be listed: ${err.message}`, enabled: false }); }
