@@ -27,6 +27,9 @@
 //        focus    focus / minimize / close / toggle: they act on ANOTHER app's
 //                 window, and Windows can make the caller wait on that app's
 //                 thread (see the registry comment below).
+//        scan     gamemode.scan, which itself never waits more than 0.4 s
+//                 (GameMode.cs, THE SCAN WORKER).
+//        notif    the notification centre (see the registry comment below).
 //      capture and slow are STA threads, because the shell's link and icon objects
 //      are apartment-threaded; audio and focus are MTA. The registry that says which command goes where
 //      is `_laneOf` in the Lanes class below.
@@ -100,7 +103,7 @@ namespace Mantle {
     readonly LinkedList<Request> _queue = new LinkedList<Request>();
     readonly object _lock = new object();
     volatile string _busyCmd;
-    long _busySinceTs;
+    long _busySinceAwake;   // Lanes.AwakeMs: a sleep in the middle of a command is not "held"
 
     public Lane(string name, Action<Request> exec, ApartmentState apartment, ThreadPriority priority) {
       Name = name;
@@ -156,13 +159,13 @@ namespace Mantle {
           r = _queue.First.Value;
           _queue.RemoveFirst();
         }
-        _busySinceTs = Stopwatch.GetTimestamp();
+        _busySinceAwake = Lanes.AwakeMs();
         _busyCmd = r.Cmd;
         try { _exec(r); } catch (Exception) { /* Execute answers every error itself */ }
         _busyCmd = null;
         int behind;
         lock (_lock) behind = _queue.Count;
-        Lanes.NoteHeld(Name, r.Cmd, Lanes.MsSince(_busySinceTs), behind);
+        Lanes.NoteHeld(Name, r.Cmd, Lanes.AwakeMsSince(_busySinceAwake), behind);
       }
     }
 
@@ -171,12 +174,12 @@ namespace Mantle {
       lock (_lock) depth = _queue.Count;
       string busy = _busyCmd;
       return Json.Obj("name", Name, "queued", depth, "busy", busy,
-                      "busyMs", busy == null ? (object)null : (object)Lanes.MsSince(_busySinceTs));
+                      "busyMs", busy == null ? (object)null : (object)Lanes.AwakeMsSince(_busySinceAwake));
     }
   }
 
   static class Lanes {
-    public const string Ui = "ui", Capture = "capture", Slow = "slow", Audio = "audio", Qs = "qs", Focus = "focus", Scan = "scan";
+    public const string Ui = "ui", Capture = "capture", Slow = "slow", Audio = "audio", Qs = "qs", Focus = "focus", Scan = "scan", Notif = "notif";
 
     // ============================================================ THE REGISTRY
     //
@@ -217,8 +220,12 @@ namespace Mantle {
       // thread while the slow lane waits.
       { "media", Slow },
       // Notifications.cs: the listener read (up to ~0.8 s under load) runs on
-      // its own MTA thread while the slow lane waits; icons are shell calls.
-      { "notifications", Slow },
+      // its own MTA thread; icons are shell calls. Its own lane since
+      // 2026-10-15 (lane mantle-lanes): on slow it held icon loads, pins and
+      // the tray for 1.6-3.7 s, 10 times in 3 days, with up to 19 requests
+      // waiting behind it. A watched list is now served from the last read
+      // without waiting for the notifications thread at all.
+      { "notifications", Notif },
       // The four window verbs (Windows.cs). Their own lane since 2026-09-27: on
       // ui, a `focus` under Valorant took ~5.2 s (a synchronous ShowWindow and
       // an AttachThreadInput to the game's thread), the bar's `place` queued
@@ -244,7 +251,10 @@ namespace Mantle {
     /// command held it. One log line when a single command keeps its lane past HeldLogMs: the lane,
     /// the command NAME (never its arguments: no paths, titles or names) and how many waited behind
     /// it. At most one line per lane per HeldLogEveryMs; the ones in between are counted in the next.
-    public const long HeldLogMs = 1500, HeldLogEveryMs = 10000;
+    /// Measured in AWAKE time (2026-10-15): it was wall time, and a sleep in the middle of a command
+    /// logged "held 20,895,388 ms by gamemode.scan" (5.8 h asleep). 1 s since the same day (was 1.5 s):
+    /// the goal is that nothing holds a lane over ~0.5 s, so a 1-1.5 s hold must show too.
+    public const long HeldLogMs = 1000, HeldLogEveryMs = 10000;
     static readonly Dictionary<string, long[]> _held = new Dictionary<string, long[]>(StringComparer.Ordinal);   // lane -> {last log ts, skipped}
     public static void NoteHeld(string lane, string cmd, long ms, int behind) {
       if (ms < HeldLogMs) return;   // (the test-only sleep counts too: that is how the harness proves this line)
@@ -282,7 +292,7 @@ namespace Mantle {
     // queue object of ours - just a count of posted-but-not-started requests.
     public static int UiQueued;
     public static volatile string UiBusyCmd;
-    public static long UiBusySinceTs;
+    public static long UiBusySinceAwake;   // AwakeMs, like the worker lanes
 
     public static void Start(Action<Request> exec) {
       _workers[Capture] = new Lane(Capture, exec, ApartmentState.STA, ThreadPriority.AboveNormal);
@@ -301,6 +311,9 @@ namespace Mantle {
       // their own work took a few ms; a hot corner (1.5 s budget) and the top bar's game-start check (3 s)
       // then gave up. STA like slow, where they ran until now; AboveNormal: a corner is waiting.
       _workers[Scan] = new Lane(Scan, exec, ApartmentState.STA, ThreadPriority.AboveNormal);
+      // The notification centre (2026-10-15): STA like slow, where it ran until now (its app icons are
+      // shell calls); Normal priority: nobody drags it.
+      _workers[Notif] = new Lane(Notif, exec, ApartmentState.STA, ThreadPriority.Normal);
     }
 
     /// The worker for a lane name, or null for ui (the message loop).
@@ -313,13 +326,25 @@ namespace Mantle {
       return (Stopwatch.GetTimestamp() - ts) * 1000 / Stopwatch.Frequency;
     }
 
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern bool QueryUnbiasedInterruptTime(out ulong t);
+    /// AWAKE milliseconds: a clock that stops while the PC sleeps or hibernates
+    /// (QueryUnbiasedInterruptTime, 100 ns units, ticking at the timer
+    /// interrupt: ~1-16 ms resolution, plenty for "held over a second").
+    /// Stopwatch keeps counting through a sleep, so a command that was running
+    /// when the lid closed looked hours long.
+    public static long AwakeMs() {
+      ulong t;
+      return QueryUnbiasedInterruptTime(out t) ? (long)(t / 10000) : Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency;
+    }
+    public static long AwakeMsSince(long awakeMs) { return Math.Max(0, AwakeMs() - awakeMs); }
+
     /// Which lane a request runs on.
     public static string For(string cmd, Dictionary<string, object> req) {
       if (cmd == "sleep") {
         // Test-only (passive only, see Program): lets the harness park a
         // chosen lane and prove the others still answer.
         string l = Json.GetString(req, "lane");
-        return l == Ui || l == Capture || l == Audio || l == Qs || l == Focus || l == Scan ? l : Slow;
+        return l == Ui || l == Capture || l == Audio || l == Qs || l == Focus || l == Scan || l == Notif ? l : Slow;
       }
       string arg;
       if (_switchArg.TryGetValue(cmd, out arg)) return Json.HasKey(req, arg) ? Qs : Ui;
@@ -412,8 +437,8 @@ namespace Mantle {
       string busy = UiBusyCmd;
       var lanes = new List<object>();
       lanes.Add(Json.Obj("name", Ui, "queued", Thread.VolatileRead(ref UiQueued), "busy", busy,
-                         "busyMs", busy == null ? (object)null : (object)MsSince(UiBusySinceTs)));
-      foreach (string name in new string[] { Capture, Slow, Audio, Qs, Focus, Scan }) {
+                         "busyMs", busy == null ? (object)null : (object)AwakeMsSince(UiBusySinceAwake)));
+      foreach (string name in new string[] { Capture, Slow, Audio, Qs, Focus, Scan, Notif }) {
         Lane w = Worker(name);
         if (w != null) lanes.Add(w.Snapshot());
       }

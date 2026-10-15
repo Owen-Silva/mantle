@@ -90,7 +90,8 @@
 // ("notifications"), like Media.cs and for the same reason (the listener's
 // objects are not agile, and an STA lane would have to pump). The database
 // connection lives on that thread too. The poll runs there while watching;
-// requests queue behind it and the lane that asked just waits. Shell calls
+// requests queue behind it and the lane that asked just waits, except a
+// watched `list`, served from the last read (THE WATCHED LIST). Shell calls
 // (icons, launching an app) are apartment-threaded, so they run on the
 // CALLER's STA lane after the thread has answered.
 using System;
@@ -126,7 +127,8 @@ namespace Mantle {
     public static string Run(Dictionary<string, object> req, ref object result) {
       string op = Json.GetString(req, "op");
       if (string.IsNullOrEmpty(op)) op = "list";
-      if (op != "list" && op != "watch" && op != "remove" && op != "clear" && op != "open")
+      // `stall` is a TEST op, passive only (see Stall).
+      if (op != "list" && op != "watch" && op != "remove" && op != "clear" && op != "open" && !(op == "stall" && Program.Passive))
         return "notifications: unknown op '" + op + "' (use list, watch, remove, clear or open)";
       if (op == "watch" && !Json.HasKey(req, "on")) return "notifications: watch needs on:true or on:false";
 
@@ -161,6 +163,7 @@ namespace Mantle {
         case "watch": result = Watch(Json.GetBool(req, "on", true)); break;
         case "remove": result = Remove(ids, "remove"); break;
         case "clear": result = Clear(aumid); break;
+        case "stall": result = Stall(Json.GetInt(req, "ms", 0)); break;
         default: result = Open(openId); break;
       }
       return null;
@@ -208,7 +211,7 @@ namespace Mantle {
     /// Runs `fn` on the notifications thread and waits for it. A late answer
     /// is dropped (the work writes only to its own locals and the thread's
     /// own state, which stays consistent either way).
-    static IDictionary OnThread(string what, Func<IDictionary> fn) {
+    static void EnsureThread() {
       lock (_gate) {
         if (_thread == null) {
           _thread = new Thread(Loop);
@@ -218,6 +221,21 @@ namespace Mantle {
           _thread.Start();
         }
       }
+    }
+
+    /// TESTS ONLY (passive only, Run refuses it otherwise): parks the notifications thread for `ms`
+    /// WITHOUT waiting for it, so test-lane-latency.js can prove a watched `list` never waits behind
+    /// whatever the thread is doing.
+    static IDictionary Stall(int ms) {
+      ms = Math.Max(0, Math.Min(10000, ms));
+      EnsureThread();
+      lock (_gate) _work.Enqueue(delegate { _busy = "a test stall"; Thread.Sleep(ms); _busy = null; });
+      _wake.Set();
+      return Json.Obj("ok", true, "stalledMs", ms);
+    }
+
+    static IDictionary OnThread(string what, Func<IDictionary> fn) {
+      EnsureThread();
       var done = new ManualResetEvent(false);
       IDictionary answer = null;
       lock (_gate) {
@@ -428,10 +446,11 @@ namespace Mantle {
       foreach (var t in _toasts) sb.Append(t["id"]).Append(',');
       sb.Append('|').Append(_access).Append('|').Append(_snapReason).Append('|').Append(_dbReason).Append('|').Append(_snapTrouble);
       string s = sb.ToString();
-      if (s == _setSig) return;
-      _setSig = s;
-      _rev++;
-      if (!_watching) return;
+      bool changed = s != _setSig;
+      if (changed) { _setSig = s; _rev++; }
+      // Published BEFORE the change event, so the read that event triggers already sees it.
+      _pub = Snapshot();
+      if (!changed || !_watching) return;
       Program.Emit(Json.Obj("ev", "notifications", "rev", _rev, "count", _toasts.Count,
                             "ok", _snapReason == null && _snapTrouble == null,
                             "reason", _snapReason ?? _snapTrouble));
@@ -439,13 +458,44 @@ namespace Mantle {
 
     // ------------------------------------------------------------------ ops
 
+    /// THE WATCHED LIST, WITHOUT WAITING (lane mantle-lanes, 2026-10-15). While the watch is on, the
+    /// thread re-reads the list whenever it changes and publishes the result here; a plain `list` is
+    /// served from it and never queues behind the thread. Before, every `list` waited for whatever the
+    /// thread was doing (a 70-800 ms listener read, a database read), and held the slow lane meanwhile:
+    /// 1.6-3.7 s, 10 times in 3 days. `fresh`, an unwatched list and the first read still go to the thread.
+    static volatile IDictionary _pub;
+
     static IDictionary List(bool fresh) {
-      IDictionary snap = OnThread("reading the notifications", delegate {
-        if (fresh || !_watching || !_haveSnap) Refresh(DbSignature());
-        return Snapshot();
-      });
+      IDictionary pub = _pub;
+      IDictionary snap;
+      if (!fresh && _watching && pub != null) snap = CopyOf(pub);
+      else {
+        snap = OnThread("reading the notifications", delegate {
+          if (fresh || !_watching || !_haveSnap) Refresh(DbSignature());
+          return Snapshot();
+        });
+      }
       FillApps(snap["toasts"] as IList);
       return snap;
+    }
+
+    /// A copy of a published snapshot and of each toast record in it: the caller's lane adds the app
+    /// icons to the copy, and the published one is shared by every reader.
+    static IDictionary CopyOf(IDictionary pub) {
+      var c = new OrderedDictionary();
+      foreach (DictionaryEntry e in pub) c[e.Key] = e.Value;
+      var toasts = new List<object>();
+      var src = pub["toasts"] as IList;
+      if (src != null) {
+        foreach (object o in src) {
+          var t = new OrderedDictionary();
+          foreach (DictionaryEntry e in (IDictionary)o) t[e.Key] = e.Value;
+          toasts.Add(t);
+        }
+      }
+      c["toasts"] = toasts;
+      c["watching"] = _watching;
+      return c;
     }
 
     /// Thread. COPIES of the toast records: the caller's lane adds the app
