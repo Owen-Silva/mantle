@@ -64,6 +64,12 @@ foreach ($prop in @($j.entries.PSObject.Properties)) {
     $left[$id] = $e
     continue
   }
+  if ($e.dryRun) {
+    # a test run's record (lib/features/ramreclaim.js under --test): nothing was changed in Windows, so
+    # nothing is written; the record is dropped
+    Say "${id}: a test run's record, nothing to put back"
+    continue
+  }
   $path = 'HKCU:\' + $key
   $cur = Read-Dword $path $name
   $isMantles = $cur.Has -and ($cur.Value -eq [int64]$e.target)
