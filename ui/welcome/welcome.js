@@ -223,8 +223,9 @@
 
   /* ---- start ---- */
   draw(null);
+  el.next.focus({ preventScroll: true });   // before data-ready: Enter works from the first frame
   document.documentElement.setAttribute('data-ready', '1');
-  requestAnimationFrame(function () { el.card.classList.add('in'); el.next.focus({ preventScroll: true }); });
+  requestAnimationFrame(function () { el.card.classList.add('in'); });
   call('welcome.state').then(function (r) { if (r && r.test) el.chip.hidden = false; }, function () { /* the cards need nothing from it */ });
   // the corners this PC really has (a changed or switched-off corner shows as it is)
   call('corners.state').then(function (r) {
