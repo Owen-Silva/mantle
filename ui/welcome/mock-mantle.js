@@ -35,7 +35,7 @@
       switch (name) {
         case 'welcome.state': return Promise.resolve({ ok: true, via: 'first start', test: q.get('test') === '1', firstRun: true, reason: 'mock' });
         case 'corners.state':
-          if (mode === 'cornersslow') return wait(400, CORNERS.cornerschanged);
+          if (mode === 'cornersslow') return wait(1500, CORNERS.cornerschanged);
           return Promise.resolve(CORNERS[mode] || CORNERS.default);
         case 'welcome.done':
           if (mode === 'donefail') return Promise.resolve({ ok: false, recorded: false, reason: 'the first-run flag could not be saved (EACCES)' });

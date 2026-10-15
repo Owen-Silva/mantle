@@ -191,7 +191,7 @@ async function main() {
       const s = await open('theme=light&mock=cornersslow');
       await s.click('#next');
       const before = await s.evaluate(() => document.querySelector('.corners').getAttribute('data-live'));
-      await sleep(550);
+      await sleep(1700);
       const after = await s.evaluate(() => ({ live: document.querySelector('.corners').getAttribute('data-live'), lines: [...document.querySelectorAll('.cline')].length, step: document.documentElement.getAttribute('data-step') }));
       check('a late corners answer swaps in place, on the same card', before === '0' && after.live === '1' && after.lines === 3 && after.step === 'keys', { before, after });
       await s.close();
