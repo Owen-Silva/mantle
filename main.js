@@ -2081,7 +2081,10 @@ function popWatchBar() {
 sidecar.on('popwatch', (ev) => { popwatch.onEvent(ev); });
 app.on('browser-window-focus', () => popwatch.refresh());
 popwatch.configure({
-  call: (args) => sidecar.call('hotkey', Object.assign({ op: 'popwatch' }, args), 1500),
+  // 4 s: the sidecar itself waits up to 3 s for its watch thread to start (Hotkey.cs StartThread), so
+  // a shorter budget gave up on watches that then started anyway. The buttons are polled meanwhile
+  // (lib/popwatch.js), so a slow answer never leaves a pop-up unwatched.
+  call: (args) => sidecar.call('hotkey', Object.assign({ op: 'popwatch' }, args), 4000),
   log: (line) => process.stdout.write(`mantle: ${line}\n`),
   toDip: (pt) => screen.screenToDipPoint(pt),        // the hook's point is per-monitor physical
   cursor: () => screen.getCursorScreenPoint(),

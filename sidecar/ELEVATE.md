@@ -257,7 +257,7 @@ Every other action, by the file that owns it (its `does` words and validator liv
 | `system.networkReset`, `system.productKey` | SysAbout.cs |
 | `system.remoteDesktop` | SysMulti.cs |
 | `time.setAutoSync`, `time.setAutoZone`, `time.setClock`, `time.syncNow` | SysTime.cs |
-| `update.activeHours`, `update.pause` | SysUpdate.cs |
+| `update.activeHours`, `update.pause`, `update.smartHours` | SysUpdate.cs |
 
 ## Tests
 

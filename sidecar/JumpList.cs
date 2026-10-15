@@ -797,6 +797,10 @@ namespace Mantle {
         if (hr != 0 || ds == null) throw new InvalidDataException("its recent-items file is damaged (no list inside it)");
         byte[] d;
         try { d = ReadAll(ds); } finally { Marshal.ReleaseComObject(ds); }
+        // A DestList stream with NOTHING in it is the same empty list (zero-fail lane, 2026-10-14:
+        // Helm's own file on Owen's machine has a 0-byte DestList and read as "could not be read").
+        // 1 to 31 bytes is a cut-off header: that one is still damaged.
+        if (d.Length == 0) { info = "empty (an empty DestList)"; return items; }
         if (d.Length < 32) throw new InvalidDataException("its DestList is " + d.Length + " bytes");
         int version = BitConverter.ToInt32(d, 0);
         int entries = BitConverter.ToInt32(d, 4);
