@@ -36,8 +36,8 @@ const JARGON = (s) => /sidecar|hwnd|\bIPC\b|renderer|dryRun|dry run|AUMID|0x[0-9
     // 2) Details: what it does, the two options, Esc closes it and focus goes back
     await pg.click('.gmmore');
     t.check('details: open, aria-expanded, "Hide details"', (await pg.eval(() => document.querySelector('.gmmore').getAttribute('aria-expanded'))) === 'true' && (await pg.text('.gmmore')) === 'Hide details');
-    t.check('details: 5 "when it is on" rows + the last game line', (await pg.count('.gmact.st-plan')) === 5 && (await pg.visible('.gmlast')) && (await pg.text('.gmlisthead')) === 'When it is on');
-    t.check('details: the two options', (await pg.count('.gmopt input[type=checkbox]')) === 2);
+    t.check('details: 6 "when it is on" rows (with the boost) + the last game line', (await pg.count('.gmact.st-plan')) === 6 && (await pg.visible('.gmlast')) && (await pg.text('.gmlisthead')) === 'When it is on');
+    t.check('details: the three options (the boost is the third, on by default)', (await pg.count('.gmopt input[type=checkbox]')) === 3);
     await shot(pg, 'gm-off-details');
     await pg.eval(() => document.querySelector('.gmopt input').focus());
     await pg.key('Escape');
