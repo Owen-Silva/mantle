@@ -307,6 +307,11 @@
   function render() {
     const m = P.m;
     if (!m) return;
+    // the open's "interactive" moment (lib/features/_open-timing.js): the first render with rows in it, once
+    if (!window.__mantleRows && ((m.apps && m.apps.length) || m.loaded)) {
+      window.__mantleRows = { at: Date.now() };
+      try { window.dispatchEvent(new Event('mantle-rows')); } catch (_) { /* the timing just says unknown */ }
+    }
     document.querySelectorAll('.tab').forEach((t) => { t.classList.toggle('on', t.dataset.view === P.view); t.setAttribute('aria-selected', t.dataset.view === P.view); });
     $('v-apps').hidden = P.view !== 'apps';
     $('v-game').hidden = P.view !== 'game';

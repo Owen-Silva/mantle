@@ -1495,6 +1495,16 @@
     if (bb) bb.disabled = !(S.hi > 0 || S.view === 'search');
     const ab = slot('about').v;
     $('testchip').hidden = !(S.test || (ab && ab.mode === 'test'));
+    rowsMark();
+  }
+  /* The open's "interactive" moment (lib/features/_open-timing.js): the first render with this page's rows
+     in it (cached or fresh), once. */
+  function rowsMark() {
+    if (window.__mantleRows) return;
+    const need = NEEDS[S.section] || [];
+    if (need.length && !need.some((k) => slot(k).st === 'ok')) return;
+    window.__mantleRows = { at: Date.now() };
+    try { window.dispatchEvent(new Event('mantle-rows')); } catch (_) { /* the timing just says unknown */ }
   }
 
   /* ---------------------------------------------------------------- input */
