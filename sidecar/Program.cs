@@ -1804,6 +1804,11 @@ namespace Mantle {
       try { detail.Add(EdgeClip.ReleaseForExit() ? "cursor clip: released" : "cursor clip: none was held"); }
       catch (Exception ex) { done = false; detail.Add("cursor clip: release failed (" + ex.Message + "); it dies with the process"); }
 
+      // Windows' own notification banners, for the apps Mantle showed its own for (ToastBanners.cs):
+      // a registry value per app, so unlike the clip it OUTLIVES this process if nothing puts it back.
+      try { detail.Add(ToastBanners.RestoreForExit()); }
+      catch (Exception ex) { done = false; detail.Add("notification banners: put back failed (" + ex.Message + "); tools\\restore-banners.ps1 finishes it"); }
+
       // GDI handles are process-owned, so this is tidiness rather than safety -
       // but a leaked DC is the kind of thing that only shows up as "Windows got
       // slow after a week", and one call costs nothing.

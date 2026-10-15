@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle notifications</title>
+<!-- Mantle's own notification banners (lib/features/toasts.js): what an app posted, on the island glass,
+     top right under the top bar. Up to three at once, newest on top, "+N more" for the rest. A click
+     goes where lib/features/_toasts-core.js clickPlan says; X closes the banner and leaves the toast in
+     the list; hovering holds every banner. The window exists only while a banner is up (RAM). -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="toasts.css">
+</head>
+<body>
+<div id="stack" role="region" aria-label="Notifications" aria-live="polite"></div>
+<template id="tpl">
+  <article class="toast" tabindex="-1">
+    <div class="head">
+      <span class="app-icon" aria-hidden="true"></span>
+      <span class="app"></span>
+      <span class="when">now</span>
+      <button type="button" class="x" title="Close (it stays in your notifications)" aria-label="Close">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="main">
+      <img class="logo" alt="" hidden>
+      <div class="text">
+        <div class="title"></div>
+        <div class="body"></div>
+        <div class="attr"></div>
+      </div>
+    </div>
+    <img class="pic" alt="" hidden>
+  </article>
+</template>
+<script src="mock-mantle.js"></script>
+<script src="toasts.js"></script>
+</body>
+</html>

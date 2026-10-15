@@ -540,6 +540,25 @@ Say "  cursor clip: $clipNote"
 if ($clipNote -like '*failed*') { Problem "cursor clip: $clipNote" }
 
 # -----------------------------------------------------------------------------
+# (f3) Give Windows its own notification pop-ups back for every app whose banner
+# Mantle turned off ("Show notifications in Mantle's style"). restore-banners.ps1
+# only writes where the value is still Mantle's 0 and is a no-op with no record.
+# -----------------------------------------------------------------------------
+$bannerScript = Join-Path $PSScriptRoot 'restore-banners.ps1'
+if (Test-Path -LiteralPath $bannerScript) {
+  try {
+    $bannerOut = & $bannerScript
+    $bannerCode = $LASTEXITCODE
+    foreach ($line in @($bannerOut)) { if ($line -ne $null -and "$line" -ne 'mantle restore-banners') { Say "  banners: $("$line".Trim())" } }
+    if ($bannerCode -ne 0) { Problem "notification banners: restore-banners.ps1 could not put every one back (see above)" }
+  } catch {
+    Problem "notification banners: restore-banners.ps1 failed ($($_.Exception.Message))"
+  }
+} else {
+  Problem "notification banners: $bannerScript is missing"
+}
+
+# -----------------------------------------------------------------------------
 # (g) Mark the state file restored, so the next Mantle does not think a run died
 # dirty and recover over the top of a desktop that is already fine.
 #

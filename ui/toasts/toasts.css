@@ -1,0 +1,84 @@
+/* toasts.css - Mantle's notification banners (lane mantle-toasts, 2026-10-15). The island theme only:
+ * every colour is a --lg-* token from ui/shared/glass-light.css, light and dark.
+ * The card is the screenshot card's surface (the HUD face: --lg-fill-strong three times over in light, one
+ * --lg-fill-pop in dark, ONE hairline, the popover shadow). No blur under it (tall-card tile glitch), no
+ * accent except focus, no glow. Motion: in from the right on --lg-dur, out on --lg-dur-out, both finish;
+ * reduced motion = none. */
+:root {
+  --hud-face: linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), var(--lg-fill-strong);
+  --card-w: 360px;
+}
+:root[data-theme="dark"] { --hud-face: var(--lg-fill-pop); }
+html, body {
+  margin: 0; height: 100%; overflow: hidden; background: transparent;
+  font-family: var(--lg-font, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif);
+  font-size: 13px; color: var(--lg-ink); user-select: none; -webkit-user-select: none; cursor: default;
+}
+/* The window is the stack plus room for its shadow: 8 px above, 16 px at each side and below. */
+#stack { position: absolute; top: 8px; right: 16px; width: var(--card-w); display: flex; flex-direction: column; gap: 8px; padding-bottom: 16px; }
+
+.toast {
+  position: relative; box-sizing: border-box; width: var(--card-w);
+  padding: 10px 12px 12px; border-radius: var(--lg-r-pop);
+  background: var(--hud-face);
+  box-shadow: 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  outline: none;
+  transform: translateX(28px); opacity: 0;
+  transition: transform var(--lg-dur) var(--lg-ease), opacity 160ms linear;
+}
+.toast.in { transform: none; opacity: 1; }
+.toast.out { transform: translateX(28px); opacity: 0; transition: transform var(--lg-dur-out) var(--lg-ease), opacity var(--lg-dur-out) linear; pointer-events: none; }
+.toast:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc), var(--lg-shadow); }
+@media (prefers-reduced-motion: reduce) { .toast, .toast.in, .toast.out { transition: none; transform: none; } }
+
+/* app line: icon, name, age, close */
+.head { display: flex; align-items: center; gap: 7px; height: 20px; margin-bottom: 6px; }
+.app-icon { flex: 0 0 16px; width: 16px; height: 16px; display: grid; place-items: center; }
+.app-icon img { width: 16px; height: 16px; object-fit: contain; display: block; }
+.app-icon .letter { width: 16px; height: 16px; border-radius: 4px; background: var(--lg-tile); color: var(--lg-ink-2);
+  font-size: 10px; font-weight: 600; display: grid; place-items: center; line-height: 1; }
+.app { flex: 1 1 auto; min-width: 0; font-size: 12px; font-weight: 600; color: var(--lg-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.when { flex: 0 0 auto; font-size: 11px; color: var(--lg-ink-3); font-variant-numeric: tabular-nums; }
+
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: default; outline: none; }
+.x {
+  flex: 0 0 22px; width: 22px; height: 22px; margin-right: -4px; border-radius: var(--lg-r-chip, 6px);
+  display: grid; place-items: center; color: var(--lg-ink-2);
+  opacity: 0; transition: opacity 120ms linear, background-color 120ms steps(2);
+}
+.x svg { width: 16px; height: 16px; }
+/* macOS's rule: the close button comes up with the pointer (and always on a banner that waits for you) */
+.toast:hover .x, .toast:focus-within .x, .toast.sticky .x { opacity: 1; }
+.x:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.x:active { background: var(--lg-press); }
+.x:focus-visible { opacity: 1; box-shadow: 0 0 0 2px var(--lg-acc); }
+
+/* the message */
+.main { display: flex; gap: 10px; align-items: flex-start; }
+.logo { flex: 0 0 36px; width: 36px; height: 36px; border-radius: var(--lg-r-ctl); object-fit: cover; background: var(--lg-sunk); }
+.logo.circle { border-radius: 50%; }
+.logo[hidden], .pic[hidden] { display: none; }
+.text { flex: 1 1 auto; min-width: 0; }
+.title { font-size: 13px; font-weight: 600; line-height: 18px; color: var(--lg-ink);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.body { font-size: 12.5px; line-height: 17px; color: var(--lg-ink-2); margin-top: 1px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
+.attr { font-size: 11px; line-height: 15px; color: var(--lg-ink-3); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title:empty, .body:empty, .attr:empty { display: none; }
+.pic { display: block; width: 100%; max-height: 180px; margin-top: 10px; border-radius: var(--lg-r-ctl); object-fit: cover; background: var(--lg-sunk);
+  box-shadow: 0 0 0 1px var(--lg-edge-out); }
+
+/* a banner that opens something looks it: the face lifts a touch under the pointer, gives when pressed */
+.toast:not(.out):hover { background: linear-gradient(var(--lg-hover), var(--lg-hover)), var(--hud-face); }
+.toast:not(.out):active { background: linear-gradient(var(--lg-press), var(--lg-press)), var(--hud-face); }
+
+/* "+N more": the rest are in the list; a click opens it */
+.more {
+  align-self: flex-end; height: 26px; padding: 0 11px; border-radius: var(--lg-r-pill);
+  background: var(--hud-face); box-shadow: 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  font-size: 12px; font-weight: 600; color: var(--lg-ink-2); font-variant-numeric: tabular-nums;
+  transition: opacity 160ms linear;
+}
+.more:hover { background: linear-gradient(var(--lg-hover), var(--lg-hover)), var(--hud-face); color: var(--lg-ink); }
+.more:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc), var(--lg-shadow); }
+.more[hidden] { display: none; }
