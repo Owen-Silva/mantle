@@ -82,7 +82,7 @@
     clearTimeout(S.outTimer);
     S.outTimer = setTimeout(function () {
       if (bridge) bridge.call('screenshot.cardDismiss', { seq: seq, why: why }).catch(function () { return null; });
-    }, reducedMotion() ? 0 : OUT_MS);
+    }, reducedMotion() ? 120 : OUT_MS);   // reduced motion: the 120 ms fade (lane mantle-motion)
   }
   function reducedMotion() { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
 

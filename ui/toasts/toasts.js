@@ -25,8 +25,18 @@
   var LIFE_MS = window.__toastLifeMs || 6000;
   var RESUME_MS = window.__toastResumeMs || 1500;
   var STALE_MS = 20000;
-  var OUT_MS = 200;
-  var FLIP_MS = 180;
+  var OUT_MS = 200;   // the exit is 45 % of --m-dur-s (144 ms): it lands inside this
+  // the shared spring (glass-light.css --m-spring), read once and proven parseable, or the old curve
+  var SPRING = (function () {
+    var old = 'cubic-bezier(.2,.8,.2,1)';
+    try {
+      var s = getComputedStyle(document.documentElement).getPropertyValue('--m-spring').replace(/\s+/g, ' ').trim();
+      if (!s) return old;
+      document.documentElement.animate([], { duration: 1, easing: s }).cancel();
+      return s;
+    } catch (_) { return old; }
+  })();
+  var FLIP_MS = 240;   // --m-dur-xs: the cards below move up on the shared spring (lane mantle-motion)
   var ROOM_TOP = 8;          // px the shape keeps above the stack
   var shrinkT = null;
   var stack = document.getElementById('stack');
@@ -133,7 +143,7 @@
       if (!c.isConnected || c.hidden || !c.animate) return;
       var dy = top - c.getBoundingClientRect().top;
       if (Math.abs(dy) <= 1) return;
-      var a = c.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'translateY(0)' }], { duration: FLIP_MS, easing: 'cubic-bezier(.2,.8,.2,1)', composite: 'add' });
+      var a = c.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'translateY(0)' }], { duration: FLIP_MS, easing: SPRING, composite: 'add' });
       if (done) a.pause();
       anims.push(a);
     });

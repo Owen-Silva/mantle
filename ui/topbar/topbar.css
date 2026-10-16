@@ -191,7 +191,7 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 :root:not([data-theme="dark"]) .dd::-webkit-scrollbar-button { display: none; height: 0; }
 :root:not([data-theme="dark"]) .dd::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
 :root:not([data-theme="dark"]) .dd:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); }
-.dd.anim { animation: dd-in 140ms var(--lg-ease) backwards; }
+.dd.anim { animation: dd-in var(--m-dur-xs) var(--m-spring) backwards, m-fade calc(var(--m-dur-xs) * .4) var(--m-fade-in) backwards; }   /* the shared pop-in (lane mantle-motion) */
 .dd.wait { visibility: hidden; animation: none; }
 @keyframes dd-in { from { opacity: 0; transform: translateY(-3px); } }
 .r {
@@ -423,3 +423,6 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 :root[data-theme="dark"] .ap-btn, :root[data-theme="dark"] .ap-ck, :root[data-theme="dark"] .ap-lnk, :root[data-theme="dark"] .ap-res { font-size: 12px; }
 :root[data-theme="dark"] .ap-btn { height: 26px; background: var(--lg-card); }
 :root[data-theme="dark"] .ap-btn:hover { background: var(--lg-press); }
+
+/* reduced motion: opacity only, 120 ms (the shared rule, lane mantle-motion) */
+@media (prefers-reduced-motion: reduce) { .dd.anim { animation: m-fade 120ms linear backwards; } }

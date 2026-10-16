@@ -14,10 +14,10 @@
   --pw: 360px;
   --ph: 424px;
   --cell: 40px;
-  /* a critically-light spring (about 0.75 damping), sampled for linear() */
-  --spring: linear(0, 0.012, 0.047 2.3%, 0.19 5%, 0.39 8.2%, 0.62 12%, 0.8 15.8%, 0.92 19.6%, 1 23.6%,
-                   1.04 28%, 1.05 32%, 1.04 37%, 1.02 43%, 1.005 52%, 0.998 64%, 1);
-  --spring-soft: linear(0, 0.06 4%, 0.28 10%, 0.62 20%, 0.86 31%, 0.97 43%, 1.01 56%, 1.005 72%, 1);
+  /* the shared spring (glass-light.css --m-spring, lane mantle-motion): the bar's own points, so the picker
+     moves like every other Mantle pop-in. Its old local spring overshot 5 %; the shared one 1.5 %. */
+  --spring: var(--m-spring);
+  --spring-soft: var(--m-spring);
 }
 * { box-sizing: border-box; }
 html, body {
@@ -41,12 +41,12 @@ html, body {
   box-shadow: inset 0 1px 0 var(--lg-edge-in), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
   /* closed: a step back from the caret, see-through */
   opacity: 0;
-  transform: translateY(-10px) scale(0.955);
+  transform: translateY(-8px) scale(.96);
   transform-origin: 28px 0;
-  transition: opacity 110ms ease-in, transform 180ms ease-in;
+  transition: opacity calc(var(--m-dur-s) * .45) var(--m-fade-out), transform calc(var(--m-dur-s) * .45) var(--m-accel);
 }
-.panel.above { transform: translateY(10px) scale(0.955); transform-origin: 28px 100%; }
-.panel.on { opacity: 1; transform: none; transition: opacity 150ms ease-out, transform 460ms var(--spring); }
+.panel.above { transform: translateY(8px) scale(.96); transform-origin: 28px 100%; }
+.panel.on { opacity: 1; transform: none; transition: opacity calc(var(--m-dur-s) * .4) var(--m-fade-in), transform var(--m-dur-s) var(--m-spring); }
 :root[data-theme="dark"] .panel { background: var(--lg-fill); box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out); }
 
 /* ---- the search line (the app keeps the keyboard: this is drawn, not an <input>) ---- */
@@ -90,7 +90,7 @@ html, body {
 .pill {
   position: absolute; top: 3px; left: 3px; height: 26px; border-radius: var(--lg-r-pill, 999px);
   background: var(--lg-card); box-shadow: 0 0 0 1px var(--lg-edge-out), 0 1px 2px rgba(0, 0, 0, 0.08);
-  transition: transform 420ms var(--spring), width 420ms var(--spring);
+  transition: transform var(--m-dur-s) var(--m-spring);   /* width snaps: only transform moves (lane mantle-motion) */
 }
 :root[data-theme="dark"] .pill { box-shadow: 0 0 0 1px var(--lg-edge-out); }
 
@@ -118,14 +118,14 @@ html, body {
   position: relative; z-index: 1; width: var(--cell); height: var(--cell); display: grid; place-items: center;
   font: 24px/1 'Segoe UI Emoji'; border-radius: 10px; cursor: pointer; transition: transform 260ms var(--spring);
 }
-.c:active { transform: scale(0.9); transition-duration: 60ms; }
+.c:active { background: var(--lg-press); }   /* pressed is a fill, never a scale (lane mantle-motion) */
 .kao .cells { grid-template-columns: repeat(2, 1fr); gap: 2px; }
 .kao .c { width: auto; height: 38px; font: 15px/1 'Segoe UI', 'Segoe UI Symbol', sans-serif; color: var(--lg-ink); white-space: nowrap; }
 .sym .c { font: 21px/1 'Segoe UI', 'Segoe UI Symbol', 'Cambria Math', sans-serif; color: var(--lg-ink); }
 .ring {
   position: absolute; left: 0; top: 0; z-index: 0; width: var(--cell); height: var(--cell); border-radius: 10px;
   background: var(--lg-acc-soft); box-shadow: inset 0 0 0 1px var(--lg-acc-line); pointer-events: none;
-  transition: transform 300ms var(--spring), width 300ms var(--spring), height 300ms var(--spring), opacity 120ms;
+  transition: transform var(--m-dur-xs) var(--m-spring), opacity 120ms;   /* size snaps: no layout per frame (lane mantle-motion) */
 }
 .ring.jump { transition: opacity 120ms; }
 .ring.off { opacity: 0; }
@@ -155,7 +155,7 @@ html, body {
 .panel.note-only .notice { position: static; margin: 12px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .panel, .panel.on, .ring, .pill, .c, .tone { transition: opacity 100ms !important; }
+  .panel, .panel.on, .ring, .pill, .c, .tone { transition: opacity 120ms linear !important; }
   .panel, .panel.above { transform: none; }
   #results .c, .tones button, .notice, .cats button.on::after { animation: none !important; }
 }

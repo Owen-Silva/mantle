@@ -37,7 +37,8 @@ html, body {
   box-shadow: 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
   overflow: hidden;
   transform: translateY(8px); opacity: 0;
-  transition: transform var(--lg-dur) var(--lg-ease), opacity 180ms linear;
+  /* the shared pop-in (glass-light.css --m-*, lane mantle-motion), the same in both themes */
+  transition: transform var(--m-dur-s) var(--m-spring), opacity calc(var(--m-dur-s) * .4) var(--m-fade-in);
 }
 /* the face, at zero specificity (lane same-huds-css, 2026-10-09): an id rule outranks the shared
    dark .hud-bd paint (ui/shared/hud-backdrop.css, two classes), so as a plain #card rule the blurred
@@ -45,9 +46,9 @@ html, body {
 :where(#card) { background: var(--hud-face); }
 #card.in { transform: none; opacity: 1; }
 /* Put away: it slides back down and fades on the exit timing, then main parks the window (card.js OUT_MS). */
-#card.out { transform: translateY(8px); opacity: 0; transition: transform var(--lg-dur-out) var(--lg-ease), opacity var(--lg-dur-out) linear; }
+#card.out { transform: translateY(8px); opacity: 0; transition: transform calc(var(--m-dur-s) * .45) var(--m-accel), opacity calc(var(--m-dur-s) * .45) var(--m-fade-out); }
 #card[hidden] { display: none; }
-@media (prefers-reduced-motion: reduce) { #card, #card.out { transition: none; transform: none; } }
+@media (prefers-reduced-motion: reduce) { #card, #card.out { transition: opacity 120ms linear; transform: none; } }
 
 button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: default; outline: none; }
 button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
@@ -76,7 +77,7 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 .thumb:not([disabled]):hover img, .thumb:focus-visible img,
 .thumb:not([disabled]):hover canvas, .thumb:focus-visible canvas { filter: brightness(.9); }
 .thumb:not([disabled]):hover .open-glyph, .thumb:focus-visible .open-glyph { opacity: 1; }
-.thumb:not([disabled]):active { transform: scale(.97); }
+.thumb:not([disabled]):active { filter: brightness(.94); }   /* pressed: never a scale (lane mantle-motion) */
 .thumb:focus-visible { box-shadow: 0 0 0 1px var(--lg-edge-out), 0 0 0 3px var(--lg-acc); }
 
 .text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding-right: 22px; }
@@ -157,9 +158,9 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
    timer, it does not wait on a transition event). Type is already on Helm's scale. Light is untouched. */
 :root[data-theme="dark"] #card {
   box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out);
-  transition: transform 160ms var(--lg-ease-ui), opacity 160ms var(--lg-ease-ui);
+  /* motion: the shared pop-in above, in dark too (lane mantle-motion) */
 }
-:root[data-theme="dark"] #card.out { transition: none; }
+/* dark plays the same exit as light (lane mantle-motion) */
 :root[data-theme="dark"] .act {
   padding: 0 9px;
   font-weight: 500;
@@ -179,4 +180,4 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 :root[data-theme="dark"] .x:active { background: var(--lg-card); }
 :root[data-theme="dark"] button:focus-visible { box-shadow: var(--lg-focus); }
 :root[data-theme="dark"] .thumb:focus-visible { box-shadow: 0 0 0 1px var(--lg-edge-out), var(--lg-focus); }
-@media (prefers-reduced-motion: reduce) { :root[data-theme="dark"] #card, :root[data-theme="dark"] .act { transition: none; } }
+@media (prefers-reduced-motion: reduce) { :root[data-theme="dark"] #card { transition: opacity 120ms linear; } :root[data-theme="dark"] .act { transition: none; } }

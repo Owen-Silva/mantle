@@ -200,9 +200,11 @@
     if (seq !== seqNow) return;                       // a newer right-click took over
     if (styled.some((x) => !x)) console.warn('[deskmenu] a menu style sheet did not load, so the menu may look plain');
     syncTheme();
+    ui.panel.classList.remove('dm-in');           // the pop-in starts from its rest pose (deskmenu.css, lane mantle-motion)
     render();
     const res = await M.call('deskmenu.place', Object.assign({ seq }, size())).catch((e) => ({ ok: false, reason: e.message }));
     if (!res || res.ok === false || !win || win.closed) return;
+    win.requestAnimationFrame(() => { if (seq === seqNow && ui) ui.panel.classList.add('dm-in'); });   // ...on its first frame on screen
     win.requestAnimationFrame(() => win.requestAnimationFrame(() => {
       M.call('deskmenu.painted', { seq }).catch(() => { /* the timing line is lost, nothing else */ });
     }));

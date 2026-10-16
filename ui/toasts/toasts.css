@@ -31,15 +31,16 @@ html, body {
   background: var(--hud-face);
   box-shadow: 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
   outline: none;
-  transform: translateX(28px); opacity: 0;
-  transition: transform var(--lg-dur) var(--lg-ease), opacity 160ms linear;
+  /* the shared pop-in (glass-light.css --m-*, lane mantle-motion): in from the screen edge it is anchored to */
+  transform: translateX(12px); opacity: 0;
+  transition: transform var(--m-dur-s) var(--m-spring), opacity calc(var(--m-dur-s) * .4) var(--m-fade-in);
 }
 .toast.in { transform: none; opacity: 1; }
-.toast.out { transform: translateX(28px); opacity: 0; transition: transform var(--lg-dur-out) var(--lg-ease), opacity var(--lg-dur-out) linear; pointer-events: none; }
-.toast:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc), var(--lg-shadow); }
+.toast.out { transform: translateX(12px); opacity: 0; transition: transform calc(var(--m-dur-s) * .45) var(--m-accel), opacity calc(var(--m-dur-s) * .45) var(--m-fade-out); pointer-events: none; }
+.toast:focus-visible { box-shadow: var(--lg-focus), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow); }   /* the inset ring (unison) */
 :root[data-theme="dark"] .toast { box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out); }
-:root[data-theme="dark"] .toast:focus-visible { box-shadow: var(--lg-lip-up), 0 0 0 2px var(--lg-acc); }
-@media (prefers-reduced-motion: reduce) { .toast, .toast.in, .toast.out { transition: none; transform: none; } }
+:root[data-theme="dark"] .toast:focus-visible { box-shadow: var(--lg-focus), var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out); }
+@media (prefers-reduced-motion: reduce) { .toast, .toast.in, .toast.out { transition: opacity 120ms linear; transform: none; } }
 
 /* app line: icon, name, age, close */
 .head { display: flex; align-items: center; gap: 7px; height: 20px; margin-bottom: 6px; }

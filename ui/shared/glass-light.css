@@ -92,11 +92,28 @@
      tabs and icon buttons packed edge to edge never paint over their neighbours. tools/overlap-audit.js
      fails any ring that reaches another control or its text. Use: box-shadow: var(--lg-focus); outline: none */
   --lg-focus: inset 0 0 0 1.5px var(--lg-acc), inset 0 0 0 3px rgba(255,255,255,.9);
-  /* A spring that settles (about 1% overshoot, then rests), for things that MOVE: a pop-up arriving, a
-     selection travelling between rows. Use it on a transition, never a keyframe, so a change of mind
-     mid-move is picked up from where it is. Fades and colour changes keep --lg-ease-ui. */
-  --lg-spring: linear(0, .157 4.4%, .5 11.3%, .776 18.9%, .91 25.7%, .977 33.3%, 1.006 42.4%, 1.012 52.3%, 1.004 72.2%, 1);
-  --lg-dur-spring: 420ms;
+  /* ---- MOTION IN UNISON (lane mantle-motion, 2026-10-16; the spec is notes/motion-unison.md) ----
+     ONE motion for every pop-in in Mantle, Quartz and Helm, with the SAME names and values in all three
+     theme files. Owen, on the bar's load-in: "we should make the rest ... similar so they are all in
+     unison and its super professional".
+     IN: --m-spring, the bar's own damped spring (damping ratio 0.8), the exact 41 points of
+     ui/bar/bar.css body.up --bar-move. linear() is over normalised time, so the SAME points played
+     over a shorter duration ARE the same spring, only quicker: a pop-up uses the points unchanged and
+     picks its duration by how far it travels. 90 % in at 35 % of the duration, a 1.5 % overshoot.
+     OUT: --m-accel, a plain accelerate at about 45 % of the IN duration. Leaving is not an event.
+     FADE: --m-fade-in over the first 40 % of the IN; --m-fade-out with the exit.
+     Only transform and opacity ever move. Reduced motion: opacity only, 120 ms. */
+  --m-spring: linear(0, 0.0208, 0.0739, 0.1478, 0.2337, 0.3245, 0.4153, 0.5025, 0.5838, 0.6577, 0.7235,
+    0.7808, 0.8301, 0.8716, 0.906, 0.9341, 0.9566, 0.9742, 0.9876, 0.9977, 1.0049, 1.0098, 1.0128, 1.0145,
+    1.0151, 1.015, 1.0143, 1.0132, 1.012, 1.0106, 1.0092, 1.0079, 1.0066, 1.0055, 1.0044, 1.0035, 1.0028,
+    1.0021, 1.0015, 1.0011, 1);
+  --m-accel:    cubic-bezier(.3, 0, .8, .15);
+  --m-fade-in:  cubic-bezier(.2, 0, 0, 1);
+  --m-fade-out: cubic-bezier(.4, 0, 1, 1);
+  --m-dur-xs: 240ms;   /* tooltips, chips, small menus */
+  --m-dur-s:  320ms;   /* pop-ups, popovers, flyouts */
+  --m-dur-m:  440ms;   /* panels, sheets, dialogs */
+  --m-dur-l:  560ms;   /* the bar, docks and other whole-edge surfaces */
 
   /* ---- states on light glass ------------------------------------------
      Ink at low alpha, never white: a white wash on a white-tinted pane is invisible, and a hover
@@ -136,7 +153,7 @@
      lands with 90ms of margin. Same curve, so it is the same object leaving. bar.css picks between
      the two by state — body.up takes --lg-dur, the bare body takes --lg-dur-out — so an exit has a
      real duration even if no script ever writes one. */
-  --lg-dur:     560ms;
+  --lg-dur:     var(--m-dur-l);
   --lg-dur-out: 260ms;
   --lg-ease:    cubic-bezier(.22,.68,.30,1);
 
@@ -288,3 +305,7 @@
    OUTSIDE the box and landed on the next button: clipboard's pin and delete, Files' window buttons). Zero
    specificity, so every page rule still wins. Lane overlap, 2026-10-15. */
 :where(:focus-visible) { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
+
+/* The shared fade of a pop-in (lane mantle-motion): listed LAST after a surface's own rise keyframe, it
+   owns opacity, so the rise moves on --m-spring and the fade runs on --m-fade-in over 40 % of the time. */
+@keyframes m-fade { from { opacity: 0; } }

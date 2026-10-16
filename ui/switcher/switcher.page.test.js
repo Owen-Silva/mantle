@@ -319,7 +319,8 @@ async function liveList(p) {
   w1 = await panelBox();
   const glide = await p.evaluate(() => ({ live: document.body.classList.contains('is-live'), tp: getComputedStyle(document.getElementById('panel')).transitionProperty, td: getComputedStyle(document.getElementById('panel')).transitionDuration }));
   check('live shrink: 5 tiles, one row', t.length === 5 && lay.rows === 1);
-  check('live shrink: the panel loses its row by gliding (height, --lg-dur-ui-slow)', glide.live && /height/.test(glide.tp) && /^0.(2|13)s$/.test(glide.td), JSON.stringify(glide));
+  // lane mantle-motion: only transform and opacity ever animate (motion-unison.md), so the row goes at once, not by a height glide
+  check('live shrink: the panel takes its new height at once (no height transition: no layout per frame)', glide.live && !/height/.test(glide.tp), JSON.stringify(glide));
   await p.waitForTimeout(260);
   w1 = await panelBox();
   check('live shrink: same width, same centre, same top; only the height changed', Math.abs(w1.w - w0.w) < 0.5 && Math.abs(w1.x - w0.x) < 0.5 && Math.abs(w1.y - w0.y) < 0.5 && w1.h < w0.h - 50, JSON.stringify({ w0, w1 }));
