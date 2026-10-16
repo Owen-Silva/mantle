@@ -132,7 +132,7 @@ function discover() {
     entries.push({ id: 'selftest:' + x, kind: 'selftest', file: f, env, name: x });
   }
   // OPT-IN (lane perfgate, 2026-10-15): the budget gate, tools/perf-budget.js (rules in PERF.md). One invisible
-  // --test copy for ~5-8 min, and its verdict is timing: never part of a plain run. Asked for with --perf, or
+  // --test copy for ~11 min, and its verdict is timing: never part of a plain run. Asked for with --perf, or
   // by naming it in --only (--only=perf:budget). --no-lock: the suite's caller already holds
   // %TEMP%\claude-heavytest.mutex (the gate would wait on its own caller otherwise); run it alone, not beside
   // another Electron run, or its timings mean nothing.
