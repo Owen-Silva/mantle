@@ -37,8 +37,15 @@
     full: 'Click to capture this screen · Esc to cancel',
     text: 'Drag over text to copy it · Esc to cancel',
   };
+  // lane screenrec: the same three picks, recording instead of copying (V toggles; the chord again stops it)
+  var REC_HINTS = {
+    rect: 'Drag an area to record · Esc to cancel',
+    window: 'Click a window to record it · Esc to cancel',
+    full: 'Click to record this screen · Esc to cancel',
+  };
+  function hintFor(mode) { return (S.record && REC_HINTS[mode]) || HINTS[mode]; }
   var S = {
-    seq: 0, grab: 0, mon: null, windows: [], mode: 'rect', view: null,
+    seq: 0, grab: 0, mon: null, windows: [], mode: 'rect', view: null, record: false,
     ocr: { available: false, why: 'Mantle has not said yet whether Windows’ OCR is available' },
     ptr: null,          // the last pointer position on this page (CSS px)
     kbd: null,          // the keyboard crosshair (CSS px), when the arrows are in use
@@ -127,8 +134,27 @@
     b.title = ok ? 'Copy text (T)' : 'Copy text is unavailable: ' + ((S.ocr && S.ocr.why) || 'no reason was given');
   }
 
+  /** Record on/off (lane screenrec): the button beside the modes, or V. Copy text has no recording, so it
+   *  falls back to Rectangle. A Record button main marked unavailable answers with its reason. */
+  function setRecord(on, tell) {
+    var b = document.getElementById('rec');
+    if (on && b && b.getAttribute('aria-disabled') === 'true') { hint.textContent = b.title; hint.classList.add('warn'); return; }
+    S.record = !!on;
+    document.body.classList.toggle('record', S.record);
+    if (b) b.setAttribute('aria-pressed', String(S.record));
+    if (S.record && S.mode === 'text') setMode('rect', tell);
+    else { hint.classList.remove('warn'); hint.textContent = hintFor(S.mode); redraw(); }
+    if (tell) send('record', { on: S.record });
+  }
+  window.__shotRecord = setRecord;   // for the tests and shoot.js
+
   function setMode(mode, tell) {
     if (!HINTS[mode]) return;
+    if (mode === 'text' && S.record) {
+      hint.textContent = 'Copy text is for screenshots: turn Record off (V) to use it';
+      hint.classList.add('warn');
+      return;
+    }
     if (mode === 'text' && !(S.ocr && S.ocr.available)) {
       // NO SILENT FAILURES: the press is answered, in the hint, with the reason; the mode stays.
       hint.textContent = 'Copy text is unavailable: ' + ((S.ocr && S.ocr.why) || 'no reason was given');
@@ -144,7 +170,7 @@
     Array.prototype.forEach.call(bar.querySelectorAll('.mode'), function (b) {
       b.setAttribute('aria-pressed', String(b.getAttribute('data-mode') === mode));
     });
-    hint.textContent = HINTS[mode];
+    hint.textContent = hintFor(mode);
     redraw();
     if (tell) send('mode', { mode: mode });
   }
@@ -166,6 +192,7 @@
       seq: S.seq, grab: S.grab, monitor: S.mon.index, mode: S.mode, via: via,
       rect: { x: t.phys.x, y: t.phys.y, w: t.phys.w, h: t.phys.h },
       kind: t.phys.kind || 'area',
+      record: S.record || undefined, hwnd: S.record ? t.phys.hwnd : undefined,
     });
     return true;
   }
@@ -299,6 +326,7 @@
     var b = e.target.closest('button');
     if (!b || S.done) return;
     if (b.id === 'close') { cancel('the close button'); return; }
+    if (b.id === 'rec') { setRecord(!S.record, true); return; }
     setMode(b.getAttribute('data-mode'), true);
   });
 
@@ -307,6 +335,7 @@
     if (S.done || S.failed) return;
     var onButton = e.target && e.target.tagName === 'BUTTON';
     var k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (k === 'v') { setRecord(!S.record, true); e.preventDefault(); return; }
     var byKey = { r: 'rect', w: 'window', f: 'full', t: 'text' }[k];
     if (byKey) { setMode(byKey, true); e.preventDefault(); return; }
     var step = e.shiftKey ? 10 : 1;
@@ -334,6 +363,15 @@
 
   if (!bridge) { fail('this page was opened without Mantle (no window.mantle bridge)'); return; }
   bridge.on('screenshot.frame', onFrame);
+  // lane screenrec: main says whether Record is on (remembered) and whether recording is available at all
+  bridge.on('screenshot.record', function (r) {
+    var b = document.getElementById('rec');
+    if (b && r && typeof r.available === 'boolean') {
+      b.setAttribute('aria-disabled', String(!r.available));
+      b.title = r.available ? 'Record instead of a screenshot (V)' : 'Recording is unavailable: ' + (r.why || 'no reason was given');
+    }
+    if (r && typeof r.on === 'boolean' && r.on !== S.record) setRecord(r.on && r.available !== false, false);
+  });
   bridge.on('screenshot.mode', function (m) { if (m && m.mode && m.mode !== S.mode && !S.done) setMode(m.mode, false); });
   bridge.on('screenshot.clear', function (c) { canary({ on: false }); clear(c); });
   // Main asked Windows' OCR again during this capture (it was unavailable): the Copy text button follows.

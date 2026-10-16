@@ -38,6 +38,12 @@
     <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2.4 1.6"/><path d="M6.5 7h7M10 7v6.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
     <span>Copy text</span>
   </button>
+  <!-- Record (lane screenrec, 2026-10-15): the same picks, recorded instead of copied (lib/features/screenrec.js). -->
+  <span class="sep" aria-hidden="true"></span>
+  <button type="button" id="rec" class="rec" aria-pressed="false" title="Record instead of a screenshot (V)">
+    <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.25" fill="none" stroke="currentColor" stroke-width="1.4"/><circle class="rec-dot" cx="10" cy="10" r="3.4" fill="currentColor"/></svg>
+    <span>Record</span>
+  </button>
   <span class="sep" aria-hidden="true"></span>
   <button type="button" id="close" title="Cancel (Esc)" aria-label="Cancel">
     <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
