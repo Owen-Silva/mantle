@@ -121,18 +121,20 @@ namespace Mantle {
     // app is in front main gives it back (Windows' Game Bar has its own way there).
     // WIN+P (lane qstiles, 2026-10-15): Mantle's Project pop-up (lib/features/project.js), in place
     // of Windows' Project flyout. A plain Win chord like Win+E (VK 0x50); FAIL-OPEN the same way.
+    // WIN+. and WIN+; (lane mantle-emoji, 2026-10-15): the emoji picker, lib/features/emoji.js (Windows'
+    // panel answers both). Plain Win chords (VK_OEM_PERIOD 0xBE, VK_OEM_1 0xBA), fail-open as Win+R.
     // Order (wave 4): every table here grows only at the end, in lib/features.js CHORDS order.
     public static readonly string[] ChordNames = {
       "Win+S", "Win+V", "Win+Tab", "Win+Left", "Win+Right", "Win+Up", "Win+Down", "Win+Z",
       "Win+Shift+S", "PrintScreen", "VolumeUp", "VolumeDown", "VolumeMute", "Win+Alt+T", "Win+Ctrl+T", "Win+Alt+N", "Win+I",
-      "Ctrl+Shift+Esc", "Win+E", "Win+R", "Win+X", "Win+G", "Win+P"
+      "Ctrl+Shift+Esc", "Win+E", "Win+R", "Win+X", "Win+G", "Win+P", "Win+.", "Win+;"
     };
-    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD, 0x54, 0x54, 0x4E, 0x49, 0x1B, 0x45, 0x52, 0x58, 0x47, 0x50 };
-    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false, true, true, true, true, false, true, true, true, true, true };
-    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, true, false, false, false, false, false };
-    static readonly bool[] ChordAlt = { false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, true, false, false, false, false, false, false, false };
-    static readonly bool[] ChordCtrl = { false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false, false, false, false, false };
-    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false };
+    static readonly int[] ChordVk = { 0x53, 0x56, 0x09, 0x25, 0x27, 0x26, 0x28, 0x5A, 0x53, 0x2C, 0xAF, 0xAE, 0xAD, 0x54, 0x54, 0x4E, 0x49, 0x1B, 0x45, 0x52, 0x58, 0x47, 0x50, 0xBE, 0xBA };
+    static readonly bool[] ChordWin = { true, true, true, true, true, true, true, true, true, false, false, false, false, true, true, true, true, false, true, true, true, true, true, true, true };
+    static readonly bool[] ChordShift = { false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false, false };
+    static readonly bool[] ChordAlt = { false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, true, false, false, false, false, false, false, false, false, false };
+    static readonly bool[] ChordCtrl = { false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, true, false, false, false, false, false, false, false };
+    static readonly bool[] ChordRepeats = { false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false };
     /// Observed keys are REPORTED on every keydown (auto-repeat included: a held Volume Up keeps
     /// stepping) and NEVER swallowed: Windows still changes the volume itself. A volume key that
     /// is also a TAKEN chord is the chord's (swallowed, a chord event); untaken, it is observed.

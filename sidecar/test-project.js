@@ -67,7 +67,7 @@ const words = (st) => {
       t.check(name, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
     };
     const winD = kv(VK.LWIN, true), winU = kv(VK.LWIN, false), w = { win: true };
-    const ALL = ['Win+S', 'Win+V', 'Win+Tab', 'Win+I', 'Win+E', 'Win+R', 'Win+X', 'Win+G', 'Win+P'];
+    const ALL = ['Win+S', 'Win+V', 'Win+Tab', 'Win+I', 'Win+E', 'Win+R', 'Win+X', 'Win+G', 'Win+P', 'Win+.', 'Win+;'];
     const unknown = await s.send('hotkey', { chords: ['Win+Q'] }, 4000);
     t.check('the protocol knows Win+P', unknown.ok === false && /Win\+P\b/.test(unknown.error), unknown.error);
     const refused = await s.send('hotkey', { chords: ['Win+P'] }, 4000);
