@@ -683,9 +683,10 @@ function galleryShots(t) {
       await p.keyboard.press('ArrowRight');
       await p.waitForTimeout(250);   // dark's ring eases in over --lg-dur-ui
       check(`17 ${T}: ArrowRight moves to the next photo, with a focus ring`, await active(p) === 'builtin:cloud-peaks' &&
-        /* light: a solid outline; dark: Helm's ring, box-shadow var(--lg-focus), no outline (lane same-finish) */
+        /* light: a solid outline; dark: a solid outline INSIDE the box (lane overlap: it paints over the photo, where the
+           inset shadow would sit under it) plus the inset var(--lg-focus) over the tile's inline hairline (lane same-finish) */
         await p.evaluate((dk) => { const cs = getComputedStyle(document.activeElement);
-          return dk ? cs.outlineStyle === 'none' && /rgba\(159, 180, 204, 0\.55\) 0px 0px 0px 3px/.test(cs.boxShadow) : cs.outlineStyle === 'solid'; }, T === 'dark'));
+          return dk ? cs.outlineStyle === 'solid' && parseFloat(cs.outlineOffset) < 0 && /rgba\(159, 180, 204, 0\.95\) 0px 0px 0px 1\.5px inset/.test(cs.boxShadow) : cs.outlineStyle === 'solid'; }, T === 'dark'));
       await p.keyboard.press('ArrowLeft');
       await p.click('[data-credit]');
       await p.waitForTimeout(200);
