@@ -141,7 +141,9 @@ kbd { display: inline-grid; place-items: center; min-width: 22px; height: 20px; 
 :root[data-theme="dark"] .btn.pri:disabled { background: var(--lg-card); color: var(--lg-ink-3); }
 :root[data-theme="dark"] .viewer { background: var(--lg-fill-pop, var(--lg-fill)); }
 html.wall-on[data-theme="dark"] .viewer { background: var(--lg-fill); }
-:root[data-theme="dark"] .toast { background: var(--lg-fill-pop, var(--lg-fill)); }
+/* dark: 18 DIP above the window's edge cannot hold --lg-shadow's 88 DIP fall (the clipped-shadow rule):
+   the toast ends on its hairline and lip instead of a band cut off at the bottom of the window */
+:root[data-theme="dark"] .toast { background: var(--lg-fill-pop, var(--lg-fill)); box-shadow: var(--lg-lip-up); }
 :root[data-theme="dark"] .cm, :root[data-theme="dark"] .vmeta, :root[data-theme="dark"] .trim-info { color: var(--lg-ink-2); }
 :root[data-theme="dark"] .head-line { background: var(--lg-ink); }
 :root[data-theme="dark"] kbd { background: var(--lg-card); box-shadow: inset 0 0 0 1px var(--lg-edge-strong); }
