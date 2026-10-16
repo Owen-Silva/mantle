@@ -74,6 +74,7 @@
     });
     if (grid.parentNode) grid.parentNode.insertBefore(me.notes, grid.nextSibling);
     live = me;
+    me.paint = paint;   // main's qstiles.state / project.state pushes call live.paint() (lane mantle-motion: it was missing, "live.paint is not a function")
 
     function q() { return me.guess || held.q; }
     function view(k) {

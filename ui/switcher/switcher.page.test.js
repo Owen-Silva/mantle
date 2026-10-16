@@ -281,7 +281,7 @@ async function liveList(p) {
   let t = await tilesNow();
   check('live open: one more tile, in the merged order', t.length === 10 && t.map((x) => x.hwnd).join() === list.map((x) => x.hwnd).join(), t.map((x) => x.hwnd).join());
   check('live open: every tile that was there is the same element (re-rendered in place, no rebuild)', t.filter((x) => x.hwnd !== fresh.hwnd).every((x) => x.born && x.born.startsWith('open-')), JSON.stringify(t.map((x) => x.born)));
-  check('live open: the new tile fades in on the UI motion token (tile-in, --lg-dur-ui-slow)', t[3].isNew && t[3].anim === 'tile-in' && (t[3].dur === '0.2s' || t[3].dur === '0.13s') && !t[3].born, JSON.stringify(t[3]));
+  check('live open: the new tile fades in on the shared motion token (tile-in, --m-dur-xs, lane mantle-motion)', t[3].isNew && t[3].anim === 'tile-in' && t[3].dur === '0.24s' && !t[3].born, JSON.stringify(t[3]));
   check('live open: no other tile animates', t.filter((x, i) => i !== 3).every((x) => x.anim === 'none' || !x.isNew));
   check('live open: the selection stays on the same window', t[1].sel && t[1].aria === 'true' && t.filter((x) => x.sel).length === 1);
   check('live open: indexes follow the new order (a click is the right tile)', t.every((x, i) => x.i === i));

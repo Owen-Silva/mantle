@@ -312,9 +312,9 @@ async function run() {
       t.check('glass: (dark strip) the guard stays out: the island is --lg-fill-bar exactly (Helm\'s rail)', !dk.s.tint && dk.s.fill === dk.s.tok.bar && /^rgba\(/.test(dk.s.tok.bar), dk.s);
       t.check('glass: (dark) the strip is blurred with the token alone, no brightness', !/brightness/.test(dk.s.filter), dk.s.filter);
       t.check('glass: (dark) a pop-up opens held unpainted until its picture lands (pre-show)', /\bbdwait\b/.test(dk.early), dk.early);
-      t.check('glass: (dark desk) the pop-up is ONE --lg-fill layer over its picture (Helm\'s panel), guard out, no open animation',
+      t.check('glass: (dark desk) the pop-up is ONE --lg-fill layer over its picture (Helm\'s panel), guard out, the shared spring entrance (lane mantle-motion: m-pop-rise + m-pop-fade)',
         /\bbd\b/.test(dk.p.cls) && !/bdwait/.test(dk.p.cls) && dk.p.vis === 'visible' && (dk.p.img.match(/gradient/g) || []).length === 1 &&
-        dk.p.img.indexOf(dk.s.tok.fill) >= 0 && /url\(/.test(dk.p.img) && !dk.p.tint && dk.p.g && dk.p.g.engaged === false && dk.p.anim === 'none', { p: dk.p, fill: dk.s.tok.fill });
+        dk.p.img.indexOf(dk.s.tok.fill) >= 0 && /url\(/.test(dk.p.img) && !dk.p.tint && dk.p.g && dk.p.g.engaged === false && dk.p.anim === 'm-pop-rise, m-pop-fade', { p: dk.p, fill: dk.s.tok.fill });
       const lt = await glass('light', '#ffffff');
       // a bar's need is its theme's --lg-guard-bar (dark: 4.2, Helm's strip contrast, 2026-10-10)
       t.check('glass: (bright strip) the guard thickens the island\'s TINT (the bar colour, never the picture) until ink-2 holds --lg-guard-bar (' + lt.s.tok.need + ':1)',
