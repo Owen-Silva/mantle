@@ -42,9 +42,9 @@ const pct = (a, p) => { const s = a.slice().sort((x, y) => x - y); return s[Math
     await pg.click('.qstile[data-tile="dnd"]', { wait: 300 });
     let c = await pg.calls('qstiles.set');
     ts = await tiles(pg);
-    t.check('Do not disturb: one set, on, and the tile is lit', c.length === 1 && c[0].a.tile === 'dnd' && c[0].a.on === true && ts.find((x) => x.tile === 'dnd').on, c);
+    t.check('Do not disturb: one set, on, and the tile is lit', c.length === 1 && c[0].p.tile === 'dnd' && c[0].p.on === true && ts.find((x) => x.tile === 'dnd').on, c);
     await pg.click('.qstile[data-tile="airplane"]', { wait: 300 });
-    t.check('Airplane mode: set on', (await pg.calls('qstiles.set')).some((x) => x.a.tile === 'airplane' && x.a.on === true));
+    t.check('Airplane mode: set on', (await pg.calls('qstiles.set')).some((x) => x.p.tile === 'airplane' && x.p.on === true));
     await pg.click('.qstile[data-tile="focus"]', { wait: 300 });
     ts = await tiles(pg);
     t.check('Focus: starts, shows minutes left', ts.find((x) => x.tile === 'focus').on && /min left/.test(ts.find((x) => x.tile === 'focus').sub), ts.find((x) => x.tile === 'focus'));
