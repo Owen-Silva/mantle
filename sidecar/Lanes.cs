@@ -257,6 +257,7 @@ namespace Mantle {
     public const long HeldLogMs = 1000, HeldLogEveryMs = 10000;
     static readonly Dictionary<string, long[]> _held = new Dictionary<string, long[]>(StringComparer.Ordinal);   // lane -> {last log ts, skipped}
     public static void NoteHeld(string lane, string cmd, long ms, int behind) {
+      CountHeld(lane, cmd, ms);
       if (ms < HeldLogMs) return;   // (the test-only sleep counts too: that is how the harness proves this line)
       long now = Stopwatch.GetTimestamp();
       long skipped;
@@ -269,6 +270,33 @@ namespace Mantle {
       Program.EmitLog("warn", "the " + lane + " lane was held " + ms + " ms by \"" + cmd + "\" (" + behind + " request(s) waiting behind it)" +
                                (skipped > 0 ? "; " + skipped + " more like it in the last " + (HeldLogEveryMs / 1000) + " s" : ""));
     }
+
+    /// EVERY HOLD, COUNTED (lane mantle-m1, 2026-10-15). The log line above only shows holds past 1 s, at
+    /// most one per 10 s, so it cannot prove "nothing holds a lane over ~0.5 s". Each lane also keeps how
+    /// many requests it ran, its longest hold (awake ms) and which command it was, and how many held it
+    /// HoldGoalMs or more. `ping` shows them per lane (load.lanes[].held); a passive ping with
+    /// {resetHeld:true} starts them over, so a load test measures only its own window. Numbers and command
+    /// names only, like the log line: never an argument.
+    public const long HoldGoalMs = 500;
+    sealed class HeldStats { public long Runs, MaxMs, Over; public string MaxCmd; }
+    static readonly Dictionary<string, HeldStats> _stats = new Dictionary<string, HeldStats>(StringComparer.Ordinal);   // under itself
+    static void CountHeld(string lane, string cmd, long ms) {
+      lock (_stats) {
+        HeldStats s;
+        if (!_stats.TryGetValue(lane, out s)) { s = new HeldStats(); _stats[lane] = s; }
+        s.Runs++;
+        if (ms >= HoldGoalMs) s.Over++;
+        if (ms > s.MaxMs || s.MaxCmd == null) { s.MaxMs = ms; s.MaxCmd = cmd; }
+      }
+    }
+    static IDictionary HeldOf(string lane) {
+      lock (_stats) {
+        HeldStats s;
+        if (!_stats.TryGetValue(lane, out s)) return Json.Obj("runs", 0L, "maxMs", 0L, "maxCmd", null, "over500", 0L);
+        return Json.Obj("runs", s.Runs, "maxMs", s.MaxMs, "maxCmd", s.MaxCmd, "over500", s.Over);
+      }
+    }
+    public static void ResetHeld() { lock (_stats) _stats.Clear(); }
 
     /// For a command added at run time rather than in the table above.
     public static void Register(string cmd, string lane) {
@@ -437,10 +465,14 @@ namespace Mantle {
       string busy = UiBusyCmd;
       var lanes = new List<object>();
       lanes.Add(Json.Obj("name", Ui, "queued", Thread.VolatileRead(ref UiQueued), "busy", busy,
-                         "busyMs", busy == null ? (object)null : (object)AwakeMsSince(UiBusySinceAwake)));
+                         "busyMs", busy == null ? (object)null : (object)AwakeMsSince(UiBusySinceAwake),
+                         "held", HeldOf(Ui)));
       foreach (string name in new string[] { Capture, Slow, Audio, Qs, Focus, Scan, Notif }) {
         Lane w = Worker(name);
-        if (w != null) lanes.Add(w.Snapshot());
+        if (w == null) continue;
+        IDictionary d = w.Snapshot();
+        d["held"] = HeldOf(name);
+        lanes.Add(d);
       }
       return Json.Obj("lanes", lanes,
                       "expired", Thread.VolatileRead(ref Expired),

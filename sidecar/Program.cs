@@ -731,6 +731,9 @@ namespace Mantle {
           // Settings cache is: the first thing to read when "the buttons do
           // nothing" comes back.
           ping["load"] = Lanes.Snapshot();
+          // Tests only (passive): the per-lane hold counts start over AFTER this answer, so a load
+          // test reads only its own window (Lanes.CountHeld).
+          if (Passive && Json.GetBool(req, "resetHeld", false)) Lanes.ResetHeld();
           ping["caches"] = QuickSettings.Snapshot();
           ping["watches"] = Json.Obj("volume", VolumeWatch.Snapshot(), "net", NetState.Snapshot());
           // Which feature commands (Features.cs) exist in this exe and which feature files failed
