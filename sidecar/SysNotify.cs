@@ -7,6 +7,7 @@
 //   sysnotify.get {}                                   everything below, each with writable + why
 //   sysnotify.set {key:'toasts'|'sound'|'lockScreen'|'criticalLock', on, dryRun?}   a global switch
 //   sysnotify.dnd {on, dryRun?}                        Do not disturb on/off
+//   sysnotify.dndGet {}                                Do not disturb only (the Quick settings tile; cheap)
 //   sysnotify.focus {on, minutes?, dryRun?}            start (1..240 min) or end a focus session
 //   sysnotify.app {app, key:'enabled'|'banner'|'center'|'priority', value, dryRun?}   one app's switch
 //
@@ -73,6 +74,7 @@ namespace Mantle {
       t.Add("sysnotify.get", Lanes.Slow, Get);
       t.Add("sysnotify.set", Lanes.Slow, SetGlobal);
       t.Add("sysnotify.dnd", Lanes.Slow, Dnd);
+      t.Add("sysnotify.dndGet", Lanes.Qs, DndGet);   // the Quick settings tile: the profile only (lane qstiles)
       t.Add("sysnotify.focus", Lanes.Slow, Focus);
       t.Add("sysnotify.app", Lanes.Slow, SetApp);
     }
@@ -275,6 +277,17 @@ namespace Mantle {
         result = Json.Obj("ok", true, "key", key, "on", on);
         return null;
       } catch (Exception ex) { return "sysnotify.set failed: " + SysCommon.Why(ex); }
+    }
+
+    /// sysnotify.dndGet {} (lane qstiles, 2026-10-15): Do not disturb for the Quick settings tile, and
+    /// only that: sysnotify.get also reads every app's switches and the platform database, far too
+    /// much to sit behind a panel. The same COM object, the same answer shape as get's `dnd`.
+    static string DndGet(Dictionary<string, object> req, ref object result) {
+      string profile;
+      string why = ReadProfile(out profile);
+      result = Json.Obj("ok", why == null, "on", profile == null ? null : (object)(profile != Unrestricted), "profile", profile,
+                        "writable", why == null, "reason", why);
+      return null;
     }
 
     static string Dnd(Dictionary<string, object> req, ref object result) {

@@ -1,0 +1,32 @@
+/* qs-tiles.css - motion for quick settings' tiles (lane qstiles, 2026-10-15). Owen: "futuristic ...
+ * the cutting edge of software", in the island style, never taking over: no glow, no gradient.
+ *
+ * Every tile in the grid (the four old ones too, so the panel moves as one system):
+ *   PRESS   the tile sinks (scale .955 and a hairline inset) the moment the pointer goes down
+ *   SETTLE  a switch that lands lifts the tile 3% for one frame and lets it spring back to rest
+ *           (qs-tiles.js adds .qsx-lift), overshooting ~2% before it settles
+ * Both are TRANSITIONS on a sampled spring (damping 0.78, ~420 ms; linear() easing), so a click
+ * mid-motion retargets from where the tile is instead of restarting. No new --lg-* token: the
+ * spring is local to the grid. prefers-reduced-motion: no movement at all. */
+.qsgrid {
+  --qsx-spring: linear(0, 0.072, 0.228, 0.409, 0.579, 0.721, 0.83, 0.909, 0.961, 0.993, 1.011, 1.018, 1.02, 1.018,
+                       1.015, 1.011, 1.008, 1.005, 1.003, 1.002, 1.001, 1, 1, 1, 1);
+}
+.qsgrid .qstile {
+  transition: background-color 150ms steps(2), color 150ms steps(2),
+              transform 420ms var(--qsx-spring), box-shadow 420ms var(--qsx-spring);
+  will-change: transform;
+}
+.qsgrid .qstile:active:not(.dead) {
+  transform: scale(.955);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+  transition-duration: 150ms, 150ms, 90ms, 90ms;     /* down fast, back on the spring */
+}
+.qsgrid .qstile.qsx-lift { transform: scale(1.03); transition: none; }
+.qsx-notes[hidden] { display: none; }
+.qsx-notes:not([hidden]) { margin: -4px 0 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .qsgrid .qstile, .qsgrid .qstile:active:not(.dead) { transition: background-color 150ms steps(2), color 150ms steps(2); transform: none; }
+  .qsgrid .qstile.qsx-lift { transform: none; }
+}
