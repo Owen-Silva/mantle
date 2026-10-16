@@ -139,7 +139,8 @@ $interop = Join-Path (Split-Path -Parent $csc) 'System.Runtime.InteropServices.W
 # ConnectionProfile; lane wire 2026-09-29, for the Network lane).
 $split = @('Windows.Foundation.winmd', 'Windows.Media.winmd', 'Windows.Storage.winmd', 'Windows.Devices.winmd',
            'Windows.UI.winmd', 'Windows.ApplicationModel.winmd', 'Windows.System.winmd',
-           'Windows.Graphics.winmd', 'Windows.Globalization.winmd', 'Windows.Networking.winmd') |
+           'Windows.Graphics.winmd', 'Windows.Globalization.winmd', 'Windows.Networking.winmd',
+           'Windows.Security.winmd') |   # Recorder.cs: GraphicsCaptureAccess answers an AppCapabilityAccessStatus (lane screenrec)
          ForEach-Object { Join-Path $wm $_ }
 $splitOk = $facade -and (Test-Path $interop) -and (@($split | Where-Object { -not (Test-Path $_) }).Count -eq 0)
 

@@ -162,6 +162,10 @@ namespace Mantle {
       // no protocol, no window, nothing below.
       foreach (string a in args)
         if (a == "--elevated") return Elevate.RunElevated(args);
+      // --record / --rec-probe / --rec-standin: this exe as ONE screen recording (Recorder.cs, lane
+      // screenrec), started by lib/features/screenrec.js and gone when the file is done. No protocol.
+      foreach (string a in args)
+        if (a == "--record" || a.StartsWith("--rec-probe", StringComparison.Ordinal) || a == "--rec-standin") return Recorder.Run(args);
 
       foreach (string a in args) {
         if (a == "--passive") Passive = true;
