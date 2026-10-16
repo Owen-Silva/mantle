@@ -34,6 +34,14 @@
     out.push({ id: 'recent', name: M.GROUP_LABEL.recent, glyph: M.GROUP_GLYPH.recent, items: rec, empty: 'The emoji you pick show up here.' });
     return out.concat(CAT.emoji);
   }
+  function viewKey() { return JSON.stringify([S.recents, S.app && S.appPicks.length >= 3 ? [S.app, S.appPicks] : null, S.tone]); }
+  /** the default view (Emoji tab, no search, the top), ready for the next open */
+  function resetView() {
+    S.tab = 'emoji';
+    Array.prototype.forEach.call($('tabs').querySelectorAll('button'), function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === 'emoji'); });
+    if (S.q || S.drawnKey !== viewKey()) setQuery('');
+    else { grid.scrollTop = 0; select(S.items.length ? 0 : -1, { jump: true }); renderCats(); }
+  }
   function cellHtml(it, i) {
     var ch = it.fixed ? it.ch : M.display(it, S.tone);
     return '<span class="c" data-i="' + i + '" title="' + esc(it.name) + '">' + esc(ch) + '</span>';
@@ -72,6 +80,8 @@
       resultsEl.hidden = true; sectionsEl.hidden = false; emptyEl.hidden = true;
     }
     S.rows = M.layout(counts, S.tab === 'kaomoji' ? 2 : M.COLS);
+    // what the default view was drawn from: an open that would draw the same thing draws nothing
+    S.drawnKey = !q && S.tab === 'emoji' ? viewKey() : null;
     renderCats();
   }
   function renderCats() {
@@ -245,9 +255,7 @@
     $('tones').hidden = true;
     $('hint').classList.remove('say');
     if (M.clampTone(p.tone) !== S.tone) setTone(p.tone, false);
-    S.tab = 'emoji';
-    Array.prototype.forEach.call($('tabs').querySelectorAll('button'), function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === 'emoji'); });
-    setQuery('');
+    resetView();     // a warm open whose view is already drawn (resetView ran at the close) draws nothing
     placePill();
     panel.classList.toggle('above', !!p.above);
     if (p.notice) say(p.notice, 8000);
@@ -260,7 +268,12 @@
   function hide() {
     S.open = false;
     panel.classList.remove('on');
-    setTimeout(function () { if (!S.open) call('emoji.hidden'); }, 130);
+    setTimeout(function () {
+      if (S.open) return;
+      call('emoji.hidden');
+      // out of sight: the next open's view is drawn now, so a warm open only shows it
+      setTimeout(function () { if (!S.open) resetView(); }, 0);
+    }, 130);
   }
   function notice(p) {
     S.open = false;
