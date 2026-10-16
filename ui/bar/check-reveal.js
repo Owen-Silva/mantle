@@ -91,6 +91,7 @@ async function runCase(browser, c) {
     const bar = document.getElementById('bar'), dock = document.getElementById('dock');
     return {
       w: bar.getBoundingClientRect().width,
+      lw: bar.offsetWidth,                       // the LAYOUT width: what the dock is fitted in (no transform)
       up: document.body.classList.contains('up'),
       cap: dock.style.getPropertyValue('--dock-max').trim(),
       cells: dock.querySelectorAll('.cell').length,
@@ -131,8 +132,11 @@ async function runCase(browser, c) {
     await page.waitForTimeout(450);                  // bar.pinned answers at 30 ms, the settle runs 50 ms later
     s = await read();
     const frozen = warns.filter(x => x.phase === 'frozen');
-    check(s.up && Math.abs(s.w - c.w * DOWN) < 1.5,
-      'reproduced: revealed, and the pill still at its down width (' + (c.w * DOWN).toFixed(1) + ') in the ' + c.w + ' window',
+    /* lane mantle-barpolish: the island no longer grows from 62 %, so the old precondition (the pill
+       caught at its down width) cannot happen; what is checked instead is the reason it cannot: the
+       entrance's first frame is already laid out at the full width, only its transform is moving. */
+    check(s.up && Math.abs(s.lw - c.w) < 1,
+      'revealed: the island is laid out at its full width (' + c.w + ') from the entrance\'s first frame, not grown into it',
       JSON.stringify(s));
     check(!frozen.length, 'no "apps hidden" judged from the entrance\'s first frame', JSON.stringify(hidden(frozen)));
 
@@ -162,13 +166,14 @@ async function runCase(browser, c) {
     const caught = await page.evaluate(() => {
       window.__mockMain.reveal('harness: back before the exit finished');
       const bar = document.getElementById('bar');
-      const ws = bar.getAnimations().filter(a => a.transitionProperty === 'width');
+      const ws = bar.getAnimations().filter(a => a.transitionProperty === 'transform');
       ws.forEach(a => a.pause());
-      return { w: bar.getBoundingClientRect().width, transitions: ws.length };
+      return { w: bar.getBoundingClientRect().width, lw: bar.offsetWidth, transitions: ws.length };
     });
     await page.waitForTimeout(450);
     const mid = warns.filter(x => x.phase === 'midexit');
-    check(caught.transitions === 1 && caught.w > c.w * DOWN + 1 && caught.w < c.w - 1,
+    // barpolish: caught mid-pose (the scale is between .94 and 1), its layout width untouched
+    check(caught.transitions === 1 && caught.w > c.w * 0.9 && caught.w < c.w - 1 && Math.abs(caught.lw - c.w) < 1,
       'reproduced: revealed mid-exit, the pill caught on its way down', JSON.stringify(caught));
     check(!mid.length, 'no "apps hidden" judged from a reveal mid-exit', JSON.stringify(hidden(mid)));
     phase = 'midexit-landing';

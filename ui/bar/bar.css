@@ -26,10 +26,10 @@
  *    parent's background — that is why the fill lives on a pseudo-element.
  *  - NO text-shadow. On light glass the ink carries itself; a shadow under dark text on a
  *    near-white pane just reads as a printing fault.
- *  - Nothing moves at rest. The reveal IS animated here (transform + width on .bar, on the Northwind
- *    curve) but only ever as a state change; between states nothing is running. Hover/active
+ *  - Nothing moves at rest. The reveal IS animated here (transform + opacity on .bar, a spring;
+ *    nothing that lays out or repaints) but only ever as a state change; between states nothing is running. Hover/active
  *    transitions are steps(2): two discrete paints, not an eight-frame ramp.
- *  - IN AND OUT ARE DIFFERENT LENGTHS, and the state picks which: 560ms in, 260ms out (see --dur
+ *  - IN AND OUT ARE DIFFERENT LENGTHS, and the state picks which: 560ms in, 220ms out (see --dur
  *    below). The exit MUST be the shorter one, because main drops the window ~350ms after
  *    'bar.hide' and an exit still running when the window goes is not an exit, it is a snap.
  *  - --lg-acc marks the active window and focus, nowhere else.
@@ -84,6 +84,27 @@ body[data-edge="top"] { justify-content: flex-start; }
 body { --dur: var(--lg-dur-out, 260ms); }
 body.up { --dur: var(--lg-dur, 560ms); }
 
+/* THE CURVES (lane mantle-barpolish, 2026-10-15). Owen: the load-in must feel like "a big
+   businesses product", cutting edge and calm. IN is a damped spring (damping ratio 0.8, sampled
+   into linear() at 40 points over the 560 ms main animates on): 90 % of the way in 195 ms, 95 % in
+   220 ms, a 1.5 % overshoot (under a pixel of the rise) that settles by itself, so the island
+   arrives quicker than the old ease (which crept for half a second) and lands like an object with
+   weight, the way the macOS Dock and visionOS windows do. OUT is a plain accelerate: leaving is
+   not an event. --bar-fade-k is how much of the duration the opacity takes. */
+body {
+  --bar-move: cubic-bezier(.3, 0, .8, .15);
+  --bar-fade: cubic-bezier(.4, 0, 1, 1);
+  --bar-fade-k: 1;
+}
+body.up {
+  --bar-move: linear(0, 0.0208, 0.0739, 0.1478, 0.2337, 0.3245, 0.4153, 0.5025, 0.5838, 0.6577, 0.7235,
+    0.7808, 0.8301, 0.8716, 0.906, 0.9341, 0.9566, 0.9742, 0.9876, 0.9977, 1.0049, 1.0098, 1.0128, 1.0145,
+    1.0151, 1.015, 1.0143, 1.0132, 1.012, 1.0106, 1.0092, 1.0079, 1.0066, 1.0055, 1.0044, 1.0035, 1.0028,
+    1.0021, 1.0015, 1.0011, 1);
+  --bar-fade: cubic-bezier(.2, 0, 0, 1);
+  --bar-fade-k: .4;
+}
+
 /* ---------------------------------------------------------------- the bar itself
    THE DIVISION OF LABOUR, rewritten 2026-09-21 after Owen: "when the taskbar expands out it isn't
    that smooth, can you make it expand out smoother". It used to be main's job: the sidecar
@@ -110,35 +131,46 @@ body.up { --dur: var(--lg-dur, 560ms); }
   gap: 8px;
   padding: 0 8px;
 
-  /* --- the FLUSH set: what the bar is before main reveals it --- */
-  --pane-fill: var(--lg-fill-0);
-  --pane-edge: var(--lg-edge-0);
-  --pane-lip:  var(--lg-lip-up-0);
-  --pane-drop: var(--lg-drop-up-0);
-  --pane-ink:  var(--lg-ink-0);
-  --pane-on:   0;                 /* the content's opacity */
-  /* ...and the DOWN geometry: fully below the window's bottom edge (the pill's 48 + the 14 dip
-     strip under it), narrowed to 62%. This is the resting state, so it is also the first frame
-     the window ever shows — before 'bar.reveal' arrives there must be nothing on screen. */
-  --pane-y: calc(var(--bar-h) + var(--lift));
-  --pane-w: 62%;
+  /* --- THE ISLAND'S PAINT: the same whether it is up or down (lane mantle-barpolish, 2026-10-15) ---
+     The island is drawn COMPLETE before it moves: its fill, hairline, lip, ink and content never
+     change during a reveal. Before, the reveal faded every one of them in from transparent and grew
+     the width from 62 %, so the glass arrived as an empty frame whose content caught up, the dock was
+     laid out again on every frame, and the backdrop picture, placed for the 62 % box, ran out short of
+     the glass on the RIGHT while it widened: Owen's "dark outline on the right side" (see
+     placeBdrop in bar.js). Now the whole island is one composited object and only its transform and
+     opacity move: compositor-only, so nothing is laid out or repainted per frame. */
+  --pane-fill: var(--lg-fill);
+  --pane-edge: var(--lg-edge-out);
+  --pane-lip:  var(--lg-lip-up);
+  --pane-drop: var(--lg-drop-up);
+  --pane-ink:  var(--lg-ink-2);
+  --pane-on:   1;                 /* the content's opacity: always 1, the island fades as one */
+  /* ...and the DOWN pose: sunk below its resting place, a little smaller, and transparent. The
+     island rises out of the screen edge and settles to full size: depth, not a slide. This is the
+     resting state, so it is also the first frame the window ever shows — before 'bar.reveal'
+     arrives there is nothing on screen (opacity 0). The width is final from the first frame. */
+  --pane-y: calc(var(--bar-h) * .75);
+  --pane-s: .94;
+  --pane-o: 0;
+  --pane-w: 100%;
 
   /* .bar itself paints NOTHING but the drop shadow: the fill and the hairlines are on ::after,
      above the backdrop image. A background-color here would be buried under that image. */
   background: transparent;
   box-shadow: var(--pane-drop);
   color: var(--pane-ink);
-  transform: translateY(var(--pane-y));
+  opacity: var(--pane-o);
+  transform: translateY(var(--pane-y)) scale(var(--pane-s));
+  transform-origin: 50% 100%;
+  will-change: transform, opacity;   /* one layer, kept: its tiles are ready before it moves */
 
-  /* border-radius is deliberately absent: the mode classes set it, and it must be right on the
-     frame the mode arrives, not eased toward. Width IS animated — it is one element, the same
-     thing Northwind's nav does when it detaches, and the content inside is laid out by flex rather
-     than scaled, so nothing in it distorts. */
+  /* THE MOTION: a spring in, an accelerate out (--bar-ease / --bar-ease-out, below). The transform
+     runs the whole duration (the spring's settle); the opacity is done in the first 40 % of it, so
+     the island is solid well before it lands. Both are CSS transitions, which retarget from wherever
+     they are: a hide half way up turns round from that pose, a reveal half way down too. */
   transition:
-    transform  var(--dur) var(--lg-ease),
-    width      var(--dur) var(--lg-ease),
-    box-shadow var(--dur) var(--lg-ease),
-    color      var(--dur) var(--lg-ease);
+    transform var(--dur) var(--bar-move),
+    opacity   calc(var(--dur) * var(--bar-fade-k)) var(--bar-fade);
 }
 
 /* PILL MODE geometry: a 48 dip island centred in the window with the 14 dip transparent strip
@@ -148,9 +180,9 @@ body.pill .bar {
   max-width: 100%;
   margin: 0 auto var(--lift);
 }
-/* EDGE MODE: the same rise, no width change — it is docked, so it is always full width, and it
-   sits on the window's bottom edge, so it only has its own height to fall through. */
-body.edge .bar { width: 100%; margin: 0; --pane-w: 100%; --pane-y: var(--bar-h); }
+/* EDGE MODE: docked, so it is always full width and sits on the window's bottom edge: it slides
+   its own height, with no scale (a docked bar that shrank would leave the screen edge). */
+body.edge .bar { width: 100%; margin: 0; --pane-w: 100%; --pane-y: var(--bar-h); --pane-s: 1; }
 
 /* THE TINT, and the only place the two hairlines live. It sits inside the same radius, so the
    1px border is drawn once, on top of the blurred backdrop, and the fill runs UNDER the 1px border (background-clip: border-box), so the hairline is drawn
@@ -172,29 +204,31 @@ body.edge .bar { width: 100%; margin: 0; --pane-w: 100%; --pane-y: var(--bar-h);
   background-color: var(--pane-fill);
   background-clip: border-box;
   box-shadow: var(--pane-lip);
-  transition:
-    background-color var(--dur) var(--lg-ease),
-    border-color     var(--dur) var(--lg-ease),
-    box-shadow       var(--dur) var(--lg-ease);
+  /* the tint never moves with the reveal; it only eases when a late picture lets it thin out
+     from the fallback fill, or the dark readability guard re-solves it */
+  transition: background-color 150ms var(--lg-ease);
 }
 
-/* --- the DETACHED set --- */
+/* --- the UP pose: in place, full size, solid. This block MUST stay after the two mode rules
+   above: they set the down pose and this one overrides it at the same specificity, so source
+   order is what decides. --- */
 body.up .bar {
-  --pane-fill: var(--lg-fill);
-  --pane-edge: var(--lg-edge-out);
-  --pane-lip:  var(--lg-lip-up);
-  --pane-drop: var(--lg-drop-up);
-  --pane-ink:  var(--lg-ink-2);
-  --pane-on:   1;
-  /* in place, and full width. This block MUST stay after the two mode rules above: they set the
-     down geometry and this one overrides it at the same specificity, so source order is what
-     decides. */
   --pane-y: 0px;
-  --pane-w: 100%;
+  --pane-s: 1;
+  --pane-o: 1;
 }
 /* No backdrop has arrived yet (or it was just cleared): there is nothing blurred under the tint,
    so the tint has to carry the pane on its own and goes up to the fallback fill. */
-body.no-backdrop.up .bar { --pane-fill: var(--lg-fill-fb); }
+body.no-backdrop .bar { --pane-fill: var(--lg-fill-fb); }
+
+/* REDUCED MOTION (Windows: Settings > Accessibility > Visual effects > Animation effects off, which
+   Chromium reads as SPI_GETCLIENTAREAANIMATION): no rise and no scale, only a short fade, in and out. */
+@media (prefers-reduced-motion: reduce) {
+  .bar, body.edge .bar { --pane-y: 0px; --pane-s: 1; }
+  body, body.up { --bar-fade: linear; --bar-fade-k: 1; }
+  body { --dur: 120ms; }
+  body.up { --dur: 160ms; }
+}
 
 /* --- the two shapes. Geometry only, applied on the frame the mode arrives. --- */
 body.edge .bar { border-radius: var(--lg-r) var(--lg-r) 0 0; }   /* docked: flush bottom lip */
@@ -203,8 +237,10 @@ body.pill .bar { border-radius: var(--lg-r-pill); }              /* the island: 
 body.pill .bar::after { border-width: 1px; }
 
 /* docked at the top instead: the lip and the shadow flip, nothing else changes */
-body[data-edge="top"] .bar { --pane-lip: var(--lg-lip-dn-0); --pane-drop: var(--lg-drop-dn-0); }
-body[data-edge="top"].up .bar { --pane-lip: var(--lg-lip-dn); --pane-drop: var(--lg-drop-dn); }
+body[data-edge="top"] .bar { --pane-lip: var(--lg-lip-dn); --pane-drop: var(--lg-drop-dn); --pane-y: calc(var(--bar-h) * -.75); transform-origin: 50% 0; }
+body[data-edge="top"].edge .bar { --pane-y: calc(var(--bar-h) * -1); }
+body[data-edge="top"].up .bar { --pane-y: 0px; }
+@media (prefers-reduced-motion: reduce) { body[data-edge="top"] .bar, body[data-edge="top"].edge .bar { --pane-y: 0px; } }
 /* DARK: NO DROP SHADOW ON THE BAR (lane clipped-shadow, 2026-10-10; Owen: "fix this black sharp stuff
    around the outside"). The window ends 1 DIP past the pill (lib/bar-shape.js shapeRect) and at the
    pill's own ends, so the dark drop (--lg-drop-up, .30 + .32 black) was cut there: a 3 px near-black
@@ -212,8 +248,8 @@ body[data-edge="top"].up .bar { --pane-lip: var(--lg-lip-dn); --pane-drop: var(-
    14,24,27 desktop; 20 over a 31 grey window). There is no room for it, so dark ends on the hairline
    and lip. The -0 twin keeps the reveal's box-shadow transition the same shape, so nothing snaps.
    Light is held as it was. */
-:root[data-theme="dark"] body.up .bar { --pane-drop: var(--lg-drop-up-0); }
-:root[data-theme="dark"] body[data-edge="top"].up .bar { --pane-drop: var(--lg-drop-dn-0); }
+:root[data-theme="dark"] .bar { --pane-drop: var(--lg-drop-up-0); }
+:root[data-theme="dark"] body[data-edge="top"] .bar { --pane-drop: var(--lg-drop-dn-0); }
 body[data-edge="top"].edge .bar { border-radius: 0 0 var(--lg-r) var(--lg-r); }
 body[data-edge="top"].edge .bar::after { border-width: 0 1px 1px; }
 
@@ -235,6 +271,10 @@ body[data-edge="top"].edge .bar::after { border-width: 0 1px 1px; }
   transition: opacity 150ms var(--lg-ease);
 }
 .bdrop.on { opacity: 1; }
+/* A picture that arrives while the island is down (main's pre-reveal frame, every reveal) is on at
+   once: fading it in there would put the first frames of the rise on the bare tint. Only a picture
+   that arrives late, with the island already up, fades in. */
+body:not(.up) .bdrop { transition: none; }
 .bdrop img {
   position: absolute;
   left: -14px;
@@ -246,8 +286,18 @@ body[data-edge="top"].edge .bar::after { border-width: 0 1px 1px; }
   /* the theme's own treatment of the photograph: light is blur(12px) saturate(150%), dark also
      dims it a fifth so light ink holds over a bright wallpaper (glass-light.css --lg-blur) */
   filter: var(--lg-blur);
-  transform: translateZ(0);
+  /* GLASS THAT STAYS WITH THE SCREEN (lane mantle-barpolish). The picture is of the screen behind
+     the island's RESTING place, so while the island rises and settles the picture is held still
+     on the screen: the exact inverse of .bar's transform, on the same clock and curve, about the
+     same point (.bar's transform-origin, in this box: 14px of overscan below it; bar.js placeBdrop
+     sets the origin when it places the picture itself). The island moves THROUGH its glass, as a
+     pane over the wallpaper would, instead of carrying a photograph of where it is going. Only a
+     transform: the blur is never animated (backdrop-filter is not used at all, see the header). */
+  transform-origin: 50% calc(100% - 14px);
+  transform: translateZ(0) scale(calc(1 / var(--pane-s))) translateY(calc(-1 * var(--pane-y)));
+  transition: transform var(--dur) var(--bar-move);
 }
+body[data-edge="top"] .bdrop img { transform-origin: 50% 14px; }
 /* DARK: THE ONE RECIPE (lane same-bars, 2026-10-09; Owen: "everything at 50% ... it will all match way
    better if its the same"). The strip is blurred with --lg-blur and nothing else (the base rule above),
    under ONE layer of --lg-fill. The only deviation is the readability guard every surface shares
@@ -259,20 +309,19 @@ body[data-edge="top"].edge .bar::after { border-width: 0 1px 1px; }
    faint white hairline (the base rule), with Helm's lip; its ends are --lg-r-pill (18 in dark). Docked
    flush to the screen edge (body.edge), the bar runs flush like the top bar and Helm: no line and no
    lip on the side that faces the windows (a rim there read as a line over a maximized window). */
-:root[data-theme="dark"] body.up .bar { --pane-fill: var(--bar-tint, var(--lg-fill-bar)); }
-:root[data-theme="dark"] body.no-backdrop.up .bar { --pane-fill: var(--lg-fill-fb); }
-:root[data-theme="dark"] body.edge.up .bar { --pane-edge: var(--lg-edge-0); --pane-lip: var(--lg-lip-up-0); }
-:root[data-theme="dark"] body[data-edge="top"].edge.up .bar { --pane-lip: var(--lg-lip-dn-0); }
+:root[data-theme="dark"] .bar { --pane-fill: var(--bar-tint, var(--lg-fill-bar)); }
+:root[data-theme="dark"] body.no-backdrop .bar { --pane-fill: var(--lg-fill-fb); }
+:root[data-theme="dark"] body.edge .bar { --pane-edge: var(--lg-edge-0); --pane-lip: var(--lg-lip-up-0); }
+:root[data-theme="dark"] body[data-edge="top"].edge .bar { --pane-lip: var(--lg-lip-dn-0); }
 
 /* Before the first event the bar paints in the flush state with NO transition, so the very first
    reveal is a detach and not a half-drawn bar fading out of nowhere. */
-body.pre .bar, body.pre .bar::after, body.pre .bdrop,
+body.pre .bar, body.pre .bar::after, body.pre .bdrop, body.pre .bdrop img,
 body.pre .left, body.pre .dock, body.pre .right { transition: none; }
 
-/* The content fades with the pane, on the same curve. It carries its own constant ink so the
-   fade is a single opacity ramp: if it inherited the pane's interpolating colour as well, the
-   glyphs would come in at opacity squared while the clock — which sets its own colour — came in
-   linearly, and the cluster would look out of step with itself. */
+/* The content is part of the island: it is never faded on its own (the island's one opacity
+   carries it), so the icons and the clock are on the glass from the reveal's first frame. It
+   carries its own constant ink. */
 .left, .dock, .right {
   /* z-index needs a positioned box: .left and .right get relative just below, and .dock is
      already absolute (it is centred on the window). Deliberately NOT setting position here, so
@@ -280,7 +329,6 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
   z-index: 2;                    /* above the tint layer, which is above the blurred backdrop */
   color: var(--lg-ink-2);
   opacity: var(--pane-on);
-  transition: opacity var(--dur) var(--lg-ease);
 }
 
 /* ---------------------------------------------------------------- shared button chrome */

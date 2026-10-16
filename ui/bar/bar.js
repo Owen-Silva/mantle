@@ -10,9 +10,9 @@
  *
  * WHO ANIMATES WHAT (rewritten the same day, after "when the taskbar expands out it isn't that
  * smooth"): main decides WHEN and shows the window ONCE, already at its final rect — it no longer
- * resizes anything per frame, which is what wasn't smooth. THIS PAGE animates the pill: transform
- * and width on .bar plus the paint (fill, border, shadow, ink, opacity), all on main's duration
- * and Northwind's curve, driven by one class. The page also reports hover back, so main knows when to
+ * resizes anything per frame, which is what wasn't smooth. THIS PAGE animates the pill: since lane
+ * mantle-barpolish (2026-10-15) ONLY transform and opacity on .bar, a spring in and an accelerate out
+ * on main's duration, driven by one class; the island is drawn complete and never changes size. The page also reports hover back, so main knows when to
  * take the bar away again.
  *
  * Three rules shape almost every decision below:
@@ -245,8 +245,8 @@
      no transition at all — body.pre, set in index.html. */
   var revealed = false, gotFirstEvent = false, barMode = 'edge';
 
-  var DUR_IN = 560, DUR_OUT = 260;    // Northwind's --dur-nav in; out is quicker, and must beat main's window drop
-  var OUT_MAX = 300;                  // main hides the window ~350ms after the event: never animate past that
+  var DUR_IN = 560, DUR_OUT = 220;    // in: the spring's whole settle (bar.css --bar-move); out is quicker, and must beat main's window drop
+  var OUT_MAX = 240;                  // main hides the window ~350ms after the event: never animate past that (barpolish: a crisp exit)
   var lastEventAt = 0;                // when main last told us to move, so a stale state push cannot fight it
 
   /* The shape is main's call: 'pill' floats the window off the edge, 'edge' keeps it docked.
@@ -351,24 +351,50 @@
   function placeBdrop() {
     var s = el.backdrop.style;
     if (!bdAt) {
-      if (bdPlace) { bdPlace = null; ['left', 'top', 'width', 'height'].forEach(function (k) { s.removeProperty(k); }); }
+      if (bdPlace) { bdPlace = null; ['left', 'top', 'width', 'height', 'transform-origin'].forEach(function (k) { s.removeProperty(k); }); }
       return;
     }
     var W = window.innerWidth, H = window.innerHeight;
     var ww = bdAt.win && bdAt.win.w > 0 ? bdAt.win.w : W, wh = bdAt.win && bdAt.win.h > 0 ? bdAt.win.h : H;
     var ax = bdAt.at.x * ww, ay = bdAt.at.y * wh, aw = bdAt.at.w * ww, ah = bdAt.at.h * wh;
     if (el.body.getAttribute('data-edge') !== 'top') ay = H - (wh - ay);   // the page is pinned to the bottom edge
-    var r = el.bdrop.getBoundingClientRect(), tx = 0, ty = 0;
-    try {
-      var m = new DOMMatrixReadOnly(getComputedStyle(el.bar).transform);
-      if (m.is2D && Math.abs(m.a - 1) < 1e-6 && Math.abs(m.d - 1) < 1e-6 && !m.b && !m.c) { tx = m.e; ty = m.f; }
-    } catch (_) { /* no transform to take off */ }
-    bdPlace = { x: ax - (r.left - tx), y: ay - (r.top - ty), w: aw, h: ah };
+    var box = barRestBox();
+    bdPlace = { x: ax - box.left, y: ay - box.top, w: aw, h: ah };
     s.left = bdPlace.x + 'px'; s.top = bdPlace.y + 'px'; s.width = aw + 'px'; s.height = ah + 'px';
+    // the picture's counter-transform (bar.css .bdrop img) turns about .bar's own origin, in its box
+    s.transformOrigin = (box.ox - bdPlace.x) + 'px ' + (box.oy - bdPlace.y) + 'px';
+  }
+  /* THE OUTLINE ON THE RIGHT (lane mantle-barpolish, 2026-10-15; Owen: "on the right side of the
+     taskbar when it comes up for a second or 2 there a dark outline ... that goes straight through
+     the taskbar"). CAUSE: dark's picture arrives BEFORE 'bar.reveal' (main's pre-reveal frame), so
+     it was placed against the pill's DOWN box: 62 % wide and centred. The pill then grew to 100 %
+     while the picture stayed pinned to the box's left edge at the 62 % offset, so its right end fell
+     short of the glass by up to 19 % of the pill (213 px of a 1120 px pill), and the glass there had
+     no picture under it: the picture's blurred, dimmed edge ran down the pill as a dark seam, on the
+     right, until the landing re-placed it 560 ms later. The old code took a pure translate off the
+     rect, never the width. NOW: the island's box never changes size in a reveal (only transform and
+     opacity move), and the picture is placed against the box's RESTING layout rect, worked out from
+     whatever pose the transform holds (any translate + scale, about its transform-origin), so a
+     picture that lands mid-reveal, before it or after it, is in the same place.
+     bar.page.test.js 'reveal glass' samples every frame of the reveal and fails on 1 px of glass with
+     no picture under it. */
+  function barRestBox() {
+    var r = el.bar.getBoundingClientRect(), cs = getComputedStyle(el.bar);
+    var o = String(cs.transformOrigin || '').split(' ').map(parseFloat);
+    var ox = isFinite(o[0]) ? o[0] : r.width / 2, oy = isFinite(o[1]) ? o[1] : r.height / 2;
+    var L = r.left, T = r.top;
+    try {
+      var m = new DOMMatrixReadOnly(cs.transform);
+      // local x 0 lands at L + ox + a(0 - ox) + e on screen, so the layout's left is r.left - e - ox(1 - a)
+      if (m.is2D && !m.b && !m.c && m.a > 0 && m.d > 0) { L = r.left - m.e - ox * (1 - m.a); T = r.top - m.f - oy * (1 - m.d); }
+    } catch (_) { /* no transform to take off */ }
+    return { left: L, top: T, ox: ox, oy: oy };
   }
   el.bar.addEventListener('transitionend', function (ev) { if (ev.target === el.bar && bdAt) placeBdrop(); });
   window.addEventListener('resize', function () { if (bdAt) placeBdrop(); });
 
+  // the picture is drawn with the frame that first shows it: the glass never shows bare for a frame (barpolish)
+  el.backdrop.decoding = 'sync';
   function setBackdrop(p) {
     if (!p || typeof p.png !== 'string' || p.png.slice(0, 5) !== 'data:') {
       fail('backdrop', 'Glass not blurred', 'Mantle did not get a picture of the screen behind the bar, so it cannot' +
@@ -686,6 +712,10 @@
         ico.className = 'ico';
         var img = document.createElement('img');
         img.alt = '';
+        /* Decoded WITH the frame that first paints it, never after (lane mantle-barpolish): an
+           icon is drawn complete or the frame waits for it, so the island never comes up with an
+           empty cell that fills in a frame later. The icons are 32-64 px, so the wait is nothing. */
+        img.decoding = 'sync';
         /* Never Chromium's own image drag: it took over every press-and-move on an icon, so drag
            to reorder never got its drop (DRAG TO REORDER, el.dock's dragstart). */
         img.draggable = false;
@@ -827,13 +857,25 @@
      MINIMUM that brings it inside; clipped only when the icons cannot fit in the whole span, and
      only then does a chip appear — saying how many are hidden. Owen: "i want to be able to see all
      my pinned stuff not just some of them". */
+  /* the island's current scale (1 at rest; the reveal's pose otherwise), from its computed transform */
+  function barScale() {
+    try {
+      var m = new DOMMatrixReadOnly(getComputedStyle(el.bar).transform);
+      return m.is2D && m.a > 0.5 && m.a < 1.5 ? m.a : 1;
+    } catch (_) { return 1; }
+  }
   function measure() {
     /* VIEWPORT coordinates, off the bar's own rect. Nothing here may assume the bar spans the
        screen: in pill mode the window IS the island, inset from the edges and far narrower than
        the display, and the centre of the icons is the centre of THAT window. */
     var r = el.bar.getBoundingClientRect();
     if (!r.width) return null;
-    var leftEnd = el.left ? el.left.getBoundingClientRect().right : r.left + 8;
+    /* THE REVEAL SCALES THE ISLAND (.94 -> 1 about its centre, bar.css; lane mantle-barpolish). Every
+       rect here is in viewport px of whatever pose it is in, so each x is taken back to the island's
+       own size about that centre first: judged mid-entrance at .94 the room came out 6 % short and
+       "+3" read "+4" until the landing (bar.page.test.js 'reveal (too many)'). */
+    var k = barScale(), c = r.left + r.width / 2, un = function (x) { return c + (x - c) / k; };
+    var leftEnd = el.left ? un(el.left.getBoundingClientRect().right) : un(r.left) + 8;
     /* In PILL mode the chip strip is NOT part of the wall the dock measures against: chips are the
        bar talking about problems, and the "apps clipped" chip was widening the very cluster it
        measured (a 136 -> 0 -> 355 px loop, live 2026-09-21). The wall is the first real control.
@@ -858,11 +900,11 @@
        more hidden, never fewer, so settle after settle converges (one more at most, per extra
        digit or the plural "s"). The price is honest: that chip takes room from the icons too. */
     if (barMode === 'edge' && el.chips && el.chips.getBoundingClientRect().width > 0) anchor = el.chips;
-    var rightStart = anchor ? anchor.getBoundingClientRect().left : r.right - 8;
+    var rightStart = anchor ? un(anchor.getBoundingClientRect().left) : un(r.right) - 8;
     var spanL = leftEnd + 8, spanR = rightStart - 8;
     return {
-      w: Math.round(r.width),
-      centre: r.left + r.width / 2,
+      w: Math.round(r.width / k),
+      centre: c,
       spanL: spanL,
       spanR: spanR,
       span: Math.max(0, spanR - spanL)
