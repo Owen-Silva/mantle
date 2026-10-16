@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; media-src file:; font-src file:">
+<title>Clips</title>
+<!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="gallery.css">
+<link rel="stylesheet" href="../shared/wall-bdrop.css">
+</head>
+<body>
+<!-- Clips (lib/features/clips.js): the Captures folder, Windows' own (Videos\Captures), newest first.
+     Thumbnails are cached on disk by main; a hover scrubs a video with ONE shared <video> element; a
+     click opens it here (inline play, trim to a NEW file, copy, share, delete with undo). The window
+     and its page are made when it opens and are gone when it closes. -->
+<main class="app">
+  <header class="head">
+    <div class="brand">Clips</div>
+    <nav id="filters" class="seg" role="tablist" aria-label="Show">
+      <button class="sb" data-filter="all" role="tab" type="button">All <span class="n" data-count="all"></span></button>
+      <button class="sb" data-filter="video" role="tab" type="button">Videos <span class="n" data-count="video"></span></button>
+      <button class="sb" data-filter="image" role="tab" type="button">Screenshots <span class="n" data-count="image"></span></button>
+    </nav>
+    <div class="grow"></div>
+    <button id="folder" class="btn" type="button" title="Open the Captures folder in File Explorer">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M1.8 4.2a1 1 0 0 1 1-1h3.4l1.4 1.5h5.6a1 1 0 0 1 1 1v6.6a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+      <span>Open folder</span>
+    </button>
+    <div class="wc">
+      <button data-op="min" type="button" aria-label="Minimize" title="Minimize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M1 5h8" stroke="currentColor" stroke-width="1.1"/></svg></button>
+      <button data-op="max" type="button" aria-label="Maximize" title="Maximize"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.1" fill="none"/></svg></button>
+      <button data-op="close" class="x" type="button" aria-label="Close" title="Close (Ctrl+W)"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.1"/></svg></button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" role="alert" hidden></div>
+  <section id="grid" class="grid" aria-label="Clips, newest first"></section>
+  <div id="empty" class="empty" hidden>
+    <div class="em-art" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="em-title">No clips yet</div>
+    <div class="em-sub">Press <kbd>Win</kbd><kbd>G</kbd>, then Record. Windows saves clips and screenshots in your Captures folder.</div>
+  </div>
+
+  <!-- one clip, inline: play, trim to a new file, copy, share, delete -->
+  <section id="viewer" class="viewer" role="dialog" aria-modal="true" aria-labelledby="vTitle" hidden>
+    <div class="vhead">
+      <button id="vBack" class="ib" type="button" aria-label="Back to all clips (Esc)" title="Back (Esc)"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M10 3.2 5.2 8l4.8 4.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div class="vt"><div id="vTitle" class="vtitle"></div><div id="vMeta" class="vmeta"></div></div>
+      <div class="grow"></div>
+      <button id="vPrev" class="ib" type="button" aria-label="Newer clip (Page Up)" title="Newer (Page Up)"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 10 8 5.5l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button id="vNext" class="ib" type="button" aria-label="Older clip (Page Down)" title="Older (Page Down)"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
+    <div id="stage" class="stage">
+      <video id="vVideo" class="media" preload="metadata" playsinline hidden></video>
+      <img id="vImg" class="media" alt="" hidden>
+      <button id="vBig" class="big" type="button" aria-label="Play (Space)" hidden><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg></button>
+    </div>
+    <div id="vBar" class="vbar">
+      <div class="trow">
+        <button id="vPlay" class="ib play" type="button" aria-label="Play (Space)" title="Play (Space)"><svg class="i-play" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 3.2v9.6L12.8 8z" fill="currentColor"/></svg><svg class="i-pause" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="4" y="3.2" width="2.8" height="9.6" rx=".8" fill="currentColor"/><rect x="9.2" y="3.2" width="2.8" height="9.6" rx=".8" fill="currentColor"/></svg></button>
+        <span id="vTime" class="time">0:00 / 0:00</span>
+        <div id="tl" class="tl" role="group" aria-label="Timeline and trim">
+          <div class="track"><i id="tlRange" class="range"></i><i id="tlHead" class="head-line"></i></div>
+          <button id="tlIn" class="handle in" type="button" role="slider" aria-label="Trim start (I)" title="Trim start (I sets it at the play head)"></button>
+          <button id="tlOut" class="handle out" type="button" role="slider" aria-label="Trim end (O)" title="Trim end (O sets it at the play head)"></button>
+        </div>
+        <span id="vTrimInfo" class="trim-info"></span>
+      </div>
+      <div class="arow">
+        <button id="aTrim" class="btn pri" type="button" title="Save the part between the handles as a NEW file (Enter); the original is kept" disabled>Save trimmed copy</button>
+        <button id="aReset" class="btn quiet" type="button" title="Put the handles back at the ends" hidden>Reset</button>
+        <div class="grow"></div>
+        <button id="aCopy" class="btn" type="button" title="Copy the file, to paste into Discord or a chat (Ctrl+C)">Copy</button>
+        <button id="aShare" class="btn" type="button" title="Windows' share sheet">Share</button>
+        <button id="aFolder" class="btn" type="button" title="Open the Captures folder">Show in folder</button>
+        <button id="aDelete" class="btn danger" type="button" title="Move it to the Recycle Bin, with Undo (Delete)">Delete</button>
+      </div>
+      <div id="vNote" class="vnote" role="status" hidden></div>
+    </div>
+  </section>
+
+  <div id="toast" class="toast" role="status" hidden><span id="toastText"></span><button id="toastUndo" class="tb" type="button" hidden>Undo</button></div>
+</main>
+<script src="mock-mantle.js"></script>
+<script src="gallery.js"></script>
+<!-- dark: the desktop wallpaper under the window's tint, lined up with the real one (lane helm-wall-apps) -->
+<script src="../shared/wall-bdrop.js" data-event="clips.wall" data-pos="clips.wallpos"></script>
+</body>
+</html>

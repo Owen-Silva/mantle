@@ -116,7 +116,10 @@
       ['cursor', 'gaming.captures.cursor', 'toggle', 'Capture mouse cursor when recording a game', 'The pointer shows in the recording'],
     ], R);
     const V = (o) => Object.keys(o).map((k) => o[k]);
-    el.append(top, kit.card(folder), kit.group('Recording'), kit.card(...V(rec)),
+    // lane mantle-clips2: Mantle's own gallery of this folder (Win+G opens its Record panel)
+    const clips = kit.button({ row: 'gaming.captures.clips', label: 'Clips', help: 'Mantle\'s gallery of your recordings and screenshots: play, trim, copy, share', text: 'Open Clips',
+      onClick: () => (kit.test ? { ok: true, dryRun: true, reason: 'Test run, nothing opened: Mantle would open Clips' } : kit.call('clips.open', {})) });
+    el.append(top, kit.card(folder, clips), kit.group('Recording'), kit.card(...V(rec)),
       kit.group('Recorded audio'), kit.card(...V(au)), kit.group('Recorded video'), kit.card(...V(vi)));
     R.on((r, why) => {
       if (!r) { top.replaceChildren(); return folder.set({ help: '—', reason: why }); }
