@@ -35,7 +35,34 @@ const pct = (a, p) => { const s = a.slice().sort((x, y) => x - y); return s[Math
     t.check('no jargon on any new tile', !nt.some((x) => JARGON(x.sub + ' ' + x.tip)), nt.map((x) => x.tip));
     t.check('the panel asked for fresh reads only after drawing', (await pg.calls('qstiles.refresh')).length === 1 && (await pg.calls('project.refresh')).length === 1);
     t.check('no page errors', pg.errors.length === 0, pg.errors);
-    if (SHOTS) await pg.page.locator('.pop.qs').screenshot({ path: path.join(SHOTS, 'qs-tiles.png') }).catch((e) => console.log('shot: ' + e.message));
+    if (SHOTS) {
+      /* the pictures: a tall page whose bar.popover answer gives the panel its real room (the mock's own
+         answer caps at 640 px, which paints "Taller than the screen allows" over every mock picture),
+         cut to the panel's top (its rounded corners, the tiles, the sliders), light then dark. */
+      const room = '(ch, p) => ch === "bar.popover" ? { ok: true, reason: "", mock: true, max: 1500, height: Math.min(1500, Number(p && p.height) || 0), capped: false } : undefined';
+      const sp = await open('?mode=pill', { h: 1600, reply: room });
+      await sp.click('#network', { wait: 600 });
+      const cut = async (file) => {
+        const box = await sp.eval(() => {
+          const pop = document.querySelector('.pop.qs').getBoundingClientRect();
+          const grid = document.querySelector('.qsgrid').getBoundingClientRect();
+          // end on a whole section: the row of the last slider just under the grid (Volume), else the grid
+          let end = grid.bottom;
+          for (const el of document.querySelectorAll('.pop.qs input[type="range"]')) {
+            const r = el.parentElement.getBoundingClientRect();
+            if (r.height > 0 && r.top >= grid.bottom - 1 && r.bottom <= grid.bottom + 220 && r.bottom > end) end = r.bottom;
+          }
+          return { x: pop.left, y: pop.top, w: pop.width, h: Math.min(pop.height, end - pop.top + 14) };
+        });
+        const m = 14;   // room round the panel so its corners and edge are in the picture
+        await sp.page.screenshot({ path: path.join(SHOTS, file), clip: { x: Math.max(0, box.x - m), y: Math.max(0, box.y - m), width: box.w + 2 * m, height: box.h + m } });
+      };
+      await cut('qs-tiles.png').catch((e) => console.log('shot: ' + e.message));
+      await sp.eval(() => { document.documentElement.dataset.theme = 'dark'; window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: 'dark' } })); });
+      await sp.wait(500);
+      await cut('qs-tiles-dark.png').catch((e) => console.log('shot: ' + e.message));
+      await sp.close();
+    }
 
     // 2) clicks: DND / airplane / focus switch through qstiles.set; project / cast open and close the panel
     await pg.reset();
@@ -60,7 +87,9 @@ const pct = (a, p) => { const s = a.slice().sort((x, y) => x - y); return s[Math
     pg = await qs('?mode=pill&qx=dead');
     ts = await tiles(pg);
     t.check('dead: Do not disturb and Airplane mode are dead with reasons', ts.find((x) => x.tile === 'dnd').dead && /quiet-hours/.test(ts.find((x) => x.tile === 'dnd').tip) && ts.find((x) => x.tile === 'airplane').dead);
-    await pg.click('.qstile[data-tile="dnd"]', { wait: 200 });
+    // force: a dead tile is aria-disabled, which Playwright reads as "not enabled" and waits on; the tile is
+    // still a live button whose click says why (that is what this checks)
+    await pg.click('.qstile[data-tile="dnd"]', { wait: 200, force: true });
     t.check('dead: a click says why in the panel, sends nothing', (await pg.calls('qstiles.set')).length === 0 && /quiet-hours/.test(await pg.text('.qsx-notes')));
     await pg.close();
     pg = await qs('?mode=pill&displays=1');
