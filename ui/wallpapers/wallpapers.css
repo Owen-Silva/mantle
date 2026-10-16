@@ -152,10 +152,10 @@ button, select, input { font: inherit; color: inherit; }
 .link:hover { text-decoration: underline; }
 .link:active { opacity: .7; }
 .link:disabled { color: var(--lg-ink-3); text-decoration: none; }
-.link:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
+.link:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
 .btn:focus-visible, .win-btn:focus-visible, .card:focus-visible, .sect summary:focus-visible {
   outline: 2px solid var(--lg-acc);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }
 
 /* ---- the notice under the header --------------------------------------- */
@@ -275,7 +275,7 @@ button, select, input { font: inherit; color: inherit; }
 .cat:hover { background: var(--lg-hover); color: var(--lg-ink); }
 .cat:active { background: var(--lg-press); }
 .cat[aria-pressed="true"] { background: var(--lg-press); border-color: transparent; color: var(--lg-ink); font-weight: 600; }
-.seg-btn:focus-visible, .cat:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
+.seg-btn:focus-visible, .cat:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
 .views-note { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--lg-ink-2); }
 .views-note[hidden] { display: none; }
 

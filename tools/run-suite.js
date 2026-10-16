@@ -113,6 +113,11 @@ function discover() {
   const all = walk(ROOT, []);
   const entries = [];
   entries.push({ id: 'tools/check.js', kind: 'node', file: path.join(ROOT, 'tools', 'check.js'), check: true });
+  // the overlap / clipping / hit-box audit over every ui/* surface, light and dark (lane overlap, 2026-10-15): one
+  // headless Chromium, judged by "OVERLAP AUDIT: N passed, M failed" (states x themes). It renders ~200 states,
+  // so it gets a longer limit than the per-file default.
+  if (fs.existsSync(path.join(ROOT, 'tools', 'overlap-audit.js')))
+    entries.push({ id: 'tools/overlap-audit.js', kind: 'node', file: path.join(ROOT, 'tools', 'overlap-audit.js'), args: ['--suite'], timeout: 1500 });
   for (const f of all.filter((p) => p.endsWith('.test.js')).sort()) {
     entries.push({ id: rel(f), kind: 'node', file: f });
     // the same file's END-TO-END half: a separate run with its flag (one Electron --test instance each)
@@ -316,7 +321,8 @@ async function runOne(e) {
   const exitP = new Promise((r) => child.on('exit', (c, sig) => { exited = true; code = c === null ? sig : c; r(); }));
   child.on('error', (err) => { text += '\n[run-suite] spawn error: ' + err.message; });
 
-  const limit = (e.kind === 'selftest' ? Math.min(TIMEOUT_S, 300) : Math.max(TIMEOUT_S, e.minTimeoutS || 0)) * 1000;
+  // e.timeout (overlap audit) and e.minTimeoutS (perf:budget) both only ever raise the per-file default
+  const limit = (e.timeout ? Math.max(e.timeout, TIMEOUT_S) : e.kind === 'selftest' ? Math.min(TIMEOUT_S, 300) : Math.max(TIMEOUT_S, e.minTimeoutS || 0)) * 1000;
   let timedOut = false; let selfDone = false; let chordSent = false;
   while (!exited) {
     await Promise.race([exitP, sleep(e.kind === 'selftest' ? 2000 : 1000)]);

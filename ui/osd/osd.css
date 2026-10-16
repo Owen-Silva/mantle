@@ -277,7 +277,7 @@ body[data-below] .osd.open .more svg { transform: none; }
    page's fade timer reads 0 too (osd.js fadeMs), so the window goes the moment the pop-up does. */
 .glyph:focus-visible, .more:focus-visible, .amute:focus-visible, .retry:focus-visible {
   outline: 1px solid var(--lg-acc);
-  outline-offset: 1px;
+  outline-offset: -1px;
 }
 @media (prefers-reduced-motion: reduce) {
   .osd, .more svg, .glyph, .more, .amute, .retry { transition: none; }

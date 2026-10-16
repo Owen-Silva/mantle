@@ -1,0 +1,24 @@
+[
+ { "surface": "clipboard", "kind": "text-clipped", "el": "div", "other": "div", "reason": "not Mantle UI: mock-mantle.js's stand-in desktop document behind the glass, cut by the mock's frame (the label is per-run text)", "exact": true
+ },
+ { "surface": "bar", "kind": "ink-overlap", "el": "span.qsx-netico > svg", "other": "span.qsx-lock > svg", "reason": "by design: the padlock is a badge on the Wi-Fi strength glyph (secured network), overlapping 3 x 5 px on purpose"
+ },
+ { "surface": "taskmgr", "kind": "hitbox-overlap", "el": "div#list", "other": "div#menu", "reason": "by design: the row menu is a pop-up floating over the list it belongs to; the list under it is not meant to take that click"
+ },
+ { "surface": "bar", "kind": "focus-overlap", "reason": "HANDED OVER (barpolish/qstiles, mantle-overlap-findings.md bar items 1-2: .pop button / .btn halo -> var(--lg-focus)); delete this entry when applied"
+ },
+ { "surface": "bar", "kind": "box-overlap", "el": "button#mchip", "other": "button#mtog", "reason": "HANDED OVER (barpolish, findings bar item 3: .mtog margin-left -3px -> 0); delete when applied"
+ },
+ { "surface": "bar", "kind": "hitbox-overlap", "el": "button#mchip", "other": "button#mtog", "reason": "HANDED OVER (barpolish, findings bar item 3: .mtog margin-left -3px -> 0); delete when applied"
+ },
+ { "surface": "bar", "kind": "target-size", "el": "button.qsx-chev", "reason": "HANDED OVER (qstiles, findings bar item 5: QS chevron hit box 23 px wide -> min-width 24px); delete when applied"
+ },
+ { "surface": "bar", "kind": "outside-window", "el": "div#bar", "reason": "HANDED OVER (barpolish, findings bar item 7: the pill sits 2 px past the window edge); delete when applied"
+ },
+ { "surface": "taskmgr", "kind": "focus-overlap", "reason": "HANDED OVER (settingsfast, findings taskmgr item 1: tabs and window buttons -> inset ring); delete when applied"
+ },
+ { "surface": "screenshot", "kind": "focus-overlap", "el": "button.mode", "reason": "HANDED OVER (speeddebt, findings screenshot item 1: mode buttons -> inset ring); delete when applied"
+ },
+ { "surface": "snap", "kind": "hover-bleed", "el": "button.zone", "reason": "OPEN (lane overlap follow-up): the top 6 px of each snap zone is not hittable although it paints; find what covers it in the picker and remove this entry"
+ }
+]
