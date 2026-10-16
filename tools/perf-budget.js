@@ -445,8 +445,8 @@ async function cli() {
     }
     locks.push(() => dropFileLock(blk));
   }
-  // MANTLE_TEST_MIN_FREE_GB lowers (or raises) the free-RAM floor for one run, when Owen allows it; the default stays 2.5.
-  const minFreeGb = Number(process.env.MANTLE_TEST_MIN_FREE_GB) > 0 ? Number(process.env.MANTLE_TEST_MIN_FREE_GB) : 2.5;
+  // MANTLE_TEST_MIN_FREE_GB sets the free-RAM floor for one run when Owen allows it (0 = no floor); unset, it stays 2.5.
+  const minFreeGb = process.env.MANTLE_TEST_MIN_FREE_GB !== undefined && process.env.MANTLE_TEST_MIN_FREE_GB !== '' && Number(process.env.MANTLE_TEST_MIN_FREE_GB) >= 0 ? Number(process.env.MANTLE_TEST_MIN_FREE_GB) : 2.5;
   if (minFreeGb !== 2.5) say(`perf-budget: free-RAM floor ${minFreeGb} GB for this run (MANTLE_TEST_MIN_FREE_GB; default 2.5)`);
   for (let i = 0; os.freemem() < minFreeGb * 1024 ** 3; i++) {
     if (i >= 30) return finish(2, `under ${minFreeGb} GB free RAM for 30 min (${(os.freemem() / 1024 ** 3).toFixed(1)} GB)`);

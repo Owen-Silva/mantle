@@ -174,8 +174,8 @@ async function main() {
   console.log(`info: registry before: paused=${paused}${paused ? ` (since ${new Date(pauseStart).toISOString()}, until ${new Date(pauseEnd).toISOString()})` : ''}, SmartActiveHoursState=${smart}, ActiveComputerName set=${!!activeName}`);
 
   // Owen's laptop (11.7 GB): an Electron instance only with at least 2.5 GB free; wait up to 10 minutes.
-  // MANTLE_TEST_MIN_FREE_GB lowers (or raises) that floor for one run, when Owen allows it; the default stays 2.5.
-  const minFreeGb = Number(process.env.MANTLE_TEST_MIN_FREE_GB) > 0 ? Number(process.env.MANTLE_TEST_MIN_FREE_GB) : 2.5;
+  // MANTLE_TEST_MIN_FREE_GB sets that floor for one run when Owen allows it (0 = no floor); unset, it stays 2.5.
+  const minFreeGb = process.env.MANTLE_TEST_MIN_FREE_GB !== undefined && process.env.MANTLE_TEST_MIN_FREE_GB !== '' && Number(process.env.MANTLE_TEST_MIN_FREE_GB) >= 0 ? Number(process.env.MANTLE_TEST_MIN_FREE_GB) : 2.5;
   const freeGb =() => { const r = spawnSync('powershell', ['-NoProfile', '-Command', '(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory'], { encoding: 'utf8', timeout: 20000 }); return (Number((r.stdout || '').trim()) || 0) / 1048576; };
   if (process.env.CI !== 'true' && !await until(() => freeGb() >= minFreeGb, 600000, 15000)) {
     check(`at least ${minFreeGb} GB of free memory to start a test instance (${freeGb().toFixed(2)} GB free after 10 minutes)`, false); return;
