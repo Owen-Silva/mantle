@@ -12,7 +12,9 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
  * pages and report picked ok; widgets: Hide -> body.widgets-off, every pane hidden with no layout shift,
  * saved, the next menu says Show, and Show brings them back; a command that fails keeps the menu up with
  * the reason in warning ink, re-sized, and reports picked ok:false; a newer right-click wins over an
- * older one; no page errors.
+ * older one; menu keys (deskmenu.key): Down/Up step over separators and wrap, Home/End, one highlight
+ * shared with the mouse, a stale seq ignored, Enter picks, Enter with nothing highlighted closes; no page
+ * errors.
  *   node ui/desktop/deskmenu.page.test.js  -> "DESKMENU PAGE TEST: n passed, m failed"
  */
 'use strict';
@@ -142,6 +144,55 @@ async function run(browser, theme) {
   await sleep(400);
   const seqs = (await calls(p, 'deskmenu.place')).map((x) => x.seq).filter((s) => s >= 6);
   check(`${theme}: two right-clicks in a row: the newer one is drawn (no stale size for the older)`, seqs.includes(7), seqs);
+
+  // ---- menu keys (main hands them over from the sidecar: deskmenu.key {seq, key})
+  await m.mouse.move(1, 1);   // off every row (inside the window's clear margin)
+  await show(8);
+  const key = async (k, seq) => { await p.evaluate((a) => window.__emit('deskmenu.key', a), { seq: seq === undefined ? 8 : seq, key: k }); await sleep(40); };
+  const hl = () => m.evaluate(() => {
+    const s = Array.from(document.querySelectorAll('.dm-row.sel'));
+    const panel = document.querySelector('.dm-panel');
+    const plain = document.querySelector('.dm-row:not(.sel)');
+    return { ids: s.map((el) => el.dataset.id), ad: panel.getAttribute('aria-activedescendant'),
+      bg: s[0] ? getComputedStyle(s[0]).backgroundColor : null, plainBg: plain ? getComputedStyle(plain).backgroundColor : null };
+  });
+  let h = await hl();
+  check(`${theme}: keys: a fresh menu has no row highlighted`, h.ids.length === 0 && !h.ad, h);
+  const walk = [];
+  for (const k of ['down', 'down', 'up', 'up', 'down', 'end', 'home', 'down', 'down']) { await key(k); walk.push((await hl()).ids.join('+') || '-'); }
+  check(`${theme}: keys: Down/Up step over the separators and wrap; Home/End go to the ends`,
+    walk.join() === 'wallpaper,display,wallpaper,settings,wallpaper,settings,wallpaper,display,personalize', walk.join());
+  h = await hl();
+  check(`${theme}: keys: exactly one row is highlighted, painted, and named to assistive tech`, h.ids.length === 1 && h.ad === 'dm-personalize' && h.bg && h.bg !== h.plainBg && h.bg !== 'rgba(0, 0, 0, 0)', h);
+  await key('down', 7);
+  check(`${theme}: keys: a key for an older menu is ignored`, (await hl()).ids.join() === 'personalize');
+  // the mouse takes the highlight, and the keys go on from where it is
+  const box = await m.evaluate(() => { const r = document.querySelector('.dm-row[data-id="display"]').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await m.mouse.move(box.x, box.y);
+  await m.mouse.move(box.x + 3, box.y);
+  await sleep(60);
+  check(`${theme}: keys: the mouse moving onto a row takes the highlight (one row only)`, (await hl()).ids.join() === 'display', await hl());
+  await key('down');
+  check(`${theme}: keys: Down goes on from the row under the mouse`, (await hl()).ids.join() === 'personalize');
+  await m.mouse.move(1, 1);
+  await sleep(60);
+  check(`${theme}: keys: the mouse leaving the menu clears the highlight`, (await hl()).ids.length === 0, await hl());
+  // Enter picks the highlighted row
+  const soBefore = (await calls(p, 'settings.open')).length;
+  await key('down'); await key('down'); await key('down');   // wallpaper, display, personalize
+  await key('enter');
+  await sleep(150);
+  const so2 = await calls(p, 'settings.open');
+  const pk = (await calls(p, 'deskmenu.picked')).pop();
+  check(`${theme}: keys: Enter runs the highlighted row (Personalize) and reports the pick`, so2.length === soBefore + 1 && so2[so2.length - 1].section === 'personalization' && pk && pk.id === 'personalize' && pk.ok === true, { so: so2.slice(-1), pk });
+  // Enter with nothing highlighted closes the menu (the key was kept from the desktop)
+  await show(9);
+  const hidesBefore = (await calls(p, 'deskmenu.hide')).length;
+  const picksBefore = (await calls(p, 'deskmenu.picked')).length;
+  await key('enter', 9);
+  const hides = await calls(p, 'deskmenu.hide');
+  check(`${theme}: keys: Enter with no row highlighted asks main to close the menu`, hides.length === hidesBefore + 1 && /Enter/.test(hides[hides.length - 1].why), hides.slice(-1));
+  check(`${theme}: keys: ...and runs nothing`, (await calls(p, 'deskmenu.picked')).length === picksBefore &&(await calls(p, 'settings.open')).length === so2.length);
 
   check(`${theme}: no page errors`, errors.length === 0, errors.join(' | '));
   await ctx.close();

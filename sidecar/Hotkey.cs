@@ -678,6 +678,7 @@ namespace Mantle {
           }
           case "popwatch": return PopWatch.Command(req, passive, out result);
           case "popesc": return PopWatch.EscTest(req, out result);
+          case "popnav": return PopWatch.NavTest(req, out result);
           case "rearm": {
             // Main, on every wake and unlock: put both kinds of hook back at the head of the chain.
             // Only ever re-installs hooks this sidecar already has, so passive is fine.
@@ -715,7 +716,7 @@ namespace Mantle {
             return TestOp(op, req, out result);
           }
           default:
-            return "hotkey: unknown op '" + op + "' (simulate, order, list, status, pick, cancel, grid, popwatch, popesc, rearm, hookhealth)";
+            return "hotkey: unknown op '" + op + "' (simulate, order, list, status, pick, cancel, grid, popwatch, popesc, popnav, rearm, hookhealth)";
         }
       }
 
@@ -846,6 +847,16 @@ namespace Mantle {
   // keyup of a swallowed Esc is swallowed with it, even after a disarm (held 1 s at most), so the
   // app never sees half a keypress. In passive (test) mode Esc is only observed, never swallowed.
   //
+  // MENU KEYS (lane mantle-deskmenu2, 2026-10-15): a pop-up that is a MENU (the desktop right-click
+  // menu) arms with nav:true, and then Up, Down, Home, End and Enter move through it and pick, the way
+  // a Windows context menu takes them, while the menu window itself never takes the keyboard. Same
+  // rules as Esc: bare keys only (Shift+Down and Ctrl+End are the app's), never while the bar is in
+  // front, the keyup goes with its keydown, observed only in passive mode. Up and Down report every
+  // autorepeat (a held arrow walks the menu); Enter reports its first down only. Without nav:true
+  // (every bar pop-up) these keys are never looked at.
+  //   hotkey {op:'popnav', vk, down, mods, fgIsBar, passive, nav, held}   the menu-key verdict, pure
+  // Events: {ev:'popwatch', op:'key', key:'up'|'down'|'home'|'end'|'enter', swallowed}.
+  //
   // The hook procs run inline with every mouse move and keystroke on the desktop: they read a few
   // fields and at most post a thread message. No allocation, no JSON, no I/O, no locks.
   static class PopWatch {
@@ -862,6 +873,7 @@ namespace Mantle {
     const uint MSG_WAKE = 0x8000 + 43;    // look at the state again (disarm, a held Esc came up)
     const uint MSG_QUIT = 0x8000 + 44;
     const uint MSG_REHOOK = 0x8000 + 45;  // re-install both hooks (main's wake/unlock rearm)
+    const uint MSG_NAV = 0x8000 + 46;     // wParam = the menu key's vk, lParam = 1 if swallowed
 
     // HOOK HEALTH (HookHealth.cs): both procs store the tick of their last callback; the watch
     // thread's timer compares it with GetLastInputInfo while armed. One heal per arm at most.
@@ -884,6 +896,9 @@ namespace Mantle {
     static volatile bool _exiting;    // the thread has decided to go (set under _gate)
     static volatile bool _passive;    // observe Esc only
     static volatile bool _escHeld;    // an Esc down was taken and its up not seen yet (hook proc only writes it)
+    static volatile bool _nav;        // the open pop-up is a menu: Up/Down/Home/End/Enter are its (MENU KEYS)
+    static volatile int _navHeld;     // NavBit()s of menu keys taken whose up is not seen yet (hook proc only writes it)
+    static volatile int _keys;        // menu keys reported, this arm
     static volatile IntPtr _bar;      // the armed hwnd: Esc while it is in front is the bar's own
     static long _deadline;            // Stopwatch ticks; under _gate
     static long _drainUntil;          // Stopwatch ticks, 0 = not draining; watch thread only
@@ -942,6 +957,74 @@ namespace Mantle {
       return null;
     }
 
+    public const int VK_RETURN = 0x0D, VK_END = 0x23, VK_HOME = 0x24, VK_UP = 0x26, VK_DOWN = 0x28;
+
+    /// The menu keys' bits (0 = not a menu key).
+    public static int NavBit(int vk) {
+      switch (vk) {
+        case VK_UP: return 1;
+        case VK_DOWN: return 2;
+        case VK_HOME: return 4;
+        case VK_END: return 8;
+        case VK_RETURN: return 16;
+        default: return 0;
+      }
+    }
+
+    static string NavName(int vk) {
+      switch (vk) {
+        case VK_UP: return "up";
+        case VK_DOWN: return "down";
+        case VK_HOME: return "home";
+        case VK_END: return "end";
+        default: return "enter";
+      }
+    }
+
+    /// PURE: what the keyboard proc does with one key while the watch is on, for the MENU KEYS. Returns
+    /// Swallow | Report | Held bits; `held` = this key's down was taken and its up not seen yet.
+    ///   not a menu key                  0 (EscVerdict's business, or nobody's)
+    ///   up                              swallowed if its down was (held, and not passive); held cleared.
+    ///                                   Checked first, as for Esc: an up whose down we ate is ours.
+    ///   down, no menu open (nav off)    pass, nothing reported, held cleared
+    ///   down + Ctrl/Alt/Shift/Win       pass, nothing reported, held cleared
+    ///   down, the bar in front          pass, nothing reported, held cleared
+    ///   down                            reported (Enter: first down only; the others every autorepeat),
+    ///                                   swallowed unless passive, held set
+    public static int NavVerdict(int vk, bool down, bool anyMod, bool fgIsBar, bool passive, bool nav, bool held) {
+      if (NavBit(vk) == 0) return 0;
+      if (!down) return held && !passive ? Swallow : 0;
+      if (!nav || anyMod || fgIsBar) return 0;
+      int r = Held;
+      if (vk != VK_RETURN || !held) r |= Report;
+      if (!passive) r |= Swallow;
+      return r;
+    }
+
+    /// `hotkey {op:'popnav', ...}`: the menu-key verdict for made-up input, for tests (passive too). Emits nothing.
+    public static string NavTest(Dictionary<string, object> req, out object result) {
+      result = null;
+      object raw;
+      if (!Json.TryGet(req, "vk", out raw) || !(raw is double))
+        return "hotkey popnav needs vk: the virtual-key code, as a number (Down is 40, Enter 13)";
+      if (!Json.TryGet(req, "down", out raw) || !(raw is bool))
+        return "hotkey popnav needs down: true for a keydown, false for a keyup";
+      bool anyMod = false;
+      if (Json.TryGet(req, "mods", out raw)) {
+        var mods = raw as Dictionary<string, object>;
+        if (mods == null) return "hotkey popnav: mods must be an object like {ctrl, alt, shift, win}";
+        anyMod = Json.GetBool(mods, "ctrl", false) || Json.GetBool(mods, "alt", false) ||
+                 Json.GetBool(mods, "shift", false) || Json.GetBool(mods, "win", false);
+      }
+      int vk = Json.GetInt(req, "vk", 0);
+      int v = NavVerdict(vk, Json.GetBool(req, "down", false), anyMod,
+                         Json.GetBool(req, "fgIsBar", false), Json.GetBool(req, "passive", false),
+                         Json.GetBool(req, "nav", false), Json.GetBool(req, "held", false));
+      result = Json.Obj("swallow", (v & Swallow) != 0, "report", (v & Report) != 0, "held", (v & Held) != 0,
+                        "key", NavBit(vk) == 0 ? null : NavName(vk));
+      return null;
+    }
+
     // ------------------------------------------------------------ the protocol
 
     public static string Command(Dictionary<string, object> req, bool passive, out object result) {
@@ -972,6 +1055,9 @@ namespace Mantle {
       if (hasHwnd && !(raw is double) && !(raw is string))
         return "hotkey popwatch: hwnd must be the pop-up's bar window handle (a number or a decimal string), not " + Json.Write(raw);
       IntPtr hwnd = hasHwnd ? Json.GetHwnd(req, "hwnd") : IntPtr.Zero;
+      bool hasNav = Json.TryGet(req, "nav", out raw);
+      if (hasNav && !(raw is bool)) return "hotkey popwatch: nav must be true (the open pop-up is a menu) or false, not " + Json.Write(raw);
+      bool nav = hasNav && (bool)raw;
 
       lock (_gate) {
         long now = Stopwatch.GetTimestamp();
@@ -982,7 +1068,9 @@ namespace Mantle {
           if (_thread != null) { _thread.Join(1500); _thread = null; }
           _passive = passive;
           _escHeld = false;
-          _clicks = 0; _escs = 0; _healedThisArm = false;
+          _navHeld = 0;
+          _nav = nav;
+          _clicks = 0; _escs = 0; _keys = 0; _healedThisArm = false;
           _bar = hwnd;
           _deadline = now + MsToTicks(lease);
           _leaseMs = lease;
@@ -992,13 +1080,14 @@ namespace Mantle {
           _armed = true;
           renewed = false;
         } else {
-          if (!_armed) { _clicks = 0; _escs = 0; _pendingOff = null; _healedThisArm = false; }
+          if (!_armed) { _clicks = 0; _escs = 0; _keys = 0; _pendingOff = null; _healedThisArm = false; }
           if (hasHwnd) _bar = hwnd;
+          _nav = nav;   // every arm and renewal says whether the newest pop-up is a menu (absent = no)
           _deadline = now + MsToTicks(lease);
           _leaseMs = lease;
           _armed = true;
         }
-        result = Json.Obj("armed", true, "esc", _passive ? "observe" : "swallow", "leaseMs", lease, "renewed", renewed);
+        result = Json.Obj("armed", true, "esc", _passive ? "observe" : "swallow", "leaseMs", lease, "renewed", renewed, "nav", nav);
         return null;
       }
     }
@@ -1011,7 +1100,7 @@ namespace Mantle {
           if (left < 0) left = 0;
         }
         return Json.Obj("armed", _armed, "esc", (_armed ? _passive : passive) ? "observe" : "swallow",
-                        "leaseLeftMs", left, "clicks", _clicks, "escs", _escs,
+                        "leaseLeftMs", left, "clicks", _clicks, "escs", _escs, "nav", _armed && _nav, "keys", _keys,
                         "hooked", _mouseHook != IntPtr.Zero && _keyHook != IntPtr.Zero,
                         "rehooks", _popRehooks, "heals", _popHeals, "outranked", _popOutranked);
       }
@@ -1218,6 +1307,12 @@ namespace Mantle {
               _escs++;
               KeyEvents.Enqueue(Json.Obj("ev", "popwatch", "op", "esc", "swallowed", msg.wParam != IntPtr.Zero));
             }
+          } else if (msg.message == MSG_NAV) {
+            if (_armed && _nav) {
+              _keys++;
+              KeyEvents.Enqueue(Json.Obj("ev", "popwatch", "op", "key", "key", NavName((int)msg.wParam.ToInt64()),
+                                         "swallowed", msg.lParam != IntPtr.Zero));
+            }
           }
           // WM_TIMER, MSG_WAKE and everything else: look at the lease and the drain.
           if (Tick()) break;
@@ -1248,9 +1343,9 @@ namespace Mantle {
         _pendingOff = null;
         if (_armed) {
           _drainUntil = 0;
-        } else if (_escHeld && !_passive) {
-          // An Esc down was swallowed and its up is still to come: keep the keyboard hook to take it,
-          // a second at most.
+        } else if ((_escHeld || _navHeld != 0) && !_passive) {
+          // An Esc (or menu key) down was swallowed and its up is still to come: keep the keyboard
+          // hook to take it, a second at most.
           if (_drainUntil == 0) _drainUntil = now + MsToTicks(1000);
           if (now >= _drainUntil) go = true;
         } else {
@@ -1287,7 +1382,7 @@ namespace Mantle {
         if (_mouseHook == mh) _mouseHook = IntPtr.Zero;
         try { Win32.UnhookWindowsHookEx(mh); } catch (Exception) { }
       }
-      if (me != 0 && _tid == me) { _tid = 0; _escHeld = false; }
+      if (me != 0 && _tid == me) { _tid = 0; _escHeld = false; _navHeld = 0; }
     }
 
     // ------------------------------------------------------------ the hooks
@@ -1342,6 +1437,36 @@ namespace Mantle {
                 if ((v & Report) != 0 && armed) KeysNative.PostThreadMessageW(_tid, MSG_ESC, new IntPtr((v & Swallow) != 0 ? 1 : 0), IntPtr.Zero);
                 if (!down && !armed) KeysNative.PostThreadMessageW(_tid, MSG_WAKE, IntPtr.Zero, IntPtr.Zero);
                 if ((v & Swallow) != 0) return new IntPtr(1);
+              }
+            }
+          } else {
+            int bit = NavBit(vk);
+            if (bit != 0) {
+              uint m = (uint)wParam.ToInt64();
+              bool down = m == WM_KEYDOWN || m == WM_SYSKEYDOWN;
+              if (down || m == WM_KEYUP || m == WM_SYSKEYUP) {
+                bool armed = _armed;
+                int heldMask = _navHeld;
+                bool held = (heldMask & bit) != 0;
+                // Only a menu (nav) watch looks at these keys; a drain still takes the up of one it ate.
+                if ((armed && _nav) || held) {
+                  bool anyMod = false, fg = false;
+                  if (down) {
+                    uint flags = (uint)Marshal.ReadInt32(lParam, 8);
+                    anyMod = (flags & LLKHF_ALTDOWN) != 0 ||
+                             KeysNative.KeyDown(0x11) || KeysNative.KeyDown(0x12) || KeysNative.KeyDown(0x10) ||
+                             KeysNative.KeyDown(0x5B) || KeysNative.KeyDown(0x5C);
+                    IntPtr bar = _bar;
+                    fg = bar != IntPtr.Zero && Win32.GetForegroundWindow() == bar;
+                  }
+                  bool passive = _passive;
+                  int v = NavVerdict(vk, down, anyMod, fg, passive, armed && _nav, held);
+                  _navHeld = (v & Held) != 0 ? (heldMask | bit) : (heldMask & ~bit);
+                  if ((v & Report) != 0 && armed)
+                    KeysNative.PostThreadMessageW(_tid, MSG_NAV, new IntPtr(vk), new IntPtr((v & Swallow) != 0 ? 1 : 0));
+                  if (!down && !armed) KeysNative.PostThreadMessageW(_tid, MSG_WAKE, IntPtr.Zero, IntPtr.Zero);
+                  if ((v & Swallow) != 0) return new IntPtr(1);
+                }
               }
             }
           }

@@ -6,6 +6,7 @@
  *   'deskmenu.prepare'  a right-click on the empty desktop began: make the menu window if there is none
  *   'deskmenu.show'     {seq}: it ended. Draw the rows, tell main the size (deskmenu.place: main puts the
  *                       window at the click and shows it), then deskmenu.painted after its second frame.
+ *   'deskmenu.key'      {seq, key}: up | down | home | end move the highlight, enter picks its row.
  *
  * The menu window is about:blank: it has no bridge of its own, so every row runs Mantle's command from
  * this page (window.mantle). A row that fails keeps the menu up with the reason in warning ink, and main
@@ -90,20 +91,54 @@
     for (const a of Array.from(to.attributes)) if (a.name !== 'class' && !from.hasAttribute(a.name)) to.removeAttribute(a.name);
   }
 
+  /** THE HIGHLIGHT: one row at most, moved by the mouse and by the menu keys alike (as in Windows' own
+      menus: the keys go on from the row the mouse is on, and moving the mouse takes the highlight back). */
+  function setSel(i) {
+    if (!ui || !ui.items) return;
+    const n = ui.items.length;
+    const next = (Number.isInteger(i) && i >= 0 && i < n) ? i : -1;
+    ui.items.forEach((it, k) => it.el.classList.toggle('sel', k === next));
+    ui.sel = next;
+    if (next >= 0) ui.panel.setAttribute('aria-activedescendant', ui.items[next].el.id);
+    else ui.panel.removeAttribute('aria-activedescendant');
+  }
+
+  /** PURE: the row a menu key moves the highlight to. sel = -1 (none) .. n-1. Down from none is the first
+      row and Up from none the last; both wrap; Home and End are the ends. */
+  function step(sel, n, key) {
+    if (!(n > 0)) return -1;
+    if (key === 'home') return 0;
+    if (key === 'end') return n - 1;
+    if (key === 'down') return sel < 0 ? 0 : (sel + 1) % n;
+    if (key === 'up') return sel < 0 ? n - 1 : (sel - 1 + n) % n;
+    return sel;
+  }
+
   function render() {
     const { doc, panel } = ui;
     panel.textContent = '';
+    ui.items = [];
+    ui.sel = -1;
+    panel.removeAttribute('aria-activedescendant');
     for (const r of rows()) {
       if (r.sep) { const s = doc.createElement('div'); s.className = 'dm-sep'; s.setAttribute('role', 'separator'); panel.appendChild(s); continue; }
       const b = doc.createElement('div');
       b.className = 'dm-row';
       b.setAttribute('role', 'menuitem');
+      b.id = `dm-${r.id}`;
       b.dataset.id = r.id;
       const ic = doc.createElement('span'); ic.className = 'dm-ic'; ic.textContent = ICON[r.id] || ''; ic.setAttribute('aria-hidden', 'true');
       const tx = doc.createElement('span'); tx.className = 'dm-tx'; tx.textContent = r.label;
       b.append(ic, tx);
+      const at = ui.items.length;
       b.addEventListener('click', () => pick(r, b));
+      b.addEventListener('mousemove', () => { if (ui.sel !== at) setSel(at); });
+      ui.items.push({ r, el: b });
       panel.appendChild(b);
+    }
+    if (!ui.leaveWired) {
+      panel.addEventListener('mouseleave', () => setSel(-1));
+      ui.leaveWired = true;
     }
     const note = doc.createElement('div');
     note.className = 'dm-note';
@@ -134,6 +169,21 @@
       M.call('deskmenu.place', Object.assign({ seq: seqNow }, s)).catch(() => { /* the menu keeps its size */ });
     }
   }
+
+  // MENU KEYS (lib/popwatch.js): the menu window never takes the keyboard, so main hands over the bare
+  // Up/Down/Home/End/Enter the sidecar took while this menu is open. Enter with nothing highlighted
+  // closes the menu (the key was kept from the desktop, so it must not do nothing).
+  M.on('deskmenu.key', (p) => {
+    if (!p || p.seq !== seqNow || !ui || !ui.items || !win || win.closed) return;
+    const key = String(p.key || '');
+    if (key === 'enter') {
+      const it = ui.sel >= 0 ? ui.items[ui.sel] : null;
+      if (it) pick(it.r, it.el);
+      else M.call('deskmenu.hide', { why: 'Enter with no row highlighted' }).catch(() => { /* Esc still closes it */ });
+      return;
+    }
+    setSel(step(ui.sel, ui.items.length, key));
+  });
 
   M.on('deskmenu.prepare', () => { try { ensure(); } catch (e) { console.warn('[deskmenu] the menu window could not be made: ' + (e && e.message)); } });
 

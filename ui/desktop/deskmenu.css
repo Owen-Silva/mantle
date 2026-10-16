@@ -36,7 +36,8 @@ html.dm-root, html.dm-root body { margin: 0; background: transparent; overflow: 
   border-radius: var(--lg-r-ctl);
   white-space: nowrap;
 }
-.dm-row:hover { background: var(--lg-hover); }
+/* The highlight is one row, moved by the mouse and the menu keys alike (deskmenu.js setSel). */
+.dm-row.sel { background: var(--lg-hover); }
 .dm-row:active, .dm-row.busy { background: var(--lg-press); }
 .dm-ic { width: 16px; text-align: center; font-family: var(--icon-font); font-size: 14px; color: var(--lg-ink-2); }
 .dm-sep { height: 1px; margin: 4px 8px; background: var(--lg-edge-out); }
