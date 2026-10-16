@@ -52,7 +52,7 @@ check('no section is DOWN', nav.every((e) => !e.down), nav.filter((e) => e.down)
 
 /* ---- the sidebar: Home, then Windows 11's category order, then Mantle's own ---- */
 const WANT = ['home', 'system', 'devices', 'internet', 'personalization', 'applist', 'accounts', 'time', 'gaming',
-  'accessibility', 'privacy', 'update', 'mantle', 'apppower', 'shortcuts', 'about'];   // apppower: Power (App power's saved limits, lane mantle-power)
+  'accessibility', 'privacy', 'update', 'mantle', 'apppower', 'ramreclaim', 'shortcuts', 'about'];   // apppower: Power (App power's saved limits, lane mantle-power); ramreclaim: Windows pieces Mantle turned off (lane ramreclaim)
 const got = nav.map((e) => e.id);
 check('the sidebar is Home, the eleven Windows categories in Windows 11 order, then Mantle', JSON.stringify(got) === JSON.stringify(WANT), got.join(' '));
 const labels = nav.map((e) => e.label);
@@ -173,7 +173,7 @@ const PROPER = new Set(['Windows', 'Mantle', 'Helm', 'Quartz', 'Bluetooth', 'Wi-
   'DNS', 'IP', 'IPv4', 'IPv6', 'USB', 'PC', 'PIN', 'Hello', 'Game', 'Bar', 'Narrator', 'Magnifier', 'Defender', 'Update', 'Alt', 'Tab',
   'Win', 'Ctrl', 'Shift', 'Esc', 'Insider', 'Program', 'Mode', 'DirectX', 'Spotify', 'Task', 'View', 'Snap', 'Copilot', 'Teams',
   'Outlook', 'Dolby', 'Atmos', 'DTS', 'Sonic', 'MAC', 'ID', 'GPU', 'CPU', 'RAM', 'SSD', 'HDD', 'Ethernet', 'Explorer', 'File', 'Start',
-  'Focus', 'Security', 'BitLocker', 'Kerberos', 'ClearType', 'Braille', 'Live', 'Captions', 'Voice', 'Access', 'Sticky', 'Keys',
+  'Widgets', 'Focus', 'Security', 'BitLocker', 'Kerberos', 'ClearType', 'Braille', 'Live', 'Captions', 'Voice', 'Access', 'Sticky', 'Keys',
   'Filter', 'Toggle', 'Mouse', 'Night', 'Light', 'Storage', 'Sense', 'Cloud', 'AutoPlay', 'Pen', 'Ink', 'Aero', 'Shake', 'Delivery',
   'Optimization', 'Find', 'My', 'Device', 'Family', 'Recall', 'Click', 'To', 'Do', 'SmartScreen', 'Nearby', 'Sharing', 'Phone', 'Link',
   'Print', 'Screen', 'Emoji', 'IME', 'UTC', 'GMT', 'AM', 'PM', 'Auto', 'HDMI', 'DisplayPort', 'Hz', 'DPI', 'Unicode', 'UTF-8', 'Beta',
@@ -197,7 +197,7 @@ check('no jargon in any label, page title or help line', jargon.length === 0, ja
 const caseBad = words.filter((w) => w.what !== 'help' && w.text).filter((w) => {
   const ws = String(w.text).replace(/\([^)]*\)/g, ' ').split(/[\s/]+/).filter(Boolean);
   if (!/^[A-Z0-9"'(]/.test(ws[0] || '')) return true;                  // starts lower-case
-  return ws.slice(1).some((x) => /^[A-Z][a-z]/.test(x) && !PROPER.has(x.replace(/[,.:;!?]+$/, '')));
+  return ws.slice(1).some((x) => /^[A-Z][a-z]/.test(x) && !PROPER.has(x.replace(/[,.:;!?]+$/, '').replace(/[’']s?$/, '')));
 });
 check('labels and page titles are in sentence case', caseBad.length === 0, caseBad.length + ': ' + caseBad.slice(0, process.env.VERBOSE ? 999 : 15).map((w) => w.where + ' "' + w.text + '"').join('; '));
 const emptyLabel = allRows.filter((r) => !r.s.label || !String(r.s.label).trim());
