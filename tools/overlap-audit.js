@@ -108,7 +108,7 @@ const keyOf = (f) => f.kind + ' | ' + f.el + (f.other ? ' | ' + f.other : '');
 function allowed(surface, state, f) {
   const k = keyOf(f);
   return ALLOW.find((a) => (!a.surface || a.surface === surface) && (!a.state || a.state === state) && (!a.kind || a.kind === f.kind) &&
-    (!a.el || f.el.includes(a.el)) && (!a.other || (f.other || '').includes(a.other)) && (!a.match || k.includes(a.match)));
+    (!a.el || (a.exact ? f.el === a.el : f.el.includes(a.el))) && (!a.other || (a.exact ? f.other === a.other : (f.other || '').includes(a.other))) && (!a.match || k.includes(a.match)));
 }
 const INFO = new Set(['target-small', 'focus-invisible']);   // reported, listed, not gating
 

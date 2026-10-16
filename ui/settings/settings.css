@@ -507,7 +507,7 @@ html.glass[data-theme="dark"]:not(.inactive) body { background: transparent; }
 /* every line one divider */
 :root[data-theme="dark"] .row { border-top-color: var(--lg-divider); }
 /* focus: Helm's ring, no outline */
-:root[data-theme="dark"] :focus-visible { outline: none; box-shadow: var(--lg-focus); }
+:root[data-theme="dark"] :focus-visible { outline: 1.5px solid var(--lg-acc); outline-offset: -2px; }   /* an outline paints over a filled child; the inset --lg-focus shadow went under .tileb and .nav-i fills */
 /* ...also on a control whose box-shadow is set inline (the wallpaper photo tiles paint their hairline / picked
    ring that way): the inline style beat the rule above, so with the outline gone a focused tile showed NO ring
    (lane same-finish, found by personalization.test.js 17 dark) */
