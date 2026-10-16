@@ -278,8 +278,9 @@
     listEl.scrollTop = 0;
     q.focus();
     if (p.notice) notice(p.notice);
+    var bdAt = 0;                            // R7: how long the dark backdrop held the report
     var report = function () {
-      M.call('clipboard.painted', { count: S.shown.length, vw: window.innerWidth, vh: window.innerHeight }).catch(function () {});
+      M.call('clipboard.painted', { count: S.shown.length, vw: window.innerWidth, vh: window.innerHeight, backdropMs: bdAt ? Math.round(performance.now() - bdAt) : null }).catch(function () {});
     };
     // A HIDDEN window runs no animation frames at all (measured in the --test run, 2026-09-24:
     // the second Win+V waited out main's whole 300 ms cap), and main only shows it after this
@@ -292,7 +293,7 @@
     // Dark: main shows the window only after the report, so the picture of what is behind it is
     // taken (and baked) first and the panel never opens as the thick fallback face. Light: at once.
     var bd = window.MantleHudBackdrop;
-    if (bd && document.documentElement.getAttribute('data-theme') === 'dark') bd.request('opened').then(ready, ready);
+    if (bd && document.documentElement.getAttribute('data-theme') === 'dark') { bdAt = performance.now(); bd.request('opened').then(ready, ready); }
     else ready();
   });
 
