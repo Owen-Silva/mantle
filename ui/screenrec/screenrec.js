@@ -45,12 +45,17 @@
   }
   function activeFace() { return S.mode === 'card' ? card : pill; }
 
-  function show() {
-    if (!shape.hidden && !shape.classList.contains('leave')) return;
+  /** Up with this face: the first time (or after a leave) it takes its size at once and springs IN;
+   *  already up, the size itself springs (the pill growing into the card). */
+  function show(face) {
+    if (!shape.hidden && !shape.classList.contains('leave')) { sizeTo(face); return; }
     shape.classList.remove('leave');
-    shape.hidden = false;
+    shape.hidden = false;              // measured only once it is laid out (a hidden parent measures 0)
     shape.classList.add('enter');
+    shape.style.transition = 'none';
+    sizeTo(face);
     void shape.offsetWidth;            // the entering state is laid out, so the spring runs from it
+    shape.style.transition = '';
     requestAnimationFrame(function () { shape.classList.remove('enter'); });
   }
 
@@ -81,8 +86,7 @@
       stopTick();
       clock.textContent = v.phase === 'stopping' ? 'Saving…' : 'Starting…';
     }
-    sizeTo(pill);
-    show();
+    show(pill);
   }
 
   /* ---- the card ----------------------------------------------------------------------------------- */
@@ -112,8 +116,7 @@
       pill.hidden = true;
       card.hidden = false;
       card.classList.remove('out');
-      sizeTo(card);
-      show();
+      show(card);
     }
     armLife(CARD_LIFE_MS);
     if (!warn) setTimeout(function () { if (S.mode === 'card' && !S.over) try { $('open').focus({ preventScroll: true }); } catch (e) { /* fine */ } }, 0);
