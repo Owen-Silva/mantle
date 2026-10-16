@@ -488,9 +488,9 @@ async function run() {
         var moreOn = !!more && !more.hidden && getComputedStyle(more).display !== 'none';
         return {
           up: document.body.classList.contains('up'),
-          bw: Math.round(bar.getBoundingClientRect().width),
-          /* the pill's width transition is still running: the entrance has not landed */
-          fly: !!bar.getAnimations && bar.getAnimations().some(function (a) { return a.transitionProperty === 'width' && a.playState === 'running'; }),
+          bw: bar.offsetWidth,   // the LAYOUT width the dock is fitted in (barpolish: the reveal is a transform)
+          /* the pill's transform transition is still running: the entrance has not landed */
+          fly: !!bar.getAnimations && bar.getAnimations().some(function (a) { return a.transitionProperty === 'transform' && a.playState === 'running'; }),
           cells: cells.length,
           ovf: cells.length - shown.length,
           more: moreOn ? more.textContent : '',
@@ -532,7 +532,8 @@ async function run() {
         await pg.page.setViewportSize({ width: c.w, height: 480 });
         await pg.wait(450);                                // the pins answer at 30 ms, a settle runs 50 ms later
         const first = await pg.eval(() => window.__snap());
-        t.check(tag + 'reproduced: revealed, the pill still at its down width', first.up && first.bw < c.w - 50, first);
+        // barpolish: the island no longer grows from 62 %; its first frame is laid out at the full width
+        t.check(tag + 'revealed: the entrance\'s first frame is laid out at the pill\'s full width', first.up && Math.abs(first.bw - c.w) <= 1, first);
         if (c.fits) t.check(tag + 'the entrance\'s first frame has the apps and no "+N"', first.ovf === 0 && first.more === '' && first.inBox > 0, first);
         else t.check(tag + 'the entrance\'s first frame has the same "+N" as the landed bar', first.ovf === landed.ovf && first.more === landed.more, [first, landed]);
 
@@ -550,6 +551,106 @@ async function run() {
         t.check(tag + 'nothing jumps when the landed fit is judged (' + home.length + ' landed frames)', home.length > 0 && moved.length === 0,
           { home: home.length, moved: moved.slice(0, 2), end: end.x });
         await cdp.detach().catch(() => {});
+        t.check(tag + 'no page errors', pg.errors.length === 0, pg.errors);
+        await pg.close();
+      }
+    }
+
+    /* ------------------------------------------- reveal glass: the outline (lane mantle-barpolish) */
+    /* Owen, 2026-10-15: "on the right side of the taskbar when it comes up for a second or 2 there a
+       dark outline ... that goes straight through the taskbar". CAUSE (bar.js barRestBox): in dark
+       main sends the wallpaper picture BEFORE 'bar.reveal', it was placed against the pill's 62 % down
+       box, and the pill then grew to full width with the picture pinned to the old offset: the right
+       end of the glass had no picture under it until the landing (reproduced: 197 px short at 250 ms).
+       Replayed exactly as main does it live: the window PARKED (694 x 48 DIP), the picture with `at`
+       for the tall window, the window placed (1120 x 702), then 'bar.reveal'; the animation clock is
+       frozen and every frame of the entrance is sought and read. Fails on 1 px of visible glass with
+       no picture under it, on the island changing its LAYOUT size, or on content not complete. */
+    if (t.want('reveal glass')) {
+      const W = 1120, H = 702, GROW = 16, PY = H - 14 - 48;
+      const measure = function () {
+        var q = function (s) { return document.querySelector(s); };
+        var r = function (e) { return e.getBoundingClientRect(); };
+        var clip = r(q('.bdrop')), im = q('#backdrop'), ir = r(im), H = window.innerHeight, W = window.innerWidth;
+        var vis = { l: Math.max(0, clip.left), r: Math.min(W, clip.right), t: Math.max(0, clip.top), b: Math.min(H, clip.bottom) };
+        var imgs = Array.prototype.slice.call(document.querySelectorAll('.dock .cell img'));
+        return {
+          src: !!im.getAttribute('src'),
+          gap: Math.max(ir.left - vis.l, vis.r - ir.right, ir.top - vis.t, vis.b - ir.bottom),
+          gapR: +(vis.r - ir.right).toFixed(2),
+          lw: q('#bar').offsetWidth,
+          dockOp: +getComputedStyle(q('.dock')).opacity, rightOp: +getComputedStyle(q('.right')).opacity,
+          icons: imgs.length, decoded: imgs.filter(function (i) { return i.complete && i.naturalWidth > 0; }).length,
+          tf: getComputedStyle(q('#bar')).transform, op: +getComputedStyle(q('#bar')).opacity
+        };
+      };
+      const INIT = 'window.__measure = ' + measure.toString() + ';';
+      const picture = function (a) {   // main's pre-reveal cut: the pill grown 16 DIP, 4x down, `at` against the tall window
+        var g = { x: -a.GROW, y: a.PY - a.GROW, w: a.W + 2 * a.GROW, h: 48 + 2 * a.GROW };
+        var c = document.createElement('canvas'); c.width = Math.round(g.w / 4); c.height = Math.round(g.h / 4);
+        var x = c.getContext('2d'), gr = x.createLinearGradient(0, 0, c.width, 0);
+        gr.addColorStop(0, '#5b7fa8'); gr.addColorStop(0.5, '#c9b28f'); gr.addColorStop(1, '#e8eef4');   // bright on the right, where the seam was
+        x.fillStyle = gr; x.fillRect(0, 0, c.width, c.height);
+        var p = { png: c.toDataURL('image/png'), w: c.width, h: c.height, rect: g, ms: 0, source: 'still' };
+        if (a.dark) { p.at = { x: g.x / a.W, y: g.y / a.H, w: g.w / a.W, h: g.h / a.H }; p.win = { w: a.W, h: a.H }; }
+        document.documentElement.setAttribute('data-theme', a.dark ? 'dark' : 'light');
+        window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: a.dark ? 'dark' : 'light' } }));
+        window.__mockMain.emit('bar.backdrop', p);
+      };
+      for (const theme of ['dark', 'light']) {
+        const tag = 'reveal glass (' + theme + '): ';
+        const pg = await open(PILL + '&reveal=0', { w: 694, h: 48, settle: 900, init: INIT });
+        const cdp = await pg.page.context().newCDPSession(pg.page);
+        await cdp.send('Animation.enable');
+        await cdp.send('Animation.setPlaybackRate', { playbackRate: 0 });
+        await pg.eval(picture, { W, H, GROW, PY, dark: theme === 'dark' });
+        await pg.wait(60);
+        await pg.page.setViewportSize({ width: W, height: H });
+        await pg.wait(120);
+        await pg.eval(() => window.__mockMain.reveal('harness: the cursor reached the bottom edge'));
+        await pg.wait(80);
+        const frames = [];
+        for (const ms of [0, 16, 33, 50, 83, 117, 150, 200, 250, 300, 400, 560]) {
+          await pg.eval((tt) => document.getAnimations().forEach((a) => { try { a.pause(); a.currentTime = tt; } catch (_) {} }), ms);
+          await pg.wait(30);
+          frames.push(Object.assign({ ms }, await pg.eval(() => window.__measure())));
+        }
+        const bad = frames.filter((f) => !f.src || f.gap > 0.5);
+        t.check(tag + 'every frame of the entrance has the picture under ALL of the visible glass (' + frames.length + ' frames)', bad.length === 0,
+          bad.slice(0, 3).map((f) => ({ ms: f.ms, gap: +f.gap.toFixed(1), gapR: f.gapR })));
+        t.check(tag + 'the island never changes its layout size in a reveal (only its transform moves)', frames.every((f) => f.lw === W), frames.map((f) => f.lw).join(','));
+        t.check(tag + 'content complete from the first frame: every icon decoded, nothing faded on its own', frames.every((f) => f.icons > 0 && f.decoded === f.icons && f.dockOp === 1 && f.rightOp === 1),
+          frames[0]);
+        t.check(tag + 'it moves: sunk and transparent at 0 ms, in place and solid at 560 ms', frames[0].op < 0.05 && /matrix/.test(frames[0].tf) && frames[frames.length - 1].op === 1 &&
+          /matrix\(1, 0, 0, 1, 0, 0\)|none/.test(frames[frames.length - 1].tf), [frames[0].tf, frames[0].op, frames[frames.length - 1].tf]);
+
+        /* interruptible: a hide half way up turns round from that pose (no jump) */
+        await pg.eval(() => document.getAnimations().forEach((a) => { a.currentTime = 90; }));
+        await pg.wait(30);
+        const before = await pg.eval(() => document.getElementById('bar').getBoundingClientRect().top);
+        await pg.eval(() => window.__mockMain.hide('harness: away again half way up'));
+        await pg.wait(30);
+        const after = await pg.eval(() => document.getElementById('bar').getBoundingClientRect().top);
+        t.check(tag + 'a hide half way up turns round from where the island is (moved ' + (after - before).toFixed(1) + ' px)', Math.abs(after - before) < 2, { before, after });
+        await cdp.detach().catch(() => {});
+        t.check(tag + 'no page errors', pg.errors.length === 0, pg.errors);
+        await pg.close();
+      }
+
+      /* REDUCED MOTION: no rise, no scale, a short fade */
+      {
+        const tag = 'reveal glass (reduced motion): ';
+        const pg = await open(PILL + '&reveal=0', { w: W, h: H, settle: 700, init: INIT });
+        await pg.page.emulateMedia({ reducedMotion: 'reduce' });
+        await pg.wait(50);
+        const down = await pg.eval(() => window.__measure());
+        await pg.eval(() => window.__mockMain.reveal('harness: reduced motion'));
+        await pg.wait(20);
+        const anims = await pg.eval(() => document.getElementById('bar').getAnimations().map((a) => ({ p: a.transitionProperty, d: a.effect.getTiming().duration })));
+        await pg.wait(400);
+        const up = await pg.eval(() => window.__measure());
+        t.check(tag + 'the island never moves or scales, down or up', /matrix\(1, 0, 0, 1, 0, 0\)|none/.test(down.tf) && /matrix\(1, 0, 0, 1, 0, 0\)|none/.test(up.tf), [down.tf, up.tf]);
+        t.check(tag + 'it only fades, in 200 ms or less', anims.length > 0 && anims.every((a) => a.p !== 'transform' && a.d <= 200) && down.op === 0 && up.op === 1, anims);
         t.check(tag + 'no page errors', pg.errors.length === 0, pg.errors);
         await pg.close();
       }

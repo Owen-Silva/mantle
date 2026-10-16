@@ -891,7 +891,11 @@ const PILL_RADIUS_DIP = 0;      // was 24 (30 physical). A window REGION on a tr
                                 // fine the instant the region was cleared. So the pill's ONLY shape is the
                                 // CSS radius in ui/bar (24 dip); roundBarCorners just turns DWM's window
                                 // border off so no square outline sits outside the CSS corners.
-const PILL_START_W = 0.62;      // it grows out from 62 % of its width as it rises
+const PILL_START_W = 1;         // PARKED AT ITS FULL WIDTH (lane mantle-barpolish, 2026-10-15). It was 0.62: the
+                                // window parked 62 % wide, so every reveal resized it 868 -> 1400 px and the page
+                                // laid the dock out again (and re-judged "+N") on the reveal's first frames. The
+                                // island no longer grows (ui/bar/bar.css: transform + opacity only), so the parked
+                                // page is already laid out at the size it is shown at, and a reveal only MOVES it.
 let hoverTimer = null;
 let hoverHeld = null;           // the game the hover poll is stopped for (hoverTick / hoverAfterRest)
 let barRevealed = false;
