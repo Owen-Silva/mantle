@@ -130,10 +130,33 @@
     s.at = Date.now();
     if (k === 'mantle' || k === 'catalog') rebuildIndex();
   }
+  /* THE OPEN CACHE (lane settingsfast, 2026-10-15): Mantle keeps no hidden Settings window (Owen: "i need to
+     save ram"), so every open is a new page. Its first paint draws Home from the last values this page saw
+     (localStorage, Mantle's own profile on this PC), and the fresh reads replace them a moment later: read()
+     keeps an 'ok' slot on screen while it refreshes. Only these slots, only good answers, saved at most every
+     CACHE_SAVE_MS and when the page hides. Nothing is sent anywhere. */
+  const CACHE_KEY = 'settings.cache', CACHE_SAVE_MS = 1500;
+  const CACHED = ['qs', 'net', 'battery', 'pm', 'gm', 'mantle', 'audio', 'about'];
+  let cacheTimer = 0;
+  function cacheSave() {
+    clearTimeout(cacheTimer); cacheTimer = 0;
+    const slots = {};
+    CACHED.forEach((k) => { const s = S.d[k]; if (s && s.st === 'ok' && s.v && typeof s.v === 'object') slots[k] = s.v; });
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ v: 1, at: Date.now(), slots })); } catch (_) { /* full or private: the next open just waits for its reads */ }
+  }
+  function cacheSoon(k) { if (!cacheTimer && CACHED.indexOf(k) >= 0) cacheTimer = setTimeout(cacheSave, CACHE_SAVE_MS); }
+  function cacheLoad() {
+    let o = null;
+    try { o = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch (_) { o = null; }
+    if (!o || o.v !== 1 || !o.slots || typeof o.slots !== 'object') return 0;
+    let n = 0;
+    CACHED.forEach((k) => { const v = o.slots[k]; if (v && typeof v === 'object' && !Array.isArray(v)) { try { take(k, v); n++; } catch (_) { delete S.d[k]; } } });
+    return n;
+  }
   function read(k) {
     const s = slot(k), gen = ++s.gen;
     if (s.st !== 'ok') s.st = 'loading';
-    return LOAD[k]().then((r) => { if (gen === s.gen) { take(k, r); schedule(k); } },
+    return LOAD[k]().then((r) => { if (gen === s.gen) { take(k, r); schedule(k); if (s.st === 'ok') cacheSoon(k); } },
       (e) => { if (gen === s.gen) { s.st = 'fail'; s.reason = msg(e); s.at = Date.now(); if (k === 'mantle' || k === 'catalog') rebuildIndex(); schedule(k); } });
   }
   function ensure(sec) { return Promise.all((NEEDS[sec] || []).map(read)); }
@@ -315,6 +338,10 @@
     'opt-reset': (t) => optionSet(t.dataset.feature, t.dataset.key, null, rowOf(t)),
     'opt-folder': (t) => act(rowOf(t), call('settings.pickFolder', { feature: t.dataset.feature, key: t.dataset.key }), (r) => { if (r.option) putOption(t.dataset.feature, r.option); }),
     switcher: (t) => switcher(t.dataset.key, t.getAttribute('aria-checked') !== 'true', rowOf(t)),
+    'keep-ready': (t) => act(rowOf(t), call('settings.keepReady', { surface: t.dataset.surface, on: t.getAttribute('aria-checked') !== 'true' }), (r) => {
+      const m = slot('mantle').v;
+      if (m && r.keepReady && Array.isArray(r.keepReady.rows)) m.keepReady = r.keepReady;
+    }),
     'sc-toggle': (t) => {
       const sc = shortcut(t.dataset.keys), want = t.getAttribute('aria-checked') !== 'true';
       if (!sc || !sc.toggle) return;
@@ -1144,6 +1171,18 @@
         ctl: sw(!!swr.altTab, { 'data-act': 'switcher', 'data-key': 'altTab' }, { label: 'Alt+Tab switcher', pending: pend('mantle.switcher') }) }),
       row({ id: 'mantle.switcher.winKeys', label: 'Win+N and Win+A', tile: tile(icon('notifications')), help: 'Mantle\'s notification center and quick settings panels', why: swr.winKeysReason || null,
         ctl: sw(!!swr.winKeys, { 'data-act': 'switcher', 'data-key': 'winKeys' }, { label: 'Win+N and Win+A panels', pending: pend('mantle.switcher.winKeys') }) })));
+    // lib/keep-ready.js (lane settingsfast): off = nothing kept in memory while closed (Owen's default)
+    const kr = m.v.keepReady;
+    if (kr && Array.isArray(kr.rows) && kr.rows.length) {
+      out.push(groupT('Keep ready in the background', 'mantle.keepready', 'Off: each opens fresh and uses no memory while closed'));
+      out.push(card('mantle-keep',
+        kr.reason ? h('div', { class: 'empty', 'data-k': 'krbad' }, why(kr.reason)) : null,
+        kr.rows.map((r) => {
+          const id = 'mantle.keepready.' + r.surface;
+          return row({ id, label: r.label, tile: tile(icon('mantle')), help: r.help,
+            ctl: sw(!!r.on, { 'data-act': 'keep-ready', 'data-surface': r.surface }, { label: r.label, pending: pend(id) }) });
+        })));
+    }
     out.push(groupT('Features', 'mantle.features', 'The same switches as the tray menu'));
     fs.forEach((f) => {
       const id = M.featureRow(f.name), fst = M.featureState(f);
@@ -1429,6 +1468,7 @@
     ensure(S.section);
   }
   function sleep() {
+    if (cacheTimer) cacheSave();
     if (!awake) return;
     awake = false;
     stopLoops();
@@ -1495,6 +1535,16 @@
     if (bb) bb.disabled = !(S.hi > 0 || S.view === 'search');
     const ab = slot('about').v;
     $('testchip').hidden = !(S.test || (ab && ab.mode === 'test'));
+    rowsMark();
+  }
+  /* The open's "interactive" moment (lib/features/_open-timing.js): the first render with this page's rows
+     in it (cached or fresh), once. */
+  function rowsMark() {
+    if (window.__mantleRows) return;
+    const need = NEEDS[S.section] || [];
+    if (need.length && !need.some((k) => slot(k).st === 'ok')) return;
+    window.__mantleRows = { at: Date.now() };
+    try { window.dispatchEvent(new Event('mantle-rows')); } catch (_) { /* the timing just says unknown */ }
   }
 
   /* ---------------------------------------------------------------- input */
@@ -1573,6 +1623,7 @@
   /* ---------------------------------------------------------------- start */
   function boot() {
     if (!mantle) S.problems.bridge = cap(NO_BRIDGE) + '.';
+    else cacheLoad();                       // the first paint draws Home from the last values seen
     renderNow();
     const first = call('settings.hello').then((r) => {
       if (!r || typeof r !== 'object') r = { ok: false, reason: 'it answered with nothing' };

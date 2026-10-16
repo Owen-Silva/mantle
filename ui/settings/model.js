@@ -64,6 +64,7 @@
     ['apps.installed', 'Installed apps', 'uninstall remove programs apps and features'],
     ['apps.defaults', 'Default apps', 'default browser file associations open with'],
     ['mantle.switcher', 'Window switcher (Alt+Tab)', 'alt tab switcher win n win a notification quick settings panels'],
+    ['mantle.keepready', 'Keep ready in the background', 'keep ready background preload prewarm memory ram instant open fast settings task manager files'],
     ['mantle.features', 'Mantle features', 'features tray switches on off'],
     ['mantle.corners', 'Hot corners', 'hot corners screen corners mouse corner actions task view show desktop'],
     ['shortcuts.list', 'Keyboard shortcuts', 'hotkeys keys chords shortcuts rebinding'],
