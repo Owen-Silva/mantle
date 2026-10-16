@@ -857,13 +857,25 @@
      MINIMUM that brings it inside; clipped only when the icons cannot fit in the whole span, and
      only then does a chip appear — saying how many are hidden. Owen: "i want to be able to see all
      my pinned stuff not just some of them". */
+  /* the island's current scale (1 at rest; the reveal's pose otherwise), from its computed transform */
+  function barScale() {
+    try {
+      var m = new DOMMatrixReadOnly(getComputedStyle(el.bar).transform);
+      return m.is2D && m.a > 0.5 && m.a < 1.5 ? m.a : 1;
+    } catch (_) { return 1; }
+  }
   function measure() {
     /* VIEWPORT coordinates, off the bar's own rect. Nothing here may assume the bar spans the
        screen: in pill mode the window IS the island, inset from the edges and far narrower than
        the display, and the centre of the icons is the centre of THAT window. */
     var r = el.bar.getBoundingClientRect();
     if (!r.width) return null;
-    var leftEnd = el.left ? el.left.getBoundingClientRect().right : r.left + 8;
+    /* THE REVEAL SCALES THE ISLAND (.94 -> 1 about its centre, bar.css; lane mantle-barpolish). Every
+       rect here is in viewport px of whatever pose it is in, so each x is taken back to the island's
+       own size about that centre first: judged mid-entrance at .94 the room came out 6 % short and
+       "+3" read "+4" until the landing (bar.page.test.js 'reveal (too many)'). */
+    var k = barScale(), c = r.left + r.width / 2, un = function (x) { return c + (x - c) / k; };
+    var leftEnd = el.left ? un(el.left.getBoundingClientRect().right) : un(r.left) + 8;
     /* In PILL mode the chip strip is NOT part of the wall the dock measures against: chips are the
        bar talking about problems, and the "apps clipped" chip was widening the very cluster it
        measured (a 136 -> 0 -> 355 px loop, live 2026-09-21). The wall is the first real control.
@@ -888,11 +900,11 @@
        more hidden, never fewer, so settle after settle converges (one more at most, per extra
        digit or the plural "s"). The price is honest: that chip takes room from the icons too. */
     if (barMode === 'edge' && el.chips && el.chips.getBoundingClientRect().width > 0) anchor = el.chips;
-    var rightStart = anchor ? anchor.getBoundingClientRect().left : r.right - 8;
+    var rightStart = anchor ? un(anchor.getBoundingClientRect().left) : un(r.right) - 8;
     var spanL = leftEnd + 8, spanR = rightStart - 8;
     return {
-      w: Math.round(r.width),
-      centre: r.left + r.width / 2,
+      w: Math.round(r.width / k),
+      centre: c,
       spanL: spanL,
       spanR: spanR,
       span: Math.max(0, spanR - spanL)
