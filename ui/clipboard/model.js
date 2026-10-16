@@ -162,9 +162,30 @@
              panel: { x: Math.round(px), y: Math.round(py), width: pw, height: ph } };
   }
 
+  /* DARK GLASS AFTER THE SHOW (lane clipwarm, 2026-10-16). The page's clipboard.glass report, made
+     safe: {ok, ms (request -> baked, in the page), capture (main's shot), bake, sinceOpen, reason}. */
+  var GLASS_SLOW_MS = 150;          // PERF.md's warm-usable p95: glass later than that is said
+  function num(v) { return typeof v === 'number' && isFinite(v) && v >= 0 ? Math.round(v) : null; }
+  function glassOf(a, sinceOpen) {
+    a = a || {};
+    return { ok: a.ok === true, ms: num(a.ms), capture: num(a.capture), bake: num(a.bake), sinceOpen: num(sinceOpen),
+             reason: a.ok === true ? null : String(a.reason || 'no reason given').slice(0, 200) };
+  }
+  /* One log line, or null: the first of a run, a slow one, and every missing one are said. */
+  function glassLine(g, first) {
+    if (!g) return null;
+    var parts = (g.capture !== null ? 'capture ' + g.capture + ' ms' : 'capture ?') + ', bake ' + (g.bake !== null ? g.bake + ' ms' : '?');
+    if (!g.ok) return 'dark glass: none this open, the panel kept its own dark face (' + g.reason + ')';
+    var slow = g.ms !== null && g.ms > GLASS_SLOW_MS;
+    if (!first && !slow) return null;
+    return 'dark glass ' + (g.ms !== null ? g.ms : '?') + ' ms after the panel was drawn' + (first ? ' (first this run)' : '') +
+      (slow ? ', slow: the panel showed its own dark face until then' : '') + ' (' + parts + '); the open never waited for it';
+  }
+
   return {
-    PANEL_W: PANEL_W, PANEL_H: PANEL_H, MARGIN: MARGIN,
+    PANEL_W: PANEL_W, PANEL_H: PANEL_H, MARGIN: MARGIN, GLASS_SLOW_MS: GLASS_SLOW_MS,
     filter: filter, previewLines: previewLines, ago: ago, meta: meta,
     keyAction: keyAction, moveSel: moveSel, reselect: reselect, place: place,
+    glassOf: glassOf, glassLine: glassLine,
   };
 }));

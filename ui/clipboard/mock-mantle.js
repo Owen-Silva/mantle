@@ -94,6 +94,7 @@
     'clipboard.clear': function () { items = items.filter(function (x) { return x.pinned; }); return listObj(); },
     'clipboard.close': function () { mock.closed++; return {}; },
     'clipboard.painted': function (a) { mock.painted = a; return {}; },
+    'clipboard.glass': function (a) { mock.glass = a; return {}; },
   };
 
   window.mantle = {

@@ -7,6 +7,7 @@
  *             clipboard.hide
  * To main:    clipboard.paste {item}  clipboard.pin {item, pinned}  clipboard.delete {item}
  *             clipboard.clear  clipboard.close  clipboard.painted {count}
+ *             clipboard.glass {ok, ms, capture, bake, reason}   (dark: the picture behind, after the show)
  *
  * Nothing here logs item content: errors go to the console as sentences about what failed.
  */
@@ -278,23 +279,38 @@
     listEl.scrollTop = 0;
     q.focus();
     if (p.notice) notice(p.notice);
-    var bdAt = 0;                            // R7: how long the dark backdrop held the report
     var report = function () {
-      M.call('clipboard.painted', { count: S.shown.length, vw: window.innerWidth, vh: window.innerHeight, backdropMs: bdAt ? Math.round(performance.now() - bdAt) : null }).catch(function () {});
+      M.call('clipboard.painted', { count: S.shown.length, vw: window.innerWidth, vh: window.innerHeight }).catch(function () {});
     };
     // A HIDDEN window runs no animation frames at all (measured in the --test run, 2026-09-24:
     // the second Win+V waited out main's whole 300 ms cap), and main only shows it after this
     // report. So hidden = the DOM is final, report now; visible = two frames, the one with this
-    // list in it produced and not just scheduled.
+    // list in it produced and not just scheduled. main says whether the window is on screen
+    // (p.visible): a window NEVER shown yet reads visibilityState 'visible' but runs no frames either
+    // (lane clipwarm, perf gate 2026-10-16: the first Win+V of a run never reported and went at the
+    // 300 ms cap, 306 ms, with the glass already in), so main's word wins when it says hidden.
     var ready = function () {
-      if (document.visibilityState !== 'visible') setTimeout(report, 0);
+      if (p.visible === false || document.visibilityState !== 'visible') setTimeout(report, 0);
       else requestAnimationFrame(function () { requestAnimationFrame(report); });
     };
-    // Dark: main shows the window only after the report, so the picture of what is behind it is
-    // taken (and baked) first and the panel never opens as the thick fallback face. Light: at once.
+    // The list is drawn: report it NOW, in both themes. main shows the window on this report.
+    ready();
+    // Dark: the picture of what is behind the panel FOLLOWS the show and never holds it (PERF.md,
+    // "Nothing waits on the open path": a warm hold is 0 ms; show solid and swap the glass in after).
+    // Lane clipwarm, 2026-10-16: holding the report for it cost 27-51 ms of EVERY warm open and ran the
+    // first open past main's 300 ms cap (309 ms, no picture yet). main's shot is protected, so the
+    // panel shown meanwhile is never in its own picture; until it is baked the pane keeps its own
+    // dark face (one --lg-fill layer, readable on its own). When it lands, main hears how long it took.
     var bd = window.MantleHudBackdrop;
-    if (bd && document.documentElement.getAttribute('data-theme') === 'dark') { bdAt = performance.now(); bd.request('opened').then(ready, ready); }
-    else ready();
+    if (bd && document.documentElement.getAttribute('data-theme') === 'dark') {
+      var bdAt = performance.now();
+      bd.request('opened').then(function (r) {
+        M.call('clipboard.glass', {
+          ok: !!(r && r.ok), ms: Math.round(performance.now() - bdAt),
+          capture: bd.ms, bake: bd.bake, reason: r && !r.ok && r.reason ? String(r.reason).slice(0, 200) : null,
+        }).catch(function () {});
+      });
+    }
   });
 
   M.on('clipboard.changed', function (p) { if (p && p.list) apply(p.list); });
