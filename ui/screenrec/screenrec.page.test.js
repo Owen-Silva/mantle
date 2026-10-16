@@ -40,7 +40,7 @@ const LOOK = () => {
   for (const e of document.querySelectorAll('.title, .detail, .clock, .act, .stop, .note, .status')) if (vis(e) && e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).textOverflow !== 'ellipsis') cut.push(e.className + ':' + e.textContent);
   return {
     shown: vis(sh), x: r.left, y: r.top, w: r.width, h: r.height, right: r.right, bottom: r.bottom,
-    pill: vis($('pill')), card: vis($('card')), isCard: sh.classList.contains('is-card'),
+    pill: vis($('pill')), card: vis($('card')), isCard: sh.classList.contains('is-card'), pillDisplay: getComputedStyle($('pill')).display, cardDisplay: getComputedStyle($('card')).display,
     clock: $('clock').textContent, starting: $('pill').classList.contains('starting'), stopping: $('pill').classList.contains('stopping'),
     dotAnim: getComputedStyle(document.querySelector('.dot')).animationName,
     stop: vis($('stop')), stopDisabled: $('stop').disabled,
@@ -82,6 +82,7 @@ async function main() {
         check(T('recording: the pill with the timer from startedAt'), a.pill && !a.starting && /^1:0[56]$/.test(a.clock), a);
         check(T('recording: the dot breathes'), a.dotAnim === 'breathe', a.dotAnim);
         check(T('recording: Stop is there and enabled'), a.stop && !a.stopDisabled);
+        check(T('recording: the hidden card is really not laid out (display none, never over the pill)'), a.cardDisplay === 'none', a.cardDisplay);
         check(T('recording: a pill (40 tall, round ends), top centre'), Math.round(a.h) === 40 && Math.abs((a.x + a.w / 2) - WIN.width / 2) <= 1 && a.y >= 8 && a.y <= 12 && a.w >= 120 && a.w <= 220, a);
         check(T('the window is see-through outside the shape'), /rgba\(0, 0, 0, 0\)|transparent/.test(a.bodyBg) && /rgba\(0, 0, 0, 0\)|transparent/.test(a.htmlBg), [a.bodyBg, a.htmlBg]);
         check(T('recording: nothing is cut'), a.cut.length === 0, a.cut);
@@ -111,6 +112,7 @@ async function main() {
         check(T('the pill GROWS into the card (in-between sizes seen, not a jump)'), mid.length >= 1, { pillW, widths: widths.map(Math.round), final: d.w });
         check(T('card: "Recording saved", the details and the name'), d.card && !d.pill && d.title === 'Recording saved' && d.detail === '0:47 · 1920 × 1080 · 14.2 MB' && d.name === 'Recording 2026-10-15 213000.mp4', d);
         check(T('card: Open, Copy, Show in folder'), JSON.stringify(d.acts) === JSON.stringify(['Open', 'Copy', 'Show in folder']), d.acts);
+        check(T('card: the hidden pill is really not laid out'), d.pillDisplay === 'none', d.pillDisplay);
         check(T('card: stays top centre, grown from the same spot'), Math.abs((d.x + d.w / 2) - WIN.width / 2) <= 1 && Math.abs(d.y - a.y) <= 1, d);
         check(T('card: inside the window with room for its shadow'), d.x >= 24 && d.right <= WIN.width - 24 && d.bottom <= WIN.height - 50, d);
         check(T('card: nothing is cut'), d.cut.length === 0, d.cut);

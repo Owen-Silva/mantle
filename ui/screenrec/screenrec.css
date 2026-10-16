@@ -80,6 +80,9 @@ button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
 
 /* ---- the card ------------------------------------------------------------------------------------ */
 #card { display: flex; gap: 12px; width: max-content; min-width: 300px; max-width: 420px; padding: 14px 14px 14px; }
+/* the faces' own display (an id) outranks .face[hidden]: without this the hidden card lay over the pill
+   (page test 2026-10-16: the card's text intercepted the click on Stop) */
+#pill[hidden], #card[hidden] { display: none; }
 .glyph {
   flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
   background: var(--lg-acc-soft); color: var(--lg-acc);
