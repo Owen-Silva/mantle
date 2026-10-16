@@ -556,7 +556,7 @@ $clipNote = [MantleRestore]::ReleaseCursorClip()
 Say "  cursor clip: $clipNote"
 if ($clipNote -like '*failed*') { Problem "cursor clip: $clipNote" }
 
-# (f3) The Windows pieces Mantle turned off to save memory (lib/features/ramreclaim.js): put back from
+# (f2b) The Windows pieces Mantle turned off to save memory (lib/features/ramreclaim.js): put back from
 # their journal by tools\ramreclaim-undo.ps1 (your own HKCU values only; a no-op when there is none).
 $rrUndo = Join-Path $PSScriptRoot 'ramreclaim-undo.ps1'
 if (Test-Path -LiteralPath $rrUndo) {
