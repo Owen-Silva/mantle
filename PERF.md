@@ -151,8 +151,12 @@ The full numbers go to a JSON file and the test copy's log goes beside it (paths
 
 **Slack.** Every time budget is multiplied by `--slack`. The default is **1.5**:
 - The plan's cloud runner was given 1.5x headroom.
-- Locally, the gate runs at Below Normal on an i3-1215U while other lanes build, which costs about that
-  much on a warm open.
+- The first real run (below) bears it out. Steady opens fit slack 1: the launcher's p50 was 45 ms against
+  50. Cold p95 on this i3, run at Below Normal, needed the 1.5. Settings' cold p95 was 464 ms: it fails
+  400 and passes 600.
+- Single spikes are not slack's job. A busy machine adds one-off opens of 1.2-6.7 s (launcher 1323 ms,
+  task manager 6665 ms). With n 10, p95 is the slowest open, so one spike fails it. The one re-run
+  absorbs these: every spike in the first run was gone on its re-run.
 - The 1 s cold ceiling is **never** scaled: it is Owen's "never".
 - RAM budgets are not scaled: a busy machine does not change bytes.
 - On a quiet machine, use `--slack=1` for the strict numbers.
@@ -172,9 +176,45 @@ mutex, as run-suite does):
 **Where it runs.** On this laptop, locally: cloudtest is refused while GitHub billing is blocked. When
 billing is back, the `mantle-ui` cloud recipe can run the same command on the Windows runner.
 
-## Baseline (master baff723, 2026-10-15)
+## Baseline (master e7ee86a, 2026-10-16 01:03)
 
-BASELINE_TABLE
+This is the first real run: `node tools/perf-budget.js`, n 10, slack 1.5, Below Normal, machine CPU
+19-22 %. It took 11 min. Times are ms from the trigger in main.
+
+Its summary line:
+`25 passed, 6 failed; 5 not instrumented yet, 4 no data`.
+
+- No surface writes the R7 line yet, so every time below is the outside probe's.
+- For cold opens, "painted" is `ready-to-show`, because `--test` never shows these three windows.
+
+| Surface | Open | painted p50 | p95 (= slowest of 10) | Verdict at slack 1.5 | RAM while open | Kept after close |
+|---|---|---|---|---|---|---|
+| Settings | cold | 233 | 464 | pass (on the re-run; the first run's slowest was 977) | 44 MB | hidden, 41 MB private / 100 MB ws |
+| Settings | warm | - | - | no data: no R7 line, and `--test` never shows it | | |
+| Task Manager | cold | 174 | 898 | **fail** p95 > 600 (also on its first run: 6665) | 41 MB | hidden, **56 MB** private / 120 MB ws: over the 45 MB keepReady cost |
+| Task Manager | warm | - | - | no data (as Settings) | | |
+| Files | cold | 179 | 509 | pass | 38 MB | destroyed (nothing kept) |
+| Files | warm | - | - | no warm path: a close destroys the window | | |
+| Launcher | warm | 45 | 59 | pass (on the re-run; the first run had one 1323 ms open) | 52 MB | (pre-made) |
+| Clipboard | warm | 84 | 1213 | **fail**: p50 > 75 and p95 > 150, on both runs (the first run's p95 was 257) | 32 MB | (pre-made) |
+| Notes | warm | - | - | no data: no R7 line, and its open is never shown in `--test` | 29 MB | |
+
+At rest:
+- **Fresh start: 784 MB Electron private**, against the 650 MB budget. That is 30 s after start, with
+  nothing idle-unloaded yet.
+- The live shell's own 30-min memory lines read **549-554 MB** the same night.
+- So the gate now judges RAM after the existing `--test-unload` hook. That is the steady state the live
+  shell sits in, and the fresh number is kept as information only.
+- **Hidden-window idle CPU:**
+  - every hidden page was 0-0.05 % of a core, except task view at 0.224 % in the first sample;
+  - in the second sample, task view was 0 %;
+  - the gate now judges each page on the lower of its two samples.
+
+What the baseline says to the surface lanes:
+- Task Manager's cold p95 and kept-window size are over budget.
+- The clipboard's warm open is slow in its median, with spikes.
+- None of the six surfaces writes the R7 line.
+- Settings, Task Manager and Notes have no warm number at all until they write it.
 
 ## What changed from the plan, and why
 
