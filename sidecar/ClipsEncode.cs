@@ -104,8 +104,8 @@ namespace Mantle {
       try {
         var comp = new MediaComposition();
         // two colours, so the movie has more than one picture in it
-        comp.Clips.Add(MediaClip.CreateFromColor(Windows.UI.Color.FromArgb(255, 70, 110, 160), TimeSpan.FromMilliseconds(ms / 2)));
-        comp.Clips.Add(MediaClip.CreateFromColor(Windows.UI.Color.FromArgb(255, 200, 150, 90), TimeSpan.FromMilliseconds(ms - ms / 2)));
+        comp.Clips.Add(ColorClip(70, 110, 160, TimeSpan.FromMilliseconds(ms / 2)));
+        comp.Clips.Add(ColorClip(200, 150, 90, TimeSpan.FromMilliseconds(ms - ms / 2)));
         StorageFolder folder; StorageFile file;
         string err = WinRt.Await(StorageFolder.GetFolderFromPathAsync(Path.GetDirectoryName(dst)), 8000, "opening the folder", out folder);
         if (err != null) return err;
@@ -122,6 +122,7 @@ namespace Mantle {
         return null;
       } catch (Exception ex) {
         try { if (File.Exists(dst) && new FileInfo(dst).Length == 0) File.Delete(dst); } catch (Exception) { }
+        while (ex is System.Reflection.TargetInvocationException && ex.InnerException != null) ex = ex.InnerException;
         return "clips.synth failed (" + Why(ex) + ")";
       }
 #else
@@ -175,8 +176,12 @@ namespace Mantle {
       if (err == null && fr != TranscodeFailureReason.None) err = "Windows could not re-encode it (" + fr + ")";
       if (err != null) return err;
       string partPath = Path.Combine(dir, part);
-      if (File.Exists(dst)) return "a file with the new name appeared while encoding; nothing was overwritten";
-      File.Move(partPath, dst);
+      // the encoder's own handle on the part file can outlive the Completed callback by a moment
+      for (int i = 0; ; i++) {
+        if (File.Exists(dst)) return "a file with the new name appeared while encoding; nothing was overwritten";
+        try { File.Move(partPath, dst); break; }
+        catch (IOException) { if (i >= 20) throw; Thread.Sleep(100); }
+      }
       bytes = new FileInfo(dst).Length;
       durMs = b - a;
       return null;
@@ -205,6 +210,35 @@ namespace Mantle {
         try { e = op.ErrorCode; } catch (Exception) { }
         return what + " failed" + (e != null ? " (" + Why(e) + ")" : "");
       } catch (Exception ex) { return what + " failed (" + Why(ex) + ")"; }
+      finally { try { op.Close(); } catch (Exception) { } }
+    }
+
+    /// MediaClip.CreateFromColor by REFLECTION. Windows.UI.Color is a projected struct whose .NET
+    /// half lives in System.Runtime.WindowsRuntime.dll, which the MANTLE_WINMD build does not
+    /// reference, so csc refuses to name it (CS0012, the same as Ocr.cs's BoundingRect). At run time
+    /// the CLR hands over the projected type, so the colour is made through that type's own FromArgb
+    /// (or its A/R/G/B members) and the factory is called by name.
+    static System.Reflection.MethodInfo _fromColor;
+    static MediaClip ColorClip(byte r, byte g, byte b, TimeSpan length) {
+      var pub = System.Reflection.BindingFlags.Public;
+      if (_fromColor == null) _fromColor = typeof(MediaClip).GetMethod("CreateFromColor", pub | System.Reflection.BindingFlags.Static);
+      if (_fromColor == null) throw new InvalidOperationException("Windows has no MediaClip.CreateFromColor here");
+      Type ct = _fromColor.GetParameters()[0].ParameterType;
+      object c = null;
+      var from = ct.GetMethod("FromArgb", pub | System.Reflection.BindingFlags.Static);
+      if (from != null) c = from.Invoke(null, new object[] { (byte)255, r, g, b });
+      else {
+        c = Activator.CreateInstance(ct);      // a boxed struct: SetValue below writes into the box
+        string[] names = { "A", "R", "G", "B" }; byte[] vals = { 255, r, g, b };
+        for (int i = 0; i < 4; i++) {
+          var f = ct.GetField(names[i], pub | System.Reflection.BindingFlags.Instance);
+          if (f != null) { f.SetValue(c, vals[i]); continue; }
+          var p = ct.GetProperty(names[i], pub | System.Reflection.BindingFlags.Instance);
+          if (p == null) throw new InvalidOperationException("Windows.UI.Color has no " + names[i]);
+          p.SetValue(c, vals[i], null);
+        }
+      }
+      return (MediaClip)_fromColor.Invoke(null, new object[] { c, length });
     }
 #endif
   }
