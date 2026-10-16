@@ -87,6 +87,16 @@
   --lg-acc:      #4436E8;                    /* the active window, focus. White on it is 7.2:1 */
   --lg-acc-on:   #FFFFFF;
   --lg-acc-soft: rgba(68,54,232,.12);
+  /* THE focus ring, every surface (lane overlap, 2026-10-15). It is drawn INSIDE the control's own box: an
+     accent line with a thin light line inside it (it still shows on a filled or accent control), so rows,
+     tabs and icon buttons packed edge to edge never paint over their neighbours. tools/overlap-audit.js
+     fails any ring that reaches another control or its text. Use: box-shadow: var(--lg-focus); outline: none */
+  --lg-focus: inset 0 0 0 1.5px var(--lg-acc), inset 0 0 0 3px rgba(255,255,255,.9);
+  /* A spring that settles (about 1% overshoot, then rests), for things that MOVE: a pop-up arriving, a
+     selection travelling between rows. Use it on a transition, never a keyframe, so a change of mind
+     mid-move is picked up from where it is. Fades and colour changes keep --lg-ease-ui. */
+  --lg-spring: linear(0, .157 4.4%, .5 11.3%, .776 18.9%, .91 25.7%, .977 33.3%, 1.006 42.4%, 1.012 52.3%, 1.004 72.2%, 1);
+  --lg-dur-spring: 420ms;
 
   /* ---- states on light glass ------------------------------------------
      Ink at low alpha, never white: a white wash on a white-tinted pane is invisible, and a hover
@@ -238,7 +248,8 @@
   --lg-ok:        #8fbf9b;
   --lg-danger:    #e0877c;
 
-  --lg-focus: 0 0 0 1px rgba(20,21,22,.9), 0 0 0 3px rgba(159,180,204,.55);
+  /* inside the box, as in light (it used to sit 3 px OUTSIDE and covered the next row, tab or button) */
+  --lg-focus: inset 0 0 0 1.5px rgba(159,180,204,.95), inset 0 0 0 3px rgba(20,21,22,.8);
   --lg-scroll:       rgba(255,255,255,.14);
   --lg-scroll-hover: rgba(255,255,255,.24);
   --lg-disabled: .45;
@@ -272,3 +283,8 @@
   background: var(--lg-scroll); border: 3px solid transparent; background-clip: padding-box; border-radius: 10px;
 }
 :where(:root[data-theme="dark"]) ::-webkit-scrollbar-thumb:hover { background-color: var(--lg-scroll-hover); }
+
+/* The default keyboard ring for anything a page has no rule of its own for (the browser's own ring sits
+   OUTSIDE the box and landed on the next button: clipboard's pin and delete, Files' window buttons). Zero
+   specificity, so every page rule still wins. Lane overlap, 2026-10-15. */
+:where(:focus-visible) { outline: 2px solid var(--lg-acc); outline-offset: -2px; }

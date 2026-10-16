@@ -21,7 +21,7 @@ body {
 }
 button { font: inherit; color: inherit; cursor: default; }
 :focus { outline: none; }
-body.kb :focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 2px; }
+body.kb :focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
 [hidden] { display: none !important; }
 svg { display: block; }
 ul, ol { list-style: none; margin: 0; padding: 0; }
