@@ -23,9 +23,16 @@ html, body {
   font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   font-size: 13px; color: var(--lg-ink); user-select: none; -webkit-user-select: none; cursor: default;
 }
-/* The window is the card plus room for its shadow; the card sits at its bottom-right. */
+/* The window is the card plus room for its shadow; the card sits at its bottom-right.
+   AS WIDE AS WHAT IS ON IT (lane mantle-toasts3, 2026-10-15). Owen: "the screenshot pop up thing in the
+   bottom right can be not as long now since there only one button now". It was a fixed 372 px, sized for
+   Save + Show in folder + Copy path in one row; a copied capture now shows only Save, so ~85 px of it
+   was empty face right of the words. Now it is the picture + its longest line (or its buttons), from
+   MIN up to the old 372 (a long reason wraps inside that, as before). main sizes the window from the
+   card's own offsetWidth (cardShown / cardSize), so the window shrinks with it and nothing is left
+   where the card used to reach; after a Save the card grows to fit its two buttons. */
 #card {
-  position: absolute; right: 12px; bottom: 12px; width: 372px; box-sizing: border-box;
+  position: absolute; right: 12px; bottom: 12px; width: max-content; min-width: 240px; max-width: 372px; box-sizing: border-box;
   display: flex; gap: 12px; padding: 12px 12px 14px; border-radius: var(--lg-r-pop);
   box-shadow: 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
   overflow: hidden;

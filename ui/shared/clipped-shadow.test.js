@@ -40,6 +40,10 @@ const CUT = [
   ['notes pad', 'notes/index.html', '', '.pad', '--lg-shadow'],
   ['snap picker', 'snap/index.html', "document.body.classList.add('mode-picker')", '.panel', '--lg-shadow'],
   ['screenshot card', 'screenshot/card.html', '', '#card', '--lg-shadow'],
+  // lane mantle-toasts3 (2026-10-15): the notification banners keep 16 px round the card (8 above), the
+  // "square dark part" Owen saw round them
+  ['notification banner', 'toasts/index.html', "var s = document.getElementById('stack'); if (!s.querySelector('.toast')) { var e = document.createElement('article'); e.className = 'toast in'; e.textContent = 'x'; s.appendChild(e); }", '.toast', '--lg-shadow'],
+  ['notification "+N more"', 'toasts/index.html', "var s = document.getElementById('stack'); if (!s.querySelector('.more')) { var e = document.createElement('button'); e.className = 'more'; e.textContent = '+2 more'; s.appendChild(e); }", '.more', '--lg-shadow'],
 ];
 const KEEP = [
   ['desktop widget pane (full-screen desktop)', 'desktop/index.html', '', '.pane'],

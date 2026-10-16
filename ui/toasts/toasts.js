@@ -3,11 +3,15 @@
  * (lib/features/toasts.js) pushes:
  *   toasts.show { banners: [{ id, aumid, app, icon, logo, logoCircle, title, body, attribution, image, sticky, opens }], ids }
  *   toasts.ids  { ids }   every toast still in the notification centre: a banner whose toast went away goes too
- * and this page calls toasts.ready (it listens), toasts.layout { h, count } after every change (main sizes
- * the window to exactly the stack, so no invisible pane eats clicks; count 0 starts the window's 30 s
- * goodbye), toasts.click { id, banner } and toasts.more.
+ * and this page calls toasts.ready (it listens), toasts.layout { h, count } after every change (h = the
+ * stack's height from the window's BOTTOM plus 8 px above it: main shapes the window to exactly that,
+ * so no invisible pane eats clicks; count 0 starts the window's 30 s goodbye), toasts.click { id, banner }
+ * and toasts.more.
  *
- * THE STACK: newest on top, at most MAX on screen; the rest are "+N more" (a click opens the list).
+ * THE STACK (bottom right, lane mantle-toasts3): newest nearest the corner, older ones above it, at
+ * most MAX on screen; the rest are "+N more" on top (a click opens the list). Every re-layout slides the
+ * cards to their new places (FLIP); the window never moves while it does (main changes only its shape),
+ * and a SHORTER stack is reported once the slide is over, so the shape never cuts a card mid-slide.
  * A hidden banner older than STALE_MS is dropped (it is in the list). Each banner leaves LIFE_MS after it
  * came on screen; a sticky one (alarm, reminder, call) waits for you, as in Windows. Hovering the stack
  * holds every timer; leaving gives each at least RESUME_MS more.
@@ -22,6 +26,9 @@
   var RESUME_MS = window.__toastResumeMs || 1500;
   var STALE_MS = 20000;
   var OUT_MS = 200;
+  var FLIP_MS = 180;
+  var ROOM_TOP = 8;          // px the shape keeps above the stack
+  var shrinkT = null;
   var stack = document.getElementById('stack');
   var tpl = document.getElementById('tpl');
   var items = [];            // newest first: { b, el, shown, left, due, timer, leaving, at }
@@ -62,7 +69,7 @@
     var pic = el.querySelector('.pic');
     if (b.image) {
       pic.hidden = false;
-      pic.addEventListener('load', report);
+      pic.addEventListener('load', function () { report(); });
       pic.addEventListener('error', function () { pic.hidden = true; report(); });
       pic.src = b.image;
     }
@@ -115,7 +122,26 @@
     });
     render();
   }
-  function render() {
+  /* FLIP: whatever `change` does to the stack, the cards that stay slide from where they were. Held at
+     the start until main has the new shape (done), so a card never moves outside the window's shape. */
+  function flip(change) {
+    var before = new Map();
+    if (!reduced) Array.prototype.forEach.call(stack.children, function (c) { if (!c.hidden) before.set(c, c.getBoundingClientRect().top); });
+    var done = change();
+    var anims = [];
+    before.forEach(function (top, c) {
+      if (!c.isConnected || c.hidden || !c.animate) return;
+      var dy = top - c.getBoundingClientRect().top;
+      if (Math.abs(dy) <= 1) return;
+      var a = c.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'translateY(0)' }], { duration: FLIP_MS, easing: 'cubic-bezier(.2,.8,.2,1)', composite: 'add' });
+      if (done) a.pause();
+      anims.push(a);
+    });
+    if (done && anims.length) Promise.resolve(done).then(function () { anims.forEach(function (a) { a.play(); }); });
+    return done;
+  }
+  function render() { return flip(layout); }
+  function layout() {
     var t = now();
     // a banner that never made it on screen and is old by now is dropped: it is in the list
     items = items.filter(function (it) { return it.shown || it.leaving || t - it.at < STALE_MS || live().indexOf(it) < MAX; });
@@ -145,6 +171,7 @@
         fresh.forEach(function (it) { if (!it.leaving) { it.el.classList.add('in'); arm(it); } });
       }, 16);
     });
+    return done;
   }
   function moreEl() {
     if (more) return more;
@@ -173,24 +200,25 @@
     if (!quiet) render();   // the next hidden one comes up now, not after the animation
   }
   function gone(it) {
-    var before = new Map();
-    Array.prototype.forEach.call(stack.children, function (c) { if (c !== it.el) before.set(c, c.getBoundingClientRect().top); });
-    it.el.remove();
-    var i = items.indexOf(it);
-    if (i >= 0) items.splice(i, 1);
-    render();
-    if (reduced) return;
-    // FLIP: the cards below slide up into the gap instead of jumping
-    before.forEach(function (top, c) {
-      if (!c.isConnected || !c.animate) return;
-      var dy = top - c.getBoundingClientRect().top;
-      if (Math.abs(dy) > 1) c.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    // the cards above slide down into the gap instead of jumping (flip)
+    flip(function () {
+      it.el.remove();
+      var i = items.indexOf(it);
+      if (i >= 0) items.splice(i, 1);
+      return layout();
     });
   }
-  function report() {
+  /* What main shapes the window to. Taller: at once (and the slide waits for it). Shorter: once the
+     cards have slid into place (`settled`), so the shape never cuts one mid-slide. */
+  function report(settled) {
     var count = live().length;
-    var h = count ? Math.ceil(stack.getBoundingClientRect().bottom) : 0;
+    var h = count ? Math.ceil(window.innerHeight - stack.getBoundingClientRect().top + ROOM_TOP) : 0;
     if (h === last.h && count === last.count) return null;
+    if (count && last.count > 0 && h < last.h && !settled && !reduced) {
+      if (!shrinkT) shrinkT = setTimeout(function () { shrinkT = null; report(true); }, FLIP_MS + 20);
+      return null;
+    }
+    clearTimeout(shrinkT); shrinkT = null;
     last = { h: h, count: count };
     return mantle.call('toasts.layout', { h: h, count: count }).catch(function () {});
   }
