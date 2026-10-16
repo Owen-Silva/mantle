@@ -168,7 +168,9 @@
       emit(ev, Object.assign({ tab, job, items: chunk, done, count: done ? items.length : undefined, ms: done ? Math.round(performance.now() - t0) : undefined, error: null }, done ? extra || {} : {}));
       if (!done) setTimeout(next, 50);
     };
-    if (window.__mockEarly) next(true); else setTimeout(() => next(true), 6);
+    // ?cache=1: the live listing lands 400 ms late, so a test can SEE the cached first view before it is
+    // replaced (at 6 ms a loaded runner missed it: page.test.js "the cached row shows", lane integrate2)
+    if (window.__mockEarly) next(true); else setTimeout(() => next(true), q.get('cache') === '1' && ev === 'files.items' ? 400 : 6);
   }
   const base = (p) => ({ ok: true, path: p, parent: M.parentOf(p), crumbs: M.crumbs(p, NAMES), view: views.get(p.toLowerCase()) || null });
 
