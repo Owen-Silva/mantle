@@ -105,7 +105,7 @@ function gaming() {
     const dRing = await ringOf();
     await page.screenshot({ path: path.join(OUT, 'focus-dismiss-dark.png') });
     check('keyboard (dark): the focused button shows the --lg-focus box-shadow ring, no outline',
-      dRing.o === 'none' && /rgba\(159, 180, 204, 0\.55\) 0px 0px 0px 3px/.test(dRing.sh), dRing);
+      dRing.o === 'none' && /rgba\(159, 180, 204, 0\.95\) 0px 0px 0px 1\.5px inset/.test(dRing.sh), dRing);
     await page.evaluate(() => { delete document.documentElement.dataset.theme; });
     await page.keyboard.press('Shift+Tab');
     await page.keyboard.press('Enter');
