@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<!-- file:// is an opaque origin, so scheme sources; nothing here ever loads from the network -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle emoji</title>
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="emoji.css">
+<link rel="stylesheet" href="../shared/hud-backdrop.css">
+</head>
+<body>
+  <!-- The window is the pane plus a see-through margin (model.js MARGIN). It never takes the
+       keyboard: the app you were typing in keeps it, and the sidecar hands the picker its keys. -->
+  <div id="stage">
+    <main class="panel" id="panel" role="dialog" aria-label="Emoji">
+      <header class="head">
+        <div class="search" id="search" role="searchbox" aria-label="Search">
+          <svg class="mag" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.6"/><path d="M10.4 10.4 14 14"/></svg>
+          <span class="q" id="q"></span><span class="caret" id="caret"></span><span class="ph" id="ph">Search emoji</span>
+        </div>
+        <button class="tone" id="toneBtn" type="button" title="Skin tone" aria-label="Skin tone"><span id="toneGlyph">&#x270B;</span></button>
+      </header>
+      <div class="tones" id="tones" role="listbox" aria-label="Skin tone" hidden></div>
+      <nav class="tabs" id="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="emoji" class="on">Emoji</button>
+        <button type="button" role="tab" data-tab="symbols">Symbols</button>
+        <button type="button" role="tab" data-tab="kaomoji">Kaomoji</button>
+        <span class="pill" id="pill"></span>
+      </nav>
+      <nav class="cats" id="cats" aria-label="Categories"></nav>
+      <section class="grid" id="grid" tabindex="-1">
+        <div id="sections"></div>
+        <div id="results" hidden></div>
+        <div class="empty" id="empty" hidden></div>
+        <span class="ring" id="ring" aria-hidden="true"></span>
+      </section>
+      <footer class="foot">
+        <span class="big" id="big"></span>
+        <span class="what"><span class="name" id="name"></span><span class="hint" id="hint"></span></span>
+      </footer>
+      <div class="notice" id="notice" hidden></div>
+    </main>
+  </div>
+  <script src="emoji-data.js"></script>
+  <script src="model.js"></script>
+  <script src="../shared/glass-adapt.js"></script>
+  <script src="../shared/hud-backdrop.js" data-event="emoji.backdrop" data-pane="#panel"></script>
+  <script src="emoji.js"></script>
+</body>
+</html>

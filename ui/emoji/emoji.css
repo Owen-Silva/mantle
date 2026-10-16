@@ -1,0 +1,161 @@
+/* emoji.css - Mantle's emoji picker (Win+.), in the taskbar island's glass (lane mantle-emoji, 2026-10-15).
+ *
+ * EVERY colour is a --lg-* token from ../shared/glass-light.css. Light: the clipboard panel's frost with
+ * its drop (the window keeps 18 DIP round the pane for it). Dark: ONE --lg-fill layer over the HUD
+ * backdrop (hud-backdrop.js), the hairline and the lip, NO outer shadow (it would be cut at the window's
+ * edge into the dark square lane clipped-shadow removed). Outside the rounded pane nothing is painted.
+ *
+ * MOTION: springs, never fixed curves, and every one interruptible (CSS transitions retarget from where
+ * they are). The pane arrives from the caret's side with a little depth; the selection ring glides
+ * between cells; results reflow in with a short stagger. prefers-reduced-motion turns all of it off.
+ */
+:root {
+  --m: 18px;
+  --pw: 360px;
+  --ph: 424px;
+  --cell: 40px;
+  /* a critically-light spring (about 0.75 damping), sampled for linear() */
+  --spring: linear(0, 0.012, 0.047 2.3%, 0.19 5%, 0.39 8.2%, 0.62 12%, 0.8 15.8%, 0.92 19.6%, 1 23.6%,
+                   1.04 28%, 1.05 32%, 1.04 37%, 1.02 43%, 1.005 52%, 0.998 64%, 1);
+  --spring-soft: linear(0, 0.06 4%, 0.28 10%, 0.62 20%, 0.86 31%, 0.97 43%, 1.01 56%, 1.005 72%, 1);
+}
+* { box-sizing: border-box; }
+html, body {
+  height: 100%; margin: 0; overflow: hidden;
+  background: transparent;                 /* the window is see-through: paint only the pane */
+  font-family: var(--lg-font, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif);
+  font-size: 13px; color: var(--lg-ink-2); user-select: none; cursor: default;
+  -webkit-font-smoothing: antialiased;
+}
+#stage { position: fixed; inset: 0; }
+
+.panel {
+  position: absolute; left: var(--m); top: var(--m); width: var(--pw); height: var(--ph);
+  border-radius: var(--lg-r-xl, 20px); overflow: hidden;
+  display: flex; flex-direction: column;
+  background:
+    linear-gradient(var(--lg-sunk), var(--lg-sunk)),
+    linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)),
+    linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)),
+    var(--lg-fill-strong);
+  box-shadow: inset 0 1px 0 var(--lg-edge-in), 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  /* closed: a step back from the caret, see-through */
+  opacity: 0;
+  transform: translateY(-10px) scale(0.955);
+  transform-origin: 28px 0;
+  transition: opacity 110ms ease-in, transform 180ms ease-in;
+}
+.panel.above { transform: translateY(10px) scale(0.955); transform-origin: 28px 100%; }
+.panel.on { opacity: 1; transform: none; transition: opacity 150ms ease-out, transform 460ms var(--spring); }
+:root[data-theme="dark"] .panel { background: var(--lg-fill); box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out); }
+
+/* ---- the search line (the app keeps the keyboard: this is drawn, not an <input>) ---- */
+.head { display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px; flex: none; }
+.search {
+  flex: 1; height: 34px; display: flex; align-items: center; gap: 2px; padding: 0 12px 0 10px;
+  border-radius: var(--lg-r-ctl, 10px); background: var(--lg-field); box-shadow: inset 0 0 0 1px var(--lg-divider);
+  color: var(--lg-ink); font-size: 13.5px; white-space: pre; overflow: hidden;
+}
+.search.typing { box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
+.mag { width: 15px; height: 15px; flex: none; margin-right: 6px; fill: none; stroke: var(--lg-ink-3); stroke-width: 1.6; stroke-linecap: round; }
+.q { overflow: hidden; text-overflow: ellipsis; }
+.caret { width: 1.5px; height: 17px; background: var(--lg-acc); border-radius: 1px; animation: blink 1.06s steps(1) infinite; }
+.ph { color: var(--lg-ink-3); margin-left: 2px; }
+:root[data-theme="dark"] .ph { color: var(--lg-ink-2); }
+@keyframes blink { 50% { opacity: 0; } }
+.tone {
+  width: 34px; height: 34px; flex: none; border: 0; border-radius: var(--lg-r-ctl, 10px); background: transparent;
+  font: 20px/1 'Segoe UI Emoji'; cursor: pointer; transition: background 120ms, transform 300ms var(--spring);
+}
+.tone:hover { background: var(--lg-hover); }
+.tone:active { background: var(--lg-press); }
+.tones {
+  display: flex; gap: 4px; padding: 0 12px 8px; justify-content: flex-end;
+}
+.tones button {
+  width: 34px; height: 30px; border: 0; border-radius: var(--lg-r-ctl, 10px); background: transparent;
+  font: 19px/1 'Segoe UI Emoji'; cursor: pointer; animation: toneIn 360ms var(--spring) backwards;
+}
+.tones button:hover { background: var(--lg-hover); }
+.tones button.on { background: var(--lg-acc-soft); box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
+@keyframes toneIn { from { opacity: 0; transform: translateX(10px) scale(0.8); } }
+
+/* ---- tabs: one pill glides under the chosen one ---- */
+.tabs { position: relative; display: flex; gap: 2px; margin: 0 12px 6px; padding: 3px; border-radius: var(--lg-r-pill, 999px); background: var(--lg-sunk); flex: none; }
+.tabs button {
+  position: relative; z-index: 1; flex: 1; height: 26px; border: 0; background: transparent; border-radius: var(--lg-r-pill, 999px);
+  font: 600 12px var(--lg-font, 'Segoe UI'); color: var(--lg-ink-2); cursor: pointer; transition: color 150ms;
+}
+.tabs button.on { color: var(--lg-ink); }
+.pill {
+  position: absolute; top: 3px; left: 3px; height: 26px; border-radius: var(--lg-r-pill, 999px);
+  background: var(--lg-card); box-shadow: 0 0 0 1px var(--lg-edge-out), 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: transform 420ms var(--spring), width 420ms var(--spring);
+}
+:root[data-theme="dark"] .pill { box-shadow: 0 0 0 1px var(--lg-edge-out); }
+
+/* ---- categories ---- */
+.cats { display: flex; justify-content: space-between; padding: 0 10px 4px; flex: none; }
+.cats[hidden] { display: none; }
+.cats button {
+  position: relative; width: 32px; height: 30px; border: 0; background: transparent; border-radius: 8px; cursor: pointer;
+  font: 17px/1 'Segoe UI Emoji'; filter: grayscale(1); opacity: 0.55; transition: opacity 150ms, filter 150ms, background 120ms;
+}
+.cats button:hover { background: var(--lg-hover); opacity: 0.85; }
+.cats button.on { filter: none; opacity: 1; }
+.cats button.on::after {
+  content: ''; position: absolute; left: 50%; bottom: 1px; width: 14px; height: 3px; margin-left: -7px; border-radius: 2px; background: var(--lg-acc);
+  animation: catIn 380ms var(--spring);
+}
+@keyframes catIn { from { transform: scaleX(0.2); opacity: 0; } }
+
+/* ---- the grid ---- */
+.grid { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 12px 6px; outline: none; scrollbar-width: thin; scrollbar-color: var(--lg-scroll) transparent; }
+.sec { content-visibility: auto; contain-intrinsic-size: auto 300px; }
+.sec h2 { margin: 8px 2px 4px; font: 600 12px var(--lg-font, 'Segoe UI'); color: var(--lg-ink-2); }
+.cells { display: grid; grid-template-columns: repeat(8, var(--cell)); }
+.c {
+  position: relative; z-index: 1; width: var(--cell); height: var(--cell); display: grid; place-items: center;
+  font: 24px/1 'Segoe UI Emoji'; border-radius: 10px; cursor: pointer; transition: transform 260ms var(--spring);
+}
+.c:active { transform: scale(0.9); transition-duration: 60ms; }
+.kao .cells { grid-template-columns: repeat(2, 1fr); gap: 2px; }
+.kao .c { width: auto; height: 38px; font: 15px/1 'Segoe UI', 'Segoe UI Symbol', sans-serif; color: var(--lg-ink); white-space: nowrap; }
+.sym .c { font: 21px/1 'Segoe UI', 'Segoe UI Symbol', 'Cambria Math', sans-serif; color: var(--lg-ink); }
+.ring {
+  position: absolute; left: 0; top: 0; z-index: 0; width: var(--cell); height: var(--cell); border-radius: 10px;
+  background: var(--lg-acc-soft); box-shadow: inset 0 0 0 1px var(--lg-acc-line); pointer-events: none;
+  transition: transform 300ms var(--spring), width 300ms var(--spring), height 300ms var(--spring), opacity 120ms;
+}
+.ring.jump { transition: opacity 120ms; }
+.ring.off { opacity: 0; }
+#results .c { animation: cellIn 260ms var(--spring-soft) backwards; }
+@keyframes cellIn { from { opacity: 0; transform: translateY(5px) scale(0.86); } }
+.empty { padding: 36px 10px; text-align: center; color: var(--lg-ink-2); line-height: 1.5; }
+
+/* ---- footer: the chosen one, big, with its name ---- */
+.foot { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px; flex: none; border-top: 1px solid var(--lg-divider); }
+.big { width: 32px; text-align: center; font: 26px/1 'Segoe UI Emoji'; }
+.big.kao, .big.sym { font: 17px/1 'Segoe UI', 'Segoe UI Symbol', sans-serif; color: var(--lg-ink); width: auto; max-width: 120px; overflow: hidden; }
+.what { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.name { color: var(--lg-ink); font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.name::first-letter { text-transform: uppercase; }
+.hint { color: var(--lg-ink-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hint.say { color: var(--lg-ink); }
+
+/* ---- a notice (admin window, copied instead of typed): the pane shrinks to one card ---- */
+.notice {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; padding: 12px 14px; border-radius: var(--lg-r, 12px);
+  background: var(--lg-card); box-shadow: 0 0 0 1px var(--lg-edge-out); color: var(--lg-ink); line-height: 1.45;
+  animation: noteIn 420ms var(--spring);
+}
+@keyframes noteIn { from { opacity: 0; transform: translateY(8px) scale(0.97); } }
+.panel.note-only { height: auto; }
+.panel.note-only > :not(.notice) { display: none; }
+.panel.note-only .notice { position: static; margin: 12px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .panel, .panel.on, .ring, .pill, .c, .tone { transition: opacity 100ms !important; }
+  .panel, .panel.above { transform: none; }
+  #results .c, .tones button, .notice, .cats button.on::after { animation: none !important; }
+}
