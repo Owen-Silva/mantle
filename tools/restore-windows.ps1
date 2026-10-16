@@ -588,6 +588,26 @@ if (Test-Path -LiteralPath $bannerScript) {
 }
 
 # -----------------------------------------------------------------------------
+# (f4) Put Windows' own pop-up host (the brightness pop-up's XAML window) back on
+# screen if a dead Mantle left it parked off screen (sidecar/Osd.cs, P7). The park
+# encodes where Windows had it, so restore-osd.ps1 needs no record; with nothing
+# parked it writes nothing.
+# -----------------------------------------------------------------------------
+$osdScript = Join-Path $PSScriptRoot 'restore-osd.ps1'
+if (Test-Path -LiteralPath $osdScript) {
+  try {
+    $osdOut = & $osdScript
+    $osdCode = $LASTEXITCODE
+    foreach ($line in @($osdOut)) { if ($line -ne $null -and "$line" -ne 'mantle restore-osd') { Say "  osd: $("$line".Trim())" } }
+    if ($osdCode -ne 0) { Problem "pop-up host: restore-osd.ps1 could not put every window back (see above)" }
+  } catch {
+    Problem "pop-up host: restore-osd.ps1 failed ($($_.Exception.Message))"
+  }
+} else {
+  Problem "pop-up host: $osdScript is missing"
+}
+
+# -----------------------------------------------------------------------------
 # (g) Mark the state file restored, so the next Mantle does not think a run died
 # dirty and recover over the top of a desktop that is already fine.
 #
