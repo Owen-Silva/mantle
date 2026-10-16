@@ -405,6 +405,22 @@ module.exports = {
     check('match: a brightness change 0.9 s before is not this pop-up', r.verdict === 'ignore', JSON.stringify(r));
     r = await m(W({ cls: 'Shell_TrayWnd' }), 1000, [1020], 1100);
     check('match: another class with a brightness change is never touched', r.verdict === 'ignore' && /class/.test(r.reason), JSON.stringify(r));
+    // P7: park at the show = only a "wait" (looks right, no change yet), on screen, hiding on, not a dry run
+    const mp = async (extra, window, now) => ((await s.send('osd.bright', Object.assign({ op: 'match', window: window || fly, showAt: 1000, brightAt: [], now: now || 1010 }, extra))).result || {});
+    r = await mp({});
+    check('P7 match: no change yet = parked at its show, decided within 250 ms', r.verdict === 'wait' && r.parkAtShow === true && r.specMs === 250, JSON.stringify(r));
+    r = await mp({}, W({ w: 600, h: 400 }));
+    check('P7 match: a pop-up of another size is never parked at its show', r.verdict === 'ignore' && r.parkAtShow === false, JSON.stringify(r));
+    r = await mp({}, W({ cls: 'Shell_TrayWnd' }));
+    check('P7 match: another class is never parked at its show', r.parkAtShow === false, JSON.stringify(r));
+    r = await mp({ parked: true });
+    check('P7 match: shown already parked = the old wait (nothing to move)', r.parkAtShow === false, JSON.stringify(r));
+    r = await mp({ disabled: true });
+    check('P7 match: hiding stopped after 3 failed bursts = never parked at its show', r.parkAtShow === false, JSON.stringify(r));
+    r = await mp({ dry: true });
+    check('P7 match: a --passive dry run is never parked at its show', r.parkAtShow === false, JSON.stringify(r));
+    r = await mp({}, null, 2000);
+    check('P7 match: no change by 1 s = ignored, not parked', r.verdict === 'ignore' && r.parkAtShow === false, JSON.stringify(r));
     r = await m(W({ cls: 'TopLevelWindowForOverflowXamlIsland' }), 1000, [1020], 1100);
     check('match: explorer\'s other XAML island class is never touched', r.verdict === 'ignore', JSON.stringify(r));
     r = await m(W({ proc: 'chrome' }), 1000, [1020], 1100);
@@ -504,21 +520,105 @@ module.exports = {
       console.log(`  measured: SHOW -> off screen, as the stand-in saw it: median ${med(lat) && med(lat).toFixed(2)} ms, max ${Math.max(...lat).toFixed(2)} ms (${lat.length}); as the sidecar measured it: median ${med(after)} ms`);
       check('stand-in: moved off screen within one 60 Hz frame (median < 16 ms)', med(lat) !== null && med(lat) < 16, JSON.stringify(lat));
 
-      // 3. brightness change AFTER the SHOW: waits, then moves
-      await new Promise((res) => setTimeout(res, 700));   // clear of the last injected change
+      // 3. brightness change AFTER the SHOW (live: the SHOW leads it by ~20 ms). P7: parked AT ITS SHOW,
+      //    nothing pushed (Mantle shows nothing) until the change says it is the brightness pop-up.
+      const sleep3 = (ms) => new Promise((res) => setTimeout(res, ms));
+      await sleep3(900);                                   // clear of the last injected change
       at = seen();
-      await fake.cmd('show', 'shown');
-      await new Promise((res) => setTimeout(res, 60));
+      let shown3 = await fake.cmd('show', 'shown');
+      let moved3 = await fake.next('moved', 1500);
+      await sleep3(60);
       rc = await fake.cmd('rect', 'rect');
-      check('stand-in: SHOW with no brightness change yet is left alone while it waits', rc.x === home.x, JSON.stringify(rc));
+      check('P7: SHOW with no brightness change yet is parked AT ITS SHOW (not left on screen while it waits)',
+        moved3 && rc.x === -24000 + home.x && rc.visible, JSON.stringify({ rc, moved3 }));
+      check('P7: ...and nothing is pushed yet (Mantle shows nothing before the change)',
+        !s.events.slice(at).some((x) => osdEv(x)), JSON.stringify(s.events.slice(at)));
+      let st3 = (await s.send('osd.bright', { op: 'state' })).result || {};
+      check('P7: state says a suspect is parked', st3.suspect === true && st3.early >= 1, JSON.stringify(st3));
       await s.send('osd.bright', { op: 'inject', level: 55 });
       e = await waitFor(at, (x) => osdEv(x) && x.flyout === 'hidden', 1500);
       rc = await fake.cmd('rect', 'rect');
-      check('stand-in: the brightness change 60 ms later moves it', e && e.level === 55 && rc.x === -24000 + home.x, JSON.stringify({ e, rc }));
+      check('P7: the brightness change 60 ms later makes it the brightness pop-up: hidden, early, the level, flash measured from its show',
+        e && e.level === 55 && e.early === true && e.how === 'parked' && typeof e.hiddenAfterMs === 'number' && e.hiddenAfterMs < 60 && rc.x === -24000 + home.x,
+        JSON.stringify({ e, rc }));
+      let end0 = seen();
+      await fake.cmd('hide', 'hidden');
+      let end3 = await waitFor(end0, (x) => osdEv(x) && x.phase === 'end', 1500);
+      check('P7: its end line says it was parked at its show', end3 && end3.early === true && /\(parked at its show\)/.test(end3.summary || ''), JSON.stringify(end3));
+
+      // 3b. the flash, measured on the stand-in's own clock: brightness change 20 ms after each SHOW
+      const flash = [];
+      for (let i = 0; i < 6; i++) {
+        await sleep3(900);
+        at = seen();
+        const sh = await fake.cmd('show', 'shown');
+        await sleep3(20);
+        await s.send('osd.bright', { op: 'inject', level: 20 + i });
+        const mv = await fake.next('moved', 1500);
+        if (mv) flash.push(mv.t - sh.t);
+        await waitFor(at, (x) => osdEv(x) && x.flyout === 'hidden', 1500);
+        end0 = seen();
+        await fake.cmd('hide', 'hidden');
+        await waitFor(end0, (x) => osdEv(x) && x.phase === 'end', 1500);
+      }
+      console.log(`  measured (P7): brightness change 20 ms AFTER the SHOW, on screen as the stand-in saw it: median ${med(flash) && med(flash).toFixed(2)} ms, max ${flash.length ? Math.max(...flash).toFixed(2) : '-'} ms (${flash.length})`);
+      check('P7: change 20 ms after the SHOW: parked before the change (median < 16 ms; it was >= 20 ms before P7)',
+        flash.length === 6 && med(flash) < 16, JSON.stringify(flash));
+
+      // 3c. a flyout-shaped SHOW with NO brightness change: one of the host's other pop-ups. Put back
+      //     after SpecMs (shown late, never lost), pushed as 'other' with its size; Mantle shows nothing.
+      await sleep3(900);
+      at = seen();
+      shown3 = await fake.cmd('show', 'shown');
+      await sleep3(120);
+      rc = await fake.cmd('rect', 'rect');
+      check('P7 other: parked while it is unknown (120 ms after its show)', rc.x === -24000 + home.x, JSON.stringify(rc));
+      const other = await waitFor(at, (x) => osdEv(x) && x.phase === 'other', 1000);
+      await sleep3(80);
+      rc = await fake.cmd('rect', 'rect');
+      check('P7 other: no change within 250 ms = put back where Windows had it, still shown',
+        rc.x === home.x && rc.y === home.y && rc.visible, JSON.stringify(rc));
+      check('P7 other: pushed as phase "other" with its size, after about 250 ms, flyout none',
+        other && other.flyout === 'none' && Math.abs(other.w - 213) <= 1 && Math.abs(other.h - 61) <= 1 && other.heldMs >= 240 && other.heldMs < 400,
+        JSON.stringify(other));
+      check('P7 other: no "hidden" and no "end" push for it (Mantle showed nothing)',
+        !s.events.slice(at).some((x) => osdEv(x) && (x.flyout === 'hidden' || x.phase === 'end')), JSON.stringify(s.events.slice(at)));
+      // a LATE brightness change (WMI late, 400 ms after the SHOW): the old route answers it on screen
+      await sleep3(60);
+      await s.send('osd.bright', { op: 'inject', level: 66 });
+      e = await waitFor(at, (x) => osdEv(x) && x.flyout === 'hidden', 1500);
+      await sleep3(60);
+      rc = await fake.cmd('rect', 'rect');
+      check('P7 other: a brightness change 400 ms after its show still hides it (the old wait, up to 800 ms)',
+        e && e.level === 66 && e.early === false && rc.x === -24000 + home.x, JSON.stringify({ e, rc }));
+      end0 = seen();
+      await fake.cmd('hide', 'hidden');
+      await waitFor(end0, (x) => osdEv(x) && x.phase === 'end', 1500);
+
+      // 3d. another pop-up that Windows hides again inside the 250 ms: ended quietly, put back, never 'end'
+      await sleep3(900);
+      at = seen();
+      await fake.cmd('show', 'shown');
+      await sleep3(80);
+      await fake.cmd('hide', 'hidden');
+      const other2 = await waitFor(at, (x) => osdEv(x) && x.phase === 'other', 1000);
+      await sleep3(100);
+      rc = await fake.cmd('rect', 'rect');
+      check('P7 other: hidden by Windows inside 250 ms = "other" (Windows hid it), put back, no "end" push',
+        other2 && other2.why === 'Windows hid it' && rc.x === home.x && !rc.visible && !s.events.slice(at).some((x) => osdEv(x) && x.phase === 'end'),
+        JSON.stringify({ other2, rc }));
+      st3 = (await s.send('osd.bright', { op: 'state' })).result || {};
+      check('P7: state counts the early parks and the other pop-ups', st3.early >= 9 && st3.other >= 2 && st3.suspect === false && /21[234]x(60|61|62)/.test(st3.lastOther || ''),
+        JSON.stringify(st3));
+
+      // 4. watch off puts it back. 3c/3d left it put back, so park it once more first (a change, then its show)
+      await sleep3(900);
+      at = seen();
+      await s.send('osd.bright', { op: 'inject', level: 60 });
+      await fake.cmd('show', 'shown');
+      await waitFor(at, (x) => osdEv(x) && x.flyout === 'hidden', 1500);
       await fake.cmd('hide', 'hidden');
       await waitFor(at, (x) => osdEv(x) && x.phase === 'end', 1500);
-
-      // 4. watch off puts it back (it is parked and hidden now)
       rc = await fake.cmd('rect', 'rect');
       r = await s.send('osd.bright', { op: 'watch', on: false });
       await new Promise((res) => setTimeout(res, 150));
@@ -554,6 +654,25 @@ module.exports = {
       e = await waitFor(at, (x) => osdEv(x) && x.flyout === 'hidden', 50);
       check('keep: a parked window shown WITHOUT a brightness change is put back on screen', rc.x === home.x && rc.y === home.y && !e, JSON.stringify({ rc, home, e }));
       await fake.cmd('hide', 'hidden');
+      // tools/restore-osd.ps1 (no Node, no Mantle; called by restore-windows.ps1 step f4): a park left behind goes back
+      await new Promise((res) => setTimeout(res, 900));
+      at = seen();
+      await s.send('osd.bright', { op: 'inject', level: 45 });
+      await fake.cmd('show', 'shown');
+      await waitFor(at, (x) => osdEv(x) && x.flyout === 'hidden', 1500);
+      await fake.cmd('hide', 'hidden');
+      await waitFor(at, (x) => osdEv(x) && x.phase === 'end', 1500);
+      const parkedRc = await fake.cmd('rect', 'rect');
+      const ps = (extra) => { try { return execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, '..', 'tools', 'restore-osd.ps1')].concat(extra), { encoding: 'utf8', windowsHide: true }); } catch (err) { return 'EXIT ' + err.status + ' ' + (err.stdout || ''); } };
+      const out1 = ps(['-TargetPid', String(fake.pid)]);
+      await new Promise((res) => setTimeout(res, 150));
+      const backRc = await fake.cmd('rect', 'rect');
+      check('restore-osd.ps1: a parked pop-up host left behind is put back where Windows had it',
+        parkedRc.x === -24000 + home.x && backRc.x === home.x && backRc.y === home.y && /put 1 parked window\(s\) back/.test(out1), JSON.stringify({ parkedRc, backRc, out1 }));
+      const out2 = ps(['-TargetPid', String(fake.pid)]);
+      check('restore-osd.ps1: run again with nothing parked = no write, "nothing to do", exit 0', /none parked off screen, nothing to do/.test(out2) && !/EXIT/.test(out2), out2);
+      const out3 = ps(['-TargetPid', String(explorerPid)]);
+      check('restore-osd.ps1: -TargetPid may never be explorer', /EXIT 1/.test(out3) && /never be explorer/.test(out3), out3);
     } finally { fake.quit(); }
 
     // 6. a BURST: the stand-in puts itself back on screen 20 times, 100 ms apart (move home + show: what
@@ -818,4 +937,6 @@ async function startFake(mode) {
   if (!ready || !home) { try { proc.kill(); } catch (e) { /* gone */ } throw new Error('the stand-in window helper did not start'); }
   return { pid: ready.pid, ready: { rect: home }, cmd, next, quit() { try { proc.stdin.write('quit\n'); } catch (e) { /* gone */ } setTimeout(() => { try { proc.kill(); } catch (e) { /* gone */ } }, 500); } };
 }
+module.exports.start = start;
+module.exports.startFake = startFake;
 if (require.main === module) main();
