@@ -65,6 +65,11 @@ function killMine() { for (const pid of mine) { try { process.kill(pid); } catch
   try {
     s = await T.startPassive();
     out.exe = s.exe;
+    // The sidecar under test runs at Normal, as in Mantle, even when this test was started at Below Normal
+    // (the local heavy-test rule): a child takes its parent's class, which made its lanes slower than real.
+    try { require('os').setPriority(s.proc.pid, 0); } catch (_) { /* reported below */ }
+    let prio = null; try { prio = require('os').getPriority(s.proc.pid); } catch (_) { /* unknown */ }
+    console.log(`sidecar priority: ${prio === 0 ? 'Normal' : prio === null ? 'unknown' : 'not Normal (' + prio + ')'}`);
     const ping = async (reset) => (await s.send('ping', reset ? { resetHeld: true } : {}, 6000)).result || {};
     const p0 = await ping(true);
     const lanesOf = (p) => (p.load && p.load.lanes) || [];

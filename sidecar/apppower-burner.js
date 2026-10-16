@@ -58,6 +58,10 @@ static class B {
   static volatile string _stop;
 
   static void Main(string[] a) {
+    // START AT NORMAL whatever launched it (lane mantle-m1, 2026-10-15): a child takes its parent's Below
+    // Normal class, so a suite started at Below Normal (the local heavy-test rule) handed every burner
+    // Below Normal, and the boost e2e read them as already eased (25/4). The tests compare against Normal.
+    try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.Normal; } catch (Exception) { }
     string mode = a.Length > 0 ? a[0] : "idle";
     int life = 240; bool readIn = true;
     for (int i = 0; i < a.Length; i++) {
