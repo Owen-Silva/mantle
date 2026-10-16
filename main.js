@@ -5378,8 +5378,11 @@ const COMMANDS = {
       }
     }
 
+    const popWas = barPopover ? barPopover.height : 0;
     barPopover = extra ? { key: (a && a.key) || 'unnamed', height: extra } : null;
     popWatchBar();   // a click outside it or Esc closes it from now on (lib/popwatch.js)
+    // the notification banners sit above an open pop-up when the pill reaches their corner (lib/corner.js)
+    if (popWas !== extra) require('./lib/corner').changed(`a bar pop-up ${extra ? `opened (${popKind(a && a.key)})` : 'closed'}`);
     if (traceMarks) traceMarks.push({ t: traceNow(), what: 'popover done', open, extra });
     try {
       process.stdout.write(`mantle: bar.popover ${open ? `open (${popKind(a && a.key)}, asked ${asked}px, got ${extra}px)` : 'closed'} -> window now ${JSON.stringify(barWin.getBounds())} (DIP)${barTall() ? `, the bar's shape ${JSON.stringify(barRect())}` : ''}\n`);

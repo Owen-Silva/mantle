@@ -103,9 +103,20 @@
     // The next frame, so the slide-in transition has a start to run from.
     requestAnimationFrame(function () { card.classList.add('in'); });
     sync();
-    send('cardShown', { h: card.offsetHeight, w: card.offsetWidth });
+    sent = { w: card.offsetWidth, h: card.offsetHeight };
+    send('cardShown', { h: sent.h, w: sent.w });
   }
-  function resized() { send('cardSize', { h: card.offsetHeight, w: card.offsetWidth }); }
+  /* The card is as wide as what is on it (card.css), so ANY change of words can change its size ("Copy
+     path" -> "Path copied", a warn line): a ResizeObserver tells main every time, so the window always
+     fits the card and never cuts it or leaves glass where it used to reach. */
+  var sent = { w: 0, h: 0 };
+  function resized() {
+    var w = card.offsetWidth, h = card.offsetHeight;
+    if (card.hidden || S.gone || !w || !h || (w === sent.w && h === sent.h)) return;
+    sent = { w: w, h: h };
+    send('cardSize', { h: h, w: w });
+  }
+  if (window.ResizeObserver) new ResizeObserver(function () { resized(); }).observe(card);
   function warnLine(parts) {
     $('warn').textContent = parts.join(' · ');
     $('warn').hidden = !parts.length;

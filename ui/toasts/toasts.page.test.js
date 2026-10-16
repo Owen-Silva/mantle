@@ -21,6 +21,29 @@ const LIFE = 700, RESUME = 400;
 let passed = 0; const failures = [];
 function check(name, ok, detail) { if (ok) passed++; else failures.push(`${name}${detail !== undefined ? ` (${String(typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 300)})` : ''}`); }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const zlib = require('zlib');
+/* A transparent screenshot (omitBackground) decoded, so a pixel OFF the card can be read: its alpha is
+   what Windows composites over the desktop there (ui/shared/seethru.test.js's decoder). */
+function decodePng(buf) {
+  let p = 8, w = 0, h = 0, ct = 0; const idat = [];
+  while (p < buf.length) {
+    const len = buf.readUInt32BE(p), type = buf.toString('ascii', p + 4, p + 8), d = buf.slice(p + 8, p + 8 + len);
+    if (type === 'IHDR') { w = d.readUInt32BE(0); h = d.readUInt32BE(4); ct = d[9]; } else if (type === 'IDAT') idat.push(d); else if (type === 'IEND') break;
+    p += 12 + len;
+  }
+  const bpp = ct === 6 ? 4 : 3, raw = zlib.inflateSync(Buffer.concat(idat)), stride = w * bpp, px = Buffer.alloc(h * stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)], src = raw.slice(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? px[y * stride + x - bpp] : 0, b = y ? px[(y - 1) * stride + x] : 0, c = (x >= bpp && y) ? px[(y - 1) * stride + x - bpp] : 0;
+      let v = src[x];
+      if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1;
+      else if (f === 4) { const pp = a + b - c, pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c); v += (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c); }
+      px[y * stride + x] = v & 255;
+    }
+  }
+  return { w, h, at: (x, y) => { const i = y * stride + x * bpp; return [px[i], px[i + 1], px[i + 2], bpp === 4 ? px[i + 3] : 255]; } };
+}
 
 /* The fake main: records every call and lets the test push events. */
 const FAKE = ([life, resume, theme]) => {
@@ -72,6 +95,8 @@ async function open(browser, theme) {
       await emit('toasts.show', { banners: [B(1, { image: PNG, attribution: 'via Helm' })] });
       const one = await until(async () => { const s = await st(); return s.items.length === 1 && s.items[0].running ? s : null; });
       check(T + 'one banner on screen with its timer running', !!one, await st());
+      // the pointer on the stack HOLDS it while it is measured (its life here is only LIFE ms); let go below
+      await page.mouse.move(200, 640);
       const text = await page.evaluate(() => { const t = document.querySelector('.toast'); return { app: t.querySelector('.app').textContent, title: t.querySelector('.title').textContent, body: t.querySelector('.body').textContent, attr: t.querySelector('.attr').textContent, pic: !t.querySelector('.pic').hidden, icon: !!t.querySelector('.app-icon img') }; });
       check(T + 'app, title, body, attribution, picture and icon shown', text.app === 'Helm' && text.title === 'Done in 1s' && /every test/.test(text.body) && text.attr === 'via Helm' && text.pic && text.icon, text);
       const lay = await calls('toasts.layout');
@@ -80,12 +105,32 @@ async function open(browser, theme) {
       // measured once the slide-in has finished (transform back to none)
       await until(() => page.evaluate(() => getComputedStyle(document.querySelector('.toast')).transform === 'none'), 2000);
       const box = await page.evaluate(() => { const r = document.querySelector('.toast').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, right: r.right }; });
-      check(T + 'the card sits top right with room for its shadow', box.w === 360 && box.y === 8 && Math.round(392 - box.right) === 16, box);
+      // bottom right (lane mantle-toasts3): the card sits 16 px in from the window's right and bottom, and
+      // the shape main is asked for is the card + 16 below + 8 above
+      check(T + 'the card sits at the bottom right of its column, 16 px in', box.w === 360 && Math.round(700 - (box.y + box.h)) === 16 && Math.round(392 - box.right) === 16, box);
+      check(T + 'the shape asked for is the card + 8 above + 16 below', l1 && Math.abs(l1.h - (700 - box.y + 8)) <= 1, { l1, box });
+      // OFF THE CARD IS SEE-THROUGH: the window's whole edge of the shape (8 px above the card, the 16 px
+      // margins each side and below) reads alpha 0, so no square of shadow or glass shows round the card
+      await sleep(260);
+      const png = decodePng(await page.screenshot({ omitBackground: true }));
+      const top = Math.round(700 - l1.h), mid = Math.round(box.y + box.h / 2);
+      const edge = [];
+      for (let x = 0; x < 392; x += 7) { edge.push([x, top]); edge.push([x, 699]); }
+      for (let y = top; y < 700; y += 5) { edge.push([0, y]); edge.push([391, y]); }
+      let worst = 0, at = null;
+      for (const [x, y] of edge) { const a = png.at(x, y)[3]; if (a > worst) { worst = a; at = [x, y]; } }
+      const corner = png.at(Math.round(box.right) - 1, Math.round(box.y + box.h) - 1)[3];
+      const faceA = png.at(Math.round(box.x + 40), mid)[3];
+      if (theme === 'dark') check(T + 'NO dark square: every pixel on the shape edge is fully see-through (alpha 0)', worst === 0, { worst, at, n: edge.length });
+      // light keeps the island's soft drop, cut at the shape like every other light pop-up (241c70e held light): only its faint tail, never glass or dark
+      else check(T + 'light: off the card only the light drop faint tail (alpha <= 31 of 255, 12%), as every light pop-up', worst <= 31, { worst, at, n: edge.length });
+      check(T + 'outside the rounded corner is see-through and the face is not', corner <= (theme === 'dark' ? 0 : 24) && faceA > 150, { corner, faceA });
       const looks = await page.evaluate(() => { const cs = getComputedStyle(document.querySelector('.toast')); return { bg: cs.backgroundImage + ' ' + cs.backgroundColor, radius: cs.borderTopLeftRadius, ink: getComputedStyle(document.querySelector('.title')).color }; });
       check(T + 'the island face, a rounded card', /gradient|rgba|rgb/.test(looks.bg) && parseFloat(looks.radius) >= 8, looks);
       await sleep(260);
       await page.screenshot({ path: path.join(SHOTS, `toasts-one-${theme}.png`) });
       inks[theme] = looks.ink;
+      await page.mouse.move(2, 2);   // let go: it gets RESUME more, then leaves by itself
 
       // ---- it goes by itself, and the window is told there is nothing left
       const gone = await until(async () => (await st()).items.length === 0, LIFE + 1500);
@@ -98,7 +143,7 @@ async function open(browser, theme) {
       await until(async () => (await st()).items[0] && (await st()).items[0].running);
       // one banner with no picture: the height three of them are measured against below
       const lPlain = await until(async () => (await calls('toasts.layout')).filter((x) => x.count === 1).pop() || null);
-      await page.mouse.move(200, 40);
+      await page.mouse.move(200, 640);
       await sleep(LIFE + 400);
       const held = await st();
       check(T + 'hovering holds the banner past its life', held.items.length === 1 && held.hover && !held.items[0].running, held);
@@ -111,7 +156,7 @@ async function open(browser, theme) {
       await until(async () => (await st()).items.length === 1 && (await st()).items[0].shown);
       // the mouse goes straight onto the card (page.hover waits for the slide-in to settle, and a
       // 700 ms test life can run out first); hovering holds it, then the X is there to click
-      await page.mouse.move(200, 40);
+      await page.mouse.move(200, 640);
       await sleep(400);
       const xOpacity = await page.evaluate(() => getComputedStyle(document.querySelector('.toast .x')).opacity);
       await page.click('.toast .x');
@@ -123,7 +168,7 @@ async function open(browser, theme) {
       // ---- a click on the banner goes to main with what it needs, and the banner goes
       await emit('toasts.show', { banners: [B(4, { opens: 'protocol' })] });
       await until(async () => (await st()).items.length === 1 && (await st()).items[0].shown);
-      await page.mouse.move(200, 40);   // hover holds it while the slide-in settles (see the X above)
+      await page.mouse.move(200, 640);   // hover holds it while the slide-in settles (see the X above)
       await sleep(400);
       await page.click('.toast .title');
       const clicks = await until(async () => { const c = await calls('toasts.click'); return c.length ? c : null; }, 1500);
@@ -135,8 +180,11 @@ async function open(browser, theme) {
       await emit('toasts.show', { banners: [B(10), B(11), B(12), B(13), B(14)] });
       const five = await until(async () => { const s = await st(); return s.items.filter((i) => i.onScreen).length === 3 && s.more ? s : null; });
       check(T + 'at most three on screen, the rest are "+2 more"', five && five.more === '+2 more', await st());
-      const order = await page.evaluate(() => Array.from(document.querySelectorAll('.toast')).map((t) => Number(t.dataset.id)));
-      check(T + 'newest on top', order.join(',') === '14,13,12', order);
+      await sleep(260);
+      const order = await page.evaluate(() => Array.from(document.querySelectorAll('.toast')).map((t) => ({ id: Number(t.dataset.id), top: t.getBoundingClientRect().top })).sort((a, b) => b.top - a.top).map((x) => x.id));
+      check(T + 'newest nearest the corner, older ones stacked above it', order.join(',') === '14,13,12', order);
+      const moreTop = await page.evaluate(() => { const m = document.querySelector('.more'), t = Array.from(document.querySelectorAll('.toast')).map((e) => e.getBoundingClientRect().top); return m.getBoundingClientRect().bottom <= Math.min.apply(null, t) + 1; });
+      check(T + '"+N more" sits on top of the stack', moreTop === true);
       const lay5 = await calls('toasts.layout');
       check(T + 'the window grows for three', lay5[lay5.length - 1].count === 5 && !!lPlain && lay5[lay5.length - 1].h > lPlain.h * 2, { last: lay5.slice(-1), one: lPlain });
       await sleep(260);
@@ -170,6 +218,18 @@ async function open(browser, theme) {
       const safe = await page.evaluate(() => ({ pwned: !!window.__pwned, title: document.querySelector('.toast .title').textContent, imgs: document.querySelectorAll('.toast .title img').length, letter: (document.querySelector('.toast .letter') || {}).textContent }));
       check(T + 'title/body are plain text', !safe.pwned && safe.imgs === 0 && /^<img/.test(safe.title), safe);
       check(T + 'no icon: the app\'s letter', safe.letter === 'D', safe);
+
+      // ---- a long title ends in an ellipsis INSIDE the card (never cut by the window's edge)
+      await emit('toasts.show', { banners: [B(50, { title: 'Preparing for fresh install of every Mantle feature on the second monitor, then checking all of it again twice, and once more on the laptop screen before anyone notices that it took this long', body: 'Done in 6s' })] });
+      await until(async () => (await st()).items.some((i) => i.id === 50 && i.shown));
+      await page.mouse.move(200, 640);   // held while it is read
+      await until(() => page.evaluate(() => { const t = document.querySelector('.toast[data-id="50"]'); return !!t && getComputedStyle(t).transform === 'none'; }), 2000);
+      const long = await page.evaluate(() => {
+        const t = document.querySelector('.toast[data-id="50"]'), ti = t.querySelector('.title'), c = t.getBoundingClientRect(), r = ti.getBoundingClientRect();
+        const cs = getComputedStyle(ti);
+        return { clamped: (function () { var f = ti.cloneNode(true); f.style.cssText = 'display:block;-webkit-line-clamp:none;overflow:visible;position:absolute;visibility:hidden;width:' + ti.clientWidth + 'px'; ti.parentNode.appendChild(f); var n = Math.round(f.getBoundingClientRect().height / parseFloat(cs.lineHeight)); f.remove(); return n > 2; })(), lines: Math.round(r.height / parseFloat(cs.lineHeight)), clamp: cs.webkitLineClamp, inside: r.right <= c.right - 11 && r.left >= c.left, cardRight: c.right, winRight: window.innerWidth };
+      });
+      check(T + 'a long title: two lines then an ellipsis, inside the card, the card inside the window', long.clamped && long.lines === 2 && String(long.clamp) === '2' && long.inside && long.cardRight <= long.winRight - 16, long);
       await P.ctx.close();
     }
     check('light and dark draw different ink (the theme reaches the page)', inks.light && inks.dark && inks.light !== inks.dark, inks);

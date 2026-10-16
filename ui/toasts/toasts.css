@@ -1,9 +1,14 @@
 /* toasts.css - Mantle's notification banners (lane mantle-toasts, 2026-10-15). The island theme only:
  * every colour is a --lg-* token from ui/shared/glass-light.css, light and dark.
  * The card is the screenshot card's surface (the HUD face: --lg-fill-strong three times over in light, one
- * --lg-fill-pop in dark, ONE hairline, the popover shadow). No blur under it (tall-card tile glitch), no
- * accent except focus, no glow. Motion: in from the right on --lg-dur, out on --lg-dur-out, both finish;
- * reduced motion = none. */
+ * --lg-fill-pop in dark, ONE hairline, the popover shadow in light). No blur under it (tall-card tile
+ * glitch), no accent except focus, no glow. Motion: in from the right on --lg-dur, out on --lg-dur-out,
+ * both finish; reduced motion = none.
+ * DARK ENDS ON ITS HAIRLINE (lane mantle-toasts3, 2026-10-15). Owen: "there is a square dark part around
+ * it similar to what was around some other mantle popouts before". It was the dark --lg-shadow (black
+ * .34 + .42, 64 px blur, needs ~90 px of room) cut at the window's edge 16 px out (8 above) into a dark
+ * rectangle with square corners: the bug 241c70e fixed on 14 other pop-ups. Dark now has the hairline
+ * and the lip only, as the screenshot card; light keeps its drop (ui/shared/clipped-shadow.test.js). */
 :root {
   --hud-face: linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), var(--lg-fill-strong);
   --card-w: 360px;
@@ -14,8 +19,11 @@ html, body {
   font-family: var(--lg-font, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif);
   font-size: 13px; color: var(--lg-ink); user-select: none; -webkit-user-select: none; cursor: default;
 }
-/* The window is the stack plus room for its shadow: 8 px above, 16 px at each side and below. */
-#stack { position: absolute; top: 8px; right: 16px; width: var(--card-w); display: flex; flex-direction: column; gap: 8px; padding-bottom: 16px; }
+/* Bottom right (Owen: "i want it to still show up in the bottom right"). The window is a column down to
+   the corner; the stack sits at its bottom, 16 px in from the side and the bottom, and grows UPWARD:
+   DOM order is newest first, column-reverse puts the newest nearest the corner and "+N more" (last in
+   the DOM) on top. Main shapes the window to the stack plus 8 px above it (toasts.layout h). */
+#stack { position: absolute; bottom: 16px; right: 16px; width: var(--card-w); display: flex; flex-direction: column-reverse; gap: 8px; }
 
 .toast {
   position: relative; box-sizing: border-box; width: var(--card-w);
@@ -29,6 +37,8 @@ html, body {
 .toast.in { transform: none; opacity: 1; }
 .toast.out { transform: translateX(28px); opacity: 0; transition: transform var(--lg-dur-out) var(--lg-ease), opacity var(--lg-dur-out) linear; pointer-events: none; }
 .toast:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc), var(--lg-shadow); }
+:root[data-theme="dark"] .toast { box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .toast:focus-visible { box-shadow: var(--lg-lip-up), 0 0 0 2px var(--lg-acc); }
 @media (prefers-reduced-motion: reduce) { .toast, .toast.in, .toast.out { transition: none; transform: none; } }
 
 /* app line: icon, name, age, close */
@@ -81,4 +91,6 @@ button { font: inherit; color: inherit; border: 0; background: none; padding: 0;
 }
 .more:hover { background: linear-gradient(var(--lg-hover), var(--lg-hover)), var(--hud-face); color: var(--lg-ink); }
 .more:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc), var(--lg-shadow); }
+:root[data-theme="dark"] .more { box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out); }
+:root[data-theme="dark"] .more:focus-visible { box-shadow: var(--lg-lip-up), 0 0 0 2px var(--lg-acc); }
 .more[hidden] { display: none; }
