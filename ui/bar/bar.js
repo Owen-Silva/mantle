@@ -2628,6 +2628,10 @@
         grid.appendChild(b);
       });
     pop.appendChild(grid);
+    /* AIRPLANE MODE, DO NOT DISTURB, FOCUS, PROJECT, CAST (lane qstiles, 2026-10-15): drawn into this grid from the
+       state the bar already holds (ui/bar/qs-tiles.js), in this same frame; fresh reads only after it. */
+    if (window.MantleQsTiles) MantleQsTiles.attach(pop, grid, { call: call, close: closePop });
+    else fail('qstiles', 'Some tiles missing', MISSING + 'Quick Settings has no Airplane mode, Do not disturb, Focus, Project or Cast tile', 'warn', 'qs-tiles.js did not load');
 
     /* A click on a switch ALWAYS does something visible: it switches (at once, pending until
        Windows answers), or - when the part cannot be switched - it says why in the panel. It used
@@ -3971,6 +3975,8 @@
       qsTake(d);
       qsRepaint();
     });
+    // the new tiles' state, held from now on so the panel opens on it (lane qstiles)
+    if (window.MantleQsTiles) MantleQsTiles.listen({ on: on });
     /* The speaker, pushed on every change from anywhere (the volume keys, Windows' flyout,
        another app) whether or not the panel is open; it was read once at start. */
     on('volume', function (v) {

@@ -28,7 +28,7 @@ const words = (st) => {
       t.check(name, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
     };
     const winD = kv(VK.LWIN, true), winU = kv(VK.LWIN, false), w = { win: true };
-    const ALL = ['Win+S', 'Win+V', 'Win+Tab', 'Win+Alt+T', 'Win+Ctrl+T', 'Win+Alt+N', 'Win+I', 'Win+E', 'Win+R', 'Win+X', 'Win+G'];
+    const ALL = ['Win+S', 'Win+V', 'Win+Tab', 'Win+Alt+T', 'Win+Ctrl+T', 'Win+Alt+N', 'Win+I', 'Win+E', 'Win+R', 'Win+X', 'Win+G', 'Win+P'];
     const unknown = await s.send('hotkey', { chords: ['Win+Q'] }, 4000);
     t.check('the protocol knows Win+G (an unknown chord error lists it)', unknown.ok === false && /Win\+G\b/.test(unknown.error), JSON.stringify(unknown));
     await sim('Win+G is taken when on; the Win-up gets the partner key (Start stays shut)', { chords: ['Win+G'] },

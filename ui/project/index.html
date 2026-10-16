@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src file:; script-src file:; img-src file: data:; font-src file:">
+<title>Mantle Project</title>
+<!-- glass-light.css ONLY: the island's --lg-* tokens are the whole palette (light and dark) -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="project.css">
+</head>
+<body>
+<!-- Win+P (lib/features/project.js): made on the key, destroyed when it closes. The four choices are
+     Windows' own; Win+P again or the arrows move, Enter picks, Esc closes. A change asks to be kept
+     within 15 s, and the sidecar switches back by itself if it is not. -->
+<div id="card" class="card" role="dialog" aria-labelledby="title" aria-describedby="note">
+  <div class="head">
+    <div id="title" class="title">Project</div>
+    <div id="count" class="count" aria-hidden="true" hidden></div>
+  </div>
+  <div id="list" class="list" role="listbox" aria-labelledby="title">
+    <i id="hl" class="hl" aria-hidden="true"></i>
+  </div>
+  <div id="ask" class="ask" hidden>
+    <div id="asktext" class="asktext" role="status" aria-live="polite"></div>
+    <div class="drain" aria-hidden="true"><i id="drain"></i></div>
+    <div class="acts">
+      <button id="revert" class="b" type="button">Revert</button>
+      <button id="keep" class="b pri" type="button">Keep changes</button>
+    </div>
+  </div>
+  <div id="note" class="note" role="status" aria-live="polite" hidden></div>
+  <button id="cast" class="cast" type="button" title="Opens Windows' own Cast panel (Win+K)">
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M1.8 5.5V4.2c0-.8.6-1.4 1.4-1.4h9.6c.8 0 1.4.6 1.4 1.4v7.6c0 .8-.6 1.4-1.4 1.4H9.6M1.8 8.4a4.8 4.8 0 0 1 4.8 4.8M1.8 10.8a2.4 2.4 0 0 1 2.4 2.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="2" cy="13.1" r=".7" fill="currentColor"/></svg>
+    <span>Connect to a wireless display</span>
+  </button>
+</div>
+<script src="mock-mantle.js"></script>
+<script src="../../lib/features/_project-core.js"></script>
+<script src="project.js"></script>
+</body>
+</html>

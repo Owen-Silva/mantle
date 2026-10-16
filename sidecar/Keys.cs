@@ -1,4 +1,4 @@
-// Keys.cs - `keys`: send one of exactly three Windows chords, and no others.
+// Keys.cs - `keys`: send one of exactly four Windows chords, and no others.
 //
 // WHY THIS EXISTS: Mantle's bar has a clock, a notification bell and a "show
 // desktop" corner, and the only way to open the real Windows surfaces behind
@@ -16,6 +16,8 @@
 //   win+a  quick settings
 //   win+n  notification centre
 //   win+d  show the desktop
+//   win+k  Windows' Cast panel ("Connect to a wireless display"; lane qstiles, 2026-10-15: no public
+//          API lets another app start a whole-screen Miracast session, so Mantle hands this one over)
 //
 // THE ORDER OF THE CHECKS MATTERS. An unknown combo is answered BEFORE the
 // passive check, because "win+x is not a thing this command does" is true in
@@ -41,6 +43,7 @@ namespace Mantle {
         case "win+a": vk = (ushort)Win32.VK_A; return true;
         case "win+n": vk = (ushort)Win32.VK_N; return true;
         case "win+d": vk = (ushort)Win32.VK_D; return true;
+        case "win+k": vk = 0x4B; return true;   // Cast (lane qstiles): Windows' own panel, which Mantle hands off to
         default: return false;
       }
     }

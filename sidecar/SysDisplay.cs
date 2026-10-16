@@ -10,6 +10,7 @@
 //   sysdisplay.get          {}                                   every display + topology + GPUs
 //   sysdisplay.mode         {display, width, height, hz?, orientation?, keepWithinMs?, dryRun}
 //   sysdisplay.topology     {mode:'extend'|'clone'|'internal'|'external', keepWithinMs?, dryRun}
+//   sysdisplay.project      {}   the preset, what Windows would take, displays connected, a waiting change (Win+P)
 //   sysdisplay.primary      {display, keepWithinMs?, dryRun}
 //   sysdisplay.arrange      {positions:[{display, x, y}], keepWithinMs?, dryRun}
 //   sysdisplay.keep         {token}        keep a pending change (stops the revert timer)
@@ -90,6 +91,7 @@ namespace Mantle {
       t.Add("sysdisplay.get", Lanes.Slow, Get);
       t.Add("sysdisplay.mode", Lanes.Slow, ModeCmd);
       t.Add("sysdisplay.topology", Lanes.Slow, TopologyCmd);
+      t.Add("sysdisplay.project", Lanes.Qs, ProjectCmd);   // Win+P / the Project tile: read only (lane qstiles)
       t.Add("sysdisplay.primary", Lanes.Slow, PrimaryCmd);
       t.Add("sysdisplay.arrange", Lanes.Slow, ArrangeCmd);
       t.Add("sysdisplay.keep", Lanes.Slow, KeepCmd);
@@ -704,6 +706,27 @@ namespace Mantle {
       }
       return Json.Obj("current", cur, "source", "QueryDisplayConfig(QDC_DATABASE_CURRENT)", "reason", reason,
                       "available", avail, "unavailable", why);
+    }
+
+    /// sysdisplay.project {} (lane qstiles, 2026-10-15): what Win+P's pop-up and the Project tile
+    /// show, and nothing else: the current preset, which of the four Windows would take
+    /// (SDC_VALIDATE: changes nothing), how many displays are connected (active + connected but
+    /// unused, as Settings counts them) and a change still waiting to be kept. No modes, no GPUs:
+    /// sysdisplay.get reads all of those and is far too slow to sit behind a key. READ ONLY, so a
+    /// passive (test) sidecar answers it in full. The change itself is sysdisplay.topology, with
+    /// its 15 s keep-or-revert, exactly as Mantle Settings uses it.
+    static string ProjectCmd(Dictionary<string, object> req, ref object result) {
+      try {
+        IDictionary r = TopologyJson();
+        string err, inactiveWhy;
+        List<Disp> ds = ReadDisplays(out err, out inactiveWhy);
+        r["connected"] = ds == null ? null : (object)ds.Count;
+        r["connectedWhy"] = err;
+        r["pending"] = PendingJson();
+        r["ok"] = true;
+        result = r;
+        return null;
+      } catch (Exception ex) { return "sysdisplay.project failed: " + Why(ex); }
     }
 
     // ------------------------------------------------------------------ GPUs

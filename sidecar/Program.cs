@@ -800,7 +800,7 @@ namespace Mantle {
           // would go on believing it works in a live run.
           string combo = Json.GetString(req, "combo");
           if (string.IsNullOrEmpty(combo))
-            return "keys needs a combo: one of win+a, win+n, win+d";
+            return "keys needs a combo: one of win+a, win+n, win+d, win+k";
           if (!Keys.IsAllowed(combo)) return "combo not allowed";
           // And THIS is what passive is for: a test run must never type into
           // whatever the person at the machine is doing.

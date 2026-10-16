@@ -1,0 +1,91 @@
+/* project.css - Win+P's pop-up (lane qstiles, 2026-10-15). The island style: every colour is a --lg-*
+ * token from ../shared/glass-light.css; a solid face (no backdrop to wait for, R3), no glow, no gradient.
+ * FUTURISTIC, NOT LOUD: the card arrives with depth (a spring from 96% and 6 px up), the selection is
+ * one plate that springs between rows (interruptible: a transition, so Win+P held and tapped glides),
+ * and the 15 s question drains a hairline instead of flashing a number. */
+:root {
+  --pj-spring: linear(0, 0.072, 0.228, 0.409, 0.579, 0.721, 0.83, 0.909, 0.961, 0.993, 1.011, 1.018, 1.02, 1.018,
+                      1.015, 1.011, 1.008, 1.005, 1.003, 1.002, 1.001, 1, 1, 1, 1);
+  --pj-face: var(--lg-fill-strong);
+  --pj-row: 44px;
+}
+:root[data-theme="dark"] { --pj-face: var(--lg-fill); }
+/* DARK: no outer shadow (Mantle's clipped-shadow rule, bar.css row 4). The window is the card + 16 px
+   (lib/features/project.js PAD), and dark --lg-shadow blurs 64 px, so it was cut square at the window's
+   sides: a hard dark band beside the rounded card. Dark ends on the hairline and the lip, like the bar's
+   pop-ups. Light is held as it was. */
+:root[data-theme="dark"] .card { box-shadow: var(--lg-lip-up); }
+html, body { margin: 0; background: transparent; overflow: hidden; }
+body { padding: 16px; font: 13px/1.35 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--lg-ink); user-select: none; }
+body.mock { background: #d9dde6; min-height: 100vh; }
+body.mock.dark { background: #1c2030; }
+
+.card {
+  width: 340px; box-sizing: border-box; padding: 12px 12px 8px;
+  background: var(--pj-face);
+  border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); box-shadow: var(--lg-shadow);
+  opacity: 0; transform: translateY(-6px) scale(.965); transform-origin: 85% 0;
+  transition: opacity 180ms var(--lg-ease), transform 420ms var(--pj-spring);
+}
+.card.in { opacity: 1; transform: none; }
+.card.out { opacity: 0; transform: translateY(-4px) scale(.98); transition-duration: 120ms, 160ms; }
+
+.head { display: flex; align-items: baseline; justify-content: space-between; padding: 2px 4px 8px; }
+.title { font-weight: 600; font-size: 14px; letter-spacing: .1px; }
+.count { color: var(--lg-ink-3); font-variant-numeric: tabular-nums; }
+
+.list { position: relative; display: grid; gap: 2px; }
+.hl {
+  position: absolute; left: 0; right: 0; top: 0; height: var(--pj-row);
+  border-radius: var(--lg-r-ctl); background: var(--lg-hover);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+  transform: translateY(0); transition: transform 420ms var(--pj-spring), opacity 150ms;
+  pointer-events: none;
+}
+.row {
+  position: relative; display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 0 10px;
+  height: var(--pj-row); padding: 0 10px 0 6px; border: 0; border-radius: var(--lg-r-ctl);
+  background: transparent; color: inherit; font: inherit; text-align: left; cursor: default;
+  transition: transform 420ms var(--pj-spring);
+}
+.row:active:not([aria-disabled="true"]) { transform: scale(.975); transition-duration: 90ms; }
+.row:focus-visible { outline: none; }
+.row .ico { display: grid; place-items: center; width: 38px; height: 30px; border-radius: var(--lg-r-ctl); background: var(--lg-sunk); color: var(--lg-ink-2, var(--lg-ink)); }
+.row .lbl { font-size: 13px; }
+.row .why { display: block; font-size: 11.5px; color: var(--lg-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .now { font-size: 11.5px; color: var(--lg-acc); font-weight: 600; }
+.row.current .ico { background: var(--lg-acc); color: var(--lg-acc-on); }
+.row[aria-disabled="true"] { color: var(--lg-ink-3); }
+.row[aria-disabled="true"] .ico { opacity: .55; }
+
+.ask { padding: 2px 4px 4px; }
+.asktext { color: var(--lg-ink-2, var(--lg-ink)); margin-bottom: 10px; }
+.drain { height: 2px; border-radius: 1px; background: var(--lg-sunk); overflow: hidden; margin-bottom: 12px; }
+.drain i { display: block; height: 100%; background: var(--lg-acc); transform-origin: 0 50%; transform: scaleX(1); }
+.acts { display: flex; gap: 8px; justify-content: flex-end; }
+.b {
+  height: 30px; min-width: 84px; padding: 0 14px; border: 0; border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk); color: var(--lg-ink); font: inherit; cursor: default;
+  transition: transform 420ms var(--pj-spring), background-color 120ms;
+}
+.b:hover { background: var(--lg-hover); }
+.b:active { transform: scale(.96); transition-duration: 90ms; }
+.b:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }   /* inset: never on a neighbour */
+.b.pri:focus-visible { outline-color: var(--lg-acc-on); }                       /* seen on the accent fill */
+.b.pri { background: var(--lg-acc); color: var(--lg-acc-on); font-weight: 600; }
+.b.pri:hover { box-shadow: inset 0 0 0 24px var(--lg-hover); }
+
+.note { margin: 8px 4px 2px; font-size: 12px; color: var(--lg-ink-3); }
+.note.warn { color: var(--lg-warn); }
+.cast {
+  display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 6px; padding: 8px 10px 6px;
+  border: 0; border-top: 1px solid var(--lg-edge-out); border-radius: 0 0 var(--lg-r-ctl) var(--lg-r-ctl);
+  background: transparent; color: var(--lg-ink-3); font: inherit; font-size: 12px; text-align: left; cursor: default;
+}
+.cast:hover { color: var(--lg-ink); }
+.cast:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
+.card.asking .list, .card.asking .cast { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .card, .hl, .row, .b { transition: opacity 120ms; transform: none !important; }
+}

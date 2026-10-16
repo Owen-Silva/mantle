@@ -51,6 +51,14 @@
   if (window.mantle) return;                 // real bridge present: do nothing at all.
 
   var q = new URLSearchParams(location.search);
+  /* lane qstiles: the state lib/features/qstiles.js and project.js replay. */
+  var qxS = { on: q.get('qx') !== 'off', dnd: { ok: true, on: false, writable: true, reason: null, rule: null },
+    airplane: { ok: true, on: false, canSet: true, reason: null }, focus: q.get('qx') === 'focus' ? { on: true, endAt: Date.now() + 1500000, minutes: 30, dndByFocus: true } : null,
+    timer: { ok: true, reason: null }, readAt: Date.now(), readError: null, busy: [], test: true };
+  if (q.get('qx') === 'dead') { qxS.dnd = { ok: false, on: null, writable: false, reason: 'Windows’ quiet-hours object is not available' }; qxS.airplane = { ok: true, on: null, canSet: false, reason: 'Windows’ radio management is not registered on this PC' }; }
+  if (q.get('qx') === 'focus') qxS.dnd.on = true;
+  function qxState() { return q.get('qx') === 'reading' ? { on: true, dnd: null, airplane: null, focus: null, timer: { ok: true }, busy: [] } : JSON.parse(JSON.stringify(qxS)); }
+  function pjState() { var one = q.get('displays') === '1'; return { on: true, phase: 'closed', read: { current: one ? 'internal' : 'extend', available: one ? ['internal'] : ['internal', 'clone', 'extend', 'external'], unavailable: {}, connected: one ? 1 : 2, pending: null } }; }
   var SIDECAR_DOWN = q.get('state') === 'down';
   var REVEAL = q.get('reveal') !== '0';
   var MODE = q.get('mode') === 'pill' ? 'pill' : 'edge';
@@ -1294,6 +1302,19 @@
         return { ok: true, reason: '' };
       }
       case 'qs.get': return qsSnapshot();
+      // lane qstiles: the new tiles' features (?qx=dead|off|focus|reading, ?displays=1)
+      case 'qstiles.state': case 'qstiles.refresh': return qxState();
+      case 'qstiles.set': {
+        var tl = payload && payload.tile, want = !!(payload && payload.on);
+        if (tl === 'dnd') qxS.dnd.on = want;
+        else if (tl === 'airplane') qxS.airplane.on = want;
+        else if (tl === 'focus') qxS.focus = want ? { on: true, endAt: Date.now() + 1800000, minutes: 30, dndByFocus: !qxS.dnd.on } : null;
+        if (tl === 'focus' && want) qxS.dnd.on = true;
+        setTimeout(function () { emit('qstiles.state', qxState()); }, 0);
+        return { ok: true, tile: tl, state: qxState() };
+      }
+      case 'project.state': case 'project.refresh': return pjState();
+      case 'project.open': case 'project.cast': return { ok: true };
       case 'net.get': return netNow;
 
       case 'osd.mixer': case 'osd.show': return { ok: true, shown: false, test: true, reason: null };   // ui/osd is its own page
@@ -1503,6 +1524,8 @@
         else if (channel === 'volume') cb(volumeReading());
         else if (channel === 'net') cb(netNow);
         else if (channel === 'qs') cb(qsSnapshot());     // main replays its last whole picture
+        else if (channel === 'qstiles.state') cb(qxState());   // lib/features/qstiles.js replays its state (lane qstiles)
+        else if (channel === 'project.state') cb(pjState());   // lib/features/project.js replays its state
         else if (channel === 'state') cb(state());
         else if (channel === 'downloads.state') cb(dlState());   // lib/features/downloads.js replays its state (sync)
         else if (channel === 'spotify.status') cb(SPQ === 'checking' ? { ok: true, state: 'checking', reason: 'checking Spotify…', port: 47292 } : spqStatus());   // lib/features/spotify.js replays its last state (sync)
