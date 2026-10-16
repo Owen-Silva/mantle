@@ -147,11 +147,12 @@
     // the first frame with the panel on it (its rAF, then the task after it), and a timer in
     // case frames are not being made at all (then main hears "timer" and the number says so)
     var said = false;
-    var say = function (how) { if (said) return; said = true; S.paints++; call('clips.painted', { seq: seq, how: how }); };
+    // the last clip (its thumbnail) and a fresh look at the window in front: asked for only AFTER the
+    // first frame is reported, so its sidecar round trip and folder read never sit in front of that frame
+    var refresh = function () { call('clips.state').then(function (r) { if (r && r.ok !== false && S.shown) { take(r); draw(); } }); };
+    var say = function (how) { if (said) return; said = true; S.paints++; call('clips.painted', { seq: seq, how: how }); refresh(); };
     requestAnimationFrame(function () { setTimeout(function () { say('frame'); }, 0); });   // after the frame with the panel is made
     setTimeout(function () { say('timer'); }, 250);
-    // the last clip (its thumbnail) and a fresh look at the window in front
-    call('clips.state').then(function (r) { if (r && r.ok !== false && S.shown) { take(r); draw(); } });
   }
   function hide() {
     S.shown = false;
