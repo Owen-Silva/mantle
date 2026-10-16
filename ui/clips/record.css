@@ -1,0 +1,174 @@
+/* record.css - the Win+G Record panel (lane mantle-clips2, 2026-10-15).
+ * The island: EVERY colour is a --lg-* token from ../shared/glass-light.css; no backdrop-filter, no glow.
+ * The window is the card plus MARGIN (lib/features/clips.js, 18 DIP) of see-through room on each side:
+ * nothing outside the card paints, so there is never a square behind it.
+ * LIGHT: the HUD face (--lg-fill-strong three times over, the timer's), the hairline and --lg-shadow.
+ * DARK: Helm's pop-up: ONE --lg-fill layer (the blurred screen behind it once main sends
+ * clips.backdrop, ui/shared/hud-backdrop.js), the hairline and the --lg-lip-up lip, and NO outer shadow
+ * (the clipped-shadow rule: 18 DIP cannot hold it, it would be cut into a hard dark edge).
+ * MOTION: in on a spring (a CSS linear() curve, ~4% overshoot, settles in ~420 ms) from the corner it
+ * lives in; the Record button's core morphs circle -> square on the same spring; the live dot breathes
+ * slowly (2.4 s), never blinks. Reduced motion: none of it. */
+:root {
+  --card-w: 340px;
+  --hud-face: linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), var(--lg-fill-strong);
+  --spring: linear(0, .096 2.4%, .33 5.4%, .62 9.3%, .84 13.6%, .96 18.3%, 1.02 23.5%, 1.035 28.4%, 1.03 33.6%, 1.012 41.9%, 1 52%, .997 64%, 1);
+  --live: var(--lg-danger, #c4314b);
+  --warn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] { --hud-face: var(--lg-fill); }
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%; overflow: hidden; background: transparent;
+  font-family: var(--lg-font, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif);
+  font-size: 12.5px; -webkit-font-smoothing: antialiased; color: var(--lg-ink); user-select: none; cursor: default;
+}
+body { display: flex; justify-content: flex-end; align-items: flex-end; padding: 18px; }
+/* headless shots only (mock-mantle.js): a stand-in for the desktop behind the window */
+body.mock { background: linear-gradient(160deg, #6d7fa6 0%, #b9c3d6 55%, #e7e2da 100%); }
+body.mock.dark { background: linear-gradient(160deg, #1b2130 0%, #2c3446 60%, #474c58 100%); }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; margin: 0; }
+button:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
+.grow { flex: 1 1 auto; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.card {
+  position: relative; flex: none; width: var(--card-w);
+  padding: 10px 12px 10px 14px;
+  background: var(--hud-face);
+  border: 1px solid var(--lg-edge-out);
+  border-radius: var(--lg-r-pop);
+  box-shadow: var(--lg-shadow);
+  transform-origin: 100% 100%;
+}
+.card.in { animation: pop 440ms var(--spring) both; }
+@keyframes pop {
+  from { transform: translate(6px, 14px) scale(.955); opacity: 0; }
+  30% { opacity: 1; }
+  to { transform: none; opacity: 1; }
+}
+
+/* ---- the top line: what it is, and the window it records ---- */
+.top { display: flex; align-items: center; gap: 8px; height: 24px; }
+.title { font-weight: 600; font-size: 13px; letter-spacing: .005em; }
+.app {
+  max-width: 190px; height: 20px; line-height: 20px; padding: 0 8px; border-radius: var(--lg-r-chip, 999px);
+  background: var(--lg-sunk); color: var(--lg-ink-2); font-size: 11.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.app:empty { display: none; }
+.ib { width: 24px; height: 24px; display: grid; place-items: center; border-radius: var(--lg-r-ctl); color: var(--lg-ink-3); margin-right: -4px; }
+.ib:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.ib:active { background: var(--lg-press); }
+
+/* ---- Record / Stop and the clock ---- */
+.main { display: flex; align-items: center; gap: 14px; padding: 12px 0 10px; }
+.rec {
+  position: relative; flex: none; width: 52px; height: 52px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--lg-sunk);
+  box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+  transition: background-color 120ms var(--lg-ease-ui, ease), transform 360ms var(--spring);
+}
+.rec:hover { background: var(--lg-hover); }
+.rec:active { transform: scale(.94); }
+.rec .core {
+  width: 20px; height: 20px; border-radius: 50%; background: var(--live);
+  transition: width 420ms var(--spring), height 420ms var(--spring), border-radius 420ms var(--spring), opacity 120ms linear;
+}
+.rec.on .core { width: 16px; height: 16px; border-radius: 4px; }
+.rec.pending .core { opacity: .55; }
+.rec:disabled { cursor: default; }
+.rec:disabled .core { background: var(--lg-ink-3); opacity: .45; }
+.rec:disabled:hover { background: var(--lg-sunk); }
+.rec:disabled:active { transform: none; }
+.rec:focus-visible { outline-offset: 2px; }
+
+.readout { min-width: 0; flex: 1 1 auto; }
+.clock {
+  font-family: var(--lg-font-display, 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif);
+  font-size: 28px; line-height: 32px; font-weight: 600; letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums; color: var(--lg-ink-3);
+  transition: color 200ms var(--lg-ease-ui, ease);
+}
+.card.recording .clock { color: var(--lg-ink); }
+.status { display: flex; align-items: center; gap: 6px; height: 16px; font-size: 12px; color: var(--lg-ink-3); white-space: nowrap; overflow: hidden; }
+.status span { overflow: hidden; text-overflow: ellipsis; }
+.dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--lg-ink-3); display: none; }
+.card.recording .dot, .card.pending .dot { display: block; }
+.card.recording .dot { background: var(--live); animation: breathe 2.4s ease-in-out infinite; }
+.card.pending .dot { animation: breathe 1.2s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .38; } }
+
+/* a game in front: the keys to press */
+.hint { display: flex; align-items: center; gap: 10px; margin: -2px 0 8px; padding: 8px 10px; border-radius: var(--lg-r); background: var(--lg-sunk); }
+.keys { display: flex; gap: 3px; flex: none; }
+kbd {
+  min-width: 22px; height: 20px; padding: 0 5px; display: inline-grid; place-items: center;
+  border-radius: 4px; font: 600 11px/1 var(--lg-font, 'Segoe UI', sans-serif); color: var(--lg-ink);
+  background: var(--lg-fill-strong); box-shadow: inset 0 0 0 1px var(--lg-edge-out), inset 0 -1px 0 var(--lg-edge-out);
+}
+.hint-text { font-size: 11.5px; line-height: 14px; color: var(--lg-ink-2); }
+.warn { position: relative; margin: -2px 0 8px; padding-left: 18px; font-size: 11.5px; line-height: 14.5px; color: var(--lg-warn); }
+.warn::before { content: ''; position: absolute; left: 0; top: 1.5px; width: 12px; height: 12px; background: currentColor; -webkit-mask: var(--warn-glyph) center / 12px 12px no-repeat; }
+
+/* ---- the rows: mic, Mantle's own region recorder ---- */
+.rows { display: flex; flex-direction: column; gap: 1px; margin: 0 -6px; }
+.row {
+  display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 8px; border-radius: var(--lg-r-ctl);
+  text-align: left; color: var(--lg-ink);
+  transition: background-color 120ms var(--lg-ease-ui, ease);
+}
+.row:hover { background: var(--lg-hover); }
+.row:active { background: var(--lg-press); }
+.ri { flex: none; color: var(--lg-ink-2); }
+.rl { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rn { flex: none; font-size: 11px; color: var(--lg-ink-3); }
+.chev { flex: none; color: var(--lg-ink-3); }
+.sw { flex: none; position: relative; width: 32px; height: 18px; border-radius: 9px; background: var(--lg-tile); box-shadow: inset 0 0 0 1px var(--lg-edge-out); transition: background-color 160ms var(--lg-ease-ui, ease); }
+.sw i { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--lg-ink-2); transition: transform 380ms var(--spring), background-color 160ms linear; }
+.row[aria-checked="true"] .sw { background: var(--lg-acc); box-shadow: none; }
+.row[aria-checked="true"] .sw i { transform: translateX(14px); background: var(--lg-acc-on); }
+.row[aria-disabled="true"] { opacity: var(--lg-disabled, .5); }
+
+/* ---- the last clip, and the way into the gallery ---- */
+.foot { display: flex; align-items: center; gap: 8px; margin: 8px -2px 0; padding-top: 10px; border-top: 1px solid var(--lg-divider, var(--lg-edge-out)); min-height: 50px; }
+.last { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 3px 6px 3px 3px; margin-left: -3px; border-radius: var(--lg-r-ctl); text-align: left; }
+.last:hover { background: var(--lg-hover); }
+.last:active { background: var(--lg-press); }
+.thumb { position: relative; flex: none; width: 64px; height: 36px; border-radius: 5px; overflow: hidden; background: var(--lg-tile); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
+.thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.thumb .play { position: absolute; right: 4px; bottom: 4px; width: 14px; height: 14px; border-radius: 50%; background: rgba(0, 0, 0, .45); display: none; }
+.thumb .play::after { content: ''; position: absolute; left: 5px; top: 3.5px; border-left: 5px solid #fff; border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent; }
+.last.video .thumb .play { display: block; }
+.lw { display: flex; flex-direction: column; min-width: 0; }
+.lt { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.lm { font-size: 11px; color: var(--lg-ink-3); white-space: nowrap; }
+.nolast { font-size: 12px; color: var(--lg-ink-3); }
+.open {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: var(--lg-r-ctl);
+  background: var(--lg-sunk); font-weight: 500; white-space: nowrap;
+}
+.open:hover { background: var(--lg-hover); }
+.open:active { background: var(--lg-press); }
+.open svg { color: var(--lg-ink-3); transition: transform 300ms var(--spring); }
+.open:hover svg { transform: translateX(2px); }
+
+/* ---- DARK, ONE SHEET: HELM (the other HUDs' rules: the pop-up radius, hairline + lip, no outer shadow) */
+:root[data-theme="dark"], :root[data-theme="dark"] body { font-size: 13px; }
+:root[data-theme="dark"] .card { box-shadow: var(--lg-lip-up); }
+:root[data-theme="dark"] .rec { background: var(--lg-card); box-shadow: inset 0 0 0 1px var(--lg-edge-out), inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .rec:hover { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-strong), inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .rec:disabled:hover { background: var(--lg-card); }
+:root[data-theme="dark"] .open { background: var(--lg-card); box-shadow: inset 0 0 0 1px var(--lg-edge-out), inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .open:hover { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-strong), inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] kbd { background: var(--lg-card); box-shadow: inset 0 0 0 1px var(--lg-edge-strong); }
+:root[data-theme="dark"] .status, :root[data-theme="dark"] .rn, :root[data-theme="dark"] .lm, :root[data-theme="dark"] .nolast { color: var(--lg-ink-2); }
+:root[data-theme="dark"] :is(button, .row):focus-visible { outline: none; box-shadow: var(--lg-focus); }
+
+@media (prefers-reduced-motion: reduce) {
+  .card.in, .card.recording .dot, .card.pending .dot { animation: none; }
+  .rec, .rec .core, .sw i, .open svg { transition: none; }
+}

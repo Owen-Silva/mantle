@@ -2666,6 +2666,7 @@ async function topbarPopBackdrop() {
 const HUD_BACKDROP_PAGES = {
   osd: 'osd/index.html', clipboard: 'clipboard/index.html', notes: 'notes/index.html', timer: 'timer/index.html',
   ontop: 'ontop/index.html', layouts: 'layouts/index.html', snap: 'snap/index.html', 'screenshot.card': 'screenshot/card.html',
+  clips: 'clips/record.html',   // lane mantle-clips2: the Win+G Record panel
 };
 const HUD_PARK_WAIT_MS = 600;         // a parked HUD is moved in when its page has painted (snap: 150 ms at most)
 async function hudBackdrop(key) {
