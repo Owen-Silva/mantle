@@ -192,7 +192,7 @@
   }
   // lib/keep-ready.js's rows (the same words), all off like a fresh profile
   const keep = { settings: false, taskmgr: false, files: false };
-  const KEEP = { settings: ['Mantle Settings', 'Win+I', 45], taskmgr: ['Task Manager', 'Ctrl+Shift+Esc', 50], files: ['Files', 'Win+E', 35] };
+  const KEEP = { settings: ['Mantle Settings', 'Win+I', 45], taskmgr: ['Task Manager', 'Ctrl+Shift+Esc', 35], files: ['Files', 'Win+E', 35] };
   const keepView = () => ({ ok: true, reason: null, rows: Object.keys(KEEP).map((s) => ({ surface: s, key: 'keepReady.' + s, on: keep[s], mb: KEEP[s][2], label: 'Keep ' + KEEP[s][0] + ' ready',
     help: 'On: ' + KEEP[s][1] + ' opens it instantly, but it holds about ' + KEEP[s][2] + ' MB of memory all the time (let go while a game runs). Off: it opens fresh in well under a second and uses no memory while closed.' })) });
   const mantleView = () => ({ ok: true, features: JSON.parse(JSON.stringify(features)), switcher: Object.assign({}, switcher), shortcuts: shortcuts(), keepReady: keepView() });
