@@ -83,9 +83,63 @@ async function verdicts(s) {
   await bad('mods that are not an object', { vk: ESC, down: true, mods: 'ctrl' }, /mods must be an object/);
 }
 
+// MENU KEYS (the desktop right-click menu): `hotkey {op:'popnav'}`, the verdict for Up/Down/Home/End/Enter.
+async function navVerdicts(s) {
+  const UP = 0x26, DOWN = 0x28, HOME = 0x24, END = 0x23, ENTER = 0x0D;
+  async function v(name, args, want) {
+    const req = Object.assign({ op: 'popnav', vk: DOWN, down: true, mods: NO_MODS, fgIsBar: false, passive: false, nav: true, held: false }, args);
+    try {
+      const r = await s.send('hotkey', req, 4000);
+      const got = r.ok ? r.result : null;
+      const ok = !!got && got.swallow === want.swallow && got.report === want.report && got.held === want.held &&
+        (want.key === undefined || got.key === want.key);
+      check('popnav: ' + name, ok, JSON.stringify(r).slice(0, 200) + ' want ' + JSON.stringify(want));
+    } catch (e) { check('popnav: ' + name, false, e.message); }
+  }
+  const TAKE = { swallow: true, report: true, held: true };
+  const PASS = { swallow: false, report: false, held: false };
+  for (const [vk, key] of [[UP, 'up'], [DOWN, 'down'], [HOME, 'home'], [END, 'end'], [ENTER, 'enter']]) {
+    await v(`a menu open: ${key} down is swallowed and reported as '${key}'`, { vk }, Object.assign({ key }, TAKE));
+  }
+  await v('an autorepeat Down is reported again (a held arrow walks the menu)', { held: true }, TAKE);
+  await v('an autorepeat Enter is swallowed, not reported again (one pick)', { vk: ENTER, held: true }, { swallow: true, report: false, held: true });
+  await v('the up of a swallowed key is swallowed too', { down: false, held: true }, { swallow: true, report: false, held: false });
+  await v('an up with no swallowed down passes', { down: false }, PASS);
+  await v('no menu open (nav off): Down passes, not reported', { nav: false }, PASS);
+  await v('no menu open: Enter passes (a bar pop-up never takes it)', { vk: ENTER, nav: false }, PASS);
+  await v('nav off, but the up of a key it swallowed is still taken', { nav: false, down: false, held: true }, { swallow: true, report: false, held: false });
+  for (const m of ['ctrl', 'alt', 'shift', 'win']) {
+    await v(`Down with ${m} held passes (the app's)`, { mods: Object.assign({}, NO_MODS, { [m]: true }) }, PASS);
+  }
+  await v('Down with the bar in front passes', { fgIsBar: true }, PASS);
+  await v('passive: reported, never swallowed', { passive: true }, { swallow: false, report: true, held: true });
+  await v('passive: the up is never swallowed', { passive: true, down: false, held: true }, PASS);
+  await v('Esc is not a menu key (EscVerdict has it)', { vk: ESC }, Object.assign({ key: null }, PASS));
+  await v('Left is not a menu key (no submenus)', { vk: 0x25 }, PASS);
+  try {
+    const r = await s.send('hotkey', { op: 'popnav', down: true }, 4000);
+    check('popnav refuses a missing vk', r.ok === false && /needs vk/.test(r.error || ''), JSON.stringify(r).slice(0, 200));
+  } catch (e) { check('popnav refuses a missing vk', false, e.message); }
+}
+
 async function hooks(s) {
   const pw = (extra) => s.send('hotkey', Object.assign({ op: 'popwatch' }, extra), 6000);
   let r;
+
+  // MENU KEYS: nav rides the arm and every renewal; absent means a plain pop-up.
+  r = await pw({ on: true, nav: true });
+  check('arm with nav:true: armed, says nav', r.ok && r.result.armed === true && r.result.nav === true, JSON.stringify(r));
+  r = await pw({});
+  check('status while a menu is open: nav true, keys counted', r.ok && r.result.nav === true && r.result.keys === 0, JSON.stringify(r));
+  r = await pw({ on: true });
+  check('a renewal without nav turns menu keys off', r.ok && r.result.renewed === true && r.result.nav === false, JSON.stringify(r));
+  r = await pw({});
+  check('status: nav false after that renewal', r.ok && r.result.nav === false, JSON.stringify(r));
+  r = await pw({ on: true, nav: 'yes' });
+  check('popwatch refuses nav that is not a bool', r.ok === false && /nav must be true/.test(r.error || ''), JSON.stringify(r).slice(0, 200));
+  r = await pw({ on: false });
+  check('disarm after the nav checks', r.ok && r.result.was === true, JSON.stringify(r));
+  await T.sleep(200);
 
   r = await pw({});
   check('status before arming: not armed, Esc observe-only (passive)',
@@ -187,6 +241,7 @@ async function hooks(s) {
   try {
     s = await T.startPassive();
     await verdicts(s);
+    await navVerdicts(s);
     await hooks(s);
   } catch (e) {
     check('the run', false, e.message);
