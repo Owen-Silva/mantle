@@ -53,8 +53,16 @@ async function nodeTests() {
   check('main: every display reading is a real SysDisplay command', readNames.length === 3 && readNames.every((c) => cmds.has(c)), readNames.filter((c) => !cmds.has(c)).join(' '));
   check('main: every display change is a real SysDisplay command', writeNames.every((c) => cmds.has(c)), writeNames.filter((c) => !cmds.has(c)).join(' '));
   const reachable = new Set(readNames.concat(writeNames));
-  const missing = [...cmds].filter((c) => c !== 'sysdisplay.decide' && c !== 'sysdisplay.testArm' && !reachable.has(c));
-  check('main: every SysDisplay command but the pure planner and the test-only arm can be reached', !missing.length, missing.join(' '));
+  // Settings is not the only caller (wave 4): a main-side feature that sends a sysdisplay.* command reaches
+  // it too, e.g. lib/features/project.js (Win+P) reads sysdisplay.project and sets sysdisplay.topology.
+  const FD = path.join(ROOT, 'lib', 'features');
+  const byFeature = new Set();
+  for (const f of fs.readdirSync(FD).filter((n) => n.endsWith('.js') && !/\.test\.js$/.test(n))) {
+    for (const m of fs.readFileSync(path.join(FD, f), 'utf8').matchAll(/send\('(sysdisplay\.[A-Za-z]+)'/g)) byFeature.add(m[1]);
+  }
+  const missing = [...cmds].filter((c) => c !== 'sysdisplay.decide' && c !== 'sysdisplay.testArm' && !reachable.has(c) && !byFeature.has(c));
+  check('main: every SysDisplay command but the pure planner and the test-only arm can be reached (Settings or a feature)', !missing.length, missing.join(' '));
+  check('main: no feature sends the test-only sysdisplay.testArm', !byFeature.has('sysdisplay.testArm'), [...byFeature].join(' '));
   check('main: the test-only sysdisplay.testArm can NOT be reached from the page', !reachable.has('sysdisplay.testArm'));
   check('main: the GPU scheduling administrator action is SysDisplay\'s [Elevated] one', elevated.has('sysdisplay.gpuScheduling') && Object.prototype.hasOwnProperty.call(main.ADMIN, 'sysdisplay.gpuScheduling'));
 
