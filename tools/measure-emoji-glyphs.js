@@ -39,12 +39,27 @@ for (const c of ['C:/Users/user/other-app/node_modules/playwright-core', 'C:/Use
       const g = document.getElementById('c').getContext('2d');
       g.font = '40px "Segoe UI Emoji"';
       const ref = g.measureText('\u{1F600}').width;
+      // ONE PICTURE = the font joined the parts: the sequence is clearly narrower than the same parts
+      // kept apart (a ZWNJ between them blocks every ligature, the ZWJs dropped). Width alone is not
+      // enough: a country flag Windows cannot draw is two regional-indicator letters, together
+      // narrower than 1.4 emoji (the first run kept all 2,396 sequences that way).
       const one = [];
-      for (const s of list) if (g.measureText(s).width < ref * 1.4) one.push(s);
-      return { ref, one };
+      let apart = 0;
+      const ZWJ = String.fromCharCode(0x200D), ZWNJ = String.fromCharCode(0x200C), VS16 = String.fromCharCode(0xFE0F), KEYCAP = String.fromCharCode(0x20E3);
+      for (const s of list) {
+        const cps = Array.from(s).filter((c) => c !== ZWJ);
+        const groups = [];
+        for (const c of cps) { if (c === VS16 && groups.length) groups[groups.length - 1] += c; else groups.push(c); }
+        const w = g.measureText(s).width, wApart = g.measureText(groups.join(ZWNJ)).width;
+        // a keycap's combining U+20E3 has no advance of its own, so kept apart it measures as just the digit:
+        // a keycap is one picture when it is about one emoji wide
+        const keycap = cps[cps.length - 1] === KEYCAP;
+        if (w < ref * 1.4 && w > ref * 0.6 && (keycap || w < wApart * 0.8)) one.push(s); else apart++;
+      }
+      return { ref, one, apart };
     }, seqs);
     fs.writeFileSync(OUT, JSON.stringify({ font: 'Segoe UI Emoji', measured: seqs.length, ref: res.ref, one: res.one }));
-    console.log(`MEASURE EMOJI: ${seqs.length} sequences, ${res.one.length} draw as one picture (ref width ${res.ref.toFixed(1)} px) -> ${OUT}`);
+    console.log(`MEASURE EMOJI: ${seqs.length} sequences, ${res.one.length} draw as one picture, ${res.apart} do not (ref width ${res.ref.toFixed(1)} px) -> ${OUT}`);
   } finally {
     await browser.close();
   }

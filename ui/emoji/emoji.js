@@ -85,12 +85,20 @@
       emptyEl.textContent = 'Nothing called “' + S.q.trim() + '”. Try another word.';
       Array.prototype.forEach.call(resultsEl.querySelectorAll('.c'), function (c, i) { if (i < 32) c.style.animationDelay = (i * 9) + 'ms'; else c.style.animation = 'none'; });
     } else {
-      var stop = secs.length;
+      var th = performance.now(), first = secs, tail = [], j = -1;
       if (partial && S.tab === 'emoji') {
-        for (var j = 0; j < secs.length; j++) if (secs[j].id !== 'app' && secs[j].id !== 'recent') { stop = j + 1; break; }
+        // the first screen: the recents (and the app's row), then the first group up to ~9 rows in all
+        var used = 0;
+        for (j = 0; j < secs.length && (secs[j].id === 'app' || secs[j].id === 'recent'); j++) used += secs[j].items.length;
+        if (j < secs.length) {
+          var take = Math.ceil(Math.max(24, 72 - used) / M.COLS) * M.COLS;
+          first = secs.slice(0, j).concat([Object.assign({}, secs[j], { items: secs[j].items.slice(0, take) })]);
+          tail = secs[j].items.slice(take);
+        } else j = -1;
       }
-      sectionsEl.innerHTML = secsHtml(secs.slice(0, stop), counts, cls);
-      if (stop < secs.length) S.pending = { secs: secs.slice(stop), cls: cls, gen: S.gen };
+      sectionsEl.innerHTML = secsHtml(first, counts, cls);
+      S.htmlMs = Math.round(performance.now() - th);
+      if (j >= 0) S.pending = { id: secs[j].id, tail: tail, secs: secs.slice(j + 1), cls: cls, gen: S.gen };
       resultsEl.hidden = true; sectionsEl.hidden = false; emptyEl.hidden = true;
     }
     S.counts = counts;
@@ -121,6 +129,12 @@
     var p = S.pending;
     if (!p || p.gen !== S.gen) return;
     S.pending = null;
+    if (p.tail.length) {
+      var html = '';
+      for (var k = 0; k < p.tail.length; k++) { html += cellHtml(p.tail[k], S.items.length); S.items.push(p.tail[k]); }
+      sectionsEl.querySelector('.sec[data-sec="' + p.id + '"] .cells').insertAdjacentHTML('beforeend', html);
+      S.counts[S.counts.length - 1] += p.tail.length;
+    }
     sectionsEl.insertAdjacentHTML('beforeend', secsHtml(p.secs, S.counts, p.cls));
     S.rows = M.layout(S.counts, M.COLS);
     if (S.tab === 'emoji' && !M.norm(S.q)) S.drawnKey = viewKey();
@@ -288,6 +302,7 @@
     $('hint').classList.remove('say');
     if (M.clampTone(p.tone) !== S.tone) setTone(p.tone, false);
     var t0 = performance.now();
+    S.htmlMs = 0;
     resetView(true); // a warm open whose view is already drawn (resetView ran at the close) draws nothing
     placePill();
     panel.classList.toggle('above', !!p.above);
@@ -298,7 +313,7 @@
     if (bd && document.documentElement.getAttribute('data-theme') === 'dark') bd.request('opened', { hold: 40 });
     var drawMs = Math.round(performance.now() - t0), showAt = Date.now();
     requestAnimationFrame(function () { requestAnimationFrame(function () {
-      call('emoji.painted', { readyAt: Date.now(), perf: { origin: Math.round(performance.timeOrigin), scriptAt: SCRIPT_AT, showAt: showAt, drawMs: drawMs, opens: ++S.shows } });
+      call('emoji.painted', { readyAt: Date.now(), perf: { origin: Math.round(performance.timeOrigin), scriptAt: SCRIPT_AT, showAt: showAt, drawMs: drawMs, htmlMs: S.htmlMs, opens: ++S.shows } });
       finishRender();     // the rest of the grid, once the first frame is on screen
     }); });
   }

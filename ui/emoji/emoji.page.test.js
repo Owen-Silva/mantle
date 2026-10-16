@@ -94,7 +94,7 @@ const settled = (page) => page.waitForFunction(() => getComputedStyle(document.g
       check(T + 'the panel springs in and comes to rest', await settled(page));
       const full = await until(() => page.evaluate(() => !window.__emoji.S.pending && window.__emoji.S.items.length > 1200 && document.querySelectorAll('#sections .sec').length >= 9 ? window.__emoji.S.items.length : 0), 2000);
       const perf = (await calls('emoji.painted'))[0].perf || {};
-      check(T + 'after the first frame the rest of the grid follows (every group, numbered on)', !!full && (await page.evaluate(() => { const c = document.querySelectorAll('#sections .c'); return +c[c.length - 1].getAttribute('data-i') === c.length - 1; })), { full, perf });
+      check(T + 'after the first frame the rest of the grid follows (every group, numbered on)', !!full && (await page.evaluate(() => { const c = document.querySelectorAll('#sections .c'); return Array.from(c).every((e, i) => +e.getAttribute('data-i') === i); })), { full, perf });
       check(T + 'the paint report carries its timings (script, show, draw)', Number.isFinite(perf.scriptAt) && Number.isFinite(perf.drawMs) && perf.opens === 1, perf);
       const head = await page.evaluate(() => ({ ph: document.getElementById('ph').textContent, rec: (document.querySelector('.sec[data-sec="recent"] .cells') || {}).textContent, cats: !document.getElementById('cats').hidden, tabOn: document.querySelector('.tabs button.on').getAttribute('data-tab') }));
       check(T + 'default view: placeholder, recents first, categories, the Emoji tab', head.ph === 'Search emoji' && head.rec === '😂❤️👍' && head.cats && head.tabOn === 'emoji', head);
@@ -133,7 +133,7 @@ const settled = (page) => page.waitForFunction(() => getComputedStyle(document.g
       await key('ArrowRight');
       await sleep(450);   // the results' entrance animation is over: the drawn cell is where it rests
       check(T + 'ArrowRight moves the selection', (await S()).sel === 1);
-      const ring = await page.evaluate(() => { const r = document.getElementById('ring'); const c = document.querySelector('#results .c[data-i="1"]').getBoundingClientRect(); const g = document.getElementById('grid').getBoundingClientRect(); const m = /translate(([-d.]+)px, *([-d.]+)px)/.exec(r.style.transform) || []; return { off: r.classList.contains('off'), at: [+m[1], +m[2]], want: [c.left - g.left, c.top - g.top + document.getElementById('grid').scrollTop] }; });
+      const ring = await page.evaluate(() => { const r = document.getElementById('ring'); const c = document.querySelector('#results .c[data-i="1"]').getBoundingClientRect(); const g = document.getElementById('grid').getBoundingClientRect(); const m = /translate\(([-\d.]+)px, *([-\d.]+)px\)/.exec(r.style.transform) || []; return { off: r.classList.contains('off'), at: [+m[1], +m[2]], want: [c.left - g.left, c.top - g.top + document.getElementById('grid').scrollTop] }; });
       check(T + 'the selection ring is on the selected cell (within 1 px)', !ring.off && Math.abs(ring.at[0] - ring.want[0]) <= 1 && Math.abs(ring.at[1] - ring.want[1]) <= 1, ring);
       await key('Enter');
       let ins = await until(async () => { const c = await calls('emoji.insert'); return c.length === 1 ? c : null; });
