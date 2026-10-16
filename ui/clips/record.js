@@ -125,7 +125,7 @@
   function take(s) {
     if (!s) return;
     if (typeof s.now === 'number') skew = s.now - Date.now();
-    S.state = s;
+    S.state = Object.assign({}, S.state || {}, s);   // a reply may carry only part (clips.state's last)
     if (s.last !== undefined) S.lastClip = s.last;
   }
   function onState(s) {
@@ -144,11 +144,11 @@
     card.classList.add('in');
     draw();
     if (window.MantleHudBackdrop && fresh) window.MantleHudBackdrop.request('shown', { hold: true });
-    // the first frame with the panel on it: two frames (the second one is painted), and a timer in
+    // the first frame with the panel on it (its rAF, then the task after it), and a timer in
     // case frames are not being made at all (then main hears "timer" and the number says so)
     var said = false;
     var say = function (how) { if (said) return; said = true; S.paints++; call('clips.painted', { seq: seq, how: how }); };
-    requestAnimationFrame(function () { requestAnimationFrame(function () { say('frame'); }); });
+    requestAnimationFrame(function () { setTimeout(function () { say('frame'); }, 0); });   // after the frame with the panel is made
     setTimeout(function () { say('timer'); }, 250);
     // the last clip (its thumbnail) and a fresh look at the window in front
     call('clips.state').then(function (r) { if (r && r.ok !== false && S.shown) { take(r); draw(); } });
