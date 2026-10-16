@@ -556,6 +556,18 @@ $clipNote = [MantleRestore]::ReleaseCursorClip()
 Say "  cursor clip: $clipNote"
 if ($clipNote -like '*failed*') { Problem "cursor clip: $clipNote" }
 
+# (f3) The Windows pieces Mantle turned off to save memory (lib/features/ramreclaim.js): put back from
+# their journal by tools\ramreclaim-undo.ps1 (your own HKCU values only; a no-op when there is none).
+$rrUndo = Join-Path $PSScriptRoot 'ramreclaim-undo.ps1'
+if (Test-Path -LiteralPath $rrUndo) {
+  try {
+    & $rrUndo -Journal (Join-Path (Split-Path -Parent $StateFile) 'features\ramreclaim-journal.json') | ForEach-Object { Say $_ }
+    if ($LASTEXITCODE -ne 0) { Problem "windows pieces: not every one was put back (see above)" }
+  } catch {
+    Problem "windows pieces: the undo did not run: $($_.Exception.Message)"
+  }
+}
+
 # -----------------------------------------------------------------------------
 # (f3) Give Windows its own notification pop-ups back for every app whose banner
 # Mantle turned off ("Show notifications in Mantle's style"). restore-banners.ps1
