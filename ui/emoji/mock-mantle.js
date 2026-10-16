@@ -26,5 +26,8 @@
     },
     on: function (name, fn) { (subs[name] = subs[name] || []).push(fn); return function () {}; },
   };
-  if (!document.documentElement.getAttribute('data-theme')) document.documentElement.setAttribute('data-theme', 'light');
+  // an init script can run before <html> exists: the default theme goes on as soon as it does
+  var light = function () { if (!document.documentElement.getAttribute('data-theme')) document.documentElement.setAttribute('data-theme', 'light'); };
+  if (document.documentElement) light();
+  else new MutationObserver(function (_m, o) { if (document.documentElement) { o.disconnect(); light(); } }).observe(document, { childList: true });
 })();

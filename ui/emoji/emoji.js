@@ -8,6 +8,7 @@
  */
 (function () {
   'use strict';
+  var SCRIPT_AT = Math.round(performance.now());   // ms after this renderer's navigation began
   var M = window.EmojiModel;
   var mantle = window.mantle;
   var CAT = M.catalogue(window.MantleEmojiData);
@@ -15,7 +16,7 @@
   var panel = $('panel'), grid = $('grid'), sectionsEl = $('sections'), resultsEl = $('results'), emptyEl = $('empty');
   var ring = $('ring'), qEl = $('q'), phEl = $('ph'), searchEl = $('search');
   var S = { tab: 'emoji', q: '', sel: 0, items: [], rows: [], tone: 0, recents: [], appPicks: [], app: null,
-            closeAfter: false, open: false, kbSelf: false, noticeTimer: 0, toneOpen: false };
+            closeAfter: false, open: false, shows: 0, pending: null, counts: [], kbSelf: false, noticeTimer: 0, toneOpen: false };
   var PLACEHOLDER = { emoji: 'Search emoji', symbols: 'Search symbols', kaomoji: 'Search kaomoji' };
 
   function call(name, args) {
@@ -36,20 +37,41 @@
   }
   function viewKey() { return JSON.stringify([S.recents, S.app && S.appPicks.length >= 3 ? [S.app, S.appPicks] : null, S.tone]); }
   /** the default view (Emoji tab, no search, the top), ready for the next open */
-  function resetView() {
+  function resetView(partial) {
     S.tab = 'emoji';
     Array.prototype.forEach.call($('tabs').querySelectorAll('button'), function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === 'emoji'); });
-    if (S.q || S.drawnKey !== viewKey()) setQuery('');
+    if (S.q || S.drawnKey !== viewKey()) setQuery('', partial);
     else { grid.scrollTop = 0; select(S.items.length ? 0 : -1, { jump: true }); renderCats(); }
   }
   function cellHtml(it, i) {
     var ch = it.fixed ? it.ch : M.display(it, S.tone);
     return '<span class="c" data-i="' + i + '" title="' + esc(it.name) + '">' + esc(ch) + '</span>';
   }
-  function render() {
+  /** the sections' cells as HTML, numbered on from S.items (which they are pushed onto) */
+  function secsHtml(list, counts, cls) {
+    var html = '';
+    for (var s = 0; s < list.length; s++) {
+      var sec = list[s];
+      if (!sec.items.length && !sec.empty) continue;
+      html += '<div class="sec ' + cls + '" data-sec="' + sec.id + '"><h2>' + esc(sec.name) + '</h2>';
+      if (sec.items.length) {
+        html += '<div class="cells">';
+        for (var k = 0; k < sec.items.length; k++) { html += cellHtml(sec.items[k], S.items.length); S.items.push(sec.items[k]); }
+        html += '</div>';
+        counts.push(sec.items.length);
+      } else html += '<div class="empty" style="padding:8px 2px;text-align:left">' + esc(sec.empty) + '</div>';
+      html += '</div>';
+    }
+    return html;
+  }
+  /* partial (an open): only what fits on the first screen (recents, the app's row and the first group)
+     is drawn before the first frame; the other ~1,700 cells follow straight after it (finishRender) */
+  function render(partial) {
     var secs = sections();
     var q = M.norm(S.q);
     S.items = [];
+    S.gen = (S.gen || 0) + 1;
+    S.pending = null;
     var counts = [];
     var cls = S.tab === 'kaomoji' ? 'kao' : S.tab === 'symbols' ? 'sym' : '';
     if (q) {
@@ -63,25 +85,18 @@
       emptyEl.textContent = 'Nothing called “' + S.q.trim() + '”. Try another word.';
       Array.prototype.forEach.call(resultsEl.querySelectorAll('.c'), function (c, i) { if (i < 32) c.style.animationDelay = (i * 9) + 'ms'; else c.style.animation = 'none'; });
     } else {
-      var html = '';
-      for (var s = 0; s < secs.length; s++) {
-        var sec = secs[s];
-        if (!sec.items.length && !sec.empty) continue;
-        html += '<div class="sec ' + cls + '" data-sec="' + sec.id + '"><h2>' + esc(sec.name) + '</h2>';
-        if (sec.items.length) {
-          html += '<div class="cells">';
-          for (var k = 0; k < sec.items.length; k++) { html += cellHtml(sec.items[k], S.items.length); S.items.push(sec.items[k]); }
-          html += '</div>';
-          counts.push(sec.items.length);
-        } else html += '<div class="empty" style="padding:8px 2px;text-align:left">' + esc(sec.empty) + '</div>';
-        html += '</div>';
+      var stop = secs.length;
+      if (partial && S.tab === 'emoji') {
+        for (var j = 0; j < secs.length; j++) if (secs[j].id !== 'app' && secs[j].id !== 'recent') { stop = j + 1; break; }
       }
-      sectionsEl.innerHTML = html;
+      sectionsEl.innerHTML = secsHtml(secs.slice(0, stop), counts, cls);
+      if (stop < secs.length) S.pending = { secs: secs.slice(stop), cls: cls, gen: S.gen };
       resultsEl.hidden = true; sectionsEl.hidden = false; emptyEl.hidden = true;
     }
+    S.counts = counts;
     S.rows = M.layout(counts, S.tab === 'kaomoji' ? 2 : M.COLS);
     // what the default view was drawn from: an open that would draw the same thing draws nothing
-    S.drawnKey = !q && S.tab === 'emoji' ? viewKey() : null;
+    S.drawnKey = !q && S.tab === 'emoji' && !S.pending ? viewKey() : null;
     renderCats();
   }
   function renderCats() {
@@ -101,14 +116,31 @@
     Array.prototype.forEach.call($('cats').children, function (b) { b.classList.toggle('on', b.getAttribute('data-cat') === cur); });
   }
 
+  /** the rest of a partial render, appended (the numbering carries on, so nothing drawn moves) */
+  function finishRender() {
+    var p = S.pending;
+    if (!p || p.gen !== S.gen) return;
+    S.pending = null;
+    sectionsEl.insertAdjacentHTML('beforeend', secsHtml(p.secs, S.counts, p.cls));
+    S.rows = M.layout(S.counts, M.COLS);
+    if (S.tab === 'emoji' && !M.norm(S.q)) S.drawnKey = viewKey();
+    markCat();
+  }
+
   /* ---- selection: a ring that glides from cell to cell -------------------------------------- */
   function cellEl(i) { return (M.norm(S.q) ? resultsEl : sectionsEl).querySelector('.c[data-i="' + i + '"]'); }
   function select(i, opts) {
     S.sel = i;
     var el = i >= 0 ? cellEl(i) : null;
     if (!el) { ring.classList.add('off'); preview(null); return; }
-    var g = grid.getBoundingClientRect(), r = el.getBoundingClientRect();
-    var x = r.left - g.left + grid.scrollLeft, y = r.top - g.top + grid.scrollTop;
+    // from LAYOUT (offsets), not the drawn box: a result cell is still in its entrance animation
+    // (translate + scale) when it is selected, and the ring must land where the cell comes to rest
+    var r = { width: el.offsetWidth, height: el.offsetHeight }, x = 0, y = 0, n = el;
+    while (n && n !== grid) { x += n.offsetLeft; y += n.offsetTop; n = n.offsetParent; }
+    if (n !== grid) {
+      var g = grid.getBoundingClientRect(), b = el.getBoundingClientRect();
+      x = b.left - g.left + grid.scrollLeft; y = b.top - g.top + grid.scrollTop;
+    }
     ring.classList.toggle('jump', !!(opts && opts.jump));
     ring.style.width = r.width + 'px'; ring.style.height = r.height + 'px';
     ring.style.transform = 'translate(' + x + 'px,' + y + 'px)';
@@ -134,12 +166,12 @@
   }
 
   /* ---- search ------------------------------------------------------------------------------- */
-  function setQuery(q) {
+  function setQuery(q, partial) {
     S.q = q;
     qEl.textContent = q;
     phEl.textContent = q ? '' : PLACEHOLDER[S.tab];
     searchEl.classList.toggle('typing', !!q);
-    render();
+    render(partial);
     grid.scrollTop = 0;
     select(S.items.length ? 0 : -1, { jump: true });
   }
@@ -255,7 +287,8 @@
     $('tones').hidden = true;
     $('hint').classList.remove('say');
     if (M.clampTone(p.tone) !== S.tone) setTone(p.tone, false);
-    resetView();     // a warm open whose view is already drawn (resetView ran at the close) draws nothing
+    var t0 = performance.now();
+    resetView(true); // a warm open whose view is already drawn (resetView ran at the close) draws nothing
     placePill();
     panel.classList.toggle('above', !!p.above);
     if (p.notice) say(p.notice, 8000);
@@ -263,7 +296,11 @@
     panel.classList.add('on');
     var bd = window.MantleHudBackdrop;
     if (bd && document.documentElement.getAttribute('data-theme') === 'dark') bd.request('opened', { hold: 40 });
-    requestAnimationFrame(function () { requestAnimationFrame(function () { call('emoji.painted', { readyAt: Date.now() }); }); });
+    var drawMs = Math.round(performance.now() - t0), showAt = Date.now();
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      call('emoji.painted', { readyAt: Date.now(), perf: { origin: Math.round(performance.timeOrigin), scriptAt: SCRIPT_AT, showAt: showAt, drawMs: drawMs, opens: ++S.shows } });
+      finishRender();     // the rest of the grid, once the first frame is on screen
+    }); });
   }
   function hide() {
     S.open = false;
@@ -290,6 +327,5 @@
     mantle.on('emoji.moved', function (p) { panel.classList.toggle('above', !!(p && p.above)); });
     mantle.on('emoji.keyboard', function (p) { S.kbSelf = !!(p && p.self); preview(S.items[S.sel]); });
   }
-  render();
   window.__emoji = { S: S, onKey: onKey, show: show, hide: hide, select: select, setTone: setTone, setTab: setTab };
 })();

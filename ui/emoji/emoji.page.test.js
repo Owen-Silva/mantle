@@ -84,7 +84,7 @@ const settled = (page) => page.waitForFunction(() => getComputedStyle(document.g
       const T = theme + ': ';
       const P = await open(browser, theme);
       const { page, S, emit, calls, clear, until, key, show } = P;
-      check(T + 'the grid is built once at load (every emoji)', (await S()).n > 1200, await S());
+      check(T + 'no grid at load: the first open draws it (once, with the recents it brings)', (await S()).n === 0, await S());
 
       // ---- open: the spring in, and the paint report
       const t0 = Date.now();
@@ -92,6 +92,10 @@ const settled = (page) => page.waitForFunction(() => getComputedStyle(document.g
       const painted = await calls('emoji.painted');
       check(T + 'emoji.show: one paint report with readyAt, after two frames', painted.length === 1 && Number.isFinite(painted[0].readyAt) && painted[0].readyAt >= t0, painted);
       check(T + 'the panel springs in and comes to rest', await settled(page));
+      const full = await until(() => page.evaluate(() => !window.__emoji.S.pending && window.__emoji.S.items.length > 1200 && document.querySelectorAll('#sections .sec').length >= 9 ? window.__emoji.S.items.length : 0), 2000);
+      const perf = (await calls('emoji.painted'))[0].perf || {};
+      check(T + 'after the first frame the rest of the grid follows (every group, numbered on)', !!full && (await page.evaluate(() => { const c = document.querySelectorAll('#sections .c'); return +c[c.length - 1].getAttribute('data-i') === c.length - 1; })), { full, perf });
+      check(T + 'the paint report carries its timings (script, show, draw)', Number.isFinite(perf.scriptAt) && Number.isFinite(perf.drawMs) && perf.opens === 1, perf);
       const head = await page.evaluate(() => ({ ph: document.getElementById('ph').textContent, rec: (document.querySelector('.sec[data-sec="recent"] .cells') || {}).textContent, cats: !document.getElementById('cats').hidden, tabOn: document.querySelector('.tabs button.on').getAttribute('data-tab') }));
       check(T + 'default view: placeholder, recents first, categories, the Emoji tab', head.ph === 'Search emoji' && head.rec === '😂❤️👍' && head.cats && head.tabOn === 'emoji', head);
       const s1 = await S();
@@ -127,16 +131,17 @@ const settled = (page) => page.waitForFunction(() => getComputedStyle(document.g
       check(T + 'a search for "heart" finds a heart first', /heart/i.test(firstName), firstName);
       if (theme === 'light') await page.screenshot({ path: path.join(SHOTS, 'emoji-light-search.png'), omitBackground: true });
       await key('ArrowRight');
+      await sleep(450);   // the results' entrance animation is over: the drawn cell is where it rests
       check(T + 'ArrowRight moves the selection', (await S()).sel === 1);
-      const ring = await page.evaluate(() => { const r = document.getElementById('ring'); const c = document.querySelector('#results .c[data-i="1"]').getBoundingClientRect(); const g = document.getElementById('grid').getBoundingClientRect(); return { off: r.classList.contains('off'), t: r.style.transform, want: `translate(${c.left - g.left}px,${c.top - g.top + document.getElementById('grid').scrollTop}px)` }; });
-      check(T + 'the selection ring is on the selected cell', !ring.off && ring.t === ring.want, ring);
+      const ring = await page.evaluate(() => { const r = document.getElementById('ring'); const c = document.querySelector('#results .c[data-i="1"]').getBoundingClientRect(); const g = document.getElementById('grid').getBoundingClientRect(); const m = /translate(([-d.]+)px, *([-d.]+)px)/.exec(r.style.transform) || []; return { off: r.classList.contains('off'), at: [+m[1], +m[2]], want: [c.left - g.left, c.top - g.top + document.getElementById('grid').scrollTop] }; });
+      check(T + 'the selection ring is on the selected cell (within 1 px)', !ring.off && Math.abs(ring.at[0] - ring.want[0]) <= 1 && Math.abs(ring.at[1] - ring.want[1]) <= 1, ring);
       await key('Enter');
       let ins = await until(async () => { const c = await calls('emoji.insert'); return c.length === 1 ? c : null; });
       check(T + 'watch Enter: types the selected one and STAYS open (close:false)', !!ins && ins[0].close === false && ins[0].via === 'key' && (await S()).open, ins);
       await key('Enter', true);
       ins = await until(async () => { const c = await calls('emoji.insert'); return c.length === 2 ? c : null; });
       check(T + 'watch Shift+Enter: types and closes (close:true)', !!ins && ins[1].close === true, ins);
-      check(T + 'the picks went into the recents', (await S()).recents.length === 2, await S());
+      check(T + 'the picks went into the recents (the same one twice is one entry)', (await S()).recents.length === 1 && (await S()).recents[0] === ins[1].ch && ins[0].ch === ins[1].ch, { s: await S(), ins });
       await key('Escape');
       const esc = await until(async () => { const c = await calls('emoji.close'); return c.length ? c : null; });
       check(T + 'watch Esc: asks main to close (why: esc)', !!esc && esc[0].why === 'esc', esc);
