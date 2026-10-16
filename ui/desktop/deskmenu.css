@@ -9,7 +9,7 @@ body.widgets-off .pane { visibility: hidden !important; }
 html.dm-root, html.dm-root body { margin: 0; background: transparent; overflow: hidden; }
 .dm-body {
   display: inline-block;
-  padding: 10px;                 /* = deskmenu.js INSET: room for the shadow */
+  padding: 20px;                 /* = deskmenu.js INSET: room for the WHOLE shadow (a clipped one draws a box edge) */
   font-family: var(--ui-font);
   font-size: 13px;
   color: var(--lg-ink);
@@ -25,8 +25,13 @@ html.dm-root, html.dm-root body { margin: 0; background: transparent; overflow: 
   box-sizing: border-box;
   background: var(--lg-fill-pop);
   border-radius: var(--lg-r);
-  box-shadow: var(--lg-shadow), inset 0 0 0 1px var(--lg-edge-out), var(--lg-lip-up);
+  box-shadow: var(--dm-shadow), inset 0 0 0 1px var(--lg-edge-out), var(--lg-lip-up);
 }
+/* The menu's own shadow: --lg-shadow reaches 54 px (light) and 88 px (dark) below a panel, far past the
+   window's clear margin, and the window's edge cut it into a visible box. This one ends within 20 px
+   (8 offset + 18 blur - 6 spread), the size of Windows' own menu shadow. */
+html.dm-root { --dm-shadow: 0 1px 2px rgba(14,18,38,.08), 0 8px 18px -6px rgba(14,18,38,.26); }
+html.dm-root[data-theme="dark"] { --dm-shadow: 0 1px 2px rgba(0,0,0,.30), 0 8px 18px -6px rgba(0,0,0,.55); }
 .dm-row {
   display: flex;
   align-items: center;

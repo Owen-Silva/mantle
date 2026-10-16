@@ -22,7 +22,7 @@
   if (!M || typeof M.on !== 'function' || typeof M.call !== 'function') return;
   const KEY = 'mantle.desktop.widgets';
   const NAME = 'mantle-deskmenu';
-  const INSET = 10;                         // the clear margin around the panel: room for its shadow
+  const INSET = 20;                         // the clear margin around the panel: room for its whole shadow (deskmenu.css --dm-shadow)
   const CSS = ['../shared/tokens.css', '../shared/glass-light.css', 'deskmenu.css'].map((h) => new URL(h, location.href).href);
   // Segoe Fluent Icons glyphs (tokens.css --icon-font)
   const ICON = { wallpaper: '', display: '', personalize: '', widgets: '', settings: '' };

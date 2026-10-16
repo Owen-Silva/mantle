@@ -91,7 +91,7 @@ async function run(browser, theme) {
   });
   check(`${theme}: five rows in order, with separators`, look.rows.join(',') === 'Change wallpaper,Display settings,Personalize,|,Hide desktop widgets,|,Mantle Settings', look.rows.join(','));
   check(`${theme}: island styles applied (a surface, rounded, a shadow, the UI face, Fluent icon glyphs)`, look.bg !== 'rgba(0, 0, 0, 0)' && parseFloat(look.radius) >= 6 && look.shadow && /Bahnschrift/.test(look.font) && /Fluent/.test(look.iconFont) && look.glyph === 'e91b', look);
-  check(`${theme}: main is told the size (panel + 2 x inset 10) for that seq`, !!place && place.seq === 3 && place.inset === 10 && place.w === look.w + 20 && place.h === look.h + 20, { place, look: [look.w, look.h] });
+  check(`${theme}: main is told the size (panel + 2 x inset 20) for that seq`, !!place && place.seq === 3 && place.inset === 20 && place.w === look.w + 40 && place.h === look.h + 40, { place, look: [look.w, look.h] });
   check(`${theme}: then that it painted (after its frames)`, !!painted && painted.seq === 3);
   check(`${theme}: the menu wears the page's theme`, look.theme === theme, look.theme);
   run.looks = run.looks || {};
