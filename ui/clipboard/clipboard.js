@@ -285,9 +285,12 @@
     // A HIDDEN window runs no animation frames at all (measured in the --test run, 2026-09-24:
     // the second Win+V waited out main's whole 300 ms cap), and main only shows it after this
     // report. So hidden = the DOM is final, report now; visible = two frames, the one with this
-    // list in it produced and not just scheduled.
+    // list in it produced and not just scheduled. main says whether the window is on screen
+    // (p.visible): a window NEVER shown yet reads visibilityState 'visible' but runs no frames either
+    // (lane clipwarm, perf gate 2026-10-16: the first Win+V of a run never reported and went at the
+    // 300 ms cap, 306 ms, with the glass already in), so main's word wins when it says hidden.
     var ready = function () {
-      if (document.visibilityState !== 'visible') setTimeout(report, 0);
+      if (p.visible === false || document.visibilityState !== 'visible') setTimeout(report, 0);
       else requestAnimationFrame(function () { requestAnimationFrame(report); });
     };
     // The list is drawn: report it NOW, in both themes. main shows the window on this report.

@@ -33,7 +33,7 @@ function stub() {
   });
 }
 
-function run(theme, backdrop) {
+function run(theme, backdrop, vis) {
   const handlers = {};
   const calls = [];
   const timers = [];
@@ -43,7 +43,7 @@ function run(theme, backdrop) {
   const document = new Proxy(doc, {
     get(t, k) {
       if (k === 'documentElement') return docEl;
-      if (k === 'visibilityState') return 'hidden';   // main shows the panel only after the report
+      if (k === 'visibilityState') return vis || 'hidden';   // main shows the panel only after the report
       if (k === 'hasFocus') return () => false;
       return t[k];
     },
@@ -70,7 +70,7 @@ function run(theme, backdrop) {
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, 'clipboard.js'), 'utf8'), ctx, { filename: 'clipboard.js' });
   const flush = () => { while (timers.length) timers.shift()(); };
-  return { handlers, calls, flush };
+  return { handlers, calls, flush, rafs };
 }
 
 const LIST = { items: [{ id: 'a', kind: 'text', text: 'one' }, { id: 'b', kind: 'text', text: 'two' }] };
@@ -126,6 +126,23 @@ const tick = () => new Promise((r) => setImmediate(r));
     p.flush();
     check('light: painted reported', p.calls.filter((c) => c.name === 'clipboard.painted').length === 1, p.calls.map((c) => c.name));
     check('light: no picture asked for', asked === 0, asked);
+  }
+
+  // ---- a window never shown yet: the page reads 'visible' but gets no frames; main says hidden
+  {
+    const p = run('light', null, 'visible');
+    p.handlers['clipboard.show']({ list: LIST, arm: null, visible: false });
+    p.flush();
+    check('never-shown window (main: hidden): painted without waiting for frames', p.calls.filter((c) => c.name === 'clipboard.painted').length === 1 && p.rafs.length === 0, { calls: p.calls.map((c) => c.name), rafs: p.rafs.length });
+  }
+  // ---- a panel already on screen (main: visible): two frames, then painted
+  {
+    const p = run('light', null, 'visible');
+    p.handlers['clipboard.show']({ list: LIST, arm: null, visible: true });
+    p.flush();
+    check('on screen: painted waits for the frame', !p.calls.some((c) => c.name === 'clipboard.painted') && p.rafs.length === 1, p.calls.map((c) => c.name));
+    p.rafs.shift()(); p.rafs.shift()();
+    check('on screen: painted after two frames', p.calls.filter((c) => c.name === 'clipboard.painted').length === 1, p.calls.map((c) => c.name));
   }
 
   // ---- model.js glassOf / glassLine
