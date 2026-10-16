@@ -160,3 +160,27 @@ body.mode-window, body.mode-full { cursor: default; }
 :root[data-theme="dark"] #bar button[aria-pressed="true"] { font-weight: 500; }
 :root[data-theme="dark"] #bar button:focus-visible,
 :root[data-theme="dark"] #bar button[aria-pressed="true"]:focus-visible { box-shadow: var(--lg-focus); }
+
+/* ---- RECORD (lanes screenrec + screenrec2, 2026-10-15) ------------------------------------------------
+   The Record button beside the modes (or V): the same picks are recorded instead of copied
+   (lib/features/screenrec.js). Off, its inner dot is small and in the button's ink; on, the dot springs
+   to full size in a muted record red (Windows' own, --lg-danger in dark) - never a glow. In Record the
+   selection's edge is that red instead of the accent, and the size readout leads with a small red dot,
+   so the screen says "this will be recorded" before the click. Unavailable (off in the tray, resting for
+   a game): ink-3, and a press says why in the hint (overlay.js setRecord). */
+:root { --rec: #C42B1C; --rec-spring: linear(0, .06 2.5%, .22 6%, .46 11%, .72 17%, .9 23%, 1 29%, 1.035 35%, 1.04 40%, 1.03 47%, 1.012 56%, 1 66%, .997 76%, 1); }
+:root[data-theme="dark"] { --rec: var(--lg-danger); }
+#bar #rec .rec-dot { transform-box: fill-box; transform-origin: center; transform: scale(.55); transition: transform 420ms var(--rec-spring), fill 160ms linear; }
+#bar #rec[aria-pressed="true"] svg { color: var(--lg-ink); }
+#bar #rec[aria-pressed="true"] .rec-dot { transform: scale(1); fill: var(--rec); }
+#bar #rec[aria-disabled="true"] { color: var(--lg-ink-3); }
+#bar #rec[aria-disabled="true"] .rec-dot { transform: scale(.4); }
+body.record #hole { box-shadow: 0 0 0 1px rgba(255,255,255,.92), 0 0 0 2px var(--rec), 0 0 0 200vmax var(--dim); }
+body.record.mode-window #hole, body.record.mode-full #hole {
+  box-shadow: inset 0 0 0 2px var(--rec), inset 0 0 0 3px rgba(255,255,255,.85), 0 0 0 200vmax var(--dim);
+}
+body.record #size::before {
+  content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 6px; vertical-align: 1px;
+  border-radius: 50%; background: var(--rec);
+}
+@media (prefers-reduced-motion: reduce) { #bar #rec .rec-dot { transition: none; } }

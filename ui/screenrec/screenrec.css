@@ -1,0 +1,138 @@
+/* screenrec.css - the recording pill and the card it becomes (lane screenrec2, 2026-10-15).
+ *
+ * The island theme (ui/shared/glass-light.css): light is the screenshot card's face (--lg-fill-strong three
+ * times over, one hairline, the --lg-shadow drop, which has room inside this window); dark is ONE layer
+ * of --lg-fill-pop and ends on its hairline and lip, no outer shadow (Mantle's clipped-shadow rule,
+ * ui/shared/clipped-shadow.test.js). Outside the shape the window is see-through and lets clicks through.
+ *
+ * MOTION: one element (#shape) is the pill and then the card. It comes in on a soft spring, and when the
+ * file is done its width and height spring from the pill's to the card's while the faces cross-fade:
+ * the eye stays where it already was. The recording dot breathes slowly (opacity and size, compositor
+ * only); nothing else moves while it records. A muted red, never a glow. Reduced motion: no spring, no
+ * breathing, the same states.
+ */
+:root {
+  --face: linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)), var(--lg-fill-strong);
+  --rec: #C42B1C;   /* Windows' own record red, at text weight */
+  /* a damped spring: ~4% past, settled by two thirds */
+  --spring: linear(0, .06 2.5%, .22 6%, .46 11%, .72 17%, .9 23%, 1 29%, 1.035 35%, 1.04 40%, 1.03 47%, 1.012 56%, 1 66%, .997 76%, 1);
+  --spring-dur: 520ms;
+  --warn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] {
+  --face: var(--lg-fill-pop);
+  --rec: var(--lg-danger);
+}
+html, body {
+  margin: 0; height: 100%; overflow: hidden; background: transparent;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px; color: var(--lg-ink); user-select: none; -webkit-user-select: none; cursor: default;
+}
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: default; outline: none; }
+button:focus-visible { box-shadow: 0 0 0 2px var(--lg-acc); }
+
+/* top centre of the window (main puts the window top centre of the screen) */
+#stage { position: absolute; top: 10px; left: 0; right: 0; display: flex; justify-content: center; pointer-events: none; }
+
+#shape {
+  position: relative; flex: none; pointer-events: auto;
+  width: 164px; height: 40px; border-radius: 20px; overflow: hidden;
+  background: var(--face);
+  box-shadow: 0 0 0 1px var(--lg-edge-out), var(--lg-shadow);
+  transition: width var(--spring-dur) var(--spring), height var(--spring-dur) var(--spring),
+    border-radius 300ms var(--lg-ease), opacity 180ms linear, transform var(--spring-dur) var(--spring);
+}
+#shape[hidden] { display: none; }
+#shape.enter { opacity: 0; transform: translateY(-10px) scale(.9); }
+#shape.leave { opacity: 0; transform: translateY(-6px) scale(.97); transition: opacity 180ms linear, transform 200ms var(--lg-ease); }
+#shape.is-card { border-radius: var(--lg-r-pop); }
+:root[data-theme="dark"] #shape { box-shadow: var(--lg-lip-up), 0 0 0 1px var(--lg-edge-out); }
+
+/* the two faces sit at the shape's top centre, so the shape can grow round them */
+.face {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%); box-sizing: border-box; width: max-content;
+  transition: opacity 140ms linear;
+}
+.face[hidden] { display: none; }
+.face.out { opacity: 0; }
+.face.measure { visibility: hidden; transition: none; }
+
+/* ---- the pill ------------------------------------------------------------------------------------ */
+#pill { display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 5px 0 15px; white-space: nowrap; }
+.dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--rec); animation: breathe 2.4s ease-in-out infinite alternate; }
+@keyframes breathe { from { opacity: 1; transform: scale(1); } to { opacity: .45; transform: scale(.78); } }
+.clock { min-width: 38px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.sep { width: 1px; height: 18px; background: var(--lg-edge-out); }
+.stop {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px 0 10px; border-radius: 15px;
+  color: var(--lg-ink); font-weight: 500;
+  transition: background-color var(--lg-dur-ui, 120ms) linear, transform 120ms var(--lg-ease);
+}
+.stop svg { width: 12px; height: 12px; color: var(--rec); }
+.stop:hover { background: var(--lg-hover); }
+.stop:active { background: var(--lg-press); transform: scale(.97); }
+.stop[disabled] { opacity: var(--lg-disabled, .45); }
+.stop[disabled]:hover { background: none; }
+/* starting: a hollow ring and words; saving: the dot holds still */
+#pill.starting .dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--lg-ink-3); animation: none; }
+#pill.starting .clock, #pill.stopping .clock { font-weight: 500; color: var(--lg-ink-2); }
+#pill.stopping .dot { animation: none; opacity: .5; }
+
+/* ---- the card ------------------------------------------------------------------------------------ */
+#card { display: flex; gap: 12px; width: max-content; min-width: 300px; max-width: 420px; padding: 14px 14px 14px; }
+.glyph {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--lg-acc-soft); color: var(--lg-acc);
+}
+.glyph svg { width: 18px; height: 18px; }
+.glyph .bad { display: none; width: 16px; height: 16px; }
+#card.warn .glyph { background: var(--lg-warn-soft); color: var(--lg-warn); }
+#card.warn .glyph .ok { display: none; }
+#card.warn .glyph .bad { display: block; }
+.text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; padding-right: 22px; }
+.title { font-size: 13px; font-weight: 600; line-height: 18px; }
+.detail { font-size: 12px; line-height: 16px; color: var(--lg-ink-2); font-variant-numeric: tabular-nums; }
+#card.warn .detail { white-space: normal; max-width: 340px; }
+.name { font-size: 12px; line-height: 16px; color: var(--lg-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+.name:empty { display: none; }
+.note { font-size: 12px; line-height: 16px; color: var(--lg-warn); }
+.status { font-size: 12px; line-height: 16px; color: var(--lg-ink-2); min-height: 0; }
+.status:empty { display: none; }
+.status.warn { color: var(--lg-warn); }
+.status.warn::before, .note::before {
+  content: ''; display: inline-block; width: 12px; height: 12px; margin-right: 5px; vertical-align: -1px;
+  background: currentColor; -webkit-mask: var(--warn-glyph) center / 12px 12px no-repeat;
+}
+.actions { display: flex; gap: 6px; margin-top: 8px; }
+.actions[hidden] { display: none; }
+.act {
+  height: 28px; padding: 0 12px; border-radius: var(--lg-r-ctl, 8px); font-size: 12px; font-weight: 500;
+  background: var(--lg-hover); color: var(--lg-ink); box-shadow: inset 0 0 0 1px var(--lg-edge-out);
+  transition: background-color var(--lg-dur-ui, 120ms) linear, transform 120ms var(--lg-ease);
+}
+.act:hover { background: var(--lg-press); }
+.act:active { transform: scale(.97); }
+.act.primary { background: var(--lg-acc); color: var(--lg-acc-on); box-shadow: none; }
+.act.primary:hover { background: var(--lg-acc-strong); }
+.act.done { color: var(--lg-ink-2); }
+.x {
+  position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; color: var(--lg-ink-3);
+}
+.x svg { width: 16px; height: 16px; }
+.x:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.x:active { background: var(--lg-press); }
+
+/* dark: Helm's small buttons, the accent button with its lip (the screenshot card's dark rows) */
+:root[data-theme="dark"] .act { background: var(--lg-card); box-shadow: inset 0 0 0 1px var(--lg-edge-out), inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .act:hover { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-strong), inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .act.primary { background: var(--lg-acc); color: var(--lg-acc-on); box-shadow: inset 0 1px 0 var(--lg-edge-inner); }
+:root[data-theme="dark"] .act.primary:hover { background: var(--lg-acc-strong); }
+:root[data-theme="dark"] .stop:hover, :root[data-theme="dark"] .x:hover { background: var(--lg-press); }
+:root[data-theme="dark"] button:focus-visible { box-shadow: var(--lg-focus); }
+
+@media (prefers-reduced-motion: reduce) {
+  #shape, #shape.leave, .face, .stop, .act { transition: none; }
+  #shape.enter { transform: none; }
+  .dot { animation: none; }
+}

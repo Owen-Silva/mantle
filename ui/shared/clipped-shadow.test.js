@@ -40,6 +40,9 @@ const CUT = [
   ['notes pad', 'notes/index.html', '', '.pad', '--lg-shadow'],
   ['snap picker', 'snap/index.html', "document.body.classList.add('mode-picker')", '.panel', '--lg-shadow'],
   ['screenshot card', 'screenshot/card.html', '', '#card', '--lg-shadow'],
+  // lane screenrec2 (2026-10-15): the recording pill and the card it becomes, one shape in one window
+  ['recording pill', 'screenrec/index.html?state=recording', "document.getElementById('shape').hidden = false", '#shape', '--lg-shadow'],
+  ['recording card', 'screenrec/index.html?state=done', "var s = document.getElementById('shape'); s.hidden = false; s.classList.add('is-card')", '#shape', '--lg-shadow'],
   // lane mantle-toasts3 (2026-10-15): the notification banners keep 16 px round the card (8 above), the
   // "square dark part" Owen saw round them
   ['notification banner', 'toasts/index.html', "var s = document.getElementById('stack'); if (!s.querySelector('.toast')) { var e = document.createElement('article'); e.className = 'toast in'; e.textContent = 'x'; s.appendChild(e); }", '.toast', '--lg-shadow'],
