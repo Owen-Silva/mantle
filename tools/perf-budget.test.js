@@ -65,6 +65,13 @@ check('no numbers at all is "no data", not a pass', P.judgeOpens('warm', nothing
 const refused = Array.from({ length: 3 }, () => ({ created: false, painted: null, r7: null, refused: 'mantle: Win+I from a second instance: {"ok":false}' }));
 check('a surface that never opened fails', P.judgeOpens('warm', refused, B).status === 'fail');
 
+// ---- RAM at rest: the main process is reported, everything else is judged against 650 - the live main's 210
+const MB = 1024;
+const sp = P.splitMain([{ type: 'Browser', privateKB: 458 * MB }, { type: 'Tab', privateKB: 38 * MB }, { type: 'Tab', privateKB: 300 * MB }, { type: 'Utility', privateKB: 13 * MB }]);
+check('splitMain: main 458, the rest 351 (integrate2 10-16)', sp.mainPrivateMB === 458 && sp.windowsPrivateMB === 351, JSON.stringify(sp));
+check('RAM budget for everything but main is 440 MB, never scaled', P.budgets(1.5).totalPrivateMB - P.budgets(1.5).liveMainMB === 440);
+check('the live shell (main 202, rest 355) fits it', 355 <= P.budgets(1).totalPrivateMB - P.budgets(1).liveMainMB);
+
 // ---- CPU from two metric snapshots
 const pct = P.cpuPct({ at: 0, procs: [{ pid: 1, cpuSec: 1.0 }, { pid: 2, cpuSec: null }] }, { at: 10000, procs: [{ pid: 1, cpuSec: 1.01 }, { pid: 2, cpuSec: 3 }, { pid: 3, cpuSec: 1 }] });
 check('cpu % of a core over 10 s', pct[1] === 0.1 && !(2 in pct) && !(3 in pct), JSON.stringify(pct));

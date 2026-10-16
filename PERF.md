@@ -43,6 +43,9 @@ main.
   separately). This assumes every `keepReady` flag is off.
   - The plan's pre-load option would have added about 110 MB: all three surfaces, reaching about 720 MB.
     Under Owen's default, Settings, Task Manager and Files add **0 MB at rest**.
+  - The live total is checked by the live shell's 30-min memory line.
+  - The gate can't check it. A `--test` copy's main process runs 373-479 MB, against 202-212 MB live, so
+    the gate judges every process except main against 650 - 210 = **440 MB**.
 - **Each `keepReady` flag that is on may cost up to 45 MB private** (and 20 MB working set after the
   trim) for its hidden window.
   - The total budget grows by that much per flag Owen turns on, and by nothing else.
@@ -200,15 +203,26 @@ Its summary line:
 | Notes | warm | - | - | no data: no R7 line, and its open is never shown in `--test` | 29 MB | |
 
 At rest:
-- **Fresh start: 784 MB Electron private**, against the 650 MB budget. That is 30 s after start, with
-  nothing idle-unloaded yet.
-- The live shell's own 30-min memory lines read **549-554 MB** the same night.
-- So the gate now judges RAM after the existing `--test-unload` hook. That is the steady state the live
-  shell sits in, and the fresh number is kept as information only.
+- **The test copy's total was 784 MB** of Electron private memory, against the 650 MB budget.
+- The live shell's own 30-min memory lines read **549-557 MB** the same night.
+- The gap is all in the **main process**:
+  - --test copies (measured 10-16): 373-479 MB. A plain --test copy with no probe was 479 MB, so the
+    gate's probe is not the cause.
+  - The live shell: 202-212 MB, at 30 s and after hours alike.
+- **Every other process matched live:** 341-355 MB in --test, 353-355 MB live.
+- So the gate cannot judge the total. It judges **everything except the main process**, against
+  650 - 210 = **440 MB**. That rest was 341-351 MB, so it passes. The main process is reported only.
+- An earlier try, judging RAM after the `--test-unload` hook, was dropped: on a fresh copy it answers
+  "nothing to unload".
 - **Hidden-window idle CPU:**
   - every hidden page was 0-0.05 % of a core, except task view at 0.224 % in the first sample;
   - in the second sample, task view was 0 %;
   - the gate now judges each page on the lower of its two samples.
+- **Check run** (10-16 06:21; launcher and Files, n 5; 15 passed, 1 failed, the failure being the old
+  total-RAM check):
+  - every hidden page was 0-0.012 % of a core;
+  - no sidecar call or spawn happened in the trigger's own tick;
+  - Files cold was p50 160 / p95 477 ms, and the launcher warm p50 62 / p95 67 ms.
 
 What the baseline says to the surface lanes:
 - Task Manager's cold p95 and kept-window size are over budget.
@@ -225,7 +239,8 @@ What the baseline says to the surface lanes:
     it was the exception.
 - **R5 RAM.** The 650 MB total is kept, but it now assumes no pre-load. The plan's ~720 MB "all three
   pre-made" option is gone. Each keepReady flag costs at most 45 MB, and the budget grows only by the
-  flags Owen turns on.
+  flags Owen turns on. In the gate, the total becomes "every process but main <= 440 MB", because a
+  `--test` main process is not the live one's size.
 - **Cold ceiling.** The plan's "1 s at 80 % CPU" is now plainly "never more than 1 s", for both visible
   and usable.
 - **R8 runs locally**, not on the cloud runner, because cloudtest is refused while GitHub billing is

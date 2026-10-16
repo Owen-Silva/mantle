@@ -58,6 +58,7 @@ const BUDGET = {
   coldCeiling: 1000,         // ms, never scaled: no cold open past 1 s (painted or interactive)
   hiddenCpuPct: 0.1,         // % of ONE core, a hidden window at rest (R6 says 0; 0.1 is the sampling floor)
   totalPrivateMB: 650,       // Electron private total at rest with every keepReady flag off (R5)
+  liveMainMB: 210,           // the live main process's share of it (live memory lines 10-16: 202-212 MB)
   keptHiddenPrivateMB: 45,   // a window kept hidden after a close = the keepReady cost (R5)
   openPrivateMB: 80,         // a visible surface (R5)
 };
@@ -148,6 +149,13 @@ function judgeOpens(mode, samples, b) {
   return { source, noinstr: source !== 'r7', status, checks, painted, interactive, n: samples.length };
 }
 
+/** Private MB of the main (Browser) process vs every other process. procs: [{type, privateKB}] */
+function splitMain(procs) {
+  const mainKB = procs.filter((p) => p.type === 'Browser').reduce((t, p) => t + (p.privateKB || 0), 0);
+  const allKB = procs.reduce((t, p) => t + (p.privateKB || 0), 0);
+  return { mainPrivateMB: Math.round(mainKB / 1024), windowsPrivateMB: Math.round((allKB - mainKB) / 1024) };
+}
+
 /** CPU % of one core between two metric snapshots, per pid. */
 function cpuPct(a, b) {
   const out = {};
@@ -185,7 +193,7 @@ function parseArgs(argv) {
     settleS: Number(opt('settle', 15)) || 15, out: opt('out', ''), json: !!opt('json', false), lockWaitMin: Number(opt('lock-wait', 240)) || 240 };
 }
 
-module.exports = { BUDGET, SURFACES, quantile, stats, budgets, parseOpenLine, judgeOpens, cpuPct, summaryLine, parseArgs,
+module.exports = { BUDGET, SURFACES, splitMain, quantile, stats, budgets, parseOpenLine, judgeOpens, cpuPct, summaryLine, parseArgs,
   takeFileLock: (...a) => takeFileLock(...a), dropFileLock: (...a) => dropFileLock(...a),
   joinQueue: (...a) => joinQueue(...a), myTurn: (...a) => myTurn(...a), leaveQueue: (...a) => leaveQueue(...a) };
 
@@ -512,16 +520,16 @@ async function cli() {
     return result.idle[label];
   };
   const idle0 = await idleSample('atRest');
-  result.freshStartPrivateMB = idle0.totalPrivateMB;   // just started: nothing idle-unloaded yet (information only)
+  result.atRestTotalMB = idle0.totalPrivateMB;   // the --test copy's whole total (information only)
   if (!idle0.cpuMeasured) result.noinstr.push('hidden-window CPU (no cumulativeCPUUsage in app metrics)');
-  // RAM at rest is judged in the STEADY state a live shell sits in: every idle-unloadable window gone, as 10
-  // unused minutes do (the existing --test-unload hook). A fresh start is ~200 MB over that (measured 10-16).
-  const un = await api('hook', { arg: '--test-unload' });
-  await sleep(4000);
-  const steady = await api('metrics');
-  result.steadyPrivateMB = Math.round(steady.procs.reduce((t, p) => t + p.privateKB, 0) / 1024);
-  result.unloaded = (lines.filter((l) => /test-unload:/.test(l.line)).pop() || { line: un.error || '?' }).line.replace(/^mantle: /, '').slice(0, 300);
-  check('mantle', 'electron private total at rest, idle windows unloaded (MB)', result.steadyPrivateMB, B.totalPrivateMB);
+  // RAM at rest. A --test copy's MAIN process is not the live one's size: measured 10-16, a plain --test copy
+  // (no probe) 479 MB, with the probe 455 / 458 / 373 MB, the live shell 202-212 MB (its own memory lines, at
+  // 30 s and after hours). Every other process matched live: 341-355 MB in --test, 353-355 MB live. So the
+  // gate judges everything EXCEPT the main process against the total less the live main's share, and only
+  // reports the main process (the live total is the 30-min memory line's job).
+  const rest = await api('metrics');
+  Object.assign(result, splitMain(rest.procs));
+  check('mantle', 'private at rest, every process but main (MB)', result.windowsPrivateMB, B.totalPrivateMB - B.liveMainMB);
 
   // ---- 3. opens
   const r7For = (s, since) => {
@@ -662,7 +670,7 @@ async function cli() {
   // ---- report
   const f = (v) => (v === null || v === undefined ? '-' : String(v));
   say(`perf-budget: ${ROOT} (${new Date().toISOString()}), slack ${A.slack}x, n ${A.n}, machine cpu ${result.cpuBefore}% before / ${result.cpuEnd}% after, ${result.freeGBBefore} GB free, start ${result.startMs} ms`);
-  say(`  at rest: electron private ${result.steadyPrivateMB} MB with idle windows unloaded (${result.freshStartPrivateMB} MB fresh; ${result.unloaded})`);
+  say(`  at rest: every process but main ${result.windowsPrivateMB} MB (budget ${B.totalPrivateMB - B.liveMainMB}); main ${result.mainPrivateMB} MB (--test main, reported only; live ~${B.liveMainMB})`);
   say(`  at rest, fresh: hidden: ${idle0.hidden.map((h) => `${h.page} ${f(h.privateMB)} MB ${f(h.cpuPct)}%`).join(', ') || 'none'}`);
   for (const [name, m] of Object.entries(result.surfaces)) {
     for (const mode of ['cold', 'warm']) {
