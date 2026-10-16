@@ -1418,7 +1418,7 @@
   }
   function startLoops(sec) {
     stopLoops();
-    if (document.hidden) return;
+    if (hiddenNow()) return;
     every(() => qsWatch(true), 30000);             // re-assert: the bar's panel closing turns main's watch off
     if (S.problems.qswatch) every(() => read('qs'), 5000);
     if (sec === 'sound') { every(() => read('sessions'), 2000); every(() => read('audio'), 6000); }
@@ -1460,8 +1460,15 @@
     });
   }
   let awake = false;
+  /* Is this window off screen? main says so explicitly (review2 #2, lane mantle-review2fix): a window made
+     ahead with show:false (keep ready) reads document.hidden === false on its first load (Electron's
+     paintWhenInitiallyHidden), so the page took the qs.watch lease and ran its loops while never shown.
+     settings.hello { hidden } starts it asleep; settings.wake (the open that shows it) and settings.sleep
+     (a close that hides it) keep it right; document.hidden still counts once Windows reports it. */
+  let keptHidden = false, bootDone = false;
+  function hiddenNow() { return keptHidden || document.hidden; }
   function wake() {
-    if (awake || document.hidden) return;
+    if (awake || hiddenNow()) return;
     awake = true;
     qsWatch(true);
     startLoops(S.section);
@@ -1618,6 +1625,8 @@
   on('corners.state', (r) => { take('corners', r); schedule('corners'); });
   on('settings.changed', () => { read('mantle'); if (S.section === 'apps') read('features'); if (S.section === 'mantle') read('corners'); modUpdate(); });
   on('settings.nav', (n) => { nav(n); });
+  on('settings.wake', () => { keptHidden = false; if (bootDone) wake(); });       // before boot: boot decides
+  on('settings.sleep', () => { keptHidden = true; sleep(); });
   on('settings.glass', glassTake);
 
   /* ---------------------------------------------------------------- start */
@@ -1629,6 +1638,7 @@
       if (!r || typeof r !== 'object') r = { ok: false, reason: 'it answered with nothing' };
       if (r.ok === false) S.problems.hello = 'Mantle did not say which page to open (' + (r.reason || 'no reason came back') + '), so this is Home.';
       S.test = !!r.test;
+      keptHidden = r.hidden === true;      // made ahead: start asleep until settings.wake
       if (r.glass) glassTake(r.glass);
       return r;
     }, (e) => {
@@ -1646,7 +1656,8 @@
       return [];
     }).then((list) => { S.model = M.sectionModel(list); S.modelSeq++; S.modsReady = true; rebuildIndex(); });
     const booted = Promise.all([first, mods]).then(([r]) => {
-      awake = !document.hidden;
+      awake = !hiddenNow();
+      bootDone = true;
       if (awake) qsWatch(true);
       const extra = [read('catalog'), slot('mantle').st === 'idle' ? read('mantle') : null];
       return Promise.all([nav({ section: r.section, page: r.page, row: r.row, query: r.query })].concat(extra));
