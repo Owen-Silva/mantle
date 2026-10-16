@@ -181,7 +181,7 @@ function parseArgs(argv) {
   const n = Math.max(1, Math.min(50, Number(opt('n', 10)) || 10));
   const slack = Number(opt('slack', 1.5)) > 0 ? Number(opt('slack', 1.5)) : 1.5;
   const only = String(opt('surfaces', '') || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-  return { n, slack, only, strict: !!opt('strict', false), lock: !opt('no-lock', false), rerun: !opt('no-rerun', false),
+  return { n, slack, only, strict: !!opt('strict', false), lock: !opt('no-lock', false), mutex: !opt('no-mutex', false), rerun: !opt('no-rerun', false),
     settleS: Number(opt('settle', 15)) || 15, out: opt('out', ''), json: !!opt('json', false), lockWaitMin: Number(opt('lock-wait', 240)) || 240 };
 }
 
@@ -319,7 +319,7 @@ function lockOwner(dir) { try { return fs.readFileSync(path.join(dir, 'owner.txt
 
 /* The heavy-test queue (the lanes' protocol): %TEMP%\claude-heavytest.queue\<n>-<lane>, holding "<n>-queued
    HH:MM:SS". Join with the next number; take the mutex only when no live ticket has a lower number; leave the
-   queue once the mutex is ours. A ticket untouched for 3 h is a dead lane's and is not waited for. */
+   queue once the mutex is ours. An integrate ticket goes first whatever its number. A ticket untouched for 3 h is a dead lane's and is not waited for. */
 const QUEUE_STALE_MS = 3 * 3600 * 1000;
 function queueDir() { return path.join(os.tmpdir(), 'claude-heavytest.queue'); }
 function queueTickets(dir) {
@@ -344,7 +344,9 @@ function joinQueue(label, dir) {
   }
   return null;
 }
-function myTurn(t) { return !queueTickets(t.dir).some((x) => x.n < t.n && x.age < QUEUE_STALE_MS); }
+function myTurn(t) {
+  return !queueTickets(t.dir).some((x) => x.name !== t.name && x.age < QUEUE_STALE_MS && (x.n < t.n || /integrate/i.test(x.name)));
+}
 function leaveQueue(t) { try { fs.rmSync(path.join(t.dir, t.name), { force: true }); } catch (_) { /* gone */ } }
 
 /* The browser lock is a FILE, created exclusively, holding {"pid","time","label"} (the protocol the other
@@ -399,7 +401,7 @@ async function cli() {
   const game = gameRunning();
   if (game) return finish(2, `a game is running (${game}); the gate never runs beside one`);
   try { os.setPriority(0, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch (_) { /* best effort; said below */ }
-  if (A.lock) {
+  if (A.lock && A.mutex) {
     const owner = `perf-budget pid ${process.pid} (${ROOT}) at ${new Date().toISOString()}`;
     const until = Date.now() + A.lockWaitMin * 60000;
     const mutex = path.join(os.tmpdir(), 'claude-heavytest.mutex');
@@ -414,8 +416,11 @@ async function cli() {
     }
     if (ticket) leaveQueue(ticket);
     locks.push(() => dropDirLock(mutex));
+  }
+  if (A.lock) {
+    const until = Date.now() + A.lockWaitMin * 60000;
+    let said = 0;
     const blk = path.join(os.tmpdir(), 'claude-headless-browser.lock');
-    said = 0;
     while (!takeFileLock(blk, `perf-budget (${LANE})`)) {
       if (Date.now() > until) return finish(2, `claude-headless-browser.lock stayed held for ${A.lockWaitMin} min (owner: ${fileLockOwner(blk)})`);
       if (said++ % 10 === 0) say(`perf-budget: waiting for claude-headless-browser.lock (held by: ${fileLockOwner(blk)}); checking every 60 s`);
