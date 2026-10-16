@@ -343,7 +343,7 @@
     Object.assign(tab, {
       path: p, kind: kindOf(p), items: [], shown: [], groups: null, index: new Map(), sel: new Set(), focusKey: o.focus || null, anchorKey: null,
       scroll: o.scroll || 0, error: null, watchWhy: null, place: null, loading: true, painted: false, t0: performance.now(), wantSel: o.select ? { keys: o.select, until: Date.now() + 8000 } : null,
-      filter: null,
+      filter: null, fromCache: false,
     });
     tab.cloud = tab.kind === 'folder' && isCloud(p);
     tab.colset = tab.kind === 'home' ? 'home' : tab.kind === 'recycle' ? 'recycle' : tab.cloud ? 'cloud' : 'folder';
@@ -352,6 +352,18 @@
     tab.view = defaultView(tab.kind);
     const run = { path: p, kind: tab.kind, t0: tab.t0, first: null, all: null, count: 0 };
     tab.run = run;
+    if (o.cached && tab.kind === 'folder' && Array.isArray(o.cached.items)) {
+      // a cold window (lane mantle-files): the last folder's cached first rows NOW, the live listing
+      // replaces them (relist); if the folder is gone by then, its error replaces them instead
+      Object.assign(tab, { items: o.cached.items.slice(), fromCache: true, loading: false });
+      if (o.cached.view) tab.view = Object.assign(defaultView(tab.kind), o.cached.view);
+      wantTypes(tab.items);
+      arrange(tab);
+      if (tab === cur()) { renderTabs(); showTab(); }
+      reportTabs();
+      relist(tab);
+      return;
+    }
     if (tab === cur()) { renderTabs(); showTab(); }
     setTimeout(() => { if (tab.run === run && tab.loading && tab === cur()) renderEmpty(); }, 300);   // the "Reading…" state, never a flash
     reportTabs();
@@ -459,8 +471,13 @@
       if (ev.done) {
         const rf = tab.refresh;
         tab.refresh = null;
-        if (ev.error) { toast(`${labelOf(tab.path)} could not be refreshed`, { kind: 'err', sub: plain(ev.error) }); return; }
+        if (ev.error) {
+          if (tab.fromCache) { cacheFailed(tab, ev.error); return; }
+          toast(`${labelOf(tab.path)} could not be refreshed`, { kind: 'err', sub: plain(ev.error) });
+          return;
+        }
         tab.items = rf.items;
+        tab.fromCache = false;
         wantTypes(tab.items);
         arrange(tab);
       }
@@ -480,6 +497,7 @@
       arrange(tab);
       if (tab.run) { tab.run.count = tab.items.length; tab.run.sidecarMs = ev.ms; afterPaint(() => { if (tab.run && tab.run.all == null) { tab.run.all = performance.now() - tab.run.t0; MF.perf.runs.push(tab.run); } }); }
       if (tab === cur()) showTab();
+      if (S.booted && tab === cur()) { tellOpen('painted'); tellOpen('interactive'); }      // an empty or failed folder draws no rows
     } else if (!tab.painted) arrange(tab);
     else scheduleArrange(tab);
   }
@@ -548,11 +566,24 @@
     tab.refresh = rf;
     const r = await api('files.list', { tab: tab.id, path: tab.path });
     if (tab.refresh !== rf) return;
-    if (!r || r.ok === false) { tab.refresh = null; toast(`${labelOf(tab.path)} could not be refreshed`, { kind: 'err', sub: plain(r) }); return; }
+    if (!r || r.ok === false) {
+      tab.refresh = null;
+      if (tab.fromCache) { cacheFailed(tab, r); return; }
+      toast(`${labelOf(tab.path)} could not be refreshed`, { kind: 'err', sub: plain(r) });
+      return;
+    }
     rf.job = r.job;
     tab.watchWhy = r.watchWhy || null;
     const evs = S.early.get(r.job);
     if (evs) { S.early.delete(r.job); for (const ev of evs) onItems(ev); }
+  }
+  /** The live listing behind a cached first view failed: the cached rows go, the plain reason shows. */
+  function cacheFailed(tab, why) {
+    tab.fromCache = false;
+    tab.items = [];
+    tab.error = plain(why);
+    arrange(tab);
+    if (tab === cur()) showTab();
   }
   const relistTimers = new Map();
   function relistSoon(tab) {
@@ -1655,6 +1686,8 @@
       const t = cur();
       if (!t || t.painted || !t.shown.length) return;
       t.painted = true;
+      tellOpen('painted');
+      if (S.booted) tellOpen('interactive');
       const run = t.run;
       if (run && run.first == null) afterPaint(() => { if (run.first == null) run.first = performance.now() - run.t0; });
     },
@@ -1873,7 +1906,13 @@
       return;
     }
     listen();
-    const b = await api('files.boot');
+    // keepReady (lane mantle-files): a hidden spare's boot answers {spare:true}; its real start comes with
+    // the open that takes it ('files.start', the same shape as a boot answer). Listened to BEFORE asking.
+    let startNow = null;
+    const started = new Promise((res) => { startNow = res; });
+    window.mantle.on('files.start', (p) => startNow(p));
+    let b = await api('files.boot');
+    if (b && b.spare) b = await started;
     if (!b || b.ok === false) {
       Object.assign(t, { path: 'mantle:home', kind: 'home', view: defaultView('home'), error: plain(b) });
       renderTabs();
@@ -1898,9 +1937,22 @@
     renderTabs();
     renderNav();
     api('files.roots').then(applyRoots);
-    await go(t, b.path || 'mantle:home', { push: false });
+    const cached = b.cache && Array.isArray(b.cache.items) && M.samePath(b.cache.path, b.path) ? b.cache : null;
+    await go(t, b.path || 'mantle:home', { push: false, cached });
     list.sc.focus({ preventScroll: true });
+    S.booted = true;
+    if (!t.loading) { tellOpen('painted'); tellOpen('interactive'); }
     document.documentElement.dataset.ready = '1';
+  }
+  /* R7 (lane mantle-files): tell main when this window's first view is ON SCREEN. Two frames after it was
+     drawn: a hidden window draws no frames, so this cannot fire early. Once per window. */
+  const told = {};
+  function tellOpen(stage) {
+    if (told[stage]) return;
+    told[stage] = true;
+    const t = cur();
+    const cached = !!(t && t.fromCache);
+    requestAnimationFrame(() => requestAnimationFrame(() => { api('files.painted', { stage, cached }).catch(() => {}); }));
   }
 
   MF.app = { S, cur, go, newTab, closeTab, activate, list, arrange, setView, sortBy, startSearch, endSearch, relist, itemMenu, backgroundMenu, runCmd, api, editAddress, selItems, back, up, setFilter, setContents, filterItems };
