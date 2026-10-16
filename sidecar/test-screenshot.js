@@ -63,7 +63,7 @@ function expected(vx, vy) {
   return [((((vx >> 8) & 15) << 4) | ((vy >> 8) & 15)) & 255, vy & 255, vx & 255];
 }
 
-/** Reads a BMP the sidecar wrote: header facts plus a pixel getter (b,g,r in the file). */
+/** Reads a BMP the sidecar wrote: header facts plus a pixel getter ([r, g, b] by its masks). */
 function readBmp(file) {
   const b = fs.readFileSync(file);
   const off = b.readUInt32LE(10);
@@ -73,7 +73,10 @@ function readBmp(file) {
     magic: b.toString('latin1', 0, 2), size: b.readUInt32LE(2), off, hdr: b.readUInt32LE(14), w, h,
     bpp: b.readUInt16LE(28), compression: b.readUInt32LE(30),
     masks: [b.readUInt32LE(54), b.readUInt32LE(58), b.readUInt32LE(62)], length: b.length,
-    px(x, y) { const o = off + (y * w + x) * 4; return [b[o + 2], b[o + 1], b[o]]; },
+    // [r, g, b] by the file's own masks (RGBA order since the raw-pixels change), plus the fourth byte
+    px(x, y) { const o = off + (y * w + x) * 4; const v = b.readUInt32LE(o); const m = [b.readUInt32LE(54), b.readUInt32LE(58), b.readUInt32LE(62)];
+      const ch = (mask) => (v & mask) >>> (Math.log2(mask & -mask)); return [ch(m[0]), ch(m[1]), ch(m[2])]; },
+    alpha(x, y) { return b[off + (y * w + x) * 4 + 3]; },
   };
 }
 
@@ -162,7 +165,9 @@ async function main() {
       check(`monitor ${m.index}: BMP header is 32-bit BI_BITFIELDS top-down at the monitor size`,
         bmp.magic === 'BM' && bmp.hdr === 40 && bmp.bpp === 32 && bmp.compression === 3 && bmp.w === m.frame.w && bmp.h === -m.frame.h &&
         bmp.off === 66 && bmp.size === bmp.length && bmp.length === m.bytes, JSON.stringify({ w: bmp.w, h: bmp.h, c: bmp.compression, off: bmp.off }));
-      check(`monitor ${m.index}: RGB masks, and no alpha mask`, bmp.masks[0] === 0xff0000 && bmp.masks[1] === 0xff00 && bmp.masks[2] === 0xff);
+      check(`monitor ${m.index}: RGBA-order masks (raw ImageData bytes), and no alpha mask`, bmp.masks[0] === 0xff && bmp.masks[1] === 0xff00 && bmp.masks[2] === 0xff0000);
+      check(`monitor ${m.index}: the fourth byte is 255 (an opaque ImageData)`, bmp.alpha(0, 0) === 255 && bmp.alpha(bmp.w - 1, -bmp.h - 1) === 255);
+      check(`monitor ${m.index}: the reply says where the raw pixels are`, m.pixels && m.pixels.offset === bmp.off && m.pixels.format === 'rgba' && m.pixels.w === bmp.w && m.pixels.h === -bmp.h, JSON.stringify(m.pixels));
       const H = -bmp.h;
       const pts = [[0, 0], [bmp.w - 1, 0], [0, H - 1], [bmp.w - 1, H - 1], [Math.floor(bmp.w / 2), Math.floor(H / 3)], [257, 511]];
       let bad = 0;

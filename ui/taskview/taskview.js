@@ -20,7 +20,8 @@
 (function () {
   'use strict';
   var Lay = window.TaskViewLayout;
-  var $ = function (id) { return document.getElementById(id); };
+  var WARM_SEQ = -1;                      // the start-up rehearsal's seq (taskview.warm); main's are >= 1
+  var $ =function (id) { return document.getElementById(id); };
   var grid = $('grid'), desksEl = $('desks'), stripWhy = $('stripWhy'), qEl = $('q'), qCount = $('qCount');
   var emptyEl = $('empty'), foot = $('foot'), toast = $('toast'), dragChip = $('dragChip');
 
@@ -271,7 +272,7 @@
     // 34 ms, whichever is first: a never-shown window (the --test instance) gets rAF about once a
     // second (measured 2026-09-24: "drawn" at ~1048 ms), and the boxes are measurable already.
     var seq = S.seq, sent = false;
-    var go = function () { if (sent || S.seq !== seq) return; sent = true; report(); };
+    var go = function () { if (sent || S.seq !== seq) return; sent = true; if (seq === WARM_SEQ) warmDone(); else report(); };
     requestAnimationFrame(function () { requestAnimationFrame(go); });
     setTimeout(go, 34);
   }
@@ -319,6 +320,8 @@
 
   function applyUpdate(m) {
     var keep = selHwnd();
+    // The fresh list put the open on another display (main drew the cached one first).
+    if (m.at && darkPage() && window.MantleWallBdrop) window.MantleWallBdrop.at(m.at.x, m.at.y);
     if (m.list) S.items = m.list;
     if (m.desktops) S.desktops = m.desktops;
     if (m.others) S.others = m.others;
@@ -522,6 +525,19 @@
     renderAll(S.items[S.sel] ? S.items[S.sel].hwnd : null);
   });
   window.mantle.on('taskview.update', function (m) { if (m && m.seq === S.seq) applyUpdate(m); });
+
+  /* THE WARM-UP (main, once at start-up when idle): the real list drawn ONCE in the parked, off-screen
+     window, so the first Win+Tab does not pay for everything done for the first time (layout, text,
+     icons, the wall backdrop). Then emptied. A real open that arrives meanwhile simply replaces it. */
+  window.mantle.on('taskview.warm', function (m) {
+    if (S.seq) return;                                   // a real Task View is up: nothing to rehearse
+    S.seq = WARM_SEQ; S.items = (m && m.list) || []; S.desktops = (m && m.desktops) || null; S.others = (m && m.others) || [];
+    S.query = ''; S.sel = 0; S.first = 0; S.thumbs = {}; S.thumbsWhy = null; S.zone = 'grid'; S.listReason = null;
+    S.warmT0 = performance.now();
+    wallFace();
+    document.body.classList.remove('is-idle');
+    renderAll(S.items[0] ? S.items[0].hwnd : null);
+  });
   window.mantle.on('taskview.icons', function (m) {
     if (!m || m.seq !== S.seq) return;
     for (var i = 0; i < S.items.length; i++) {
@@ -552,10 +568,18 @@
     renderFoot();
   });
   window.mantle.on('taskview.notice', function (m) { if (m && (!m.seq || m.seq === S.seq)) showToast(m.text || 'it failed'); });
-  window.mantle.on('taskview.end', function (m) {
-    if (m && m.seq && m.seq !== S.seq) return;
+  function idle() {
     S.seq = 0; S.items = []; S.shown = []; S.drag = null; S.renaming = null;
     grid.textContent = ''; desksEl.textContent = ''; dragChip.classList.remove('on');
     document.body.classList.add('is-idle');
+  }
+  function warmDone() {
+    var ms = Math.round((performance.now() - S.warmT0) * 10) / 10;
+    idle();
+    call('taskview.warmed', { ms: ms }).catch(function () { /* main times the warm-up out itself */ });
+  }
+  window.mantle.on('taskview.end', function (m) {
+    if (m && m.seq && m.seq !== S.seq) return;
+    idle();
   });
 })();

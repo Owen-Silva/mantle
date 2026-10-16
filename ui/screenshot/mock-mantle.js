@@ -98,6 +98,13 @@
         ? { available: false, why: 'Windows has no text recognition installed: add a language in Windows Settings > Time & language > Language & region' }
         : { available: true, lang: 'en-US' },
     };
+    // ?raw=1: main's RAW PIXELS (an ImageData's RGBA bytes) beside the picture; ?raw=bad: bytes of the
+    // wrong length, so the page must fall back to decoding the picture. The pattern: R = x, G = y, B = 77.
+    if (q.get('raw') === '1' || q.get('raw') === 'bad') {
+      var n = W * H * 4 - (q.get('raw') === 'bad' ? 4 : 0), px = new Uint8Array(n);
+      for (var i = 0; i + 3 < n; i += 4) { var p = i / 4; px[i] = (p % W) & 255; px[i + 1] = Math.floor(p / W) & 255; px[i + 2] = 77; px[i + 3] = 255; }
+      mock.frame.pixels = { w: W, h: H, data: px };
+    }
     emit('screenshot.frame', mock.frame);
   });
   window.__mockEmit = emit;
