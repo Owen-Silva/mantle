@@ -23,6 +23,10 @@
   transition-duration: 150ms, 150ms, 90ms, 90ms;     /* down fast, back on the spring */
 }
 .qsgrid .qstile.qsx-lift { transform: scale(1.03); transition: none; }
+/* Keyboard focus INSIDE the tile (overlap audit, 2026-10-16): bar.css's `.pop button:focus-visible` adds a
+   2 px outer halo that lands on the next tile. The new tiles take night/overlap's default ring instead:
+   2 px accent, inset. (The four older tiles are qs-more.css's, fixed with bar.css in barpolish.) */
+.qsgrid .qstile.qsx:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; box-shadow: none; }
 .qsx-notes[hidden] { display: none; }
 .qsx-notes:not([hidden]) { margin: -4px 0 10px; }
 
