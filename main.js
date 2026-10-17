@@ -954,6 +954,17 @@ const KEYS_ALLOWED = new Set(['win+a', 'win+n', 'win+d']);
  */
 const deadPagesSaid = new WeakSet();
 let pushWords = (name, payload) => payload;   // set after this region: raw codes become words (lib/plain-error.js)
+/* WHAT MOVES WITH THE BAR (lane mantle-corner, 2026-10-16). Owen: the corner pop-ups should sit in the
+   corner and "just ... smoothly move up if the taskbar comes up". Called on the SAME tick the bar's page
+   is told ('bar.reveal' / 'bar.hide'), so the bar and its neighbours start together. barUpNow is where the
+   bar is headed: --dock is always up; a bar on its way out already counts as gone. */
+const barMotionFns = new Set();
+function barMotion(up, ms, why) {
+  for (const fn of barMotionFns) {
+    try { fn({ up, ms, why }); } catch (err) { process.stderr.write(`mantle: something that moves with the bar threw (${why}): ${err.message}\n`); }
+  }
+}
+function barUpNow() { return !!flags.dock || (barRevealed && !hideTimer); }
 function broadcast(name, payload) {
   payload = pushWords(name, payload);
   for (const win of BrowserWindow.getAllWindows()) {
@@ -1863,6 +1874,7 @@ async function revealByPage(geo, why, visible) {
     return;
   }
   broadcast('bar.reveal', { why, mode: geo.shape, ms: REVEAL_MS });
+  barMotion(true, REVEAL_MS, why);   // lane mantle-corner: the corner banners rise with it
   setBar({ ok: true, revealed: true, reason: barReason(`the bar is up: ${why}`) });
   process.stdout.write(`mantle: bar revealed (${why}) -- ${geo.shape} ${JSON.stringify(rect)}, the page animates it over ${REVEAL_MS} ms\n`);
 
@@ -1971,6 +1983,7 @@ function revealBar(why) {
     return;
   }
   broadcast('bar.reveal', { why, mode: geo.shape, ms: REVEAL_MS });
+  barMotion(true, REVEAL_MS, why);   // lane mantle-corner: the corner banners rise with it
   setBar({ ok: true, revealed: true, reason: barReason(`the bar is up: ${why}`) });
   process.stdout.write(`mantle: bar revealed (${why}) -- ${geo.shape} ${JSON.stringify(sideRect(geo.rest))} over ${REVEAL_MS} ms\n`);
   // Not awaited: the bar is "up" the instant the page is told, and the 560 ms of
@@ -2047,6 +2060,7 @@ function beginHide(why) {
   // The panel goes with the bar: a 2 s poll for a panel nobody can see is pure cost.
   qsWatchStop(`the bar is hiding: ${why}`);
   broadcast('bar.hide', { why, ms: HIDE_MS });
+  barMotion(false, HIDE_MS, why);    // lane mantle-corner: ...and go back to the corner with it
   setBar({ ok: true, revealed: true, reason: barReason(`the bar is leaving: ${why}`) });
   // A reveal that lands DURING an exit must not start capturing over the top of
   // it; revealBar() sets a fresh one if the cursor comes back.
@@ -3126,6 +3140,8 @@ function startFeatures() {
       commands: COMMANDS,
       broadcast,
       host: { openLauncher: openLauncherFor, barRect: () => barRect(), display: featureDisplay, rest: (on, why) => restMantle(on, why),
+        // lane mantle-corner: is the bar up, and a call on the tick it starts coming in or going
+        bar: { up: () => barUpNow(), onMotion: (fn) => { barMotionFns.add(fn); return () => barMotionFns.delete(fn); } },
         media: () => lastMedia, onMedia: (fn) => { mediaListeners.add(fn); return () => mediaListeners.delete(fn); },
         // lane mantle-crash: Explorer started again (TaskbarCreated): the top bar registers its strip again
         onShellRestart,
@@ -8662,6 +8678,17 @@ async function runScreenshots(dir) {
  */
 let traceMarks = null;
 const traceNow = () => performance.timeOrigin + performance.now();
+/* TEST ONLY (lane mantle-corner): a --test run moves the bar itself, for the corner-glide trace. The hover
+   watch stops on the first call (the real cursor is Owen's: it must not reveal or hide a test bar), and only
+   then, so a reveal asked for mid-hide is still a reveal. Never registered live. */
+let testMoveArmed = false;
+if (flags.test) {
+  COMMANDS['bar.testMove'] = async (a) => {
+    if (!testMoveArmed) { testMoveArmed = true; stopHoverWatch(); }
+    if (a && a.up) revealBar('a test asked for the bar'); else beginHide('a test asked the bar to go');
+    return { ok: true, up: barUpNow(), rect: barRect(), tall: barTall() };
+  };
+}
 
 async function runTrace(dir) {
   const say = (s) => process.stdout.write(`mantle: --test-trace: ${s}\n`);
