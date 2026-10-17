@@ -8,6 +8,9 @@
  *              firmware's, so they cannot be taken: lib/features/osd.js, osd3 2026-09-24)
  *   osd.level  {kind, state}   the level moved while the pop-up is up (the sidecar's volume watch)
  *   osd.hide   {why}           gone at once (the feature was switched off, the display changed)
+ *   osd.lift   {px, kind, ms}  how far up the pane rests: above the bar's pill while the bar is up
+ *                              (ui/shared/bar-follow.js on #lift; lib/bar-follow.js in main)
+ *   osd.show {hold: true}      --test only (main's testShow): no fade until main hides it
  * WHAT THE PAGE ASKS:
  *   osd.size   {w, h}   the surface's size plus its shadow margin: main sizes and places the window
  *   osd.faded  {}       the fade finished: main hides the window (it takes no clicks while hidden)
@@ -32,7 +35,7 @@
   var POLL_MS = 1500;                        // the mixer's own refresh while it is open (qs-more.js)
 
   var el = {};
-  ['osd', 'panel', 'dev', 'apps', 'note', 'pill', 'glyph', 'level', 'num', 'more', 'why'].forEach(function (id) {
+  ['lift', 'osd', 'panel', 'dev', 'apps', 'note', 'pill', 'glyph', 'level', 'num', 'more', 'why'].forEach(function (id) {
     el[id] = document.getElementById(id);
   });
 
@@ -40,6 +43,7 @@
   var st = { volume: null, brightness: null };  // the newest reading of each, as main reports it
   var why = null;                                // a master set that did not take
   var open = false, shown = false, fading = 0, pollT = 0, gen = 0, seq = null;
+  var pinned = false;                            // --test only (main's testShow, show {hold:true}): no fade until it goes
   var mix = { data: null, memo: null, rows: {}, keys: '' };
   var dragging = false;
 
@@ -55,7 +59,7 @@
 
   var master = Send ? Send.sender(function (v) { return setMaster(v); }, {
     minGapMs: 16,
-    onIdle: function () { paint(); fader.hold(dragging); },
+    onIdle: function () { paint(); fader.hold(dragging || pinned); },
   }) : { push: function (v) { setMaster(v); }, busy: function () { return false; } };
 
   function held() { return dragging || master.busy(); }
@@ -175,6 +179,7 @@
     el.osd.hidden = false;
     shown = true;
     if (p.expand && kind === 'volume') setOpen(true);
+    if (p.hold === true) { pinned = true; fader.hold(true); }
     paint();
     fader.poke();
     // dark: one picture of what is behind the pop-up per show, not per key repeat (ui/shared/hud-backdrop.js)
@@ -215,6 +220,7 @@
     el.osd.hidden = true;
     el.osd.classList.remove('fading');
     setOpen(false);
+    pinned = false;
     fader.reset();
     why = null;
   }
@@ -416,7 +422,7 @@
   }
 
   function anyHeld() {
-    if (held()) return true;
+    if (held() || pinned) return true;
     for (var k in mix.rows) if (mix.rows[k].drag || mix.rows[k].send.busy()) return true;
     return false;
   }
@@ -475,6 +481,19 @@
     el.why.textContent = 'This page is Mantle’s volume pop-up; it needs Mantle (or ui/osd/mock-mantle.js) to run.';
     return;
   }
+  /* THE GLIDE WITH THE BAR (lane corner-follow-osd, 2026-10-17; ui/shared/bar-follow.js). Main places
+     the window as if the bar were not there and sends osd.lift {px, kind, ms}: how far up the pane rests
+     (above the bar's pill while the bar is up), on the bar's own clock. #lift carries the transform, so
+     the pane's own fade is untouched. DARK: the baked picture under the pane (ui/shared/hud-backdrop.js)
+     is mapped to where the pane was when it was baked, and its shot can hold the pill that has gone
+     since, so once a glide that travelled is over the pane asks for ONE fresh picture (no hold: the old
+     one stays up until the new one is baked). Light: nothing to bake. */
+  var follow = window.MantleBarFollow ? window.MantleBarFollow.attach(el.lift, {
+    event: 'osd.lift',
+    shown: function () { return shown; },
+    backdrop: 'the pop-up glided with the bar',   // dark: ui/shared/bar-follow.js reshoot
+  }) : { lift: function () { return 0; } };
+
   B.on('osd.show', show);
   B.on('osd.level', level);
   B.on('osd.hide', function () { if (fading) { clearTimeout(fading); fading = 0; } gone(); });
@@ -485,6 +504,9 @@
   });
 
   window.__osd = { show: show, level: level, setOpen: setOpen, fader: fader, state: function () {
-    return { kind: kind, shown: shown, open: open, fading: !!fading, st: st, why: why, rows: Object.keys(mix.rows), fade: fader.state() };
+    return { kind: kind, shown: shown, open: open, fading: !!fading, st: st, why: why, rows: Object.keys(mix.rows), fade: fader.state(), pinned: pinned,
+      // the glide: the lift main last sent, the transform it makes, and the pane's own box (no transform in it)
+      lift: follow.lift(), glideUp: el.lift.classList.contains('glide-up'), transform: getComputedStyle(el.lift).transform,
+      pane: { top: el.lift.offsetTop + el.osd.offsetTop, height: el.osd.offsetHeight, bottomGap: window.innerHeight - (el.lift.offsetTop + el.lift.offsetHeight) } };
   } };
 })();

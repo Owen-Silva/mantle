@@ -192,9 +192,33 @@
     return { x: x, y: y, width: w, height: h, below: !!top };
   }
 
+  /* WHERE THE POP-UP GOES NOW: as if the bar were not there, and it GLIDES with the bar (lane
+     corner-follow-osd, 2026-10-17; lib/bar-follow.js). Owen: no overlapping UI anywhere, "just have
+     them smoothly move up if the taskbar comes up". place() above put the window's bottom on the bar's
+     RESTING top even while the bar was hidden (ctx.host.barRect() is the resting shape then too), so a
+     hidden bar left the pop-up floating a bar-height up. Here the LOW window's bottom sits on the work
+     area's bottom (the page's --m margin is the gap to the edge), and `reach` is how far the page lifts
+     the pane while the bar is up (reachOver: lib/bar-follow.js's, passed in so the page can load this
+     file too), never more than the room above. The window while it can glide is `full` = height + reach
+     tall, its bottom on the low spot's. A top-edge bar: place()'s spot (below it), reach 0, no glide.
+     place() itself is unchanged: the layouts and on-top HUDs still use it. */
+  function placeLow(bar, work, size, bounds, reachOver) {
+    var p = place(bar, work, size, 0, bounds);
+    if (p.below) return Object.assign(p, { reach: 0, full: p.height });
+    var y = Math.max(work.y, Math.round(work.y + work.height - p.height));
+    var low = { x: p.x, y: y, width: p.width, height: p.height, below: false };
+    var on = bounds || work;
+    var barOn = bar && bar.width > 0 && bar.height > 0 &&
+      bar.x < on.x + on.width && bar.x + bar.width > on.x && bar.y < on.y + on.height && bar.y + bar.height > on.y;
+    var reach = barOn && typeof reachOver === 'function' ? Math.max(0, Math.round(Number(reachOver(low, bar, work)) || 0)) : 0;
+    low.reach = Math.min(reach, y - work.y);
+    low.full = low.height + low.reach;
+    return low;
+  }
+
   return {
     HOLD_MS: HOLD_MS, GRACE_MS: GRACE_MS,
     fader: fader, pct: pct, volumeSvg: volumeSvg, sunSvg: sunSvg, describe: describe, plain: plain, wheel: wheel,
-    listApps: listApps, appName: appName, place: place,
+    listApps: listApps, appName: appName, place: place, placeLow: placeLow,
   };
 }));

@@ -156,6 +156,34 @@ check('sun glyph: filled from 50', /fill="currentColor"/.test(M.sunSvg(60)) && !
   check('work area that starts below a top strip: still just above the bottom bar', q.y === 812 - 82 && q.x === 606, q);
 }
 
+// ---- placeLow: as if the bar were not there, plus the reach it glides up by (lane corner-follow-osd)
+{
+  const BF = require('../../lib/bar-follow.js');
+  const work = { x: 0, y: 0, width: 1536, height: 864 };
+  const pill = { x: 208, y: 802, width: 1120, height: 62 };   // Owen's resting pill, 1920x1080 at 125 %
+  const s = { w: 324, h: 82 };
+  const p = M.placeLow(pill, work, s, work, BF.reachOver);
+  check('low: the window\'s bottom on the work area\'s bottom, centred', p.x === 606 && p.y === 864 - 82 && p.height === 82 && !p.below, p);
+  check('low: the reach clears the pill\'s resting top (the pane 18 DIP above it, as place() put it)', p.reach === 62 && p.full === 144 && p.y - p.reach === M.place(pill, work, s, 0, work).y, p);
+  const big = M.placeLow(pill, work, { w: 384, h: 330 }, work, BF.reachOver);
+  check('the open panel: same reach, the window grows by it', big.reach === 62 && big.full === 392 && big.y === 534, big);
+  const pop = M.placeLow({ x: 208, y: 402, width: 1120, height: 462 }, work, s, work, BF.reachOver);
+  check('a bar pop-up open (the resting shape is taller): the reach clears it too', pop.reach === 462, pop);
+  const tall = M.placeLow(pill, work, { w: 384, h: 840 }, work, BF.reachOver);
+  check('no room above: the reach is cut to the room there is (inside the work area)', tall.y === 24 && tall.reach === 24 && tall.y - tall.reach === 0, tall);
+  const top = M.placeLow({ x: 208, y: 0, width: 1120, height: 62 }, work, s, work, BF.reachOver);
+  check('top-edge bar: below it as place() does, reach 0', top.below && top.y === 62 && top.reach === 0 && top.full === 82, top);
+  const dock = M.placeLow({ x: 0, y: 820, width: 1536, height: 44 }, { x: 0, y: 0, width: 1536, height: 820 }, s, { x: 0, y: 0, width: 1536, height: 864 }, BF.reachOver);
+  check('--dock (outside the work area): reach 0, the bottom on the bar\'s top', dock.reach === 0 && dock.y === 738, dock);
+  const none = M.placeLow(null, work, s, work, BF.reachOver);
+  check('no bar: low, reach 0', none.y === 782 && none.reach === 0, none);
+  const other = M.placeLow(pill, { x: 1536, y: 0, width: 1920, height: 1040 }, s, { x: 1536, y: 0, width: 1920, height: 1080 }, BF.reachOver);
+  check('the bar on another display: reach 0 here', other.reach === 0 && other.x > 1536 && other.y === 1040 - 82, other);
+  const noFn = M.placeLow(pill, work, s, work);
+  check('no reachOver given (the page): reach 0, never a throw', noFn.reach === 0 && noFn.y === 782, noFn);
+  check('place() is unchanged for the layouts / on-top HUDs (the bar\'s room kept)', M.place(pill, work, s, 0, work).y === 720);
+}
+
 console.log(`osd-model: ${passed} passed, ${failures.length} failed`);
 failures.forEach((f) => console.log('  FAIL ' + f));
 process.exit(failures.length ? 1 : 0);
