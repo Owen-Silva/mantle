@@ -25,6 +25,9 @@ html, body {
   font-size: 12.5px; -webkit-font-smoothing: antialiased; color: var(--lg-ink); user-select: none; cursor: default;
 }
 body { display: flex; justify-content: flex-end; align-items: flex-end; padding: 18px; }
+/* lane corner-follow: the card's wrapper, at the window's bottom; ui/shared/bar-follow.css lifts it above the
+   bar's pill while the bar is up (the window is that much taller). No transform of its own: the card pops. */
+#lift { flex: none; }
 /* headless shots only (mock-mantle.js): a stand-in for the desktop behind the window */
 body.mock { background: linear-gradient(160deg, #6d7fa6 0%, #b9c3d6 55%, #e7e2da 100%); }
 body.mock.dark { background: linear-gradient(160deg, #1b2130 0%, #2c3446 60%, #474c58 100%); }
