@@ -326,6 +326,26 @@
       pic: S.thumbDrawn, left: Math.round(leftNow()), paused: card.classList.contains('paused'), gone: S.gone };
   };
 
+  /* IN THE CORNER, GLIDING WITH THE BAR (lane corner-follow-card, 2026-10-17; the banners' mechanism). The
+     window sits in the corner as if the bar were not there, with the bar's reach above the card; main sends
+     screenshot.lift { px, kind, ms } and the shared follow lifts #lift (ui/shared/bar-follow.js: up on the bar's
+     spring, down on its exit, reduced motion a jump). main's window shape follows the card, so its clicks,
+     hover and keys work where it is. DARK: the baked picture (ui/shared/hud-backdrop.js) is a slice of the
+     screen at where the pane stood when it was baked, and the bar itself comes or goes behind the window, so
+     once a glide lands with the card up it asks for ONE new picture of what is behind it there. */
+  var lift = $('lift');
+  // dark: one fresh backdrop once a glide that moved the card has landed (ui/shared/bar-follow.js reshoot)
+  var follow = window.MantleBarFollow ? window.MantleBarFollow.attach(lift, {
+    event: 'screenshot.lift', shown: function () { return !S.gone && !card.hidden; }, backdrop: 'the card glided with the bar',
+  }) : null;
+  /** Where the card is in its window, for the page test and the corner trace (screenshot.cardState). */
+  window.__cardFollow = function () {
+    var m = /matrix\(([^)]+)\)/.exec(getComputedStyle(lift).transform), r = card.getBoundingClientRect();
+    return { lift: follow ? follow.lift() : 0, y: m ? Number(m[1].split(',')[5]) : 0, glideUp: lift.classList.contains('glide-up'),
+      inner: window.innerHeight, offBottom: window.innerHeight - (card.offsetTop + card.offsetHeight), boxTop: r.top, boxBottom: r.bottom,
+      w: card.offsetWidth, h: card.offsetHeight, hidden: card.hidden, gone: S.gone };
+  };
+
   if (!bridge) return;
   // dark: one picture of what is behind the card per show; main waits for it to leave its parking spot
   bridge.on('screenshot.card', function (p) { show(p); if (window.MantleHudBackdrop) window.MantleHudBackdrop.request('shown', { hold: true }); });

@@ -48,6 +48,112 @@ async function open(browser, theme, q) {
   return { ctx, page, m: () => page.evaluate(MEASURE) };
 }
 
+/* ---- IN THE CORNER, GLIDING WITH THE BAR (lane corner-follow-card, 2026-10-17). Owen, of the banners: "this
+   and anything else that comes up here needs to go in the corner not up like this ... just have them smoothly
+   move up if the taskbar comes up". The window is the card plus the bar's reach (62 DIP on his screen) ABOVE it;
+   main sends screenshot.lift { px, kind, ms } (lib/bar-follow.js) and ui/shared/bar-follow.js lifts #lift:
+     - the card sits at the window's BOTTOM (its 12 px margin), the reach above it, lift 0;
+     - up: the bar's spring (linear(), the 41 points) over main's ms, really travelling, landing 62 up;
+     - down: the bar's exit (cubic-bezier(.3,0,.8,.15)), back at the bottom; ms 0: simply there;
+     - the lift is a transform: the card's own size (what main sizes the window from) never changes, main is
+       not told a new size;
+     - its pointer and keys work WHERE IT IS (hover pauses the timer, Save, Esc) at the lifted place;
+     - dark: once a glide lands, ONE new picture is asked for (hud.backdrop); light: none;
+     - reduced motion: up jumps at once; down holds above the fading pill for main's ms, then jumps. */
+const REACH = 62;
+const FOLLOW = () => {
+  const f = window.__cardFollow(), cs = getComputedStyle(document.getElementById('lift'));
+  return Object.assign(f, { tf: cs.transitionTimingFunction, dur: cs.transitionDuration, paused: document.getElementById('card').classList.contains('paused'),
+    sizes: window.__mock.calls.filter((x) => /card(Shown|Size)$/.test(x.name)).length,
+    asks: window.__mock.calls.filter((x) => x.name === 'hud.backdrop' && x.args && x.args.why === 'the card glided with the bar').length,
+    dismissed: window.__mock.calls.filter((x) => /cardDismiss$/.test(x.name)).length });
+};
+async function openGlide(browser, theme, motion) {
+  const ctx = await browser.newContext({ viewport: { width: 420, height: 220 + REACH }, deviceScaleFactor: 1, reducedMotion: motion });
+  const page = await ctx.newPage();
+  await page.addInitScript((t) => {
+    const set = () => { document.documentElement.dataset.theme = t; };
+    if (document.documentElement) set(); else new MutationObserver((_m, o) => { if (document.documentElement) { set(); o.disconnect(); } }).observe(document, { childList: true });
+  }, theme);
+  await page.goto(PAGE + '?life=0&state=copied');
+  await page.waitForFunction(() => { const c = document.getElementById('card'); return c && !c.hidden && window.__mock.calls.some((x) => /cardShown$/.test(x.name)); }, null, { timeout: 5000 });
+  await sleep(450);                        // the card's own slide-in is over
+  // dark: the mock answers the show's hud.backdrop with no picture, so that request stays in flight until
+  // hud-backdrop.js's 1500 ms timeout (one in flight serves every request): let it lapse first
+  if (theme === 'dark') await sleep(1300);
+  const emit = (p) => page.evaluate((x) => window.__cardEmit('screenshot.lift', x), p);
+  return { ctx, page, emit, f: () => page.evaluate(FOLLOW) };
+}
+async function glideChecks(browser) {
+  for (const theme of ['light', 'dark']) {
+    const T = theme + ' glide: ';
+    const P = await openGlide(browser, theme, 'no-preference');
+    const g0 = await P.f();
+    check(T + 'the card sits at the window\'s bottom (12 px margin), the reach above it, no lift', g0.offBottom === 12 && g0.y === 0 && Math.abs(g0.boxBottom - (g0.inner - 12)) < 0.5 && g0.boxTop > REACH, g0);
+    await P.emit({ px: REACH, kind: 'up', ms: 336 });
+    const g1 = await P.f();
+    check(T + 'up: on the bar\'s spring (linear(), the 41 points) over main\'s 336 ms', /^linear\(/.test(g1.tf) && g1.dur === '0.336s' && g1.glideUp, g1);
+    await sleep(90);
+    const gMid = await P.f();
+    check(T + 'up: really travels (mid-way at ~90 ms, not a jump)', gMid.y < -5 && gMid.y > -REACH, gMid);
+    await sleep(400);
+    const g2 = await P.f();
+    check(T + 'up: lands 62 above the corner (the card\'s bottom 12 + 62 from the window\'s)', Math.abs(g2.y + REACH) < 0.5 && Math.abs(g2.boxBottom - (g2.inner - 12 - REACH)) < 0.5, g2);
+    check(T + 'the lift is a transform: the card\'s own size and place in the layout are the same, main is not told a new size',
+      g2.w === g0.w && g2.h === g0.h && g2.offBottom === 12 && g2.sizes === g0.sizes, { g0, g2 });
+    if (theme === 'dark') {
+      await sleep(120);
+      const a1 = (await P.f()).asks;
+      check(T + 'dark: once the glide landed, ONE new picture of what is behind the card there is asked for', a1 === g0.asks + 1, { before: g0.asks, after: a1 });
+      await P.emit({ px: REACH, kind: 'up', ms: 0 });
+      await sleep(200);
+      check(T + 'dark: a stand where it already is asks for nothing more', (await P.f()).asks === a1);
+    } else {
+      await sleep(120);
+      check(T + 'light: no picture is ever asked for (nothing is baked in light)', (await P.f()).asks === 0);
+    }
+    // its pointer works WHERE IT IS: hover (the timer rests), then Save at the lifted place
+    await P.page.hover('#card');
+    await sleep(60);
+    const gh = await P.f();
+    check(T + 'lifted: the pointer on the card pauses its timer (hover reaches it where it is)', gh.paused, gh);
+    await P.page.mouse.move(2, 2);
+    await sleep(60);
+    check(T + 'lifted: the pointer gone, the timer runs again', !(await P.f()).paused);
+    await P.page.click('#save');
+    await P.page.waitForFunction(() => !document.getElementById('folder').hidden, null, { timeout: 3000 }).catch(() => {});
+    const gs = await P.f();
+    const folderUp = await P.page.evaluate(() => !document.getElementById('folder').hidden);
+    check(T + 'lifted: Save clicked where the card is, saved (Show in folder is up), and the card still 62 up', folderUp && Math.abs(gs.y + REACH) < 0.5, { folderUp, gs });
+    await P.emit({ px: 0, kind: 'down', ms: 300 });
+    const g3 = await P.f();
+    check(T + 'down: on the bar\'s exit (cubic-bezier(.3,0,.8,.15)) over main\'s 300 ms', /cubic-bezier\(0\.3, 0, 0\.8, 0\.15\)/.test(g3.tf) && g3.dur === '0.3s' && !g3.glideUp, g3);
+    await sleep(420);
+    const g4 = await P.f();
+    check(T + 'down: back in the corner, at the window\'s bottom', Math.abs(g4.y) < 0.5 && g4.offBottom === 12 && Math.abs(g4.boxBottom - (g4.inner - 12)) < 0.5, g4);
+    await P.emit({ px: REACH, kind: 'up', ms: 0 });
+    const g5 = await P.f();
+    check(T + 'ms 0 (the page told where it rests before a show): simply there, no travel', Math.abs(g5.y + REACH) < 0.5, g5);
+    await P.page.keyboard.press('Escape');
+    await sleep(420);
+    check(T + 'lifted: Esc puts the card away (the keyboard reaches it where it is)', (await P.f()).dismissed === 1);
+    await P.ctx.close();
+  }
+  {
+    const P = await openGlide(browser, 'light', 'reduce');
+    await P.emit({ px: REACH, kind: 'up', ms: 336 });
+    const r1 = await P.f();
+    check('reduced motion: up is a jump, 62 up at once (no travel)', Math.abs(r1.y + REACH) < 0.5 && r1.dur === '0s', r1);
+    await P.emit({ px: 0, kind: 'down', ms: 300 });
+    await sleep(120);
+    const held = await P.f();
+    await sleep(320);
+    const down = await P.f();
+    check('reduced motion: down holds above the fading pill for main\'s 300 ms, then is in the corner', Math.abs(held.y + REACH) < 0.5 && Math.abs(down.y) < 0.5 && down.offBottom === 12, { held, down });
+    await P.ctx.close();
+  }
+}
+
 (async () => {
   const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true });
   try {
@@ -89,6 +195,7 @@ async function open(browser, theme, q) {
       check(T + 'Copy text card: fits its words, no wider than 372', e.w >= 240 && e.w <= 372 && e.cut.length === 0, e);
       await P.ctx.close();
     }
+    await glideChecks(browser);
   } catch (e) {
     check('the run itself', false, e && e.stack ? e.stack : String(e));
   } finally {

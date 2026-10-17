@@ -10,9 +10,12 @@
      the picture opens the file, Show in folder / Copy path. Plain words for whatever failed. -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="card.css">
+<link rel="stylesheet" href="../shared/bar-follow.css">
 <link rel="stylesheet" href="../shared/hud-backdrop.css">
 </head>
 <body>
+<!-- #lift glides the card with the bar (ui/shared/bar-follow.js, lane corner-follow-card); #card keeps its own slide-in -->
+<div id="lift">
 <div id="card" hidden>
   <button type="button" id="open" class="thumb" title="Open the screenshot" aria-label="Open the screenshot">
     <canvas id="pic" width="1" height="1"></canvas>
@@ -35,8 +38,10 @@
   </button>
   <div id="timer" class="timer"></div>
 </div>
+</div>
 <script src="card-mock.js"></script>
 <script src="geometry.js"></script>
+<script src="../shared/bar-follow.js"></script>
 <script src="card.js"></script>
 <!-- dark only: the blurred picture of the screen behind this window, once main sends screenshot.card.backdrop (lane see-huds) -->
 <script src="../shared/glass-adapt.js"></script>
