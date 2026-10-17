@@ -194,7 +194,9 @@ namespace Mantle {
       string record;
       lock (_gate) record = _record;
       if (record == null) return "notification banners: Mantle never took any in this run";
-      return RestoreFrom(record, SettingsKey, Program.Passive);
+      string dir = null;
+      try { dir = Path.GetDirectoryName(record); } catch (Exception) { dir = null; }
+      return RestoreFrom(record, SettingsKey, Program.Passive, string.IsNullOrEmpty(dir) ? null : Path.Combine(dir, "notif-banners-back.sidecar.json"));
     }
 
     /// The put-back itself, shared by the sidecar's exit (RestoreForExit) and the crash supervisor
@@ -203,21 +205,25 @@ namespace Mantle {
     /// (SettingsKey; a test points it at a scratch key); testOnly = only app ids starting with
     /// TestPrefix are written (a passive sidecar, a --supervise-test supervisor). The one rule: an
     /// original goes back ONLY where the value is still the DWORD 0 Mantle wrote; anything else is
-    /// Owen's own value and is left. Never throws; one line, no paths.
-    public static string RestoreFrom(string record, string settingsKey, bool testOnly) {
+    /// Owen's own value and is left. backFile (null = none): this writer's own put-back mark, which
+    /// tells main's next start that a 0 on those apps afterwards is Owen's choice (MarkBack). Never
+    /// throws; one line, no paths.
+    public static string RestoreFrom(string record, string settingsKey, bool testOnly, string backFile) {
       if (string.IsNullOrEmpty(record)) return "notification banners: Mantle never took any in this run";
       if (string.IsNullOrEmpty(settingsKey)) settingsKey = SettingsKey;
-      Dictionary<string, object> owned;
+      Dictionary<string, object> owned, taken;
       try {
         if (!File.Exists(record)) return "notification banners: no record, nothing to put back";
         var top = Json.Parse(File.ReadAllText(record)) as Dictionary<string, object>;
-        object o;
+        object o, tk;
         owned = top != null && top.TryGetValue("owned", out o) ? o as Dictionary<string, object> : null;
+        taken = top != null && top.TryGetValue("taken", out tk) ? tk as Dictionary<string, object> : null;
       } catch (Exception ex) {
         return "notification banners: the record could not be read (" + ex.GetType().Name + "), so Windows' banners stay as they are; tools\\restore-banners.ps1 puts them back";
       }
       if (owned == null || owned.Count == 0) return "notification banners: none owned";
       int back = 0, left = 0, failed = 0;
+      var put = new List<string>();   // the record's own keys of the apps put back, for MarkBack
       try {
         using (RegistryKey root = Registry.CurrentUser.OpenSubKey(settingsKey, true)) {
           if (root == null) return "notification banners: Windows' notification settings are gone; nothing to put back";
@@ -236,15 +242,65 @@ namespace Mantle {
                 if (original.HasValue) k.SetValue("ShowBanner", original.Value, RegistryValueKind.DWord);
                 else k.DeleteValue("ShowBanner", false);
                 back++;
+                put.Add(kv.Key);
               }
             } catch (Exception) { failed++; }
           }
         }
       } catch (Exception ex) {
-        return "notification banners: put back failed (" + ex.GetType().Name + "); tools\\restore-banners.ps1 finishes it";
+        string partial = put.Count > 0 && backFile != null ? MarkBack(backFile, put, taken) : null;
+        return "notification banners: put back failed (" + ex.GetType().Name + "); tools\\restore-banners.ps1 finishes it" +
+               (partial != null ? "; the put-back mark could not be written (" + partial + ")" : "");
       }
+      string markWhy = put.Count > 0 && backFile != null ? MarkBack(backFile, put, taken) : null;
       return "notification banners: " + back + " put back to Windows" + (left > 0 ? ", " + left + " left as they were" : "") +
-             (failed > 0 ? ", " + failed + " FAILED (tools\\restore-banners.ps1 finishes it)" : "");
+             (failed > 0 ? ", " + failed + " FAILED (tools\\restore-banners.ps1 finishes it)" : "") +
+             (markWhy != null ? "; the put-back mark could not be written (" + markWhy + "), so a banner Owen turns off before Mantle starts again may be read as Mantle's" : "");
+    }
+
+    /// Which apps this writer put back, for main's next start (lib/features/_toasts-owner.js): an owned app
+    /// that reads 0 later while the record still has the SAME taken stamp is Owen's own choice (a retake
+    /// stamps a new one, so an older mark never matches it). Format:
+    /// {"v":1,"back":{"<aumid as the record keys it>":{"at":<ms>,"took":<the record's stamp, or null>}}},
+    /// merged with this file's earlier entries (the newest 300 kept), written whole through a temp file.
+    /// Only this writer writes this file. -> null, or why it could not be written.
+    static string MarkBack(string backFile, List<string> ids, Dictionary<string, object> taken) {
+      try {
+        var back = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        if (File.Exists(backFile)) {
+          try {
+            var top = Json.Parse(File.ReadAllText(backFile)) as Dictionary<string, object>;
+            object b;
+            var old = top != null && top.TryGetValue("back", out b) ? b as Dictionary<string, object> : null;
+            if (old != null) foreach (var kv in old) if (kv.Value is Dictionary<string, object>) back[kv.Key] = kv.Value;
+          } catch (Exception) { /* an unreadable mark is replaced whole */ }
+        }
+        long now = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+        foreach (string id in ids) {
+          object took = null, v;
+          if (taken != null && taken.TryGetValue(id, out v) && v is double) took = (long)(double)v;
+          back[id] = Json.Obj("at", now, "took", took);
+        }
+        if (back.Count > 300) {
+          var keys = new List<string>(back.Keys);
+          keys.Sort((a, c) => AtOf(back[a]).CompareTo(AtOf(back[c])));
+          for (int i = 0; i < keys.Count - 300; i++) back.Remove(keys[i]);
+        }
+        string text = Json.Write(Json.Obj("v", 1, "back", back));
+        string tmp = backFile + ".tmp-" + System.Diagnostics.Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
+        File.WriteAllText(tmp, text, new System.Text.UTF8Encoding(false));
+        if (File.Exists(backFile)) File.Replace(tmp, backFile, null);
+        else File.Move(tmp, backFile);
+        return null;
+      } catch (Exception ex) {
+        return ex.GetType().Name;
+      }
+    }
+
+    static double AtOf(object entry) {
+      var d = entry as IDictionary;
+      object at = d != null && d.Contains("at") ? d["at"] : null;
+      try { return at == null ? 0 : Convert.ToDouble(at, CultureInfo.InvariantCulture); } catch (Exception) { return 0; }
     }
   }
 }

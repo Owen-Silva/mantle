@@ -20,6 +20,12 @@
 //        (Quit Mantle, the kill switch, Restore Windows taskbar, `electron . --quit` = golive,
 //        Restart Mantle, Windows ending the session): it exits without starting anything;
 //     2. Windows is signing out / shutting down (SM_SHUTTINGDOWN): exits;
+//     2b. the record names ANOTHER live main (lane mantle-notif-safety2): the dead one lost Electron's
+//        single-instance lock to it (a relaunch racing Owen's own start) or was replaced: not a crash, exits;
+//     2c. main AND its sidecar ended with exit code 1 within 2 s = a process-tree kill (Task Manager's "End
+//        process tree", taskkill /T): Owen stopping Mantle. The taskbar is put back (restore-windows.ps1
+//        -NoKill, as a give-up does), no dialog, no restart, exits. It keeps a handle on main's sidecar(s)
+//        while main lives (TrackSidecars), because a process that is gone cannot be asked its exit code;
 //     3. otherwise a CRASH: the 3rd crash inside 2 minutes = a crash loop -> stop retrying, put the
 //        Windows taskbar back (tools\restore-windows.ps1 -NoKill) and say why in a dialog;
 //        before that, start main again with the SAME exe, arguments and folder, once the dead
@@ -30,9 +36,12 @@
 //
 // FILES in <userData> (one writer each, so the two processes never race on a file):
 //   supervisor-main.json   written by main only: pid, exe, args, cwd, root, standDown, crashNote, told
-//   supervisor-state.json  written by this only: crashes[], last{...}, gaveUp{...}, banners{at, result, skipped}
+//   supervisor-state.json  written by this only: supervisorPid, startedAt, watching, lock, crashes[], last{...},
+//                          gaveUp{...}, banners{at, result, skipped}
 //   supervisor.log         this process's own lines (also appended to main's --log file when it has one)
 //   notif-banners.json     written by main only (lib/features/_toasts-owner.js); READ here, see BannersBack
+//   notif-banners-back.supervisor.json  written by this only: which apps BannersBack put back (ToastBanners.MarkBack)
+//   supervisor.lock        held open by the mutex holder for its whole life (empty; main only opens it to look)
 //
 // WINDOWS' OWN NOTIFICATION BANNERS (BannersBack, lane mantle-notif-safety 2026-10-17): Mantle turns
 // Windows' banner off per app while it draws its own, and Owen's rule is that a Windows surface Mantle
@@ -47,6 +56,15 @@
 // so "End process tree" / taskkill /F /T on main cannot reach it. A copy that cannot be started:
 // {"supervisor":<own pid>,"detached":false,"why":"..."} and this process supervises from inside the tree.
 //
+// ONE PER MANTLE FOLDER (lane mantle-notif-safety2, 2026-10-17): two supervisors on one main both start it
+// after a crash; the start that loses the single-instance lock then read as crashes 2 and 3 and a give-up
+// over a running Mantle. So the watcher takes Local\Mantle.Supervisor.<hash of --supervise-dir> first. A
+// copy whose holder already watches the SAME main exits at once; a launcher in that case answers
+// {"supervisor":<holder>,"detached":true,"existing":true} and starts no copy. A holder still finishing for
+// an OLDER main (Restart Mantle, a crash-loop dialog) is waited for. The holder writes supervisorPid,
+// startedAt and watching into supervisor-state.json and keeps supervisor.lock open share-none for its whole
+// life: main opens that file for a moment to tell a live supervisor from a pid Windows has handed on.
+//
 // --supervise-test (a --test instance): never shows a dialog and never runs the restore script; the
 // restore command is written into the state file instead, so a test can read what would have run. The
 // banners ARE put back, but only for app ids starting with ToastBanners.TestPrefix, and
@@ -59,6 +77,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 
@@ -76,6 +95,17 @@ namespace Mantle {
     static IDictionary _banners;          // the latest BannersBack, for WriteState: {at, result, skipped}
     static int _skipSaidFor;              // the owner pid a skip was last said for (said once, not per death)
     const string BannersFile = "notif-banners.json";
+    const string BackFile = "notif-banners-back.supervisor.json";   // which apps THIS put back (lib/features/_toasts-owner.js)
+    static int _watching;                 // the main pid watched now (state file: who this supervisor is for)
+    static long _startedMs;               // this process's own start time (state file: its identity, not just a pid)
+    static Mutex _mutex;                  // ONE supervisor per Mantle folder (TakeMutex)
+    static bool _haveMutex;
+    static FileStream _lock;              // supervisor.lock, held share-none while the mutex is held: main's proof it is alive
+    static readonly List<Tracked> _sidecars = new List<Tracked>();   // the watched main's sidecar(s), for TreeKilled
+    const int TrackEveryMs = 10000;
+    const int TreeKillWindowMs = 2000;    // main and its sidecar both ended with code 1 this close together = a tree kill
+
+    class Tracked { public int Pid; public IntPtr H; }
 
     [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr h, uint ms);
@@ -148,8 +178,18 @@ namespace Mantle {
       }
       Dictionary<string, object> rec0 = ReadJson(MainFile());
       _mainLog = LogArg(rec0);
+      _startedMs = OwnStartMs();
 
       if (detach) {
+        // ONE supervisor per Mantle folder: a supervisor that already watches THIS main is named instead of
+        // starting a second one (two would both start main after a crash, and the one that lost Electron's
+        // single-instance lock would count it as a crash and give up over a running Mantle).
+        int holder = HolderFor(mainPid);
+        if (holder > 0) {
+          StdoutLine("{\"supervisor\":" + holder.ToString(CultureInfo.InvariantCulture) + ",\"detached\":true,\"existing\":true}");
+          Say("supervisor: supervisor pid " + holder + " already watches Mantle's main process " + mainPid + ", so no second one was started");
+          return 0;
+        }
         // Out of main's process tree, so "End process tree" on main cannot take the supervisor with it.
         string whyNot;
         int copy = Detach(args, out whyNot);
@@ -169,15 +209,22 @@ namespace Mantle {
         Say("supervisor: Mantle's main process " + mainPid + " was not running when the supervisor started, so there is nothing to watch");
         return 2;
       }
+      // One supervisor per Mantle folder. Another one already watching THIS main = this copy is a spare: it
+      // exits. One finishing up for an older main (Restart Mantle, a crash-loop dialog) is waited for.
+      if (TakeMutex(mainPid, h) == MutexDuplicate) { CloseHandle(h); return 0; }
+      _watching = mainPid;
       // A supervisor that replaces one that went away carries its crash history on.
       List<long> crashes = PriorCrashes();
+      if (_haveMutex) WriteState(null, null, null);   // who watches whom, before anything can happen
       Say("supervisor: watching Mantle's main process " + mainPid + " (supervisor pid " + _me + "); a crash brings it back, " +
           MaxCrashes + " crashes inside " + (WindowMs / 60000) + " minutes stop the retries");
+      int launched = 0;   // the main THIS supervisor started last (0 = it watches the one that started it)
 
       for (;;) {
-        WaitForSingleObject(h, INFINITE);
+        WatchUntilGone(h, mainPid);
         uint raw = 0;
         bool haveCode = GetExitCodeProcess(h, out raw);
+        long mainEndedMs = ExitMs(h);
         CloseHandle(h);
         h = IntPtr.Zero;
         long diedAt = NowMs();
@@ -200,6 +247,38 @@ namespace Mantle {
         if (GetSystemMetrics(SM_SHUTTINGDOWN) != 0) {
           Say("supervisor: Mantle " + mainPid + " ended while Windows is signing out or shutting down (exit code " + codeHex + "); it is not started again");
           WriteState(crashes, null, null);   // keeps last/gaveUp; records what BannersBack did
+          return 0;
+        }
+
+        // Another LIVE Mantle main for this folder (the record names it): the one that died lost Electron's
+        // single-instance lock to it (a relaunch while Owen started Mantle himself), or was replaced. Not a
+        // crash, and starting main again could only lose that lock again. That Mantle has its own supervisor
+        // (waiting for this one's mutex), so this one exits.
+        int other = !recIsHis ? OtherLiveMain(mainPid, launched == mainPid && haveCode && raw == 0 ? 5000 : 0) : 0;
+        if (other > 0) {
+          CloseTracked();
+          Say("supervisor: Mantle " + mainPid + " stopped (exit code " + codeHex + ") because another Mantle (pid " + other +
+              ") already runs for this folder" + (launched == mainPid ? " (the one it started lost the single-instance lock)" : "") +
+              "; that is not a crash, nothing is started, and this supervisor leaves the watching to that Mantle's own");
+          WriteState(crashes, null, null);   // not counted: crashes as they were
+          return 0;
+        }
+
+        // "End process tree" / taskkill /T: main AND its sidecar ended with exit code 1 together. That is Owen
+        // stopping Mantle, not a crash: Windows' taskbar back (the same restore a crash-loop give-up runs), no
+        // dialog, no restart. A crash of main alone leaves its sidecar to exit by itself, with code 0.
+        bool treeKill = haveCode && raw == 1 && TreeKilled(mainEndedMs > 0 ? mainEndedMs : diedAt);
+        CloseTracked();
+        if (treeKill) {
+          string restoreCmd = RestoreCommand();
+          string restoreResult = _test ? "not run (test instance)" : RunRestore(restoreCmd);
+          var stopped = Json.Obj("at", diedAt, "oldPid", mainPid, "code", (long)raw, "codeHex", codeHex,
+                                 "words", "it was ended together with its helper (a process-tree kill)", "restarted", false, "treeKill", true,
+                                 "restore", Json.Obj("command", restoreCmd, "dryRun", _test, "result", restoreResult));
+          WriteState(new List<long>(), stopped, null);   // a deliberate stop ends the story, like a quit
+          Say("supervisor: Mantle " + mainPid + " and its helper were ended together (exit code " + codeHex +
+              ": Task Manager's \"End process tree\" or taskkill /T), which is a deliberate stop, so it is not started again; " +
+              "the Windows taskbar was put back: " + restoreResult);
           return 0;
         }
 
@@ -230,10 +309,14 @@ namespace Mantle {
           Say("supervisor: Windows started signing out or shutting down before Mantle was started again; it is not started");
           return 0;
         }
+        // A test instance whose folder its test has already cleaned up is never started again (a test runner's
+        // kill must never leave a test Mantle running on Owen's desktop).
+        if (_test && !Directory.Exists(_dir)) return 0;
 
         string why2;
         int newPid = Launch(spec, out why2);
         long backAt = NowMs();
+        if (newPid > 0) { launched = newPid; _watching = newPid; }
         var last = Json.Obj("at", diedAt, "oldPid", mainPid, "code", haveCode ? (object)(long)raw : null, "codeHex", codeHex,
                             "words", words, "what", what, "restarted", newPid > 0, "newPid", newPid > 0 ? (object)newPid : null,
                             "startedInMs", backAt - diedAt, "waitedForTaskbar", waitedForShell, "failed", newPid > 0 ? null : why2);
@@ -339,7 +422,7 @@ namespace Mantle {
           }
           return;
         }
-        string result = ToastBanners.RestoreFrom(record, _bannersKey, _test);
+        string result = ToastBanners.RestoreFrom(record, _bannersKey, _test, Path.Combine(_dir, BackFile));
         _banners = Json.Obj("at", at, "result", result, "skipped", false);
         Say("supervisor: Mantle " + deadPid + " is gone; Windows' own " + result.Replace("tools\\restore-banners.ps1", "the restore-banners script") +
             (_test ? " (test instance: test app ids only)" : ""));
@@ -382,6 +465,195 @@ namespace Mantle {
         return true;
       } finally { CloseHandle(h); }
     }
+
+    // ------------------------------------------------------------------ one supervisor per Mantle folder
+
+    const int MutexHeld = 0, MutexDuplicate = 1, MutexMainGone = 2;
+
+    /// Local\Mantle.Supervisor.<hash of the folder>: one name per userData, whatever its spelling.
+    static string MutexName() {
+      string dir;
+      try { dir = Path.GetFullPath(_dir); } catch (Exception) { dir = _dir; }
+      dir = dir.TrimEnd('\\', '/').ToLowerInvariant();
+      using (SHA256 sha = SHA256.Create()) {
+        byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(dir));
+        var sb = new StringBuilder("Local\\Mantle.Supervisor.");
+        for (int i = 0; i < 12; i++) sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
+        return sb.ToString();
+      }
+    }
+
+    /// -> MutexHeld (this is the one), MutexDuplicate (another supervisor already watches mainPid: this copy
+    /// exits) or MutexMainGone (main ended while this waited for an older main's supervisor to finish; nobody
+    /// else watches it, so it is handled here anyway and the mutex is taken later, in WatchUntilGone).
+    static int TakeMutex(int mainPid, IntPtr h) {
+      try { _mutex = new Mutex(false, MutexName()); }
+      catch (Exception ex) {
+        Say("supervisor: its one-per-folder lock could not be made (" + ex.GetType().Name + "); it watches without it");
+        return MutexHeld;
+      }
+      bool said = false;
+      for (;;) {
+        if (TryMutexNow()) return MutexHeld;
+        int dup = Duplicate(mainPid);
+        if (dup > 0) {
+          Say("supervisor: supervisor pid " + dup + " already watches Mantle's main process " + mainPid + ", so this copy (pid " + _me + ") exits");
+          return MutexDuplicate;
+        }
+        if (!said) {
+          said = true;
+          Say("supervisor: another supervisor for this Mantle folder is still running (for an older main); it waits for that one to finish before it watches main " + mainPid);
+        }
+        if (WaitForSingleObject(h, 500) == WAIT_OBJECT_0) return MutexMainGone;
+      }
+    }
+
+    /// The mutex if it is free now (an abandoned one counts: its holder is gone), with supervisor.lock.
+    static bool TryMutexNow() {
+      if (_haveMutex) return true;
+      if (_mutex == null) return false;
+      try { _haveMutex = _mutex.WaitOne(0); }
+      catch (AbandonedMutexException) { _haveMutex = true; }
+      catch (Exception) { return false; }
+      if (!_haveMutex) return false;
+      // Held (shared for delete only, so a test can still remove its folder) for as long as this process
+      // lives: main opens it for a moment to see that it is
+      // (a pid alone can be reused by another process). A few tries: main's own look may hold it that moment.
+      string lockFile = Path.Combine(_dir, "supervisor.lock");
+      for (int i = 0; i < 5 && _lock == null; i++) {
+        try { _lock = new FileStream(lockFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Delete); }
+        catch (Exception ex) {
+          if (i == 4) Say("supervisor: supervisor.lock could not be held (" + ex.GetType().Name + "); Mantle checks this supervisor by its pid only");
+          else Thread.Sleep(50);
+        }
+      }
+      return true;
+    }
+
+    /// Another supervisor that already watches mainPid (the state file it wrote when it took the mutex, or
+    /// when it started main again) and is still that process -> its pid, or 0.
+    static int Duplicate(int mainPid) {
+      Dictionary<string, object> st = ReadJson(StateFile());
+      if (st == null) return 0;
+      int sp = Json.GetInt(st, "supervisorPid", 0);
+      if (sp <= 0 || sp == _me || Json.GetInt(st, "watching", 0) != mainPid) return 0;
+      return AliveSince(sp, GetLong(st, "at")) ? sp : 0;
+    }
+
+    /// --supervise-detach: the supervisor that holds this folder's mutex AND watches mainPid -> its pid, or 0.
+    static int HolderFor(int mainPid) {
+      Mutex m = null;
+      try {
+        if (!Mutex.TryOpenExisting(MutexName(), out m)) return 0;
+        bool free;
+        try { free = m.WaitOne(0); } catch (AbandonedMutexException) { free = true; }
+        if (free) { try { m.ReleaseMutex(); } catch (Exception) { } return 0; }
+        return Duplicate(mainPid);
+      } catch (Exception) {
+        return 0;
+      } finally {
+        if (m != null) m.Dispose();
+      }
+    }
+
+    // ------------------------------------------------------------------ watching main (and its sidecar)
+
+    /// Waits for main to end. Meanwhile it keeps a handle on each of main's sidecars (TreeKilled needs their
+    /// exit codes, and a process that is gone cannot be opened any more) and takes the mutex if it had to start
+    /// without it. Every second for the first 30 s of a main (its sidecar starts then), every 10 s after.
+    static void WatchUntilGone(IntPtr h, int mainPid) {
+      long since = NowMs();
+      for (;;) {
+        if (_mutex != null && !_haveMutex && TryMutexNow()) WriteState(null, null, null);
+        TrackSidecars(mainPid);
+        uint step = NowMs() - since < 30000 ? 1000u : (uint)TrackEveryMs;
+        if (WaitForSingleObject(h, step) == WAIT_OBJECT_0) return;
+      }
+    }
+
+    static void TrackSidecars(int mainPid) {
+      var found = new List<int>();
+      IntPtr snap = CreateToolhelp32Snapshot(0x2 /* TH32CS_SNAPPROCESS */, 0);
+      if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return;
+      try {
+        var e = new PROCESSENTRY32W();
+        e.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32W));
+        if (Process32FirstW(snap, ref e)) {
+          do {
+            if (e.th32ParentProcessID == (uint)mainPid && e.th32ProcessID != (uint)_me &&
+                string.Equals(e.szExeFile, "Mantle.Sidecar.exe", StringComparison.OrdinalIgnoreCase))
+              found.Add((int)e.th32ProcessID);
+          } while (Process32NextW(snap, ref e));
+        }
+      } finally { CloseHandle(snap); }
+      foreach (int pid in found) {
+        bool have = false;
+        foreach (Tracked t in _sidecars) if (t.Pid == pid && StillRunning(t.H)) { have = true; break; }
+        if (have) continue;
+        IntPtr ph = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (ph != IntPtr.Zero) _sidecars.Add(new Tracked { Pid = pid, H = ph });
+      }
+      while (_sidecars.Count > 8) {   // bounded: ended ones go first
+        int drop = _sidecars.FindIndex(t => !StillRunning(t.H));
+        if (drop < 0) drop = 0;
+        CloseHandle(_sidecars[drop].H);
+        _sidecars.RemoveAt(drop);
+      }
+    }
+
+    static bool StillRunning(IntPtr ph) { uint c; return GetExitCodeProcess(ph, out c) && c == STILL_ACTIVE; }
+
+    /// main ended with exit code 1 at mainEndedMs: did one of its sidecars end with code 1 within
+    /// TreeKillWindowMs of it? One still running gets up to 1.5 s: a tree kill ends them all at once, while
+    /// after a crash (or kill) of main ALONE the sidecar sees its stdin close and exits by itself, with code 0.
+    static bool TreeKilled(long mainEndedMs) {
+      if (_sidecars.Count == 0) return false;   // no sidecar was seen: it cannot tell, so a crash (restart) as before
+      long until = NowMs() + 1500;
+      foreach (Tracked t in _sidecars) {
+        uint code;
+        if (!GetExitCodeProcess(t.H, out code)) continue;
+        if (code == STILL_ACTIVE) {
+          long rest = until - NowMs();
+          if (rest > 0) WaitForSingleObject(t.H, (uint)rest);
+          if (!GetExitCodeProcess(t.H, out code) || code == STILL_ACTIVE) continue;
+        }
+        if (code != 1) continue;
+        long ended = ExitMs(t.H);
+        if (ended > 0 && Math.Abs(ended - mainEndedMs) <= TreeKillWindowMs) return true;
+      }
+      return false;
+    }
+
+    static void CloseTracked() {
+      foreach (Tracked t in _sidecars) CloseHandle(t.H);
+      _sidecars.Clear();
+    }
+
+    /// supervisor-main.json names another LIVE main -> its pid, else 0. waitMs > 0: keeps looking that long
+    /// (the main that won the single-instance lock writes the record a moment after it starts).
+    static int OtherLiveMain(int deadPid, int waitMs) {
+      long end = NowMs() + waitMs;
+      for (;;) {
+        Dictionary<string, object> m = ReadJson(MainFile());
+        int pid = m != null ? Json.GetInt(m, "pid", 0) : 0;
+        if (pid > 0 && pid != deadPid && pid != _me && AliveSince(pid, GetLong(m, "at"))) return pid;
+        if (NowMs() >= end) return 0;
+        Thread.Sleep(250);
+      }
+    }
+
+    static long OwnStartMs() {
+      try { return ToUnixMs(Process.GetCurrentProcess().StartTime.ToUniversalTime()); } catch (Exception) { return 0; }
+    }
+
+    /// When the process behind h ended (GetProcessTimes), or 0.
+    static long ExitMs(IntPtr h) {
+      long c, e, k, u;
+      if (h == IntPtr.Zero || !GetProcessTimes(h, out c, out e, out k, out u) || e <= 0) return 0;
+      try { return ToUnixMs(DateTime.FromFileTimeUtc(e)); } catch (Exception) { return 0; }
+    }
+
+    static long ToUnixMs(DateTime utc) { return (long)(utc - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds; }
 
     static long GetLong(Dictionary<string, object> d, string key) {
       object v;
@@ -547,13 +819,20 @@ namespace Mantle {
       return list;
     }
 
+    /// crashes null = the ones already in the file. supervisorPid + startedAt + watching say who this is and
+    /// whom it watches (another copy's Duplicate check); lock = it holds supervisor.lock (main's liveness check).
     static void WriteState(List<long> crashes, IDictionary last, IDictionary gaveUp) {
       Dictionary<string, object> prev = ReadJson(StateFile());
-      object keepLast = null, keepGave = null, keepBanners = null;
-      if (prev != null) { Json.TryGet(prev, "last", out keepLast); Json.TryGet(prev, "gaveUp", out keepGave); Json.TryGet(prev, "banners", out keepBanners); }
+      object keepLast = null, keepGave = null, keepBanners = null, keepCrashes = null;
+      if (prev != null) {
+        Json.TryGet(prev, "last", out keepLast); Json.TryGet(prev, "gaveUp", out keepGave); Json.TryGet(prev, "banners", out keepBanners);
+        Json.TryGet(prev, "crashes", out keepCrashes);
+      }
       var arr = new List<object>();
-      foreach (long t in crashes) arr.Add(t);
-      var st = Json.Obj("v", 1, "supervisorPid", _me, "at", NowMs(), "crashes", arr,
+      if (crashes != null) foreach (long t in crashes) arr.Add(t);
+      else if (keepCrashes is IList) foreach (object o in (IList)keepCrashes) arr.Add(o);
+      var st = Json.Obj("v", 1, "supervisorPid", _me, "startedAt", _startedMs, "watching", _watching, "lock", _lock != null,
+                        "at", NowMs(), "crashes", arr,
                         "last", last != null ? (object)last : keepLast, "gaveUp", gaveUp != null ? (object)gaveUp : keepGave,
                         "banners", _banners != null ? (object)_banners : keepBanners);
       WriteAtomic(StateFile(), Json.Write(st));
