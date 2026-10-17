@@ -39,7 +39,7 @@ const ROOT = path.resolve(__dirname, '..');
 const DIR = path.join(ROOT, 'assets', 'icons');
 const SIZES = [16, 20, 24, 32, 40, 48, 64, 256];
 const SMALL_MAX = 24;                      // 16, 20, 24 use the hinted drawing
-const ICONS = ['mantle-settings', 'mantle-taskmgr', 'mantle-files'];   // one per lib/mantle-apps.js APPS entry
+const ICONS = ['mantle-settings', 'mantle-taskmgr', 'mantle-files', 'mantle-player'];   // one per lib/mantle-apps.js APPS entry
 
 /* The bar's glass as it reads on screen: --lg-fill (white at .45) over a mid wallpaper. */
 const GLASS = '#C9CEDB';

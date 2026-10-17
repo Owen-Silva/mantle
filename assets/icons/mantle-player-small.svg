@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Mantle Player, HINTED for 16-24 px (tools/make-icons.js): the master's plate and play mark on a
+       16 px grid. -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5245EE"/>
+      <stop offset="1" stop-color="#3A2DD8"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="14" height="14" rx="3.25" fill="url(#plate)"/>
+  <path fill="#FFFFFF" stroke="#FFFFFF" stroke-width="1" stroke-linejoin="round" d="M6.5 5v6l4.75-3z"/>
+</svg>

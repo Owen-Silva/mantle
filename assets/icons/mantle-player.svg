@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Mantle Player (lane mantle-player). The master drawing, used for 32 px and up; 16-24 px use
+       mantle-player-small.svg. The same plate as Mantle Settings / Task Manager / Files
+       (--lg-acc #4436E8, white glyph): one family, told apart by the glyph, a rounded play mark. -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5245EE"/>
+      <stop offset="1" stop-color="#3A2DD8"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="54" fill="url(#plate)"/>
+  <rect x="16.75" y="16.75" width="222.5" height="222.5" rx="53.25" fill="none" stroke="#0B0E1A" stroke-opacity=".14" stroke-width="1.5"/>
+  <path fill="#FFFFFF" stroke="#FFFFFF" stroke-width="22" stroke-linejoin="round" d="M104 82v92l76-46z"/>
+</svg>

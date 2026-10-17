@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src file:; style-src file:; img-src file: data: blob:; media-src file: blob: data:; font-src file:">
+<title>Mantle Player</title>
+<!-- glass-light.css ONLY for colour: the taskbar island's --lg-* tokens (light + dark) -->
+<link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="player.css">
+</head>
+<body>
+<!-- Mantle Player (lib/features/player.js). The page never touches the disk: every read is a
+     window.mantle.call('player.<verb>'). ../../lib/features/_player-probe.js = the format rules both sides share. -->
+<div class="app" id="app">
+  <header class="titlebar" id="titlebar">
+    <img class="appicon" src="../../assets/icons/png/mantle-player-32.png" alt="">
+    <div class="ttl" id="ttl">Mantle Player</div>
+    <span class="chip" id="testchip" hidden title="Main runs in --test: sound is muted and nothing outside the test folders is read">test mode</span>
+    <div class="grow"></div>
+    <div class="wc">
+      <button type="button" class="wb" id="wmini" title="Mini player (Ctrl+M)" aria-label="Mini player"></button>
+      <button type="button" class="wb" id="wmin" title="Minimise" aria-label="Minimise"></button>
+      <button type="button" class="wb" id="wmax" title="Maximise" aria-label="Maximise"></button>
+      <button type="button" class="wb close" id="wclose" title="Close" aria-label="Close"></button>
+    </div>
+  </header>
+
+  <nav class="rail" id="rail" aria-label="Library">
+    <label class="search"><span class="sico" id="sico"></span><input id="q" type="search" placeholder="Search" spellcheck="false" aria-label="Search your library (Ctrl+F)" title="Search (Ctrl+F)"></label>
+    <button type="button" class="ni" data-view="now"><span class="nico" data-icon="now"></span>Now playing</button>
+    <button type="button" class="ni" data-view="songs"><span class="nico" data-icon="music"></span>Music</button>
+    <button type="button" class="ni" data-view="videos"><span class="nico" data-icon="video"></span>Videos</button>
+    <button type="button" class="ni" data-view="playlists"><span class="nico" data-icon="list"></span>Playlists</button>
+    <button type="button" class="ni" data-view="queue"><span class="nico" data-icon="queue"></span>Play queue<span class="count" id="qcount"></span></button>
+    <div class="grow"></div>
+    <button type="button" class="ni open" id="openfiles" title="Open files (Ctrl+O)"><span class="nico" data-icon="open"></span>Open files</button>
+    <input type="file" id="picker" multiple hidden accept="video/*,audio/*,.mkv,.flac,.opus,.m4a,.mov">
+  </nav>
+
+  <main class="main" id="main">
+    <!-- now playing: the video (or the song's big cover) -->
+    <section class="view now" id="v-now" data-view="now">
+      <div class="stage" id="stage">
+        <video id="v" preload="metadata" playsinline></video>
+        <div class="cover" id="cover" hidden>
+          <div class="art" id="art"></div>
+          <div class="meta"><div class="t1" id="ct1"></div><div class="t2" id="ct2"></div><div class="t3" id="ct3"></div></div>
+        </div>
+        <div class="empty" id="nothing">
+          <div class="eico" data-icon="play"></div>
+          <div class="eh">Nothing is playing</div>
+          <div class="ep">Drop video or music here, or open files</div>
+          <button type="button" class="btn acc" id="openfiles2">Open files</button>
+        </div>
+        <div class="nope" id="nope" hidden role="alert">
+          <div class="eico warn" data-icon="alert"></div>
+          <div class="eh" id="nopeh"></div>
+          <div class="ep" id="nopep"></div>
+          <div class="acts"><button type="button" class="btn" id="nopewith">Open with another app</button><button type="button" class="btn" id="nopefiles">Show in Files</button><button type="button" class="btn acc" id="nopeskip">Skip</button></div>
+        </div>
+        <div class="notice" id="notice" hidden role="status"><span id="noticet"></span><button type="button" class="x" id="noticex" title="Dismiss" aria-label="Dismiss"></button></div>
+        <div class="dropzone" id="drop" hidden><div>Drop to play</div></div>
+        <button type="button" class="bigplay" id="bigplay" hidden aria-label="Play"></button>
+      </div>
+    </section>
+    <section class="view lib" id="v-songs" data-view="songs" hidden>
+      <div class="vhead"><h1>Music</h1><div class="tabs" role="tablist"><button type="button" class="tab" data-sub="songs">Songs</button><button type="button" class="tab" data-sub="albums">Albums</button><button type="button" class="tab" data-sub="artists">Artists</button></div><div class="grow"></div><span class="scan" id="scan1"></span><button type="button" class="btn quiet" id="rescan1" title="Read the Music and Videos folders again">Rescan</button><button type="button" class="btn" id="playall">Play all</button><button type="button" class="btn quiet" id="shuffleall">Shuffle</button></div>
+      <div class="vbody" id="musicbody"></div>
+    </section>
+    <section class="view lib" id="v-videos" data-view="videos" hidden>
+      <div class="vhead"><h1>Videos</h1><div class="grow"></div><span class="scan" id="scan2"></span><button type="button" class="btn quiet" id="rescan2" title="Read the Music and Videos folders again">Rescan</button></div>
+      <div class="vbody" id="videobody"></div>
+    </section>
+    <section class="view lib" id="v-playlists" data-view="playlists" hidden>
+      <div class="vhead"><h1 id="plh">Playlists</h1><div class="grow"></div><button type="button" class="btn quiet" id="plback" hidden>All playlists</button><button type="button" class="btn" id="plplay" hidden>Play</button><button type="button" class="btn quiet" id="pldel" hidden>Delete</button></div>
+      <div class="vbody" id="plbody"></div>
+    </section>
+    <section class="view lib" id="v-queue" data-view="queue" hidden>
+      <div class="vhead"><h1>Play queue</h1><div class="grow"></div><button type="button" class="btn quiet" id="qclear">Clear</button><button type="button" class="btn" id="qsave">Save as playlist</button></div>
+      <div class="vbody" id="qbody"></div>
+    </section>
+  </main>
+
+  <footer class="transport" id="transport">
+    <div class="np" id="np"><div class="npart" id="npart"></div><div class="nptext"><div class="npt" id="npt">Nothing playing</div><div class="nps" id="nps"></div></div></div>
+    <div class="center">
+      <div class="btns">
+        <button type="button" class="ib sm" id="shuf" title="Shuffle (S)" aria-label="Shuffle" aria-pressed="false"></button>
+        <button type="button" class="ib" id="prev" title="Previous (Shift+P)" aria-label="Previous"></button>
+        <button type="button" class="ib play" id="play" title="Play (Space)" aria-label="Play"></button>
+        <button type="button" class="ib" id="next" title="Next (Shift+N)" aria-label="Next"></button>
+        <button type="button" class="ib sm" id="rep" title="Repeat: off (R)" aria-label="Repeat off"></button>
+      </div>
+      <div class="seek"><span class="tm" id="tcur">0:00</span><div class="bar" id="bar" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><div class="track"><div class="buf" id="buf"></div><div class="fill" id="fill"></div></div><div class="knob" id="knob"></div><div class="hovert" id="hovert" hidden></div></div><span class="tm" id="tdur">0:00</span></div>
+    </div>
+    <div class="right">
+      <button type="button" class="ib sm" id="cc" title="Subtitles (C)" aria-label="Subtitles"></button>
+      <button type="button" class="ib sm" id="atrack" title="Sound track" aria-label="Sound track"></button>
+      <button type="button" class="ib sm txt" id="speed" title="Speed (&lt; and &gt;)" aria-label="Speed">1×</button>
+      <button type="button" class="ib sm" id="mute" title="Mute (M)" aria-label="Mute"></button>
+      <div class="vol" id="vol" role="slider" tabindex="0" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><div class="track"><div class="fill" id="volfill"></div></div><div class="knob" id="volknob"></div></div>
+      <button type="button" class="ib sm" id="full" title="Full screen (F)" aria-label="Full screen"></button>
+      <button type="button" class="ib sm" id="unmini" title="Back to the full window (Esc)" aria-label="Back to the full window"></button>
+    </div>
+  </footer>
+  <div class="menu" id="menu" hidden role="menu"></div>
+  <div class="toast" id="toast" hidden role="status"><span id="toastt"></span><button type="button" class="btn quiet" id="toasta" hidden></button></div>
+  <div class="dialog" id="dlg" hidden><div class="dbox" role="dialog" aria-modal="true" aria-labelledby="dlgh"><div class="dh" id="dlgh">Save as playlist</div><input id="dlgin" type="text" maxlength="80" spellcheck="false" placeholder="Playlist name"><div class="dacts"><button type="button" class="btn quiet" id="dlgno">Cancel</button><button type="button" class="btn acc" id="dlgok">Save</button></div></div></div>
+</div>
+<script src="../../lib/plain-error.js"></script>
+<script src="../../lib/features/_player-probe.js"></script>
+<script src="player.js"></script>
+</body>
+</html>

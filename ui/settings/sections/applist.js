@@ -166,6 +166,24 @@
     const files = kit.list({ row: 'apps.defaults.files', items: [], empty: 'Reading…' });
     const links = kit.list({ row: 'apps.defaults.links', items: [], empty: 'Reading…' });
     const why1 = kit.h('div', {}), why2 = kit.h('div', {});
+    /* lane mantle-player: "Use Mantle Player for video and music". Mantle only ADDS itself to Windows' list
+       (HKCU, documented keys) and opens Windows' Default apps page at Mantle Player; the pick itself is Owen's
+       click there (Windows protects it). Undo takes out exactly what was added. --test = a dry run. */
+    const P = (op) => kit.call('player.defaults', { op });
+    const pState = kit.status({ row: 'apps.defaults.player', label: 'Mantle Player', help: 'Mantle\'s video and music player', value: 'Reading…' });
+    const pUse = kit.button({ row: 'apps.defaults.player.use', label: 'Use Mantle Player for video and music', help: 'Adds Mantle Player to Windows\' list of apps, then opens Default apps so you can pick it', text: 'Set up', tone: 'acc',
+      onClick: async () => { const r = await P('use'); if (r && r.ok && !r.dryRun) await readPlayer(); return r; } });
+    const pUndo = kit.button({ row: 'apps.defaults.player.undo', label: 'Take Mantle Player out of Windows\' list', help: 'Removes exactly what Set up added. Files you set to open in it go back to Windows\' choice', text: 'Undo',
+      onClick: async () => { const r = await P('undo'); if (r && r.ok && !r.dryRun) await readPlayer(); return r; } });
+    async function readPlayer() {
+      const r = await P('status');
+      if (!r || r.ok === false) { pState.set({ value: '—', reason: bad(r, 'Mantle Player\'s setup could not be read') }); pUndo.set({ disabled: true }); return; }
+      pState.set({ value: r.registered ? 'In Windows\' list' : 'Not set up', tone: r.registered ? 'ok' : null, info: r.reason || (r.dryRun ? 'Test run: Set up and Undo change nothing' : null), reason: null });
+      pUse.set({ text: r.registered ? 'Open Default apps' : 'Set up' });
+      pUndo.set({ disabled: !r.registered && !r.dryRun });
+    }
+    el.append(kit.card(pState, pUse, pUndo));
+    readPlayer();
     el.append(kit.card(lock, browser, mail, pdf), kit.card(search), kit.group('File types'), kit.card(why1, files), kit.group('Link types'), kit.card(why2, links));
     const S = { r: null, q: '' };
     const it = (x) => ({ key: rowKey(x.name), label: x.name, help: [x.type, x.chosen ? 'Chosen by you' : 'Windows\' default'].filter(Boolean).join(' · '), value: x.app || 'No default app' });

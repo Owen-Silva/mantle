@@ -454,7 +454,9 @@ app.setAppUserModelId('com.owensilva.mantle');
 // wallpaper, and the bar disappears behind any maximised window. A frozen clock
 // and a blank capturePage() are both symptoms of the same optimisation, so it
 // goes off. These pages are idle between ticks; the cost is not measurable.
-app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+// lane mantle-player: a --test copy never publishes a media session to Windows (HardwareMediaKeyHandling is
+// Chromium's SMTC link), so a muted test video never shows in Owen's media flyout or his live bar's chip.
+app.commandLine.appendSwitch('disable-features', flags.test ? 'CalculateNativeWinOcclusion,HardwareMediaKeyHandling' : 'CalculateNativeWinOcclusion');
 /*
  * The GPU service runs INSIDE the main process. Measured 2026-09-21 (private
  * bytes, 30 s after start, same pages): a separate GPU process held 148 MB and
@@ -534,6 +536,11 @@ if (flags.open !== null) {
   const openReq = require('./lib/args').openRequest(process.argv.slice(1));
   if (app.requestSingleInstanceLock()) {
     process.stderr.write(require('./lib/args').openNotRunningLine(openReq) + '\n');
+    // lane mantle-player: a double-clicked video or song (Windows runs --open=player --play=...) must never
+    // vanish silently. dialog.showErrorBox is safe before 'ready'. Never in --test: a box would reach Owen.
+    if (openReq && openReq.ok && openReq.target === 'player' && openReq.files.length && !flags.test) {
+      try { require('electron').dialog.showErrorBox('Mantle Player', `Mantle is not running, so Mantle Player could not open ${openReq.files.length === 1 ? 'this file' : 'these files'}. Start Mantle, then open ${openReq.files.length === 1 ? 'it' : 'them'} again.`); } catch (_) { /* the stderr line above stays */ }
+    }
     app.releaseSingleInstanceLock();
     app.exit(3);
     // app.exit() before 'ready' ends the process on the spot (measured 2026-10-10: not one more
@@ -3554,7 +3561,7 @@ const MANTLE_TITLES = new Set(['mantle bar', 'mantle desktop', 'mantle launcher'
   'mantle task view', 'mantle volume', 'mantle clipboard', 'mantle snap', 'mantle screenshot', 'mantle top bar']);
 // Mantle's APP windows (lane settings, 2026-09-28): windows Owen works in like any app's, listed on
 // the bar and in Alt+Tab (the sidecar's Switcher.IsMantleApp lets the same exact titles through).
-const MANTLE_APP_TITLES = new Set(['Mantle Settings', 'Mantle Task Manager', 'Mantle Files']);
+const MANTLE_APP_TITLES = new Set(['Mantle Settings', 'Mantle Task Manager', 'Mantle Files', 'Mantle Player']);
 function isMantleWindow(w) {
   if (!w) return false;
   const exe0 = w.exe ? path.basename(String(w.exe)).toLowerCase() : '';
@@ -4680,9 +4687,12 @@ async function mediaRead() {
   const snap = await ask();
   if (!snap || snap.ok === false) return failed((snap && snap.reason) || 'the sidecar answered "media" with ok:false and gave no reason', !(snap && snap.old));
 
+  // lane mantle-player: a session from Mantle's own process (its AUMID com.owensilva.mantle) is Mantle Player's,
+  // named and drawn as such, not "com.owensilva.mantle" / Electron (lib/mantle-apps.js mediaApp)
+  const ownMedia = (aumid) => (mantleApps && typeof mantleApps.mediaApp === 'function' ? mantleApps.mediaApp(aumid) : null);
   const sessions = (Array.isArray(snap.sessions) ? snap.sessions : []).map((s) => ({
     aumid: s.aumid || null,
-    app: s.app ? { name: s.app.name || null, icon: s.app.icon || null } : null,
+    app: ownMedia(s.aumid) || (s.app ? { name: s.app.name || null, icon: s.app.icon || null } : null),
     title: s.title || null,
     artist: s.artist || null,
     status: s.status || 'unknown',
@@ -4748,6 +4758,7 @@ async function mediaRead() {
   }
   if (shown) {
     shown = Object.assign({}, shown, { lessonplayer: isLessonPlayer(shown) });
+    { const own = mantleApps && mantleApps.mediaApp ? mantleApps.mediaApp(shown.aumid) : null; if (own) shown.app = Object.assign({}, shown.app || {}, own); }   // lane mantle-player: Mantle's own session = Mantle Player
     shown.controls = shown.lessonplayer && mediaGuardOn()
       ? { ok: false, reason: LESSONPLAYER_GUARD_REASON, how: LESSONPLAYER_GUARD_HOW }
       : { ok: true, reason: null, how: null };
@@ -7999,6 +8010,13 @@ app.on('second-instance', (_event, argv) => {
     if (!openReq.ok) { process.stdout.write(openReq.line + '\n'); return; }
     try {
       if (openReq.target === 'wallpapers') wallpaper.openLibrary();
+      else if (openReq.target === 'player') {
+        // lane mantle-player: lib/features/player.js listens only while it is on; off = said, never silent
+        if (app.listenerCount('mantle-open:player') === 0) throw new Error('Mantle Player is switched off (Settings > Mantle)');
+        const reply = {};
+        app.emit('mantle-open:player', { paths: openReq.files, via: 'the command line', reply });
+        if (reply.handled && !reply.ok) throw new Error(reply.reason || 'it did not say why');
+      }
       process.stdout.write(openReq.line + '\n');
     } catch (err) {
       process.stdout.write(`mantle: a second start asked for ${openReq.label} (--open=${openReq.target}), but it did not open: ${err.message}\n`);

@@ -353,6 +353,8 @@
   function answer(name, a) {
     a = a || {};
     switch (name) {
+      // lane mantle-player: Settings > Apps > Default apps, the Mantle Player rows (main: lib/features/player.js defaults)
+      case 'player.defaults': return a.op === 'status' ? { ok: true, registered: false, dryRun: true, reason: null } : { ok: true, dryRun: true, reason: 'Test run: nothing was written' };
       case 'settings.hello': return { ok: true, section: q.get('section') || 'home', page: q.get('page') || null, row: q.get('row') || null, query: q.get('q') || null, test: TEST, glass: GLASS };
       // section modules: ?sections=a,b loads the FIXTURES in test-sections/ (never sections/, which
       // belongs to the category lanes); an id ending in "!" is DOWN on the main side

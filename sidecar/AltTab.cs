@@ -558,7 +558,7 @@ namespace Mantle {
     // Settings), so Alt+Tab and the bar's window list (WindowList.Build) show it although it is
     // Mantle's own process, which every other Mantle window is skipped for. Exact title (the page's
     // <title>), Chromium's window class, and still never a tool window or an owned one.
-    static readonly HashSet<string> MantleAppTitles = new HashSet<string>(StringComparer.Ordinal) { "Mantle Settings", "Mantle Task Manager", "Mantle Files" };
+    static readonly HashSet<string> MantleAppTitles = new HashSet<string>(StringComparer.Ordinal) { "Mantle Settings", "Mantle Task Manager", "Mantle Files", "Mantle Player" };
     public static bool IsMantleApp(string cls, string title) { return cls == "Chrome_WidgetWin_1" && title != null && MantleAppTitles.Contains(title); }
 
     public sealed class Item {
