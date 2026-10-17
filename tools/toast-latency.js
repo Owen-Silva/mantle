@@ -70,7 +70,8 @@ async function cdp(port) {
 }
 // injected into every NEW page before its own scripts; only the banner page records anything
 const STAMP = `(function () {
-  if (!/\\/ui\\/toasts\\//.test(location.pathname)) return;
+  if (!/\\/ui\\/toasts\\//.test(location.pathname) || window.__latOn) return;
+  window.__latOn = 1;
   window.__toastLifeMs = 500;
   var seen = {}; window.__lat = [];
   new MutationObserver(function (recs) {
@@ -129,10 +130,17 @@ const STAMP = `(function () {
         try { const x = JSON.parse(j.params.payload); if (!stamps.has(x.k)) stamps.set(x.k, x.at); } catch (_) { /* not ours */ }
         return;
       }
+      // the page's document can exist before addScriptToEvaluateOnNewDocument lands (the 00:12 run: the
+      // binding was in, the script was not), so the stamp also goes into each new main-world context the
+      // moment Chromium reports it, before the page's own scripts run; __latOn keeps it to one install
+      if (j.method === 'Runtime.executionContextCreated' && j.sessionId && j.params.context && j.params.context.auxData && j.params.context.auxData.isDefault) {
+        c.send('Runtime.evaluate', { expression: STAMP, contextId: j.params.context.id }, j.sessionId).catch(() => {});
+        return;
+      }
       if (j.method !== 'Target.attachedToTarget') return;
       const sid = j.params.sessionId;
       const go = () => c.send('Runtime.runIfWaitingForDebugger', {}, sid).catch(() => {});
-      if (j.params.targetInfo.type !== 'page' || !j.params.waitingForDebugger) return void go();
+      if (j.params.targetInfo.type !== 'page') return void go();
       // SENT back to back, NOT awaited: a page paused at start may not answer Runtime commands until it
       // runs (the first hold hung here, 2026-10-17 00:08). CDP keeps one session's commands in order, so
       // the script and the binding are in before the resume is handled (Puppeteer's pattern).
@@ -174,7 +182,7 @@ const STAMP = `(function () {
         if (!pg) return null;
         const s = (await c.send('Target.attachToTarget', { targetId: pg.id, flatten: true })).sessionId;
         try {
-          return (await ev(s, `document.body && /Mantle lat ${key}\\b/.test(document.body.textContent) ? { k: ${key}, at: 0 } : null`)) || null;
+          return (await ev(s, `(window.__lat || []).filter(function (x) { return x.k === ${key}; })[0] || (document.body && /Mantle lat ${key}\\b/.test(document.body.textContent) ? { k: ${key}, at: 0 } : null)`)) || null;
         } finally { c.send('Target.detachFromTarget', { sessionId: s }).catch(() => {}); }
       } catch (_) { return null; }
     }
