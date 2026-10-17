@@ -3,8 +3,8 @@
  * test-recorder.js - the screen recorder (sidecar/Recorder.cs, lane screenrec 2026-10-15) end to end, on a
  * STAND-IN window this test makes (Mantle.Sidecar.exe --rec-standin): placed wholly outside every monitor,
  * never activated, so nothing appears on Owen's screen and nothing of his is ever recorded. Every recording
- * runs with test:true, which the recorder itself enforces: window mode only, and only a window owned by the
- * stand-in's pid. Every file made is deleted at the end.
+ * runs with test:true, which the recorder itself enforces: window mode only, only a window owned by the
+ * stand-in's pid, and never the mouse pointer. Every file made is deleted at the end.
  *
  *   node sidecar/test-recorder.js            -> "RECORDER TEST: n passed, m failed"
  *   MANTLE_SIDECAR_EXE=<exe> to test another build; MANTLE_FFPROBE=<ffprobe.exe> for the independent check
@@ -113,8 +113,12 @@ async function main() {
     const r1 = await record({ mode: 'window', hwnd: si.hwnd, fps: 30, audio: false, out: out1, test: true, allowPid: si.pid, testSecs: 5 });
     check('window 30 fps: ready', !!r1.ready, JSON.stringify(r1.error || r1.events.slice(-3)));
     check('window 30 fps: done, stopped by the test clock', r1.done && /test's time/.test(r1.done.why), JSON.stringify(r1.done || r1.error));
-    if (r1.ready) console.log(`  ready: ${r1.ready.w}x${r1.ready.h} @${r1.ready.fps} encoder=${JSON.stringify(r1.ready.encoder)} border=${r1.ready.border} (${r1.ready.borderWhy || ''}; access ${r1.ready.access}) item=${JSON.stringify(r1.ready.item)} start=${r1.startMs} ms`);
+    if (r1.ready) console.log(`  ready: ${r1.ready.w}x${r1.ready.h} @${r1.ready.fps} encoder=${JSON.stringify(r1.ready.encoder)} border=${r1.ready.border} cursor=${r1.ready.cursor} (${r1.ready.borderWhy || ''}; access ${r1.ready.access}) item=${JSON.stringify(r1.ready.item)} start=${r1.startMs} ms`);
     if (r1.done) console.log(`  done: ${r1.done.secs} s, ${r1.done.frames} frames (late ${r1.done.late}, dup ${r1.done.dup}, fresh ${r1.done.fresh}), ${Math.round(r1.done.bytes / 1024)} KB, finalize ${r1.done.finalizeMs} ms, textures ${r1.done.textures}, per frame ${JSON.stringify(r1.done.perFrameMs)}`);
+    // Owen's mouse pointer rests wherever he left it; over the stand-in's corner of the screen Windows drew it into
+    // the frames read back below (the TL quadrant "white" at 2.5 s, lane recwhite 2026-10-16). A test recording
+    // never draws it, and the recorder says so with what Windows will really do.
+    check('window 30 fps: no mouse pointer in a test recording (cursor:false, read back from Windows)', r1.ready && r1.ready.cursor === false, r1.ready && JSON.stringify(r1.ready.cursor));
     check('window 30 fps: the output is the window\'s visible frame (even size)', r1.ready && r1.ready.w === fw && r1.ready.h === fh, r1.ready && `${r1.ready.w}x${r1.ready.h} vs ${fw}x${fh}`);
     check('window 30 fps: saved under the asked name, no part file left', r1.done && r1.done.path === out1 && fs.existsSync(out1) && !fs.existsSync(out1 + '.part'));
     const p1 = r1.done ? probe(out1) : { ok: false };

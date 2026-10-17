@@ -39,13 +39,13 @@
 //   {"ev":"error", error}         plain words; nothing is left behind (the part file is deleted)
 // The spec: {mode:"window"|"monitor", hwnd:"<decimal>", x, y (a point on the monitor, physical px),
 //   crop:{x,y,w,h} (monitor: VIRTUAL-screen physical px; window: relative to the window's visible frame),
-//   fps:30|60, audio:bool, mic:bool, out:"<final path>.mp4", maxSecs, minFreeMb, test:bool, allowPid:N,
-//   testSecs:N}
+//   fps:30|60, audio:bool, mic:bool, cursor:bool (the mouse pointer in the picture; default true, never in a
+//   test), out:"<final path>.mp4", maxSecs, minFreeMb, test:bool, allowPid:N, testSecs:N}
 // The file is written as "<out>.part" and renamed only when finished, to <out> or "<name> (2).mp4" and so
 // on: an existing file is NEVER overwritten, and a crash never leaves a broken file under the real name.
 //
 // TESTS (test:true): only mode "window", and only a window owned by allowPid (the test's own stand-in), so
-// a test can never record Owen's screen or windows. `--rec-standin` is that stand-in: a borderless,
+// a test can never record Owen's screen or windows, nor his mouse pointer. `--rec-standin` is that stand-in: a borderless,
 // never-activated window painting four coloured quadrants and a moving bar. `--rec-probe=<file>` reads an
 // MP4 back through Media Foundation's Source Reader: its size, frame rate, frame count, duration, audio
 // track, and the colours at given points of a middle frame (which proves the crop and the orientation).
@@ -699,7 +699,7 @@ namespace Mantle {
     IntPtr _hwnd, _hmon;
     int _fps, _maxSecs, _testSecs, _allowPid;
     long _minFreeMb;
-    bool _test, _wantAudio, _wantMic;
+    bool _test, _wantAudio, _wantMic, _cursor;
     // the crop, in the CAPTURED picture's pixels, and the output size (even)
     int _cropX, _cropY, _outW, _outH;
     RecRect _monRect;
@@ -777,6 +777,11 @@ namespace Mantle {
       _test = Json.GetBool(_spec, "test", false);
       _allowPid = Json.GetInt(_spec, "allowPid", 0);
       _testSecs = Json.GetInt(_spec, "testSecs", 0);
+      // Windows draws the mouse pointer into the picture wherever it is over the window or area - but never in
+      // a test: a test recording must not show Owen's pointer, and where he leaves it is not the test's to
+      // choose. Over the stand-in's corner of the screen it sits in the very frames a test reads back (lane
+      // recwhite 2026-10-16: the top-left quadrant read WHITE at 2.5 s while he was away from the laptop).
+      _cursor = !_test && Json.GetBool(_spec, "cursor", true);
       if (string.IsNullOrEmpty(_outPath) || !Path.IsPathRooted(_outPath) || !_outPath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
         throw new RecError("no full .mp4 path to save the recording to");
       string dir = Path.GetDirectoryName(_outPath);
@@ -829,7 +834,8 @@ namespace Mantle {
       _poolW = itemW; _poolH = itemH;
       _pool = Direct3D11CaptureFramePool.CreateFreeThreaded(_wdev, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, _item.Size);
       _session = _pool.CreateCaptureSession(_item);
-      try { _session.IsCursorCaptureEnabled = true; } catch (Exception) { }
+      try { _session.IsCursorCaptureEnabled = _cursor; } catch (Exception) { }
+      try { _cursor = _session.IsCursorCaptureEnabled; } catch (Exception) { }   // what Windows will really do
       if (_mode == "window") { try { _session.IncludeSecondaryWindows = true; } catch (Exception) { } }
       try { _session.MinUpdateInterval = TimeSpan.FromTicks(10000000L / _fps); } catch (Exception) { }
       Borderless();
@@ -858,7 +864,7 @@ namespace Mantle {
       Recorder.Emit(Json.Obj("ev", "ready", "w", _outW, "h", _outH, "fps", _fps, "mode", _mode,
         "item", Json.Obj("w", itemW, "h", itemH), "crop", Json.Obj("x", _cropX, "y", _cropY, "w", _outW, "h", _outH),
         "encoder", Json.Obj("name", _encName, "hardware", _encHardware, "route", _hw ? "gpu" : "software", "why", _encWhy),
-        "border", _border, "borderWhy", _borderWhy, "access", _access, "audio", audio, "part", _part,
+        "border", _border, "borderWhy", _borderWhy, "access", _access, "cursor", _cursor, "audio", audio, "part", _part,
         "pid", (long)Process.GetCurrentProcess().Id, "ms", Json.Obj("ready", ready, "firstFrame", Ms())));
       Recorder.Emit(Json.Obj("ev", "started", "ms", Ms()));
     }
