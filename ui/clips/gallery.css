@@ -17,6 +17,12 @@ body {
 }
 body.mock { background: linear-gradient(160deg, #c9d2e2, #e9e4dc); }
 body.mock.dark { background: linear-gradient(160deg, #1b2130, #3a3f4c); }
+/* the stand-in desk follows the THEME (<html data-theme>), not only ?dark=1 / ?theme=dark: the app's own
+   plumbing (and every shot that flips the theme live) sets data-theme alone, and the light desk then
+   painted over the whole window in dark (lane mantle-clipsdark). In dark the window's own tint lies over
+   the desk, as wall-bdrop lays it over the wallpaper: --wall-tint (header band --lg-fill-bar, the rest
+   --lg-fill), so the mock reads like the real window and the other surfaces. Light is untouched. */
+:root[data-theme="dark"] body.mock { background: var(--wall-tint), linear-gradient(160deg, #1b2130, #3a3f4c); }
 [hidden] { display: none !important; }
 button { font: inherit; color: inherit; border: 0; background: none; padding: 0; margin: 0; }
 button:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
