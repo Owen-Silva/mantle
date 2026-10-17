@@ -489,6 +489,19 @@
           return { ok: true, ssid: n.ssid, connected: true, reason: null };
         });
       }
+      // Google Calendar (lib/features/gcal.js; ?gcal=connected|disconnected|expired|offline|nocals|off, lane mantle-gcal)
+      case 'gcal.status': {
+        const g = q.get('gcal') || 'off';
+        if (g === 'off') return { ok: false, reason: 'the mock does not play gcal.status' };
+        const on = g !== 'disconnected';
+        return later(40, { enabled: true, test: false, client: on, clientReason: null, signedIn: on, connected: on && g !== 'expired', needsSignIn: g === 'expired', signingIn: false,
+          account: on && g !== 'nocals' ? 'owen@example.com' : null, canEncrypt: true, syncing: false, syncedAt: on ? Date.now() - 3 * 60000 : 0, nextAt: 0, ver: 1,
+          error: g === 'expired' ? { kind: 'auth', reason: 'Google ended Mantle’s sign-in; sign in again in Settings', at: Date.now() } : g === 'offline' ? { kind: 'offline', reason: 'no internet connection', at: Date.now() } : null,
+          calendars: on && g !== 'nocals' ? [{ id: 'owen@example.com', name: 'Owen', color: '#039be5', primary: true, on: true }, { id: 'club@group.calendar.google.com', name: 'Club', color: '#33b679', primary: false, on: true },
+            { id: 'work@group.calendar.google.com', name: 'Work', color: '#8e24aa', primary: false, on: false }] : [] });
+      }
+      case 'gcal.signIn': case 'gcal.signOut': case 'gcal.pickClient': return later(120, { ok: true, dryRun: true, reason: 'test run: nothing is sent to Google' });
+      case 'gcal.setCalendar': return later(80, { ok: true, value: !!(a && a.on) });
       case 'qs.wifi.disconnect': nets.forEach((x) => { x.connected = false; }); qs.wifi.connected = false; return later(400, { ok: true, reason: null });
       default:
         // a fixture section's main-side command: settings.<id>.<name> answers with what it was sent

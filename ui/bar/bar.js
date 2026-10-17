@@ -2285,6 +2285,7 @@
     }
     if (popKey.indexOf('jl:') === 0 && window.MantleJumpList) MantleJumpList.closed();   // gives the keyboard back
     if (popKey === 'dl' && window.MantleDownloads) MantleDownloads.closed();             // its 30 s age ticker stops
+    if (popKey === 'cal' && window.MantleGcal) MantleGcal.closed();                      // gives the keyboard back
     if (isFlyKey(popKey)) flyTeardown();
     popKey = null;
     popLast = null;
@@ -3148,6 +3149,13 @@
       wheelSum = 0;
     }, { passive: false });
 
+    /* Google Calendar (ui/bar/gcal.js, 2026-10-16): the day dots and the selected day's agenda, drawn
+       from what main last pushed (no network or IPC here). null when it is off: nothing is added. */
+    var gc = window.MantleGcal || null;
+    var agenda = gc ? gc.mount({ pop: pop, grid: grid, step: step, shown: function () { return calShown; }, repaint: function () { paintGrid(); } }) : null;
+    if (!agenda) gc = null;
+    else pop.appendChild(agenda);
+
     var foot = document.createElement('div'); foot.className = 'calfoot';
     var link = document.createElement('button');
     link.type = 'button'; link.className = 'qslink';
@@ -3178,8 +3186,10 @@
           (sameDay(d, t) ? ' today' : '');
         c.textContent = String(d.getDate());
         c.title = d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        if (gc) gc.day(c, d);
         grid.appendChild(c);
       }
+      if (gc) gc.painted(calShown);
     }
 
     function paintClock() {
@@ -3935,6 +3945,14 @@
     var bell = document.getElementById('notifs');
     if (bell) bell.addEventListener('click', function () { closePop(); keys('win+n', 'notifications'); });
     fail('notifs', 'Notifications panel missing', MISSING + 'the bell opens Windows\' notification centre instead', 'warn', 'notifications.js did not load');
+  }
+
+  /* Google Calendar in the clock's calendar (ui/bar/gcal.js). Without that file the calendar is the
+     plain month it always was, and the strip says why. */
+  if (window.MantleGcal && MantleGcal.init) {
+    MantleGcal.init({ call: call, on: on, msg: msg, fail: fail, closePop: closePop });
+  } else {
+    fail('gcal', 'Google Calendar missing', MISSING + 'the calendar shows no Google events', 'warn', 'gcal.js did not load');
   }
 
   if (!mantle) {

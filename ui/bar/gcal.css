@@ -1,0 +1,108 @@
+/* gcal.css - Google Calendar inside the clock's calendar flyout (ui/bar/gcal.js; lane mantle-gcal, 2026-10-16).
+ *
+ * Content only: the day dots, the selected day, the agenda rows and the status line. The flyout's own
+ * box, its motion and its pop-in belong to bar.css (and the shared motion tokens); nothing here moves.
+ * Island theme tokens only (glass-light.css --lg-*), light and dark; focus rings are INSIDE their control
+ * (--lg-focus is inset in both themes); no glow.
+ */
+
+/* ---- the days: selectable now, a dot under a day with events */
+.pop.cal .calday { position: relative; }
+.pop.cal.gcal-on .calday { cursor: default; transition: background-color 150ms steps(2), color 150ms steps(2); }
+.pop.cal.gcal-on .calday:hover { background: var(--lg-hover); color: var(--lg-ink); }
+.pop.cal.gcal-on .calday.sel { background: var(--lg-acc-soft); color: var(--lg-ink); }
+.pop.cal.gcal-on .calday.today.sel { color: var(--lg-acc); }
+.pop.cal .calday:focus { outline: none; }
+.pop.cal .calday:focus-visible { box-shadow: var(--lg-focus); }
+/* today keeps its accent ring under the keyboard ring */
+.pop.cal .calday.today:focus-visible { box-shadow: var(--lg-focus), inset 0 0 0 1px var(--lg-acc); }
+
+.gcal-dot {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--gc, var(--lg-ink-2));
+  pointer-events: none;
+}
+/* several calendars on one day: one neutral dot, not a rainbow */
+.gcal-dot.many { background: var(--lg-ink-2); }
+.calday.other .gcal-dot { opacity: .6; }
+
+/* ---- the agenda: the selected day, between the grid and "Notifications" */
+.gcal {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--lg-edge-out);
+}
+.gcal-head { margin: 0 6px 3px; font-size: 12px; color: var(--lg-ink-2); }
+/* about 5 rows, then it scrolls; never so short that one event and "No events" change its height */
+.gcal-list {
+  min-height: 28px;
+  max-height: 140px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--lg-scroll) transparent;
+}
+.gcal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--lg-r-ctl);
+  background: transparent;
+  color: var(--lg-ink);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: default;
+  transition: background-color 150ms steps(2);
+}
+.gcal-row:hover { background: var(--lg-hover); }
+.gcal-row:active { background: var(--lg-press); }
+.pop .gcal-row:focus-visible { outline: none; box-shadow: var(--lg-focus); }
+/* the calendar's colour: a short bar at full strength, and the title tinted toward the ink so a pale
+   Google colour still reads on light glass and a dark one on dark glass */
+.gcal-bar {
+  flex: 0 0 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--gc, var(--lg-ink-3));
+}
+.gcal-time {
+  flex: 0 0 auto;
+  min-width: 58px;
+  color: var(--lg-ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gcal-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in oklab, var(--gc, var(--lg-ink)) 60%, var(--lg-ink));
+}
+.gcal-empty { padding: 6px 6px; font-size: 12.5px; color: var(--lg-ink-3); }
+.gcal-note { margin: 6px 6px 0; font-size: 11.5px; line-height: 1.35; color: var(--lg-ink-2); }
+.gcal-connect { display: block; width: 100%; text-align: left; }
+
+/* ---- dark: Helm's type scale and its 120 ms hover, as bar.css does for the rest of the flyout */
+:root[data-theme="dark"] .gcal-row,
+:root[data-theme="dark"] .gcal-empty { font-size: 13px; }
+:root[data-theme="dark"] .gcal-head,
+:root[data-theme="dark"] .gcal-note { font-size: 12px; }
+:root[data-theme="dark"] .gcal-row,
+:root[data-theme="dark"] .pop.cal.gcal-on .calday { transition-duration: var(--lg-dur-ui); transition-timing-function: var(--lg-ease-ui); }
+
+@media (prefers-reduced-motion: reduce) {
+  .gcal-row, .pop.cal.gcal-on .calday { transition: none; }
+}

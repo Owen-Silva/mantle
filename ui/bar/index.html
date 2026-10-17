@@ -27,6 +27,7 @@
 <link rel="stylesheet" href="spotify.css">
 <link rel="stylesheet" href="downloads.css">
 <link rel="stylesheet" href="helmbadge.css">
+<link rel="stylesheet" href="gcal.css">
 </head>
 <!-- data-edge says which screen edge the bar is docked to. bar.js overwrites it from State.edge.
      class="pre edge": the flush, fully transparent state with NO transition, which is how the
@@ -148,6 +149,9 @@
 <script src="downloads.js"></script>
 <!-- app counts on their icons, Helm's chats that need you (window.MantleBadges; lib/features/helmbadge.js) -->
 <script src="helmbadge.js"></script>
+<!-- Google Calendar in the clock's calendar: day dots + the day's agenda (window.MantleGcal; lib/features/gcal.js) -->
+<script src="gcal-days.js"></script>
+<script src="gcal.js"></script>
 <script src="../shared/glass-adapt.js"></script>
 <script src="bar.js"></script>
 <!-- Mantle-themed tooltips for every title (window.MantleTips); data-room: it asks bar.popover for room above the pill -->
