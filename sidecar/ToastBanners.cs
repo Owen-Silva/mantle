@@ -20,7 +20,9 @@
 // Ctrl+C, an unhandled exception) puts each owned app's original back - but ONLY where the value is
 // still the 0 Mantle wrote. A value Owen changed himself in Windows' Settings is never overwritten.
 // Main re-applies on the next sidecar start (ctx.sidecar.onReady), so a sidecar restart costs at most a
-// moment of Windows' own banner, never a lost one. tools/restore-banners.ps1 does the same with no Mantle
+// moment of Windows' own banner, never a lost one. The crash supervisor (Supervisor.cs BannersBack, run
+// OUTSIDE main's process tree so a tree kill of main cannot take it) does the same through RestoreFrom
+// every time main dies, before it starts anything. tools/restore-banners.ps1 does the same with no Mantle
 // at all (tools/restore-windows.ps1, the supervisor's crash-loop give-up, `npm run autostart:remove`).
 //
 // DO NOT DISTURB: the ACTIVE quiet-hours profile is the WNF state WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED
@@ -192,6 +194,19 @@ namespace Mantle {
       string record;
       lock (_gate) record = _record;
       if (record == null) return "notification banners: Mantle never took any in this run";
+      return RestoreFrom(record, SettingsKey, Program.Passive);
+    }
+
+    /// The put-back itself, shared by the sidecar's exit (RestoreForExit) and the crash supervisor
+    /// (Supervisor.cs BannersBack, which outlives main AND this sidecar). record = main's
+    /// notif-banners.json; settingsKey = the HKCU-relative key holding one subkey per app id
+    /// (SettingsKey; a test points it at a scratch key); testOnly = only app ids starting with
+    /// TestPrefix are written (a passive sidecar, a --supervise-test supervisor). The one rule: an
+    /// original goes back ONLY where the value is still the DWORD 0 Mantle wrote; anything else is
+    /// Owen's own value and is left. Never throws; one line, no paths.
+    public static string RestoreFrom(string record, string settingsKey, bool testOnly) {
+      if (string.IsNullOrEmpty(record)) return "notification banners: Mantle never took any in this run";
+      if (string.IsNullOrEmpty(settingsKey)) settingsKey = SettingsKey;
       Dictionary<string, object> owned;
       try {
         if (!File.Exists(record)) return "notification banners: no record, nothing to put back";
@@ -204,14 +219,14 @@ namespace Mantle {
       if (owned == null || owned.Count == 0) return "notification banners: none owned";
       int back = 0, left = 0, failed = 0;
       try {
-        using (RegistryKey root = Registry.CurrentUser.OpenSubKey(SettingsKey, true)) {
+        using (RegistryKey root = Registry.CurrentUser.OpenSubKey(settingsKey, true)) {
           if (root == null) return "notification banners: Windows' notification settings are gone; nothing to put back";
           var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           foreach (string n in root.GetSubKeyNames()) names[n] = n;
           foreach (var kv in owned) {
             string found;
             if (!names.TryGetValue(kv.Key, out found)) { left++; continue; }
-            if (Program.Passive && !IsTest(found)) { left++; continue; }
+            if (testOnly && !IsTest(found)) { left++; continue; }
             int? original = kv.Value is double ? (int?)(int)(double)kv.Value : null;
             try {
               using (RegistryKey k = root.OpenSubKey(found, true)) {

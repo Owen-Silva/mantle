@@ -10,8 +10,10 @@
 // WHO OUTLIVES WHOM:
 //   Task Scheduler -> electron.exe main --+-> Mantle.Sidecar.exe (the sidecar; exits when main dies)
 //                                         |      +-> --taskbar-guard (clears the taskbar region)
-//                                         +-> THIS (spawned DETACHED, so it is not in libuv's
-//                                              kill-on-close job and lives on when main dies)
+//                                         +-> launcher --supervise-detach (exits at once)
+//                                                +-> THIS (no handles from main, not in libuv's
+//                                                    kill-on-close job, parent gone: it lives on
+//                                                    when main dies, even by a process-tree kill)
 //   It owns no window, no hook and no shell state: it only waits on main's process handle. Explorer
 //   restarting does not touch it. When main dies it decides, in this order:
 //     1. main wrote supervisor-main.json {pid: <that pid>, standDown: {...}} first = a DELIBERATE quit
@@ -28,11 +30,28 @@
 //
 // FILES in <userData> (one writer each, so the two processes never race on a file):
 //   supervisor-main.json   written by main only: pid, exe, args, cwd, root, standDown, crashNote, told
-//   supervisor-state.json  written by this only: crashes[], last{...}, gaveUp{...}
+//   supervisor-state.json  written by this only: crashes[], last{...}, gaveUp{...}, banners{at, result, skipped}
 //   supervisor.log         this process's own lines (also appended to main's --log file when it has one)
+//   notif-banners.json     written by main only (lib/features/_toasts-owner.js); READ here, see BannersBack
 //
-// --supervise-test (a --test instance): never shows a dialog and never runs the restore; the restore
-// command is written into the state file instead, so a test can read what would have run.
+// WINDOWS' OWN NOTIFICATION BANNERS (BannersBack, lane mantle-notif-safety 2026-10-17): Mantle turns
+// Windows' banner off per app while it draws its own, and Owen's rule is that a Windows surface Mantle
+// replaces comes back when Mantle crashes or closes. On EVERY death of the watched main (crash, stand-
+// down, Windows shutting down) this puts the originals back FIRST, before it waits, restarts or gives
+// up (a restarted main applies them again itself). It never fights a running Mantle: when the record's
+// pid or supervisor-main.json's pid is another LIVE main, it leaves them and says why.
+//
+// OUT OF MAIN'S TREE (--supervise-detach): main spawns this with --supervise-detach; it starts a copy of
+// itself with no inherited handles (breaking away from any job that allows it) and exits after ONE
+// stdout line, {"supervisor":<pid>,"detached":true}. The copy's parent is then a process that is gone,
+// so "End process tree" / taskkill /F /T on main cannot reach it. A copy that cannot be started:
+// {"supervisor":<own pid>,"detached":false,"why":"..."} and this process supervises from inside the tree.
+//
+// --supervise-test (a --test instance): never shows a dialog and never runs the restore script; the
+// restore command is written into the state file instead, so a test can read what would have run. The
+// banners ARE put back, but only for app ids starting with ToastBanners.TestPrefix, and
+// --supervise-banners-key=<HKCU-relative key> (honoured ONLY with --supervise-test) points them at a
+// scratch key (lib/supervisor-banners.test.js).
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -53,6 +72,10 @@ namespace Mantle {
     static string _mainLog;               // main's --log=<file>, from the record (live has one)
     static bool _test;
     static int _me;
+    static string _bannersKey = ToastBanners.SettingsKey;   // a scratch key only with --supervise-test
+    static IDictionary _banners;          // the latest BannersBack, for WriteState: {at, result, skipped}
+    static int _skipSaidFor;              // the owner pid a skip was last said for (said once, not per death)
+    const string BannersFile = "notif-banners.json";
 
     [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr h, uint ms);
@@ -64,9 +87,16 @@ namespace Mantle {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowW(string cls, string title);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int MessageBoxW(IntPtr owner, string text, string caption, uint type);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetProcessTimes(IntPtr h, out long creation, out long exit, out long kernel, out long user);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool CreateProcessW(string app, StringBuilder cmdLine, IntPtr procAttr, IntPtr threadAttr, bool inheritHandles,
+                                      uint flags, IntPtr env, string cwd, ref STARTUPINFOW si, out PROCESS_INFORMATION pi);
 
     const uint SYNCHRONIZE = 0x00100000, PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     const uint WAIT_OBJECT_0 = 0, INFINITE = 0xFFFFFFFF;
+    const uint DETACHED_PROCESS = 0x8, CREATE_NEW_PROCESS_GROUP = 0x200, CREATE_BREAKAWAY_FROM_JOB = 0x01000000;
+    const int ERROR_ACCESS_DENIED = 5;
+    const uint STILL_ACTIVE = 259;
     const int SM_SHUTTINGDOWN = 0x2000;
     const uint MB_YESNO = 0x4, MB_ICONWARNING = 0x30, MB_TOPMOST = 0x40000, MB_SETFOREGROUND = 0x10000;
     const int IDYES = 6;
@@ -81,14 +111,36 @@ namespace Mantle {
       [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct STARTUPINFOW {
+      public int cb;
+      public IntPtr lpReserved, lpDesktop, lpTitle;
+      public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+      public short wShowWindow, cbReserved2;
+      public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct PROCESS_INFORMATION {
+      public IntPtr hProcess, hThread;
+      public int dwProcessId, dwThreadId;
+    }
+
     public static int Run(string[] args) {
       int mainPid = 0;
+      bool detach = false;
+      string keyArg = null;
       foreach (string a in args) {
         if (a.StartsWith("--supervise=", StringComparison.Ordinal))
           int.TryParse(a.Substring("--supervise=".Length), NumberStyles.Integer, CultureInfo.InvariantCulture, out mainPid);
         else if (a.StartsWith("--supervise-dir=", StringComparison.Ordinal)) _dir = a.Substring("--supervise-dir=".Length).Trim('"');
         else if (a == "--supervise-test") _test = true;
+        else if (a == "--supervise-detach") detach = true;
+        else if (a.StartsWith("--supervise-banners-key=", StringComparison.Ordinal)) keyArg = a.Substring("--supervise-banners-key=".Length).Trim('"');
       }
+      // A scratch registry key for the banners is a TEST-only switch: a live supervisor always uses
+      // Windows' own key, whatever its command line says.
+      if (_test && !string.IsNullOrEmpty(keyArg)) _bannersKey = keyArg;
       _me = Process.GetCurrentProcess().Id;
       if (mainPid <= 0 || string.IsNullOrEmpty(_dir) || !Directory.Exists(_dir)) {
         Console.Error.WriteLine("mantle-sidecar: supervisor: needs --supervise=<pid> and an existing --supervise-dir=<folder>");
@@ -96,6 +148,21 @@ namespace Mantle {
       }
       Dictionary<string, object> rec0 = ReadJson(MainFile());
       _mainLog = LogArg(rec0);
+
+      if (detach) {
+        // Out of main's process tree, so "End process tree" on main cannot take the supervisor with it.
+        string whyNot;
+        int copy = Detach(args, out whyNot);
+        if (copy > 0) {
+          StdoutLine("{\"supervisor\":" + copy.ToString(CultureInfo.InvariantCulture) + ",\"detached\":true}");
+          return 0;
+        }
+        StdoutLine("{\"supervisor\":" + _me.ToString(CultureInfo.InvariantCulture) + ",\"detached\":false,\"why\":" + Json.Write(whyNot) + "}");
+        Say("supervisor: it could not move out of Mantle's process tree (" + whyNot + "), so it watches from inside it; " +
+            "ending Mantle's whole process tree ends the supervisor too");
+      }
+      // Nothing below ever writes to stdout: main reads one line at most and then closes its end.
+      try { Console.SetOut(TextWriter.Null); } catch (Exception) { }
 
       IntPtr h = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, false, mainPid);
       if (h == IntPtr.Zero) {
@@ -119,6 +186,9 @@ namespace Mantle {
         Dictionary<string, object> rec = ReadJson(MainFile());
         _mainLog = LogArg(rec) ?? _mainLog;
         bool recIsHis = rec != null && Json.GetInt(rec, "pid", 0) == mainPid;
+        // FIRST, whatever the reason main is gone (and before any wait, restart or give-up): Windows'
+        // own notification banners back. A main restarted below turns them off again itself.
+        BannersBack(mainPid);
         object sd;
         if (recIsHis && Json.TryGet(rec, "standDown", out sd) && sd is Dictionary<string, object>) {
           string why = Json.GetString((Dictionary<string, object>)sd, "why") ?? "no reason was given";
@@ -129,6 +199,7 @@ namespace Mantle {
         }
         if (GetSystemMetrics(SM_SHUTTINGDOWN) != 0) {
           Say("supervisor: Mantle " + mainPid + " ended while Windows is signing out or shutting down (exit code " + codeHex + "); it is not started again");
+          WriteState(crashes, null, null);   // keeps last/gaveUp; records what BannersBack did
           return 0;
         }
 
@@ -241,6 +312,128 @@ namespace Mantle {
       } catch (Exception ex) {
         return "the restore script would not run (" + ex.Message + ")";
       }
+    }
+
+    /// Windows' own notification banners back after main <deadPid> is gone (every death: crash, stand-down,
+    /// Windows shutting down). Same rule as the sidecar's exit (ToastBanners.RestoreFrom): an original goes
+    /// back ONLY where the value is still Mantle's 0. Quiet when there is nothing to put back; skipped (said
+    /// once) while another live Mantle main owns them. Records {at, result, skipped} for WriteState.
+    static void BannersBack(int deadPid) {
+      string record = Path.Combine(_dir, BannersFile);
+      long at = NowMs();
+      try {
+        if (!File.Exists(record)) { _banners = Json.Obj("at", at, "result", "nothing to put back (no record)", "skipped", false); return; }
+        Dictionary<string, object> top = ReadJson(record);
+        object o;
+        Dictionary<string, object> owned = top != null && Json.TryGet(top, "owned", out o) ? o as Dictionary<string, object> : null;
+        if (top != null && (owned == null || owned.Count == 0)) { _banners = Json.Obj("at", at, "result", "nothing to put back (none owned)", "skipped", false); return; }
+        // An unreadable record (top == null) still goes to RestoreFrom, which says so in its own words.
+        int owner;
+        string other = OtherOwner(deadPid, out owner);
+        if (other == null) other = OtherOwner(deadPid, out owner);   // re-checked right before the write
+        if (other != null) {
+          _banners = Json.Obj("at", at, "result", other, "skipped", true);
+          if (_skipSaidFor != owner) {
+            _skipSaidFor = owner;
+            Say("supervisor: Windows' own notification banners were left to Mantle: " + other + " and owns them now");
+          }
+          return;
+        }
+        string result = ToastBanners.RestoreFrom(record, _bannersKey, _test);
+        _banners = Json.Obj("at", at, "result", result, "skipped", false);
+        Say("supervisor: Mantle " + deadPid + " is gone; Windows' own " + result.Replace("tools\\restore-banners.ps1", "the restore-banners script") +
+            (_test ? " (test instance: test app ids only)" : ""));
+      } catch (Exception ex) {
+        // never in the way of the restart below
+        _banners = Json.Obj("at", at, "result", "the put-back failed (" + ex.GetType().Name + ")", "skipped", false);
+        Say("supervisor: putting Windows' own notification banners back failed (" + ex.GetType().Name + "); the restore-banners script finishes it");
+      }
+    }
+
+    /// Another LIVE Mantle main that owns the banners now -> the words for it (and its pid), or null.
+    /// The record's own pid (the main that saved it last) first, then supervisor-main.json's (a newer main
+    /// from Restart Mantle or golive). A pid Windows has since given to a process started AFTER that file
+    /// was written is not Mantle, so it does not count.
+    static string OtherOwner(int deadPid, out int pid) {
+      Dictionary<string, object> b = ReadJson(Path.Combine(_dir, BannersFile));
+      pid = b != null ? Json.GetInt(b, "pid", 0) : 0;
+      if (pid > 0 && pid != deadPid && pid != _me && AliveSince(pid, GetLong(b, "at")))
+        return "the Mantle that saved the banner record (pid " + pid + ") is still running";
+      Dictionary<string, object> m = ReadJson(MainFile());
+      pid = m != null ? Json.GetInt(m, "pid", 0) : 0;
+      if (pid > 0 && pid != deadPid && pid != _me && AliveSince(pid, GetLong(m, "at")))
+        return "a newer Mantle (pid " + pid + ") is running";
+      pid = 0;
+      return null;
+    }
+
+    /// pid is running and was started no later than atMs (+5 s of slack; 0 = not checked).
+    static bool AliveSince(int pid, long atMs) {
+      IntPtr h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+      if (h == IntPtr.Zero) return Marshal.GetLastWin32Error() == ERROR_ACCESS_DENIED;   // there, but not ours to open: assume Mantle
+      try {
+        uint code;
+        if (GetExitCodeProcess(h, out code) && code != STILL_ACTIVE) return false;   // exited, its handle still held somewhere
+        long created, ex, k, u;
+        if (atMs > 0 && GetProcessTimes(h, out created, out ex, out k, out u) && created > 0) {
+          long createdMs = (long)(DateTime.FromFileTimeUtc(created) - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+          if (createdMs > atMs + 5000) return false;   // a later process that got the same pid
+        }
+        return true;
+      } finally { CloseHandle(h); }
+    }
+
+    static long GetLong(Dictionary<string, object> d, string key) {
+      object v;
+      if (d == null || !Json.TryGet(d, key, out v) || !(v is double)) return 0;
+      double x = (double)v;
+      return x > 0 && x < 9e15 ? (long)x : 0;
+    }
+
+    /// --supervise-detach: a copy of this process OUTSIDE main's tree. No handle is inherited (it must not
+    /// hold node's stdout pipe open), no console, its own process group, and out of any job that lets it
+    /// break away (one that does not: the copy stays in that job, which is still better than main's tree).
+    /// Same arguments minus --supervise-detach. -> the copy's pid, or 0 with the reason.
+    static int Detach(string[] args, out string why) {
+      why = null;
+      string exe;
+      try { exe = Process.GetCurrentProcess().MainModule.FileName; }
+      catch (Exception ex) { why = "it could not read its own program file (" + ex.GetType().Name + ")"; return 0; }
+      var sb = new StringBuilder(QuoteArg(exe));
+      foreach (string a in args) {
+        if (a == "--supervise-detach") continue;
+        sb.Append(' ');
+        sb.Append(QuoteArg(a));
+      }
+      string line = sb.ToString();
+      uint flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+      int err = 0;
+      for (int attempt = 0; attempt < 2; attempt++) {
+        bool breakaway = attempt == 0;
+        var si = new STARTUPINFOW();
+        si.cb = Marshal.SizeOf(typeof(STARTUPINFOW));
+        PROCESS_INFORMATION pi;
+        var cmd = new StringBuilder(line, line.Length + 1);   // CreateProcessW may write into its command line
+        if (CreateProcessW(exe, cmd, IntPtr.Zero, IntPtr.Zero, false, flags | (breakaway ? CREATE_BREAKAWAY_FROM_JOB : 0u),
+                           IntPtr.Zero, null, ref si, out pi)) {
+          if (pi.hThread != IntPtr.Zero) CloseHandle(pi.hThread);
+          if (pi.hProcess != IntPtr.Zero) CloseHandle(pi.hProcess);
+          return pi.dwProcessId;
+        }
+        err = Marshal.GetLastWin32Error();
+        if (!(breakaway && err == ERROR_ACCESS_DENIED)) break;   // a job that forbids breakaway: once more without
+      }
+      why = "Windows would not start a copy of it outside Mantle's process tree (error " + err.ToString(CultureInfo.InvariantCulture) + ")";
+      return 0;
+    }
+
+    /// The one line main reads from a --supervise-detach start. Never throws.
+    static void StdoutLine(string line) {
+      try {
+        TextWriter w = Console.Out;
+        w.Write(line + "\n");
+        w.Flush();
+      } catch (Exception) { }
     }
 
     /// Start main again exactly as it was started. -> new pid, or 0 with the reason.
@@ -356,12 +549,13 @@ namespace Mantle {
 
     static void WriteState(List<long> crashes, IDictionary last, IDictionary gaveUp) {
       Dictionary<string, object> prev = ReadJson(StateFile());
-      object keepLast = null, keepGave = null;
-      if (prev != null) { Json.TryGet(prev, "last", out keepLast); Json.TryGet(prev, "gaveUp", out keepGave); }
+      object keepLast = null, keepGave = null, keepBanners = null;
+      if (prev != null) { Json.TryGet(prev, "last", out keepLast); Json.TryGet(prev, "gaveUp", out keepGave); Json.TryGet(prev, "banners", out keepBanners); }
       var arr = new List<object>();
       foreach (long t in crashes) arr.Add(t);
       var st = Json.Obj("v", 1, "supervisorPid", _me, "at", NowMs(), "crashes", arr,
-                        "last", last != null ? (object)last : keepLast, "gaveUp", gaveUp != null ? (object)gaveUp : keepGave);
+                        "last", last != null ? (object)last : keepLast, "gaveUp", gaveUp != null ? (object)gaveUp : keepGave,
+                        "banners", _banners != null ? (object)_banners : keepBanners);
       WriteAtomic(StateFile(), Json.Write(st));
     }
 

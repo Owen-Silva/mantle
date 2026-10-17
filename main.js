@@ -3136,6 +3136,8 @@ function startFeatures() {
           // lane mantle-toastfast: a new toast is coming (before its list read), so the banner window can start
           onIncoming: (fn) => notifications.onIncoming(fn),
           last: () => notifications.lastPayload(),
+          // lane mantle-notif-safety: how new notifications reach Mantle now, for Settings' notification status
+          watch: () => notifications.watchState(),
           // the app's window, through the bar's own grouping (AUMID first, exe second: groupRunning)
           targetFor: (aumid) => {
             const want = String(aumid || '').toLowerCase();

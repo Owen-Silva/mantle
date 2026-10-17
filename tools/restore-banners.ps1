@@ -3,6 +3,10 @@
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\restore-banners.ps1
 #   ... -RecordFile <path>    read Mantle's record from somewhere else (tests)
+#   ... -SettingsKey <path>   an HKCU-relative key to use instead of Windows' own
+#                             Notifications\Settings (tests use a scratch key)
+#   ... -TestOnly             only app ids that start with Mantle.ToastTest (what a
+#                             --test Mantle owns; lib/features/_toasts-safety.js)
 #
 # -----------------------------------------------------------------------------
 # WHAT IT UNDOES
@@ -34,11 +38,13 @@
 
 [CmdletBinding()]
 param(
-  [string]$RecordFile = (Join-Path $env:APPDATA 'mantle\notif-banners.json')
+  [string]$RecordFile = (Join-Path $env:APPDATA 'mantle\notif-banners.json'),
+  [string]$SettingsKey = 'Software\Microsoft\Windows\CurrentVersion\Notifications\Settings',
+  [switch]$TestOnly
 )
 
 $ErrorActionPreference = 'Stop'
-$settingsPath = 'Software\Microsoft\Windows\CurrentVersion\Notifications\Settings'
+$settingsPath = $SettingsKey
 $problems = 0
 
 function Say([string]$text) { Write-Output $text }
@@ -94,6 +100,7 @@ try {
   foreach ($e in $entries) {
     $id = [string]$e.Name
     $original = $e.Value
+    if ($TestOnly -and -not $id.StartsWith('Mantle.ToastTest', [System.StringComparison]::OrdinalIgnoreCase)) { $left++; Say "  left    $id (-TestOnly: not a test app id)"; continue }
     $found = $names[$id.ToLowerInvariant()]
     if ($found -eq $null) { $left++; Say "  left    $id (no longer in Windows' list)"; continue }
     try {
