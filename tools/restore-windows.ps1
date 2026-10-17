@@ -572,11 +572,16 @@ if (Test-Path -LiteralPath $rrUndo) {
 # (f3) Give Windows its own notification pop-ups back for every app whose banner
 # Mantle turned off ("Show notifications in Mantle's style"). restore-banners.ps1
 # only writes where the value is still Mantle's 0 and is a no-op with no record.
+# -RecordFile: the record beside $StateFile, i.e. the SAME userData this run was
+# pointed at (the supervisor passes its own -StateFile). Without it the script
+# read %APPDATA%\mantle every time, so a -StateFile run for another profile
+# silently put back the wrong (or no) banners.
 # -----------------------------------------------------------------------------
 $bannerScript = Join-Path $PSScriptRoot 'restore-banners.ps1'
+$bannerRecord = Join-Path (Split-Path -Parent $StateFile) 'notif-banners.json'
 if (Test-Path -LiteralPath $bannerScript) {
   try {
-    $bannerOut = & $bannerScript
+    $bannerOut = & $bannerScript -RecordFile $bannerRecord
     $bannerCode = $LASTEXITCODE
     foreach ($line in @($bannerOut)) { if ($line -ne $null -and "$line" -ne 'mantle restore-banners') { Say "  banners: $("$line".Trim())" } }
     if ($bannerCode -ne 0) { Problem "notification banners: restore-banners.ps1 could not put every one back (see above)" }

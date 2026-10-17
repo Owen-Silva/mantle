@@ -349,7 +349,7 @@
     return lookView();
   }
 
-  const TOASTS = { mode: q.get('toasts') || 'on', on: q.get('toasts') !== 'off' };
+  const TOASTS = { mode: q.get('toasts') || 'on', on: q.get('toasts') !== 'off', status: q.get('tstatus') };
   function answer(name, a) {
     a = a || {};
     switch (name) {
@@ -368,7 +368,12 @@
         const denied = TOASTS.mode === 'denied';
         return later(40, { ok: true, on: TOASTS.on, access: denied ? 'Denied' : 'Allowed', accessOk: !denied,
           accessWhy: denied ? 'Windows is not letting Mantle read notifications, so Windows keeps showing its own pop-ups. Allow it in Windows Settings > Privacy > Notifications.' : null,
-          fixUri: 'ms-settings:privacy-notifications', covered: denied || !TOASTS.on ? 0 : 4, released: 0, recordWhy: null, quiet: null, reason: null });
+          fixUri: 'ms-settings:privacy-notifications', covered: denied || !TOASTS.on ? 0 : 4, released: 0, recordWhy: null, quiet: null, reason: null,
+          // main's banner status; ?tstatus=helper|none plays the helper dying, ?tstatus=absent an older main with none
+          ...(TOASTS.status === 'absent' ? {} : { status: TOASTS.status === 'helper' ? { mode: 'windows', line: 'Banners: Windows\' own', why: 'Mantle\'s notification helper stopped; restored at 01:12', tone: 'warn', at: 1760000000000 }
+            : TOASTS.status === 'none' ? { mode: 'none', line: 'Banners: none', why: 'Mantle\'s notification helper stopped and Windows\' pop-ups could not be put back (made up: Windows refused the change)', tone: 'warn', at: 1760000000000 }
+            : !TOASTS.on ? { mode: 'windows', line: 'Banners: Windows\' own', why: 'Mantle\'s style is off', tone: 'info', at: null }
+            : { mode: 'mantle', line: 'Banners: Mantle', why: 'checking every 0.1 s, because Windows won\'t send change events to this app', tone: 'ok', at: null } }) });
       }
       case 'settings.enable': {
         if (a.feature === 'toasts') { TOASTS.on = !!a.on; return later(120, { ok: true, reason: null, feature: { name: 'toasts', enabled: TOASTS.on, ok: true, reason: null } }); }

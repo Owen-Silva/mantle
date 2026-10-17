@@ -338,8 +338,12 @@ async function runOne(e) {
   }
   // stop the root (timeout or selftest instance) and anything the test left behind, by pid
   const rows = await snap();
-  const left = leftovers(rows, child.pid, t0);
+  let left = leftovers(rows, child.pid, t0);
   const stopped = [];
+  // A --test --supervise instance's crash supervisor lives OUTSIDE the root's process tree (lib/supervisor.js):
+  // it is stopped FIRST, so the tree kill below can never read as a crash it starts Mantle again after.
+  const sups = left.filter((r) => /^Mantle\.Sidecar\.exe$/i.test(r.name) && /--supervise=\d+/.test(r.cmd));
+  if (sups.length) { stopped.push(...killPids(sups)); left = left.filter((r) => !sups.includes(r)); }
   if (!exited) { const k = spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { encoding: 'utf8', windowsHide: true }); stopped.push('root:' + child.pid + (k.status === 0 ? '' : '(gone)')); }
   if (left.length) { await sleep(500); stopped.push(...killPids(left)); }
   await Promise.race([exitP, sleep(3000)]);

@@ -639,8 +639,8 @@ namespace Mantle {
                         "coming", _db != null || _changes == "event", "comings", _comings,
                         "changes", _changes, "changesWhy", _changesWhy,
                         // how each look is made: the WAL-index header, else data_version, else the full query
-                        "looks", _db == null ? null : _db.ShortcutWhy != null ? "full signature" : _db.ShmWhy != null ? "data_version" : "wal-index header",
-                        "looksWhy", _db == null ? null : (_db.ShortcutWhy ?? _db.ShmWhy),
+                        "looks", _db == null ? null : _db.Looks,
+                        "looksWhy", _db == null ? null : _db.LooksWhy,
                         "detail", _db != null ? null : _dbReason,
                         "reason", _snapReason);
       });
@@ -1170,6 +1170,15 @@ namespace Mantle {
     int _sinceFull;
     public string ShortcutWhy;        // null = data_version is trusted
 
+    /// How each look is made now (the watch reply's "looks"), and why it is not the cheapest one.
+    public string Looks { get { return ShortcutWhy != null ? "full signature" : ShmWhy != null ? "data_version" : "wal-index header"; } }
+    public string LooksWhy { get { return ShortcutWhy ?? ShmWhy; } }
+    /// lane mantle-notif-safety: a shortcut switched off mid-run reaches main as an event too (Settings'
+    /// notification status shows it), not only as a log line.
+    void EmitLooks() {
+      Program.Emit(Json.Obj("ev", "notifications.looks", "looks", Looks, "looksWhy", LooksWhy));
+    }
+
     long DataVersion() {
       if (_verSt == IntPtr.Zero) _verSt = Prepare("pragma data_version");
       try {
@@ -1261,10 +1270,12 @@ namespace Mantle {
         if (_shmQuietRun && _shmView != IntPtr.Zero && ShmWhy == null) {
           ShmWhy = "the notification database changed while its WAL-index header did not, so every look now asks SQLite";
           Program.EmitLog("warn", "notifications: " + ShmWhy);
+          EmitLooks();
         }
         if (v == _ver) {
           ShortcutWhy = "the notification database changed without its data_version moving, so every look now reads the full signature";
           Program.EmitLog("warn", "notifications: " + ShortcutWhy);
+          EmitLooks();
         }
       }
       _ver = v; _sigCache = s; _sinceFull = 0; _shmQuietRun = true;

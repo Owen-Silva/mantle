@@ -675,6 +675,17 @@ const supervisor = require('./lib/supervisor').makeSupervisor({
   fs, path, spawn: require('child_process').spawn,
   alive: (pid) => { try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; } },
   kill: (pid) => process.kill(pid),
+  // stand-down's last resort (its record could not be written): a hidden PowerShell, detached so a quit never
+  // waits on it, stops every supervisor started for this main (twice: a copy can appear a moment after its launcher)
+  killSupervisorsOf: (mainPid) => {
+    const n = Number(mainPid);
+    if (!Number.isInteger(n) || n <= 0) return;
+    const ps = `foreach ($w in 800, 2500) { Start-Sleep -Milliseconds $w; Get-CimInstance Win32_Process -Filter "Name='Mantle.Sidecar.exe'" | Where-Object { $_.CommandLine -match '--supervise=${n}(\\s|"|$)' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }`;
+    const c = require('child_process').spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command', ps],
+      { detached: true, stdio: 'ignore', windowsHide: true });
+    c.on('error', () => { /* said by the caller's line; nothing else can be done on the way out */ });
+    c.unref();
+  },
   now: Date.now,
   log: (line) => process.stdout.write(`mantle: ${line}\n`),
   setInterval, clearInterval,
@@ -3165,6 +3176,12 @@ function startFeatures() {
           // lane mantle-toastfast: a new toast is coming (before its list read), so the banner window can start
           onIncoming: (fn) => notifications.onIncoming(fn),
           last: () => notifications.lastPayload(),
+          // lane mantle-notif-safety: how new notifications reach Mantle now, for Settings' notification status
+          watch: () => notifications.watchState(),
+          // lane mantle-notif-safety2: a crash supervisor is watching main (it puts Windows' banners back the
+          // moment main is gone), and main is on its way out (shutdown() has begun)
+          supervised: () => supervisor.status().on,
+          quitting: () => shuttingDown,
           // the app's window, through the bar's own grouping (AUMID first, exe second: groupRunning)
           targetFor: (aumid) => {
             const want = String(aumid || '').toLowerCase();
