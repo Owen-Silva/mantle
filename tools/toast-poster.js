@@ -9,8 +9,9 @@
  *   await p.clear();                     // removes every toast this id posted from Windows' centre
  *   await p.close();                     // clear + delete the id's registry keys, pass or fail
  *
- * NEVER OWEN'S APPS: the only id is Mantle.ToastTest.fast<random>. Its Notifications\Settings key is
- * made with ShowBanner 0 BEFORE the first post, so Windows never pops a banner on Owen's screen, and a
+ * NEVER OWEN'S APPS: the only id is Mantle.ToastTest.fast<random>. Every post first reads its
+ * ShowBanner and refuses unless it is 0 (written here, or by the --test Mantle that took the id:
+ * open({ takenBy: 'mantle' })), so Windows never pops a banner on Owen's screen, and a
  * live Mantle leaves Mantle.ToastTest* ids to Windows (_toasts-owner.js leftToWindows), so it draws none
  * either; a --test Mantle manages ONLY those ids. The toasts are silent (<audio silent="true"/>).
  * ONE PowerShell process posts them all (stdin lines), so a post costs no PowerShell start; the stamps
@@ -49,14 +50,25 @@ while ($true) {
 }
 `;
 
+/** Windows' banner for the id is off (ShowBanner 0): the one condition for any post. */
+function bannerOff(aumid) {
+  const q = reg(['query', `${SET}\\${aumid}`, '/v', 'ShowBanner']);
+  return q.status === 0 && /ShowBanner\s+REG_DWORD\s+0x0\b/i.test(q.stdout);
+}
+
+/**
+ * opts.takenBy: 'mantle' = make the id's Settings key with NO ShowBanner value, for a --test Mantle to
+ * take (a value of 0 already there reads as Owen's own banner-off, which Mantle never takes); every post
+ * then waits until Mantle has written 0. Default: write ShowBanner 0 here (no Mantle involved).
+ */
 async function open(opts) {
   const o = opts || {};
   const aumid = o.aumid || 'Mantle.ToastTest.fast' + Math.random().toString(36).slice(2, 8);
   if (!/^Mantle\.ToastTest/.test(aumid)) throw new Error('toast-poster posts only from Mantle.ToastTest* ids');
   reg(['add', `${AUMID_KEY}\\${aumid}`, '/v', 'DisplayName', '/t', 'REG_SZ', '/d', 'Mantle test', '/f']);
-  reg(['add', `${SET}\\${aumid}`, '/v', 'ShowBanner', '/t', 'REG_DWORD', '/d', '0', '/f']);
-  const q = reg(['query', `${SET}\\${aumid}`, '/v', 'ShowBanner']);
-  if (q.status !== 0 || !/ShowBanner\s+REG_DWORD\s+0x0\b/i.test(q.stdout)) {
+  if (o.takenBy === 'mantle') reg(['add', `${SET}\\${aumid}`, '/f']);
+  else reg(['add', `${SET}\\${aumid}`, '/v', 'ShowBanner', '/t', 'REG_DWORD', '/d', '0', '/f']);
+  if (o.takenBy !== 'mantle' && !bannerOff(aumid)) {
     cleanupKeys(aumid);
     throw new Error(`could not set ShowBanner 0 for ${aumid} first, so nothing is posted (Windows would pop its own banner)`);
   }
@@ -87,7 +99,10 @@ async function open(opts) {
   let closed = false;
   const p = {
     aumid,
+    bannerOff: () => bannerOff(aumid),
     async post(title) {
+      // NEVER a Windows banner on Owen's screen: no post unless Windows' banner for the id reads 0
+      if (!bannerOff(aumid)) throw new Error(`refusing to post: Windows' banner for ${aumid} is not off (ShowBanner is not 0)`);
       proc.stdin.write(String(title).replace(/[\r\n]/g, ' ') + '\n');
       const l = await next(15000);
       const m = /^posted (\d+\.\d+) (\d+\.\d+)$/.exec(l);

@@ -86,7 +86,8 @@ const STAMP = `(function () {
   try {
     try { fs.unlinkSync(RECORD); } catch (_) { /* none */ }
     try { fs.unlinkSync(PORT_FILE); } catch (_) { /* none */ }
-    poster = await P.open();   // the id exists with ShowBanner 0 before Mantle starts, so the instance takes it
+    // the id's Settings key exists (no value) before Mantle starts, so the instance takes it (writes 0)
+    poster = await P.open({ takenBy: 'mantle' });
     const env = Object.assign({}, process.env, { MANTLE_TEST_MIN_FREE_GB: '0' });
     delete env.MANTLE_TEST_VISIBLE;
     const cli = require.resolve('electron/cli.js', { paths: [ROOT] });
@@ -139,9 +140,10 @@ const STAMP = `(function () {
     await until(() => ev(barS, '!!(window.mantle && window.mantle.call)'), 15000, 200);
     const st = await until(async () => { const s = await call('toasts.state'); return s && s.ok && s.access ? s : null; }, 30000, 500);
     if (!st || st.access !== 'Allowed') throw new Error(`notification access is not Allowed (${st && st.access}): nothing to measure`);
-    let owned = await until(() => { try { const r = JSON.parse(fs.readFileSync(RECORD, 'utf8')); return r.owned && Object.prototype.hasOwnProperty.call(r.owned, poster.aumid); } catch (_) { return false; } }, 10000, 250);
-    if (!owned) { await call('toasts.apply'); owned = await until(() => { try { const r = JSON.parse(fs.readFileSync(RECORD, 'utf8')); return r.owned && Object.prototype.hasOwnProperty.call(r.owned, poster.aumid); } catch (_) { return false; } }, 10000, 250); }
-    if (!owned) throw new Error('the test instance never took the poster\'s id');
+    const taken = () => { try { const r = JSON.parse(fs.readFileSync(RECORD, 'utf8')); return !!(r.owned && Object.prototype.hasOwnProperty.call(r.owned, poster.aumid)) && poster.bannerOff(); } catch (_) { return false; } };
+    let owned = await until(taken, 10000, 250);
+    if (!owned) { await call('toasts.apply'); owned = await until(taken, 10000, 250); }
+    if (!owned) throw new Error('the test instance never took the poster\'s id (no ShowBanner 0 from it), so nothing is posted');
 
     let k = 0;
     // the stamp the banner page pushed; on a timeout, ONE look at the page says "drawn but not stamped" or "never drawn"
