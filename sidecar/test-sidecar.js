@@ -1245,6 +1245,58 @@ async function tbhideGuardChecks() {
   try { fs.unlinkSync(note); } catch (_) { /* gone */ }
 }
 
+/* DIFF-ONLY ANSWERS (lane mantle-idlefix-game, 2026-10-17; GameMode.cs): a keyed names-only scan that
+ * sends back its last procsGen gets only the pids that came or went, and applying them to the last
+ * list gives exactly the list a whole read gives. A stale since, a detail read or no key: the whole list. */
+async function scanDiffChecks(s) {
+  const key = 'test-diff-' + process.pid;
+  const scan = (extra) => s.send('gamemode.scan', Object.assign({ procs: true }, extra), 8000);
+  try {
+    const a = await scan({ key });
+    const ar = a.ok ? a.result : null;
+    check('scan diff: a keyed first read is the whole list, with a procsGen', !!ar && Array.isArray(ar.procs) && ar.procs.length > 10 && typeof ar.procsGen === 'number' && !ar.came,
+      JSON.stringify(ar && { n: ar.procs && ar.procs.length, gen: ar.procsGen, reason: a.reason || a.error }));
+    if (!ar) return;
+    const rows = new Map(ar.procs.map((p) => [p.pid, p]));
+    // a process that comes and goes between reads: proved by a child of this test
+    const child = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 20000)'], { stdio: 'ignore', windowsHide: true });
+    await sleep(400);
+    const b = await scan({ key, since: ar.procsGen });
+    const br = b.ok ? b.result : null;
+    const bytesWhole = JSON.stringify(ar.procs).length;
+    check('scan diff: the next read with since is changes only (came/gone, procsSince), no procs',
+      !!br && !br.procs && Array.isArray(br.came) && Array.isArray(br.gone) && br.procsSince === ar.procsGen && br.procsGen > ar.procsGen,
+      JSON.stringify(br && { keys: Object.keys(br), came: br.came && br.came.length, gone: br.gone && br.gone.length }));
+    if (br && br.came) {
+      check('scan diff: the child this test started is in came', br.came.some((p) => p.pid === child.pid && /node/i.test(p.file)), JSON.stringify(br.came.map((p) => p.file)));
+      for (const pid of br.gone) rows.delete(pid);
+      for (const p of br.came) rows.set(p.pid, p);
+      check(`scan diff: changes are a small answer (${JSON.stringify(br.came).length + JSON.stringify(br.gone).length} bytes against ${bytesWhole} for the whole list)`,
+        JSON.stringify(br.came).length + JSON.stringify(br.gone).length < bytesWhole / 4, '');
+    }
+    try { child.kill(); } catch (_) { /* gone */ }
+    await sleep(400);
+    const c = await scan({ key, since: br && br.procsGen });
+    const cr = c.ok ? c.result : null;
+    check('scan diff: the child\'s exit comes back in gone', !!cr && Array.isArray(cr.gone) && cr.gone.indexOf(child.pid) >= 0, JSON.stringify(cr && { gone: cr.gone, came: cr.came && cr.came.length }));
+    if (cr && cr.came) { for (const pid of cr.gone) rows.delete(pid); for (const p of cr.came) rows.set(p.pid, p); }
+    // the list the changes make = a whole read's list (give or take a process that started or ended between the two reads)
+    const w = await scan({});
+    const wr = w.ok ? w.result : null;
+    if (wr && Array.isArray(wr.procs)) {
+      const want = new Set(wr.procs.map((p) => p.pid));
+      let miss = 0; for (const pid of want) if (!rows.has(pid)) miss++;
+      let extra = 0; for (const pid of rows.keys()) if (!want.has(pid)) extra++;
+      check(`scan diff: applied changes match a whole read (${miss} missing, ${extra} extra of ${want.size})`, miss + extra <= 3, '');
+      check('scan diff: a read with no key is the whole list as before, no procsGen', !('procsGen' in wr) && !wr.came, JSON.stringify(Object.keys(wr)));
+    }
+    const d = await scan({ key, since: 12345678 });
+    check('scan diff: a since the sidecar does not hold gets the whole list', d.ok && Array.isArray(d.result.procs) && !d.result.came, JSON.stringify(d.ok && Object.keys(d.result)));
+    const e = await scan({ key, detail: true, since: d.ok ? d.result.procsGen : 0 });
+    check('scan diff: a detail read is always the whole list', e.ok && Array.isArray(e.result.procs) && !e.result.came, JSON.stringify(e.ok && Object.keys(e.result)));
+  } catch (e) { check('scan diff', false, e.message); }
+}
+
 async function main() {
   if (EXE_ARG && !fs.existsSync(EXE)) {
     console.log('SIDECAR TEST: 0 passed, 1 failed');
@@ -1301,6 +1353,7 @@ async function main() {
 
   // ---- the feature seam: Features.cs in ping, unknown feature commands, the chord machine ----
   await featureSeamChecks(s);
+  await scanDiffChecks(s);
 
   // ---- state file (the recovery note) -----------------------------------
   // Written before anything could have been changed, so a recovery script has
