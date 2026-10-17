@@ -19,8 +19,9 @@ const t = H.suite('GCAL PAGE TEST');
 const SHOTS = process.env.SHOTS || '';
 const JARGON = /\b(sidecar|IPC|renderer|dryRun|Electron|undefined|null|NaN|gcal\.[a-z]+|\w+Exception|DPAPI)\b|\[object/;
 const DESK = { light: '#dfe4ec', dark: '#141619' };
-const themeInit = (th) => 'document.documentElement.dataset.theme = ' + JSON.stringify(th) + ';' +
-  'document.addEventListener("readystatechange", function () { document.documentElement.dataset.theme = ' + JSON.stringify(th) + '; });';
+// an init script runs before <html> exists: set the theme once it does (and again as the page loads)
+const themeInit = (th) => '(function () { var set = function () { if (document.documentElement) document.documentElement.dataset.theme = ' + JSON.stringify(th) + '; };' +
+  ' set(); document.addEventListener("readystatechange", set); })();';
 
 async function run() {
   if (H.gaming()) { console.log('a game is running: the browser half is skipped'); t.check('not skipped (a game was running)', false); return; }
