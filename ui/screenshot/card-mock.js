@@ -23,6 +23,12 @@
   window.mantle = {
     call: function (name, args) {
       mock.calls.push({ name: name, args: args });
+      // hud.backdrop (dark): main.js hudBackdrop answers { ok: true } only AFTER it has sent the picture as
+      // <key>.backdrop; with no picture it answers { ok: false, reason }. The mock takes no picture, so it says
+      // that. (A bare { ok: true } with no picture after it kept hud-backdrop.js's one request "in flight" for
+      // good: its timeout is cleared on the answer, so every later request, the glide's reshoot too, was folded
+      // into it and never reached main: card.page.test.js 48/1, lane mantle-corner-follow2.)
+      if (name === 'hud.backdrop') return Promise.resolve({ ok: false, reason: 'the card mock takes no picture' });
       // ?openfail=1: main could not open the file (main sends the reason in plain words)
       if (name === 'screenshot.cardOpen' && q.get('openfail') === '1') return Promise.resolve({ ok: false, reason: 'Windows has no app set to open PNG pictures' });
       if (name === 'screenshot.cardSave') {

@@ -78,8 +78,8 @@ async function openGlide(browser, theme, motion) {
   await page.goto(PAGE + '?life=0&state=copied');
   await page.waitForFunction(() => { const c = document.getElementById('card'); return c && !c.hidden && window.__mock.calls.some((x) => /cardShown$/.test(x.name)); }, null, { timeout: 5000 });
   await sleep(450);                        // the card's own slide-in is over
-  // dark: the mock answers the show's hud.backdrop with no picture, so that request stays in flight until
-  // hud-backdrop.js's 1500 ms timeout (one in flight serves every request): let it lapse first
+  // dark: the mock answers the show's hud.backdrop the way main does with no picture ({ ok: false }, card-mock.js),
+  // so that request is over at once (one in flight serves every request); the wait is kept as a margin
   if (theme === 'dark') await sleep(1300);
   const emit = (p) => page.evaluate((x) => window.__cardEmit('screenshot.lift', x), p);
   return { ctx, page, emit, f: () => page.evaluate(FOLLOW) };

@@ -78,10 +78,22 @@ async function open(browser, theme, reduced) {
       check(T + 'down: back in the corner', Math.abs((await g()).y) < 0.5);
       await emit('clips.lift', { px: REACH, kind: 'up', ms: 336 });
       await page.waitForTimeout(60);
-      const g5 = await g();
-      await emit('clips.lift', { px: 0, kind: 'down', ms: 300 });
+      // lane mantle-corner-follow2: where it is, the reversal and where it is right after, in ONE task of the page.
+      // Read across three round trips (r1: 26/1 in both runs, light and dark), the up's spring kept going between
+      // the read and the reversal (~10-20 DIP in a loaded --test box), so the "jump" was the test's own delay.
+      // In one task the animation clock does not move: no jump = the same place, to a fraction of a pixel.
+      const rv = await page.evaluate(() => {
+        const y = () => { const m = /matrix\(([^)]+)\)/.exec(getComputedStyle(document.getElementById('lift')).transform); return m ? Number(m[1].split(',')[5]) : 0; };
+        const before = y();
+        window.__fake.emit('clips.lift', { px: 0, kind: 'down', ms: 300 });
+        const after = y();
+        const tf = getComputedStyle(document.getElementById('lift')).transitionTimingFunction;
+        return { before, after, tf };
+      });
+      await page.waitForTimeout(50);
       const g6 = await g();
-      check(T + 'rapid toggle: the way back starts from where it was (no jump)', g5.y < -3 && Math.abs(g6.y - g5.y) < 8, { g5, g6 });
+      check(T + 'rapid toggle: the way back starts from where it was (no jump)', rv.before < -3 && Math.abs(rv.after - rv.before) < 0.5 && /cubic-bezier/.test(rv.tf), rv);
+      check(T + 'rapid toggle: ... and goes on down from there (not back up, not at once in the corner)', g6.y > rv.after - 0.5 && g6.y < -0.5, { rv, g6 });
       await page.waitForTimeout(400);
       check(T + 'rapid toggle: ends in the corner', Math.abs((await g()).y) < 0.5);
       await emit('clips.lift', { px: REACH, kind: 'up', ms: 0 });
