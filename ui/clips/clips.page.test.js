@@ -28,7 +28,8 @@ function decodePng(buf) {
   while (p < buf.length) { const len = buf.readUInt32BE(p), type = buf.toString('ascii', p + 4, p + 8), d = buf.slice(p + 8, p + 8 + len); if (type === 'IHDR') { w = d.readUInt32BE(0); h = d.readUInt32BE(4); ct = d[9]; } else if (type === 'IDAT') idat.push(d); else if (type === 'IEND') break; p += 12 + len; }
   const bpp = ct === 6 ? 4 : 3, raw = zlib.inflateSync(Buffer.concat(idat)), stride = w * bpp, px = Buffer.alloc(h * stride);
   for (let y = 0; y < h; y++) { const f = raw[y * (stride + 1)], src = raw.slice(y * (stride + 1) + 1, (y + 1) * (stride + 1)); for (let x = 0; x < stride; x++) { const a = x >= bpp ? px[y * stride + x - bpp] : 0, b = y ? px[(y - 1) * stride + x] : 0, c = (x >= bpp && y) ? px[(y - 1) * stride + x - bpp] : 0; let v = src[x]; if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1; else if (f === 4) { const pp = a + b - c, pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c); v += (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c); } px[y * stride + x] = v & 255; } }
-  return { w, h, at: (x, y) => { const i = y * stride + x * bpp; return bpp === 4 ? px[i + 3] : 255; } };
+  return { w, h, at: (x, y) => { const i = y * stride + x * bpp; return bpp === 4 ? px[i + 3] : 255; },
+    lum: (x, y) => { const i = y * stride + x * bpp; return 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]; } };
 }
 
 /* the fake main: records calls, answers from window.__answers, lets the test push events */
@@ -202,6 +203,38 @@ async function open(browser, file, theme, w, h) {
       await sleep(80);
       check(G + 'Ctrl+Z undoes it (clips.undo {token})', ((await Q.calls('clips.undo'))[0] || {}).token === 'u1');
       await Q.ctx.close();
+    }
+
+    /* the gallery UNDER THE MOCK (no fake main, so mock-mantle.js draws its stand-in desk), the theme flipped
+       live on <html data-theme> the way the app's plumbing does it (lane mantle-clipsdark): in dark the light
+       desk painted over the whole window, the white title nearly invisible. Dark must read dark; light keeps
+       its desk exactly. */
+    const LIGHT_DESK = 'linear-gradient(160deg, rgb(201, 210, 226), rgb(233, 228, 220))';
+    for (const theme of ['light', 'dark']) {
+      const M = theme + ' gallery under the mock: ';
+      const ctx = await browser.newContext({ viewport: { width: 900, height: 600 }, deviceScaleFactor: 1, reducedMotion: 'reduce' });
+      const page = await ctx.newPage();
+      await page.goto(UI + 'index.html?mock=empty');
+      await page.waitForFunction(() => document.body.classList.contains('mock'));
+      await page.evaluate((th) => {
+        if (th === 'dark') document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme;
+        window.dispatchEvent(new CustomEvent('mantle-theme', { detail: { theme: th } }));
+      }, theme);
+      await sleep(150);
+      const st = await page.evaluate(() => ({ img: getComputedStyle(document.body).backgroundImage, ink: getComputedStyle(document.querySelector('.brand')).color }));
+      const png = decodePng(await page.screenshot());
+      let sum = 0, n = 0;   // the body below the header band, its four corners' quarter (clear of the empty state)
+      for (const [x0, y0] of [[20, 70], [700, 70], [20, 450], [700, 450]]) for (let y = y0; y < y0 + 120; y += 8) for (let x = x0; x < x0 + 180; x += 8) { sum += png.lum(x, y); n++; }
+      const body = Math.round(sum / n);
+      await page.screenshot({ path: path.join(SHOTS, `gallery-mock-empty-${theme}.png`) });
+      if (theme === 'dark') {
+        check(M + 'the body reads dark (mean luminance under 70)', body < 70, { body, img: st.img });
+        check(M + 'the window tint (--wall-tint) lies over the desk', /rgba\(9, 10, 11, 0\.5\)/.test(st.img) && /rgba\(19, 20, 21, 0\.83\)/.test(st.img), st.img);
+      } else {
+        check(M + 'light keeps its stand-in desk exactly', st.img === LIGHT_DESK, st.img);
+        check(M + 'the body reads light (mean luminance over 180)', body > 180, body);
+      }
+      await ctx.close();
     }
   } catch (err) {
     failures.push(`threw: ${err.stack}`);
