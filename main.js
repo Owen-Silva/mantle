@@ -1586,6 +1586,19 @@ function barRect() {
   }
 }
 
+/** Where the bar's PILL rests, in DIP, and its shape (lane mantle-corner4): the corner banners rest above the
+    HIDDEN pill's footprint (lib/features/_toasts-core.js hiddenPillTop), at any display scale. In the pill
+    shape the pill is the top BAR_H of the resting rect (the PILL_LIFT_DIP under it stay transparent). */
+function barPillRest() {
+  if (!barWin || barWin.isDestroyed()) return null;
+  try {
+    const geo = barGeometry();
+    const r = geo.rest.dip;
+    return { x: r.x, y: r.y, width: r.width, height: BAR_SHAPE === 'pill' ? BAR_H : r.height, shape: BAR_SHAPE, edge: geo.edge };
+  } catch (_) {
+    return null;
+  }
+}
 function pointIn(rect, pt) {
   return !!rect && pt.x >= rect.x && pt.x < rect.x + rect.width
     && pt.y >= rect.y && pt.y < rect.y + rect.height;
@@ -3141,7 +3154,7 @@ function startFeatures() {
       broadcast,
       host: { openLauncher: openLauncherFor, barRect: () => barRect(), display: featureDisplay, rest: (on, why) => restMantle(on, why),
         // lane mantle-corner: is the bar up, and a call on the tick it starts coming in or going
-        bar: { up: () => barUpNow(), onMotion: (fn) => { barMotionFns.add(fn); return () => barMotionFns.delete(fn); } },
+        bar: { up: () => barUpNow(), pill: () => barPillRest(), onMotion:(fn) => { barMotionFns.add(fn); return () => barMotionFns.delete(fn); } },
         media: () => lastMedia, onMedia: (fn) => { mediaListeners.add(fn); return () => mediaListeners.delete(fn); },
         // lane mantle-crash: Explorer started again (TaskbarCreated): the top bar registers its strip again
         onShellRestart,
