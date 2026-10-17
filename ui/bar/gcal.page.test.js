@@ -118,8 +118,20 @@ async function run() {
       if (t.want('keys')) {
         const pg = await go(th, 'events');
         await openCal(pg);
+        // the focus comes after the first frame and the keyboard answer: wait for it (2 s at most), never a fixed guess
+        await pg.page.waitForFunction(() => { const a = document.activeElement; return !!a && a.classList.contains('calday') && a.classList.contains('sel'); }, null, { timeout: 2000 }).catch(() => {});
         const focused = await pg.eval(() => { const a = document.activeElement; return a && a.classList.contains('calday') && a.classList.contains('sel'); });
-        t.check(th + ' keys: the keyboard lands on the selected day', focused);
+        const fdiag = focused ? null : await pg.eval(() => {
+          const a = document.activeElement; const p = document.querySelector('#pop'); const c = document.querySelector('#clock');
+          const r = c ? c.getBoundingClientRect() : null;
+          const hit = r ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
+          const st = window.MantleGcal && window.MantleGcal._state();
+          return { active: a ? a.tagName + '#' + a.id + '.' + a.className : null, pop: p ? { hidden: p.hidden, cls: p.className, kids: p.children.length } : null,
+            clock: r ? [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)] : null, hit: hit ? hit.tagName + '#' + hit.id + '.' + String(hit.className).slice(0, 60) : null,
+            kbd: st && st.kbd, view: !!(st && st.view), status: !!(st && st.status), calls: (window.__MOCK_CALLS__ || []).map((x) => x.ch).slice(-12), theme: document.documentElement.dataset.theme };
+        });
+        if (!focused) { fdiag.errors = pg.errors.slice(0, 4); const f = path.join(require('os').tmpdir(), 'gcal-keys-fail-' + th + '.png'); await pg.page.screenshot({ path: f }).catch(() => {}); fdiag.shot = f; }
+        t.check(th + ' keys: the keyboard lands on the selected day', focused, fdiag);
         await pg.key('ArrowRight');
         t.check(th + ' keys: Right moves the selection a day', await pg.text('#pop .gcal-head') === 'Tomorrow');
         await pg.key('ArrowLeft'); await pg.key('ArrowLeft');
@@ -243,7 +255,7 @@ async function run() {
         const r = await pg.eval(async () => {
           const out = [];
           const frame = () => new Promise((res) => requestAnimationFrame(() => setTimeout(res, 0)));
-          for (let i = 0; i < 25; i++) {
+          for (let i = 0; i < 45; i++) {      // 40 measured: with only 20, "p95" was simply the slowest one
             const t0 = performance.now();
             document.querySelector('#clock').click();
             await frame();
