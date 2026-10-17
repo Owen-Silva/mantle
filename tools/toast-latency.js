@@ -58,7 +58,14 @@ async function cdp(port) {
     if (j.id && pend.has(j.id)) { const p = pend.get(j.id); pend.delete(j.id); if (j.error) p.rej(new Error(j.error.message)); else p.res(j.result); return; }
     if (j.method) for (const h of handlers) h(j);
   });
-  const send = (method, params, sessionId) => new Promise((res, rej) => { const i = ++n; pend.set(i, { res, rej }); ws.send(JSON.stringify(Object.assign({ id: i, method, params: params || {} }, sessionId ? { sessionId } : {}))); });
+  ws.addEventListener('close', () => { for (const p of pend.values()) p.rej(new Error('the DevTools connection closed')); pend.clear(); });
+  // every command answers or fails within 15 s: a hang can never stall a hold
+  const send = (method, params, sessionId) => new Promise((res, rej) => {
+    const i = ++n;
+    const t = setTimeout(() => { if (pend.has(i)) { pend.delete(i); rej(new Error(`${method} did not answer within 15 s`)); } }, 15000);
+    pend.set(i, { res: (v) => { clearTimeout(t); res(v); }, rej: (e) => { clearTimeout(t); rej(e); } });
+    ws.send(JSON.stringify(Object.assign({ id: i, method, params: params || {} }, sessionId ? { sessionId } : {})));
+  });
   return { send, on: (h) => handlers.push(h), close: () => { try { ws.close(); } catch (_) { /* gone */ } } };
 }
 // injected into every NEW page before its own scripts; only the banner page records anything
@@ -102,6 +109,14 @@ const STAMP = `(function () {
       spawnSync('taskkill', ['/PID', String(run.proc.pid), '/T', '/F'], { windowsHide: true });
     }, 5000);
     guard.unref();
+    // the whole run in 15 min or it stops itself (its own tree only, by PID); the finally still cleans up
+    const watchdog = setTimeout(() => {
+      if (stopped) return;
+      stopped = 'the run took over 15 min (watchdog)';
+      spawnSync('taskkill', ['/PID', String(run.proc.pid), '/T', '/F'], { windowsHide: true });
+      if (c) c.close();
+    }, 15 * 60000);
+    watchdog.unref();
 
     const port = await until(() => { try { return parseInt(fs.readFileSync(PORT_FILE, 'utf8').split('\n')[0], 10) || null; } catch (_) { return null; } }, 60000, 250);
     if (!port) throw new Error('the --test instance never opened its DevTools port: ' + run.out.slice(-400));
@@ -118,11 +133,13 @@ const STAMP = `(function () {
       const sid = j.params.sessionId;
       const go = () => c.send('Runtime.runIfWaitingForDebugger', {}, sid).catch(() => {});
       if (j.params.targetInfo.type !== 'page' || !j.params.waitingForDebugger) return void go();
-      Promise.all([
-        c.send('Runtime.enable', {}, sid),
-        c.send('Runtime.addBinding', { name: '__latBinding' }, sid),
-        c.send('Page.addScriptToEvaluateOnNewDocument', { source: STAMP }, sid),
-      ]).catch(() => {}).then(go);
+      // SENT back to back, NOT awaited: a page paused at start may not answer Runtime commands until it
+      // runs (the first hold hung here, 2026-10-17 00:08). CDP keeps one session's commands in order, so
+      // the script and the binding are in before the resume is handled (Puppeteer's pattern).
+      c.send('Page.addScriptToEvaluateOnNewDocument', { source: STAMP }, sid).catch(() => {});
+      c.send('Runtime.addBinding', { name: '__latBinding' }, sid).catch(() => {});
+      c.send('Runtime.enable', {}, sid).catch(() => {});
+      go();
     });
     await c.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
     const bar = await until(async () => {
@@ -144,6 +161,7 @@ const STAMP = `(function () {
     let owned = await until(taken, 10000, 250);
     if (!owned) { await call('toasts.apply'); owned = await until(taken, 10000, 250); }
     if (!owned) throw new Error('the test instance never took the poster\'s id (no ShowBanner 0 from it), so nothing is posted');
+    console.log(`  ${LABEL}: instance up, ${poster.aumid} taken; measuring ${COLD} cold + ${WARM} warm`);
 
     let k = 0;
     // the stamp the banner page pushed; on a timeout, ONE look at the page says "drawn but not stamped" or "never drawn"
@@ -167,6 +185,7 @@ const STAMP = `(function () {
       const s = await stampOf(key, 6000);
       if (!s || !s.at) { res.missed++; console.log(`  ${kind} ${key}: ${s ? 'banner seen but not stamped (the page was made before the stamp script)' : 'no banner within 6 s'}`); return; }
       res[kind].push(s.at - p.before);
+      console.log(`  ${kind} ${key}: ${Math.round(s.at - p.before)} ms (Show() took ${Math.round(p.after - p.before)} ms)`);
     }
     // COLD: no window open
     for (let i = 0; i < COLD; i++) {
