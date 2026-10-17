@@ -173,7 +173,7 @@ const PROPER = new Set(['Windows', 'Mantle', 'Helm', 'Quartz', 'Bluetooth', 'Wi-
   'DNS', 'IP', 'IPv4', 'IPv6', 'USB', 'PC', 'PIN', 'Hello', 'Game', 'Bar', 'Narrator', 'Magnifier', 'Defender', 'Update', 'Alt', 'Tab',
   'Win', 'Ctrl', 'Shift', 'Esc', 'Insider', 'Program', 'Mode', 'DirectX', 'Spotify', 'Task', 'View', 'Snap', 'Copilot', 'Teams',
   'Outlook', 'Dolby', 'Atmos', 'DTS', 'Sonic', 'MAC', 'ID', 'GPU', 'CPU', 'RAM', 'SSD', 'HDD', 'Ethernet', 'Explorer', 'File', 'Start',
-  'Widgets', 'Focus', 'Security', 'BitLocker', 'Kerberos', 'ClearType', 'Braille', 'Live', 'Captions', 'Voice', 'Access', 'Sticky', 'Keys',
+  'Widgets', 'Focus', 'Google', 'Calendar', 'Security', 'BitLocker', 'Kerberos', 'ClearType', 'Braille', 'Live', 'Captions', 'Voice', 'Access', 'Sticky', 'Keys',
   'Filter', 'Toggle', 'Mouse', 'Night', 'Light', 'Storage', 'Sense', 'Cloud', 'AutoPlay', 'Pen', 'Ink', 'Aero', 'Shake', 'Delivery',
   'Optimization', 'Find', 'My', 'Device', 'Family', 'Recall', 'Click', 'To', 'Do', 'SmartScreen', 'Nearby', 'Sharing', 'Phone', 'Link',
   'Print', 'Screen', 'Emoji', 'IME', 'UTC', 'GMT', 'AM', 'PM', 'Auto', 'HDMI', 'DisplayPort', 'Hz', 'DPI', 'Unicode', 'UTF-8', 'Beta',
