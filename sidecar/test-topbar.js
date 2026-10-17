@@ -231,6 +231,21 @@ function flat(items, out) {
       Math.abs(last.mem.total - os.totalmem()) / os.totalmem() < 0.01);
     t.check('stats: GPU is a number or carries its reason', typeof last.gpu.pct === 'number' || !!last.gpu.reason, JSON.stringify(last.gpu).slice(0, 200));
     t.check('stats: network rates are numbers', typeof last.net.down === 'number' && typeof last.net.up === 'number');
+    // THE GPU EVERY 2 S (lane mantle-idlefix-stats): the costly \GPU Engine(*) wildcard is its own query, read
+    // every 2nd tick; the tick between repeats that reading (same gpu.at, same figure), the rest stays 1 s
+    t.check('gpu: read every 2000 ms (topbar.stats says so)', son.gpuEveryMs === 2000, JSON.stringify(son));
+    const reads = [];
+    for (const [, e] of got) if (e.gpu && typeof e.gpu.at === 'number' && (!reads.length || reads[reads.length - 1].at !== e.gpu.at)) reads.push({ at: e.gpu.at, pct: e.gpu.pct });
+    const rgaps = reads.slice(1).map((r, i) => r.at - reads[i].at);
+    t.check('gpu: one engine read per 2 s, not per 1 s sample', reads.length >= Math.floor(got.length / 2) - 1 && reads.length <= Math.ceil(got.length / 2) + 1 &&
+      rgaps.every((g) => g > 1700 && g < 2300), `${reads.length} reads in ${got.length} samples, gaps ${rgaps.join(',')}`);
+    const repeats = got.slice(1).filter(([, e], i) => e.gpu && got[i][1].gpu && e.gpu.at === got[i][1].gpu.at);
+    t.check('gpu: the sample between two reads repeats the reading (same figure, same engines)', repeats.length >= 1 && repeats.every(([, e]) => {
+      const prev = got[got.findIndex(([, x]) => x === e) - 1][1].gpu;
+      return e.gpu.pct === prev.pct && JSON.stringify(e.gpu.engines) === JSON.stringify(prev.engines);
+    }), `${repeats.length} repeats`);
+    t.check('gpu: the figure is still the busiest engine (>= every engine type shown, <= 100)', typeof last.gpu.pct !== 'number' ||
+      (last.gpu.pct <= 100 && (last.gpu.engines || []).every((g) => g.pct <= last.gpu.pct + 0.051)), JSON.stringify(last.gpu).slice(0, 300));
     // PING (sidecar/TopbarPing.cs, lane topbar-ping): the closest Valorant NA stand-in, every 2 s
     const pg = last.ping || {};
     const firstPing = got.length ? (got[0][1].ping || {}) : {};
@@ -258,7 +273,10 @@ function flat(items, out) {
     // detail: the top processes by name, only while asked
     await s.call('topbar.stats', { detail: 'mem' }, 4000);
     await T.sleep(1300);
-    const dl = s.collect('topbarstats').filter((e) => e.detail === 'mem').pop();
+    const dls = s.collect('topbarstats').filter((e) => e.detail === 'mem');
+    const dl = dls[dls.length - 1];
+    t.check('gpu: while a detail is asked the engines are read every sample (its top processes stay 1 s)', dls.length >= 2 &&
+      new Set(dls.map((e) => e.gpu && e.gpu.at)).size === dls.length, dls.map((e) => e.gpu && e.gpu.at).join(','));
     t.check('stats detail: top processes for CPU, RAM and GPU arrive while asked', !!dl && Array.isArray(dl.cpu.top) && Array.isArray(dl.mem.top) && dl.mem.top.length === 5,
       JSON.stringify(dl && { cpu: (dl.cpu.top || []).length, mem: (dl.mem.top || []).length }));
     if (dl) {
