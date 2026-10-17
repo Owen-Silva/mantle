@@ -266,7 +266,8 @@ namespace Mantle {
 
         // "End process tree" / taskkill /T: main AND its sidecar ended with exit code 1 together. That is Owen
         // stopping Mantle, not a crash: Windows' taskbar back (the same restore a crash-loop give-up runs), no
-        // dialog, no restart. A crash of main alone leaves its sidecar to exit by itself, with code 0.
+        // dialog, no restart. A crash or kill of main ALONE ends its sidecar with code 0
+        // (node's kill-on-close job ends it ~3 ms later; measured 10-17), so that still restarts.
         bool treeKill = haveCode && raw == 1 && TreeKilled(mainEndedMs > 0 ? mainEndedMs : diedAt);
         CloseTracked();
         if (treeKill) {
@@ -605,7 +606,8 @@ namespace Mantle {
 
     /// main ended with exit code 1 at mainEndedMs: did one of its sidecars end with code 1 within
     /// TreeKillWindowMs of it? One still running gets up to 1.5 s: a tree kill ends them all at once, while
-    /// after a crash (or kill) of main ALONE the sidecar sees its stdin close and exits by itself, with code 0.
+    /// after a crash (or kill) of main ALONE, node's kill-on-close job ends the sidecar with code 0 a few ms later
+    /// (measured 10-17: taskkill /F /T gave main and child code 1 in the same millisecond, 3 of 3 runs).
     static bool TreeKilled(long mainEndedMs) {
       if (_sidecars.Count == 0) return false;   // no sidecar was seen: it cannot tell, so a crash (restart) as before
       long until = NowMs() + 1500;
