@@ -230,9 +230,78 @@ async function open(browser, theme) {
         return { clamped: (function () { var f = ti.cloneNode(true); f.style.cssText = 'display:block;-webkit-line-clamp:none;overflow:visible;position:absolute;visibility:hidden;width:' + ti.clientWidth + 'px'; ti.parentNode.appendChild(f); var n = Math.round(f.getBoundingClientRect().height / parseFloat(cs.lineHeight)); f.remove(); return n > 2; })(), lines: Math.round(r.height / parseFloat(cs.lineHeight)), clamp: cs.webkitLineClamp, inside: r.right <= c.right - 11 && r.left >= c.left, cardRight: c.right, winRight: window.innerWidth };
       });
       check(T + 'a long title: two lines then an ellipsis, inside the card, the card inside the window', long.clamped && long.lines === 2 && String(long.clamp) === '2' && long.inside && long.cardRight <= long.winRight - 16, long);
+      if (theme === 'light') {
+        // ---- IN THE CORNER, GLIDING WITH THE BAR (lane mantle-corner, 2026-10-16)
+        const g = () => page.evaluate(() => {
+          const s = document.getElementById('stack'), cs = getComputedStyle(s);
+          const m = /matrix\(([^)]+)\)/.exec(cs.transform);
+          return { y: m ? Number(m[1].split(',')[5]) : 0, tf: cs.transitionTimingFunction, dur: cs.transitionDuration, offTop: s.offsetTop, boxTop: s.getBoundingClientRect().top, lastH: window.__toasts.state().last.h, inner: window.innerHeight };
+        });
+        const g0 = await g();
+        check(T + 'glide: in the corner to start (no lift)', g0.y === 0, g0);
+        const nLay = (await calls('toasts.layout')).length;
+        await emit('toasts.lift', { px: 62, kind: 'up', ms: 560 });
+        const g1 = await g();
+        check(T + 'glide up: on the bar\'s spring (linear(), the 41 points) over 560 ms', /^linear\(/.test(g1.tf) && g1.dur === '0.56s', g1);
+        await page.waitForTimeout(110);
+        const gMid = await g();
+        check(T + 'glide up: really travels (mid-way at ~110 ms, not a jump)', gMid.y < -5 && gMid.y > -62, gMid);
+        await page.waitForTimeout(650);
+        const g2 = await g();
+        check(T + 'glide up: lands 62 above the corner', Math.abs(g2.y + 62) < 0.5, g2);
+        check(T + 'glide: the stack\'s reported height ignores the lift (offsetTop, not the moved box): no new layout, same h', g2.offTop === g0.offTop && g2.boxTop < g0.boxTop - 60 && (await calls('toasts.layout')).length === nLay && g2.lastH === Math.ceil(g2.inner - g2.offTop + 8), { g0, g2 });
+        await emit('toasts.lift', { px: 0, kind: 'down', ms: 240 });
+        const g3 = await g();
+        check(T + 'glide down: on the bar\'s exit (cubic-bezier(.3,0,.8,.15)) over 240 ms', /cubic-bezier\(0\.3, 0, 0\.8, 0\.15\)/.test(g3.tf) && g3.dur === '0.24s', g3);
+        await page.waitForTimeout(340);
+        const g4 = await g();
+        check(T + 'glide down: back in the corner', Math.abs(g4.y) < 0.5, g4);
+        // a reversal half-way (the bar toggled back): goes back from where it is, ends where the LAST message said
+        await emit('toasts.lift', { px: 62, kind: 'up', ms: 560 });
+        await page.waitForTimeout(90);
+        const g5 = await g();
+        await emit('toasts.lift', { px: 0, kind: 'down', ms: 240 });
+        const g6 = await g();
+        check(T + 'rapid toggle: the way back starts from where it was (no jump)', g5.y < -3 && Math.abs(g6.y - g5.y) < 8, { g5, g6 });
+        await page.waitForTimeout(340);
+        const g7 = await g();
+        check(T + 'rapid toggle: ends in the corner', Math.abs(g7.y) < 0.5, g7);
+        await emit('toasts.lift', { px: 62, kind: 'up', ms: 0 });
+        const g8 = await g();
+        check(T + 'ms 0 (a page made mid-reveal): simply there, no travel', Math.abs(g8.y + 62) < 0.5, g8);
+        await emit('toasts.lift', { px: 0, kind: 'down', ms: 0 });
+      }
       await P.ctx.close();
     }
     check('light and dark draw different ink (the theme reaches the page)', inks.light && inks.dark && inks.light !== inks.dark, inks);
+    {
+      // reduced motion (lane mantle-corner): the stack jumps, no travel; only opacity moves
+      const ctx = await browser.newContext({ viewport: { width: 392, height: 700 }, deviceScaleFactor: 1, reducedMotion: 'reduce' });
+      const page = await ctx.newPage();
+      await page.addInitScript(FAKE, [LIFE, RESUME, 'light']);
+      await page.goto(PAGE);
+      await page.waitForFunction(() => window.__toasts && window.__fake.calls.some((c) => c.ch === 'toasts.ready'));
+      await page.evaluate(([c, x]) => window.__fake.emit(c, x), ['toasts.show', { banners: [B(60)] }]);
+      await page.waitForFunction(() => window.__toasts.state().items.some((i) => i.id === 60 && i.shown));
+      await page.evaluate(([c, x]) => window.__fake.emit(c, x), ['toasts.lift', { px: 62, kind: 'up', ms: 560 }]);
+      const r = await page.evaluate(() => { const cs = getComputedStyle(document.getElementById('stack')); const m = /matrix\(([^)]+)\)/.exec(cs.transform); return { y: m ? Number(m[1].split(',')[5]) : 0, dur: cs.transitionDuration, fades: document.getElementById('stack').getAnimations().length }; });
+      check('reduced motion: the stack is simply 62 up at once (no travel), with only an opacity settle', Math.abs(r.y + 62) < 0.5 && r.dur === '0s' && r.fades <= 1, r);
+      // lane mantle-corner3: the bar's pill only FADES where it rests under reduced motion, so going down the
+      // stack waits out that fade (the down ms main sends) and only then jumps to the corner
+      const yNow = () => page.evaluate(() => { const m = /matrix\(([^)]+)\)/.exec(getComputedStyle(document.getElementById('stack')).transform); return m ? Number(m[1].split(',')[5]) : 0; });
+      await page.evaluate(([c, x]) => window.__fake.emit(c, x), ['toasts.lift', { px: 0, kind: 'down', ms: 300 }]);
+      const yHeld = await yNow();
+      await page.waitForTimeout(150);
+      const yMid = await yNow();
+      await page.waitForTimeout(260);
+      const yDown = await yNow();
+      check('reduced motion, the bar going: the stack holds above the fading pill for the down\'s 300 ms, then is in the corner', Math.abs(yHeld + 62) < 0.5 && Math.abs(yMid + 62) < 0.5 && Math.abs(yDown) < 0.5, { yHeld, yMid, yDown });
+      await page.evaluate(([c, x]) => window.__fake.emit(c, x), ['toasts.lift', { px: 0, kind: 'down', ms: 300 }]);
+      await page.evaluate(([c, x]) => window.__fake.emit(c, x), ['toasts.lift', { px: 62, kind: 'up', ms: 336 }]);
+      await page.waitForTimeout(360);
+      check('reduced motion: an up during the held down cancels it (the stack stays up, no late jump down)', Math.abs((await yNow()) + 62) < 0.5, await yNow());
+      await ctx.close();
+    }
   } finally {
     await browser.close();
   }
