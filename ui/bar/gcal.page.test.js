@@ -87,6 +87,17 @@ async function run() {
         t.check(th + ' events: the flyout stays a reasonable height (< 520 px)', sizes.pop < 520, sizes);
         await noJargon(pg, th + ' events');
         await shot(pg, 'events-' + th);
+        // ONE width whatever day is picked: a day with no events is exactly as wide as today with its long titles
+        const w1 = await pg.eval(() => document.querySelector('#pop').getBoundingClientRect().width);
+        const emptyDay = await pg.eval(() => {
+          const today = document.querySelector('#pop .calday.today').getAttribute('data-day');
+          const c = Array.prototype.find.call(document.querySelectorAll('#pop .calday[data-day]'), (x) => x.getAttribute('data-day').slice(0, 7) === today.slice(0, 7) && !x.querySelector('.gcal-dot') && x.getAttribute('data-day') !== today);
+          return c ? c.getAttribute('data-day') : null;
+        });
+        if (emptyDay) await pg.click('#pop .calday[data-day="' + emptyDay + '"]', { wait: 150 });
+        const w2 = await pg.eval(() => ({ w: document.querySelector('#pop').getBoundingClientRect().width, empty: !!document.querySelector('#pop .gcal-empty') }));
+        t.check(th + ' events: the flyout keeps one width whatever day is picked', !!emptyDay && w2.empty && Math.abs(w2.w - w1) < 0.5, { today: w1, emptyDay, then: w2 });
+        await pg.click('#pop .calday.today', { wait: 150 });   // back to today for the steps below
         // tomorrow: 7 rows -> the list scrolls after about 5
         await pg.click('#pop .calday.today + .calday, #pop .calday.sel + .calday', { wait: 150 });
         const tom = await pg.eval(() => { const l = document.querySelector('#pop .gcal-list'); return { head: document.querySelector('#pop .gcal-head').textContent, n: l.querySelectorAll('.gcal-row').length, ch: l.clientHeight, sh: l.scrollHeight }; });

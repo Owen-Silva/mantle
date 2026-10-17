@@ -37,6 +37,10 @@
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--lg-edge-out);
+  /* the agenda takes the calendar's width and never sets it: a long title ellipsizes (its row's
+     tooltip has it in full) instead of widening the flyout, which keeps ONE width whatever day is picked */
+  width: 0;
+  min-width: 100%;
 }
 .gcal-head { margin: 0 6px 3px; font-size: 12px; color: var(--lg-ink-2); }
 /* about 5 rows, then it scrolls; never so short that one event and "No events" change its height */
