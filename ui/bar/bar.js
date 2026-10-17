@@ -65,6 +65,10 @@
   function call(channel, payload) {
     if (!mantle || typeof mantle.call !== 'function')
       return Promise.reject(new Error('window.mantle is not present (preload did not run)'));
+    // A room asked for while a closed pop-up's exit copy still holds the old one (closePop, popFreeFn): that
+    // close goes out FIRST, so main hears open:false before this open, the order it always had. Sent late,
+    // main (one room owner, a close shuts whatever is open) would shut this new room instead.
+    if (channel === 'bar.popover' && payload && payload.open && popFreeFn) popFreeNow();
     try {
       var p = mantle.call(channel, payload);
       return (p && typeof p.then === 'function') ? p : Promise.resolve(p);

@@ -155,6 +155,10 @@ async function main() {
     const pt = { x: Math.max(0, qb.x - 40), y: qb.y + Math.round(qb.height / 2) };   // beside the bar: outside whatever its height
     s = await pw({ ev: { op: 'click', button: 'right', x: pt.x, y: pt.y }, dip: true });
     check('a right click outside closes quick settings', s && s.result === 1 && !!(await until(async () => !(await popOpen()), 3000, 50)), { s, pt });
+    // #pop is hidden at once, but its exit copy holds the room ~144 ms more (bar.js closePop, lane mantle-motion).
+    // The asks below go straight to main (window.mantle.call, not the page's own call(), which sends a pending
+    // close first), so wait for main to have the room back, as after the click outside above.
+    check('and its room is given back once the exit copy has gone', !!(await until(async () => { const x = await pw(); return x && x.barPopover === null ? x : null; }, 3000, 50)));
 
     // ---- keys that carry an app's pin name (the right-click menu's jl:, the previews' app:): the
     // room is asked for the way those modules ask (the page's own bar.popover call), so the log
