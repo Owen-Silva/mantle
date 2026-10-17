@@ -82,6 +82,7 @@
   }
 
   function closed() {
+    if (view && view.focusWait) { view.focusWait.disconnect(); view.focusWait = null; }
     view = null; openNote = '';
     keyboard(false);
   }
@@ -312,11 +313,28 @@
       if (gen !== kbdGen || !view) { if (got) B.call('qs.keyboard', { on: false }).catch(function () {}); return; }
       kbd = got;
       view.api.grid.title = got ? '' : 'Arrow keys do not reach this calendar: ' + String((r && r.reason) || 'Windows kept the keyboard on another window').split(', so ')[0];
-      if (got) {
-        var c = view.api.grid.querySelector('.calday[data-day="' + view.sel + '"]');
-        if (c && !view.box.contains(document.activeElement)) c.focus({ preventScroll: true });
-      }
+      if (got) focusSel(view, false);
     }, function (e) { if (gen === kbdGen && view) view.api.grid.title = 'Arrow keys do not reach this calendar: ' + B.msg(e); });
+  }
+
+  /* The selected day takes the keyboard focus. In the dark theme bar.js holds the flyout unpainted
+     (.bdwait = visibility: hidden) until its backdrop picture lands, at most POP_BD_WAIT_MS (250 ms), and
+     a hidden element cannot take focus. So when the focus does not take, it is given ONCE more when the
+     hold ends; the wait is dropped on close and after 1.5 s whatever happens. */
+  function focusSel(v, last) {
+    if (view !== v || !kbd) return;
+    var c = v.api.grid.querySelector('.calday[data-day="' + v.sel + '"]');
+    if (!c || v.box.contains(document.activeElement)) return;
+    c.focus({ preventScroll: true });
+    if (document.activeElement === c || last || v.focusWait || typeof MutationObserver !== 'function') return;
+    var mo = new MutationObserver(function () {
+      if (view !== v) { drop(); return; }
+      if (!v.api.pop.classList.contains('bdwait')) { drop(); focusSel(v, true); }
+    });
+    var stopT = setTimeout(drop, 1500);
+    function drop() { mo.disconnect(); clearTimeout(stopT); if (v.focusWait === mo) v.focusWait = null; }
+    v.focusWait = mo;
+    mo.observe(v.api.pop, { attributes: true, attributeFilter: ['class'] });
   }
 
   window.MantleGcal = { init: init, mount: mount, day: day, painted: painted, closed: closed,

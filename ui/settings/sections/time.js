@@ -170,8 +170,10 @@
     const G = (name, args) => kit.call('gcal.' + name, args || {});
     let st = null, sig = null, synced = null;
     const syncedValue = (s) => (s.syncedAt ? agoText(s.syncedAt) : s.syncing ? 'Syncing now…' : 'Not yet');
+    // main's reasons are written for the clock's flyout ("... in Settings"); here they are already in Settings
+    const here = (r) => String(r || '').replace(/ in Settings$/, '');
     const syncedReason = (s) => {
-      const r = s.error && !s.needsSignIn ? String(s.error.reason || 'the last sync did not finish') : '';
+      const r = s.error && !s.needsSignIn ? here(s.error.reason || 'the last sync did not finish') : '';
       return r ? r.charAt(0).toUpperCase() + r.slice(1) : null;
     };
     function draw() {
@@ -184,9 +186,10 @@
       }
       const rows = [];
       rows.push(kit.status({ row: 'time.datetime.gcal', label: 'Google Calendar',
-        value: s.signedIn ? (s.account ? 'Signed in as ' + s.account : 'Signed in') : 'Not connected', tone: s.signedIn && !s.needsSignIn ? 'ok' : 'info',
+        value: s.signedIn && s.needsSignIn ? 'Sign-in ended' + (s.account ? ' (' + s.account + ')' : '')
+          : s.signedIn ? (s.account ? 'Signed in as ' + s.account : 'Signed in') : 'Not connected', tone: s.signedIn && !s.needsSignIn ? 'ok' : 'info',
         help: 'Read-only: your events show in the clock\'s calendar; Mantle never changes them',
-        reason: s.needsSignIn ? (s.error && s.error.reason) || 'Google ended Mantle\'s sign-in; sign in again' : (!s.canEncrypt ? 'Windows encryption (DPAPI) is not available, so Mantle will not store a Google sign-in' : null) }));
+        reason: s.needsSignIn ? here((s.error && s.error.reason) || 'Google ended Mantle\'s sign-in; sign in again') : (!s.canEncrypt ? 'Windows encryption (DPAPI) is not available, so Mantle will not store a Google sign-in' : null) }));
       if (!s.signedIn || s.needsSignIn) {
         rows.push(kit.button({ row: 'time.datetime.gcal.signin', label: 'Sign in with Google', text: s.signingIn ? 'Waiting for your browser…' : 'Sign in with Google', tone: 'acc',
           help: s.client ? 'Opens Google\'s sign-in page in your default browser' : 'Choose your Google client file first (below)',
