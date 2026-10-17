@@ -1873,8 +1873,8 @@ async function revealByPage(geo, why, visible) {
     setBar({ revealed: false, reason: `the bar window would not show: ${err.message}` });
     return;
   }
+  barMotion(true, REVEAL_MS, why);   // lane mantle-corner: the corner banners rise with it, told FIRST (corner3: never behind the pill)
   broadcast('bar.reveal', { why, mode: geo.shape, ms: REVEAL_MS });
-  barMotion(true, REVEAL_MS, why);   // lane mantle-corner: the corner banners rise with it
   setBar({ ok: true, revealed: true, reason: barReason(`the bar is up: ${why}`) });
   process.stdout.write(`mantle: bar revealed (${why}) -- ${geo.shape} ${JSON.stringify(rect)}, the page animates it over ${REVEAL_MS} ms\n`);
 
@@ -1982,8 +1982,8 @@ function revealBar(why) {
     setBar({ revealed: false, reason: `the bar window would not show: ${err.message}` });
     return;
   }
+  barMotion(true, REVEAL_MS, why);   // lane mantle-corner: the corner banners rise with it, told FIRST (corner3: never behind the pill)
   broadcast('bar.reveal', { why, mode: geo.shape, ms: REVEAL_MS });
-  barMotion(true, REVEAL_MS, why);   // lane mantle-corner: the corner banners rise with it
   setBar({ ok: true, revealed: true, reason: barReason(`the bar is up: ${why}`) });
   process.stdout.write(`mantle: bar revealed (${why}) -- ${geo.shape} ${JSON.stringify(sideRect(geo.rest))} over ${REVEAL_MS} ms\n`);
   // Not awaited: the bar is "up" the instant the page is told, and the 560 ms of

@@ -237,11 +237,16 @@
      A CSS transition, as the bar's: a reversal half-way goes back from where it is, the same way the
      bar's does, so the two stay together through rapid toggles. ms 0, nothing on screen, or reduced
      motion: no travel, it is simply there (reduced motion: a 120 ms fade-up of what is on screen). */
-  var lift = 0;
+  var lift = 0, waitT = null;
+  /* Reduced motion (lane mantle-corner3): the bar's pill does not move then, it only fades where it rests
+     (ui/bar/bar.css), so a stack jumping DOWN at once would sit on the fading pill. It waits out the bar's
+     fade (the ms main sends for a down is longer than it) and then jumps; up jumps at once (out of the way). */
   function glide(p) {
+    clearTimeout(waitT); waitT = null;
     var px = Math.max(0, Math.round(Number(p && p.px) || 0));
     var ms = Math.max(0, Math.round(Number(p && p.ms) || 0));
     var shown = live().length > 0;
+    if (reduced && shown && ms && px < lift) { waitT = setTimeout(function () { waitT = null; glide({ px: px, kind: p.kind, ms: 0 }); }, ms); return; }
     var still = !ms || reduced || !shown;
     stack.classList.toggle('glide-up', !!(p && p.kind === 'up'));
     if (still) stack.classList.add('still');

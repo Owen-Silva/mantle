@@ -286,6 +286,20 @@ async function open(browser, theme) {
       await page.evaluate(([c, x]) => window.__fake.emit(c, x), ['toasts.lift', { px: 62, kind: 'up', ms: 560 }]);
       const r = await page.evaluate(() => { const cs = getComputedStyle(document.getElementById('stack')); const m = /matrix\(([^)]+)\)/.exec(cs.transform); return { y: m ? Number(m[1].split(',')[5]) : 0, dur: cs.transitionDuration, fades: document.getElementById('stack').getAnimations().length }; });
       check('reduced motion: the stack is simply 62 up at once (no travel), with only an opacity settle', Math.abs(r.y + 62) < 0.5 && r.dur === '0s' && r.fades <= 1, r);
+      // lane mantle-corner3: the bar's pill only FADES where it rests under reduced motion, so going down the
+      // stack waits out that fade (the down ms main sends) and only then jumps to the corner
+      const yNow = () => page.evaluate(() => { const m = /matrix\(([^)]+)\)/.exec(getComputedStyle(document.getElementById('stack')).transform); return m ? Number(m[1].split(',')[5]) : 0; });
+      await page.evaluate(([c, x]) => window.__fake.emit(c, x), ['toasts.lift', { px: 0, kind: 'down', ms: 300 }]);
+      const yHeld = await yNow();
+      await page.waitForTimeout(150);
+      const yMid = await yNow();
+      await page.waitForTimeout(260);
+      const yDown = await yNow();
+      check('reduced motion, the bar going: the stack holds above the fading pill for the down\'s 300 ms, then is in the corner', Math.abs(yHeld + 62) < 0.5 && Math.abs(yMid + 62) < 0.5 && Math.abs(yDown) < 0.5, { yHeld, yMid, yDown });
+      await page.evaluate(([c, x]) => window.__fake.emit(c, x), ['toasts.lift', { px: 0, kind: 'down', ms: 300 }]);
+      await page.evaluate(([c, x]) => window.__fake.emit(c, x), ['toasts.lift', { px: 62, kind: 'up', ms: 336 }]);
+      await page.waitForTimeout(360);
+      check('reduced motion: an up during the held down cancels it (the stack stays up, no late jump down)', Math.abs((await yNow()) + 62) < 0.5, await yNow());
       await ctx.close();
     }
   } finally {
