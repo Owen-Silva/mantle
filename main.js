@@ -911,6 +911,9 @@ let hoverTimer = null;
 let hoverHeld = null;           // the game the hover poll is stopped for (hoverTick / hoverAfterRest)
 let barRevealed = false;
 let barLeftAt = null;          // when the cursor last left the bar, or null while it is in
+let barOutAt = null;           // when it last left the overshoot band too (lib/bar-intent.js), or null
+// TEST ONLY: the hover poll's stand-in cursor (bar.testCursor), off the screen until a test moves it
+let testCursor = flags.test && process.env.MANTLE_BAR_TEST_CURSOR === '1' ? { x: -10000, y: -10000 } : null;
 let rendererHoverAt = 0;       // last 'bar.hover' {inside:true} from lane B's page
 /*
  * THE BAR IS NEVER hide()-DEN: it is PARKED below the screen edge (build 29).
@@ -1632,18 +1635,10 @@ function pointIn(rect, pt) {
  *     screen's, no wider than the island itself.
  *
  * In flush mode the bar IS the edge, so the first two are the whole of it.
+ *
+ * Since 10-17 this union, plus the rest band and the overshoot band around the pill, is ONE pure
+ * function, lib/bar-intent.js zone(), which hoverTick calls and lib/bar-intent.test.js sweeps.
  */
-function inHotZone(pt, rect, inBand) {
-  if (inBand) return true;
-  if (pointIn(rect, pt)) return true;
-  if (BAR_SHAPE !== 'pill') return false;
-  const b = screen.getPrimaryDisplay().bounds;
-  const rest = barGeometry().rest.dip;
-  const column = flags.barEdge === 'top'
-    ? { x: rest.x, y: b.y, width: rest.width, height: rest.y - b.y }
-    : { x: rest.x, y: rest.y + rest.height, width: rest.width, height: (b.y + b.height) - (rest.y + rest.height) };
-  return column.height > 0 && pointIn(column, pt);
-}
 
 /*
  * Is something fullscreen in front of us? Asked of the sidecar, because Electron
@@ -1900,7 +1895,9 @@ async function revealByPage(geo, why, visible) {
   barMotion(true, REVEAL_MS, why);   // lane mantle-corner: the corner banners rise with it, told FIRST (corner3: never behind the pill)
   broadcast('bar.reveal', { why, mode: geo.shape, ms: REVEAL_MS });
   setBar({ ok: true, revealed: true, reason: barReason(`the bar is up: ${why}`) });
-  process.stdout.write(`mantle: bar revealed (${why}) -- ${geo.shape} ${JSON.stringify(rect)}, the page animates it over ${REVEAL_MS} ms\n`);
+  // `rect` is the WINDOW (in hover mode POPOVER_MAX taller than the pill; its region shows the pill), so
+  // it was never the pill the line used to call it: the window, then the pill and where it keeps (10-17).
+  process.stdout.write(`mantle: bar revealed (${why}) -- window ${JSON.stringify(rect)}, ${geo.shape} ${JSON.stringify(geo.rest.dip)} (DIP), ${require("./lib/bar-intent").describe(geo.rest.dip, flags.barEdge)}; the page animates it over ${REVEAL_MS} ms\n`);
 
   // "Landed" is now a clock, not a reply: nothing in the main process is moving.
   if (revealLandTimer) clearTimeout(revealLandTimer);
@@ -1975,6 +1972,7 @@ function revealBar(why) {
   }
   const wasHiding = cancelPendingHide();
   barLeftAt = null;
+  barOutAt = null;
   const visible = barWin.isVisible();
   if (barRevealed && visible && !wasHiding) return;
   barRevealed = true;
@@ -2099,6 +2097,7 @@ function beginHide(why) {
     hideTimer = null;
     barRevealed = false;
     barLeftAt = null;
+    barOutAt = null;
     if (barWin && !barWin.isDestroyed()) parkBar(geo, why);
     setBar({ ok: true, revealed: false, reason: barReason(`hidden: ${why}`) });
     process.stdout.write(`mantle: bar hidden (${why})\n`);
@@ -2204,7 +2203,7 @@ async function hoverTick() {
 
   let pt = null;
   try {
-    pt = screen.getCursorScreenPoint();
+    pt = testCursor ? { x: testCursor.x, y: testCursor.y } : screen.getCursorScreenPoint();
   } catch (err) {
     setBar({ reason: `the cursor position could not be read, so the bar cannot reveal on hover: ${err.message}` });
     scheduleHoverTick();
@@ -2247,10 +2246,15 @@ async function hoverTick() {
   // Shown. Anything that counts as "Owen is still using it" resets the clock. The zone that KEEPS
   // the bar is wider than the band that reveals it (lib/bar-intent.js, audit #6): a cursor within
   // KEEP_ABOVE_DIP above the pill is still using it, so the bar no longer slides away under it.
-  const inside = inHotZone(pt, barRect(), inBand) || BarIntent.holds(pt, barGeometry().rest.dip, flags.barEdge);
+  // Two bands since 10-17 (lane mantle-barhover, Owen: "i can hold my mouse a lot of pixels above it
+  // without it going away"): the pill plus KEEP_ABOVE_DIP keeps it for as long as the cursor is there;
+  // out to OVERSHOOT_ABOVE_DIP keeps it only for OVERSHOOT_MS, a pass on the way to an icon. Only 'in'
+  // pulls a sliding-away bar back, so resting in the overshoot band can never bounce it.
+  const where = BarIntent.zone(pt, { rest: barGeometry().rest.dip, win: barRect(), screen: b, edge: flags.barEdge, pill: BAR_SHAPE === 'pill', inBand });
   const rendererSaysInside = Date.now() - rendererHoverAt < HIDE_GRACE_MS;
-  if (inside || barPopover || rendererSaysInside) {
+  if (where === 'in' || barPopover || rendererSaysInside) {
     barLeftAt = null;
+    barOutAt = null;
     // If the bar was already sliding away, the page has to be told to come back
     // -- cancelling the hide timer alone would leave the window up with a page
     // that has animated itself off the bottom of it.
@@ -2258,10 +2262,13 @@ async function hoverTick() {
     scheduleHoverTick();
     return;
   }
-  const step = BarIntent.shownTick(barLeftAt, Date.now(), false, HIDE_GRACE_MS);
+  const step = BarIntent.shownStep({ leftAt: barLeftAt, outAt: barOutAt }, Date.now(), where, HIDE_GRACE_MS);
   barLeftAt = step.leftAt;
+  barOutAt = step.outAt;
   if (step.hide) {
-    beginHide(`the cursor has been away from the bar (and the ${BarIntent.KEEP_ABOVE_DIP} DIP above it) for ${HIDE_GRACE_MS} ms`);
+    beginHide(step.outAt !== null
+      ? `the cursor has been away from the bar (and the ${BarIntent.KEEP_ABOVE_DIP} DIP above it) for ${HIDE_GRACE_MS} ms`
+      : `the cursor has rested ${BarIntent.KEEP_ABOVE_DIP + 1}..${BarIntent.OVERSHOOT_ABOVE_DIP} DIP off the bar for ${BarIntent.OVERSHOOT_MS} ms`);
   }
   scheduleHoverTick();
 }
@@ -8715,6 +8722,21 @@ const traceNow = () => performance.timeOrigin + performance.now();
    then, so a reveal asked for mid-hide is still a reveal. Never registered live. */
 let testMoveArmed = false;
 if (flags.test) {
+  /* TEST ONLY (lane mantle-barhover): with MANTLE_BAR_TEST_CURSOR=1 the hover poll reads THIS point,
+     never the real cursor (Owen's), from its first tick; bar.testCursor {x, y} (DIP) moves it and says
+     what the bar is doing, so a test can sweep the keep band through the real hoverTick. */
+  COMMANDS['bar.testCursor'] = async (a) => {
+    if (!testCursor) return { ok: false, reason: 'start the test with MANTLE_BAR_TEST_CURSOR=1, or the poll reads the real cursor' };
+    if (a && Number.isFinite(a.x) && Number.isFinite(a.y)) testCursor = { x: a.x, y: a.y };
+    let geo = null;
+    try { geo = barGeometry(); } catch (_) { /* no display */ }
+    return {
+      ok: true, cursor: testCursor, revealed: barRevealed, hiding: !!hideTimer, up: barRevealed && !hideTimer,
+      popover: barPopover ? { kind: popKind(barPopover.key), height: barPopover.height } : null,
+      rect: barRect(), rest: geo ? geo.rest.dip : null, screen: screen.getPrimaryDisplay().bounds, tall: barTall(),
+      polling: !!hoverTimer,
+    };
+  };
   COMMANDS['bar.testMove'] = async (a) => {
     if (!testMoveArmed) { testMoveArmed = true; stopHoverWatch(); }
     if (a && a.up) revealBar('a test asked for the bar'); else beginHide('a test asked the bar to go');
