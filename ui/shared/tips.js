@@ -136,6 +136,11 @@
   // A side spot narrower than this is a column, not a tip: at 120 px the footer link's 58-character
   // title ran to five lines, 81 px tall, hanging off the panel's edge (headless, 2026-09-25).
   var SIDE_MIN = 150;
+  // An element this close to the panel's side (a full-width row: only the panel's padding between
+  // them) also gets side spots flush against the PANEL's edge, wholly beside it. Its own side spot
+  // would straddle the edge. Farther in (the footer link) a spot that far away would read as
+  // detached from the element, so it is not offered.
+  var HUG = 24;
 
   function overlap(r, s) {
     var w = Math.min(r.right, s.right) - Math.max(r.left, s.left);
@@ -168,7 +173,11 @@
         if (avoid[i].warn) warn += v; else text += v;
       }
       var out = r.left < P.left - 0.5 || r.right > P.right + 0.5 || r.top < P.top - 0.5 || r.bottom > P.bottom + 0.5 ? 1 : 0;
-      var key = [warn > 0 ? 1 : 0, out, text > 0 ? 1 : 0, warn, text, idx];
+      // Straddling = partly in the panel, partly out: the "cut off" look. Wholly beside the panel
+      // is not cut off, so there covering no text beats covering text inside (2026-10-17: the
+      // quick-settings sound view's default-device tip lay over the next row's name and "Volume mixer").
+      var straddle = out && overlap(r, P) ? 1 : 0;
+      var key = [warn > 0 ? 1 : 0, straddle, text > 0 ? 1 : 0, out, warn, text, idx];
       if (best) {
         for (var k = 0; k < key.length && key[k] === best.key[k]; k++) { /* equal so far */ }
         if (k === key.length || key[k] > best.key[k]) return;
@@ -186,25 +195,35 @@
           consider(side, clamp(x, B.left, B.right - w), y, w, h, B);
         });
       });
-      var roomL = a.left - GAP - B.left, roomR = B.right - (a.right + GAP);
-      (roomR > roomL ? ['right', 'left'] : ['left', 'right']).forEach(function (side) {
-        var room = Math.floor(side === 'left' ? roomL : roomR);
-        var ww = w, hh = h;
-        if (room < w) {
-          if (!o.measure || room < SIDE_MIN) return;
-          ww = room; hh = o.measure(ww);
-          if (!(hh > 0)) return;
-        }
-        var x = side === 'left' ? a.left - GAP - ww : a.right + GAP;
-        [(a.top + a.bottom) / 2 - hh / 2, a.top, a.bottom - hh].forEach(function (y) {
-          consider(side, x, clamp(y, B.top, B.bottom - hh), ww, hh, B);
+      function sides(L, R, only) {
+        var roomL = L - GAP - B.left, roomR = B.right - (R + GAP);
+        (roomR > roomL ? ['right', 'left'] : ['left', 'right']).forEach(function (side) {
+          if (only && only.indexOf(side) < 0) return;
+          var room = Math.floor(side === 'left' ? roomL : roomR);
+          var ww = w, hh = h;
+          if (room < w) {
+            if (!o.measure || room < SIDE_MIN) return;
+            ww = room; hh = o.measure(ww);
+            if (!(hh > 0)) return;
+          }
+          var x = side === 'left' ? L - GAP - ww : R + GAP;
+          [(a.top + a.bottom) / 2 - hh / 2, a.top, a.bottom - hh].forEach(function (y) {
+            consider(side, x, clamp(y, B.top, B.bottom - hh), ww, hh, B);
+          });
         });
-      });
+      }
+      sides(a.left, a.right);
+      if (B === band) {
+        var hug = [];
+        if (a.left - P.left <= HUG) hug.push('left');
+        if (P.right - a.right <= HUG) hug.push('right');
+        if (hug.length) sides(P.left, P.right, hug);
+      }
     });
-    return best ? { x: best.x, y: best.y, side: best.side, need: 0, w: best.w, h: best.h, covers: { warn: best.key[3], text: best.key[4] } } : null;
+    return best ? { x: best.x, y: best.y, side: best.side, need: 0, w: best.w, h: best.h, covers: { warn: best.key[4], text: best.key[5] } } : null;
   }
 
-  var api = { place: place, SIDE_MIN: SIDE_MIN, T: T, GAP: GAP, MARGIN: MARGIN, SLACK: SLACK, ROOM_MAX: ROOM_MAX, ATTR: ATTR };
+  var api = { place: place, SIDE_MIN: SIDE_MIN, HUG: HUG, T: T, GAP: GAP, MARGIN: MARGIN, SLACK: SLACK, ROOM_MAX: ROOM_MAX, ATTR: ATTR };
   if (typeof module === 'object' && module && module.exports) module.exports = api;
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
