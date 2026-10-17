@@ -170,7 +170,10 @@
     const G = (name, args) => kit.call('gcal.' + name, args || {});
     let st = null, sig = null, synced = null;
     const syncedValue = (s) => (s.syncedAt ? agoText(s.syncedAt) : s.syncing ? 'Syncing now…' : 'Not yet');
-    const syncedReason = (s) => (s.error && !s.needsSignIn ? s.error.reason.charAt(0).toUpperCase() + s.error.reason.slice(1) : null);
+    const syncedReason = (s) => {
+      const r = s.error && !s.needsSignIn ? String(s.error.reason || 'the last sync did not finish') : '';
+      return r ? r.charAt(0).toUpperCase() + r.slice(1) : null;
+    };
     function draw() {
       const s = st;
       synced = null;
@@ -199,6 +202,9 @@
         card.push(kit.card(...s.calendars.map((c) => kit.toggle({ row: 'time.datetime.gcal.cal.' + keyOf(c.id), label: c.name,
           help: c.primary ? 'Your main calendar' : null, value: !!c.on,
           onChange: (on) => G('setCalendar', { calendar: c.id, on }) }))));
+      } else if (s.signedIn && !s.needsSignIn && s.syncedAt) {
+        card.push(kit.card(kit.status({ row: 'time.datetime.gcal.cal.none', label: 'Calendars', value: 'None', tone: 'info',
+          reason: 'This Google account has no calendars Mantle can read, so the clock\'s calendar shows no events' })));
       }
       const tail = [];
       if (s.signedIn) {
@@ -220,7 +226,8 @@
       if (k !== sig) { sig = k; draw(); }
       else if (synced && st) synced.set({ value: syncedValue(st), reason: syncedReason(st), tone: st.error ? 'warn' : 'ok' });
     };
-    G('status').then((r) => { if (!kit.disposed) apply(r && r.ok === false ? null : r); });
+    // not running: the "Off" row (drawn below) already says why, so a refused ask changes nothing
+    G('status').then((r) => { if (!kit.disposed) apply(r && r.ok === false ? null : r); }, () => {});
     kit.watch('gcal.status', apply);
     kit.every(30000, () => { if (synced && st) synced.set({ value: syncedValue(st) }); });
     draw();

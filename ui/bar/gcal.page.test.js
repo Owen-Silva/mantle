@@ -50,10 +50,17 @@ async function run() {
       if (t.want('events')) {
         const pg = await go(th, 'events');
         await pg.reset();
+        // every request the page makes while it opens (the page is file://, so anything else is the network)
+        const reqs = [];
+        const onReq = (rq) => reqs.push(rq.url());
+        pg.page.on('request', onReq);
         // the open path: no gcal call before the first frame
         const sync = await pg.eval(() => { document.querySelector('#clock').click(); return (window.__MOCK_CALLS__ || []).map((c) => c.ch); });
         t.check(th + ' events: the open path makes no gcal call (no IPC, no network)', !sync.some((c) => /^gcal\./.test(c)), sync);
         await pg.wait(350);
+        pg.page.off('request', onReq);
+        const net = reqs.filter((u) => !/^(file|data|blob|about):/i.test(u));
+        t.check(th + ' events: opening the calendar makes NO network request', net.length === 0, net.slice(0, 5));
         const after = (await pg.calls()).map((c) => c.ch);
         t.check(th + ' events: gcal.opened only after the first frame, once', after.filter((c) => c === 'gcal.opened').length === 1, after);
         t.check(th + ' events: the calendar is open', await popOpen(pg));
@@ -184,6 +191,35 @@ async function run() {
         t.check(th + ' month: two months on is asked for', want.length === 1 && want[0].p.year === exp.year && want[0].p.month === exp.month, want);
         t.check(th + ' month: "Loading <month> from Google…" while it comes', await pg.text('#pop .gcal-note') === 'Loading ' + exp.name + ' from Google…', await pg.text('#pop .gcal-note'));
         t.check(th + ' states: no page errors', pg.errors.length === 0, pg.errors);
+        await pg.close();
+      }
+
+      /* ------------------------------------------------------------ Windows' time zone changes */
+      if (t.want('zone') && th === 'light') {
+        const pg = await go(th, 'events');
+        await openCal(pg);
+        // "Morning run" is today 6:45 in the page's own zone (mock-mantle.js)
+        const S = await pg.eval(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate(), 6, 45).getTime(); });
+        const west = await pg.eval(() => new Date().getTimezoneOffset() > 0);
+        await pg.key('Escape', 250);
+        if (await popOpen(pg)) await openCal(pg);          // the clock toggles it shut
+        t.check('zone: the calendar closed before the change', !(await popOpen(pg)));
+        const cdp = await pg.page.context().newCDPSession(pg.page);
+        await cdp.send('Emulation.setTimezoneOverride', { timezoneId: west ? 'Pacific/Kiritimati' : 'Pacific/Pago_Pago' });
+        await openCal(pg);
+        t.check('zone: the calendar opens again', await popOpen(pg));
+        const z = await pg.eval((s) => { const D = window.MantleGcalDays; const k = D.keyOf(new Date(s)); const p = D.dateOf(k); return { k, before: D.keyOf(new Date(p.getFullYear(), p.getMonth(), p.getDate() - 1)), after: D.keyOf(new Date(p.getFullYear(), p.getMonth(), p.getDate() + 1)), zone: Intl.DateTimeFormat().resolvedOptions().timeZone }; }, S);
+        t.check('zone: the page really changed time zone', /Kiritimati|Pago_Pago/.test(z.zone), z);
+        const titlesOn = async (k) => {
+          if (!(await pg.count('#pop .calday[data-day="' + k + '"]'))) return null;
+          await pg.click('#pop .calday[data-day="' + k + '"]', { wait: 120 });
+          return pg.eval(() => Array.prototype.map.call(document.querySelectorAll('#pop .gcal-row'), (r) => r.textContent));
+        };
+        const on = await titlesOn(z.k), prev = await titlesOn(z.before);
+        t.check('zone: after the change, an event sits on its NEW local day', !!on && on.some((s) => /Morning run/.test(s)), [z, on]);
+        t.check('zone: ...and is gone from the day it used to be on', prev === null || !prev.some((s) => /Morning run/.test(s)), prev);
+        t.check('zone: no page errors', pg.errors.length === 0, pg.errors);
+        await cdp.detach().catch(() => {});
         await pg.close();
       }
     }

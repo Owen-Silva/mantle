@@ -22,7 +22,8 @@
   var B = null;
   var status = null;             // main's last 'gcal.status'
   var idx = null;                // the day index of the last 'gcal.events'
-  var view = null;               // the open flyout's parts, null when closed
+  var payload = null, idxZone = '';  // ...the push it came from, and the time zone it was bucketed in
+  var view = null;              // the open flyout's parts, null when closed
   var openNote = '';             // the last answer to a row click / a month ask, said in the status line
   var kbd = false, kbdGen = 0;
 
@@ -31,9 +32,22 @@
     if (!D) { B.fail('gcal', 'Google Calendar missing', 'the calendar shows no Google events', 'warn', 'gcal-days.js did not load'); return; }
     B.on('gcal.status', function (s) { status = s || null; if (view) paintAgenda(); });
     B.on('gcal.events', function (p) {
-      idx = D.index(p);
+      payload = p; idx = D.index(p); idxZone = zone();
       if (view) { view.api.repaint(); paintAgenda(); }
     });
+  }
+
+  /* Timed events are bucketed into LOCAL days. If Windows' time zone changed since the last push, the
+     next open re-buckets the same push (no network); otherwise the open path never rebuilds. */
+  function zone() {
+    var z = '';
+    try { z = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { z = ''; }
+    return z + '|' + new Date().getTimezoneOffset();
+  }
+  function rezone() {
+    if (!payload) return;
+    var z = zone();
+    if (z !== idxZone) { idx = D.index(payload); idxZone = z; }
   }
 
   function active() { return !!(status && status.enabled !== false); }
@@ -45,6 +59,7 @@
      the footer, or null when Google Calendar is off / unknown (nothing is added then). */
   function mount(api) {
     if (!B || !D || !active()) { view = null; return null; }
+    rezone();
     var box = document.createElement('div'); box.className = 'gcal';
     view = { api: api, box: box, sel: D.keyOf(new Date()), asked: {} };
     api.pop.classList.add('gcal-on');
