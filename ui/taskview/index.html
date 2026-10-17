@@ -12,6 +12,7 @@
 <!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette (one theme for
      every Mantle surface, Owen 2026-09-21). -->
 <link rel="stylesheet" href="../shared/glass-light.css">
+<link rel="stylesheet" href="../shared/empty-state.css">
 <link rel="stylesheet" href="taskview.css">
 <link rel="stylesheet" href="../shared/wall-bdrop.css">
 </head>
@@ -41,6 +42,9 @@
        draws over the page there, so the close button lives in the caption row. -->
   <main class="grid" id="grid" role="listbox" aria-label="Windows on this desktop"></main>
 
+  <!-- the empty state's icon tile (ui/shared/empty-state.css): a window. It sits ABOVE #empty, which
+       the page fills with words (textContent) and hides when it has none; the tile shows only with it. -->
+  <div class="es-tile tv-es" aria-hidden="true"><svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="2" y="3" width="12" height="10" rx="1.6"/><path d="M2 6h12"/></svg></div>
   <div class="empty" id="empty"></div>
 
   <!-- what is degraded in THIS Task View (no blur, no previews), in words -->

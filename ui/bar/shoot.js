@@ -177,7 +177,8 @@ const SHOTS = [
   { name: 'notifs-panel', w: 1280, h: 540, q: '?mode=pill&notifs=some', click: '#notifs' },
   { name: 'notifs-many', w: 1280, h: 540, q: '?mode=pill&notifs=many', click: '#notifs' },
   { name: 'notifs-plain', w: 1280, h: 540, q: '?mode=pill&notifs=plain', click: '#notifs' },
-  { name: 'notifs-none', w: 1280, h: 330, q: '?mode=pill&notifs=none', click: '#notifs' },
+  // premium-empty (2026-10-16): the empty state carries its 40 px icon tile (+52 px), so a taller picture
+  { name: 'notifs-none', w: 1280, h: 400, q: '?mode=pill&notifs=none', click: '#notifs' },
   { name: 'notifs-off', w: 1280, h: 330, q: '?mode=pill&notifs=off', click: '#notifs' },
   { name: 'notifs-edge', w: 1280, h: 540, q: '?notifs=some', click: '#notifs' },
   /* The Downloads shelf (lane downloads, 2026-09-27; mock states in mock-mantle.js ?dl=). The panel

@@ -322,6 +322,7 @@ body.is-empty .empty {
   inset: 0;
   z-index: 2;
   display: flex;
+  flex-direction: column;           /* the icon tile (ui/shared/empty-state.css) 12 px above the words */
   align-items: center;
   justify-content: center;
   font-size: 13px;

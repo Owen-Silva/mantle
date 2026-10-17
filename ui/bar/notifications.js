@@ -133,6 +133,22 @@
     return e;
   }
 
+  /* The empty state's icon tile (ui/shared/empty-state.css, the one recipe every Mantle empty state
+     uses): a 16-unit line glyph drawn at 18 px in a quiet 40 px raised tile, above the title. */
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  var BELL = ['M8 2.2a3.9 3.9 0 0 0-3.9 3.9v2.6L2.9 11h10.2l-1.2-2.3V6.1A3.9 3.9 0 0 0 8 2.2Z', 'M6.4 12.9a1.7 1.7 0 0 0 3.2 0'];
+  function esTile(paths) {
+    var tile = mk('div', 'es-tile');
+    tile.setAttribute('aria-hidden', 'true');
+    var s = document.createElementNS(SVG_NS, 'svg');
+    [['viewBox', '0 0 16 16'], ['width', '18'], ['height', '18'], ['fill', 'none'], ['stroke', 'currentColor'],
+      ['stroke-width', '1.3'], ['stroke-linecap', 'round'], ['stroke-linejoin', 'round'], ['focusable', 'false']]
+      .forEach(function (a) { s.setAttribute(a[0], a[1]); });
+    paths.forEach(function (d) { var p = document.createElementNS(SVG_NS, 'path'); p.setAttribute('d', d); s.appendChild(p); });
+    tile.appendChild(s);
+    return tile;
+  }
+
   function xButton(tip, onClick) {
     var x = mk('button', 'x ntf-x', '×');
     x.type = 'button';
@@ -302,6 +318,7 @@
         list.appendChild(u);
       } else if (!ts.length) {
         var e = mk('div', 'ntf-empty');
+        e.appendChild(esTile(BELL));
         e.appendChild(mk('div', 'big', 'No notifications'));
         e.appendChild(mk('div', 'sub', 'What apps tell you lands here, newest first.'));
         list.appendChild(e);

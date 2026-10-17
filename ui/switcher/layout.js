@@ -41,7 +41,7 @@
     maxW: 0.92,       // of the work area: Windows' own switcher leaves about this much air
     maxH: 0.84,
     emptyW: 380,      // the panel that says there is nothing to switch to
-    emptyH: 64,
+    emptyH: 116,      // 64 for the line + the icon tile above it (40 px + 12 px, ui/shared/empty-state.css)
     noticeW: 460,     // the "could not switch" notice
     noticeH: 104,
   };
