@@ -29,6 +29,7 @@ const ROOT = path.resolve(arg('root', path.resolve(__dirname, '..')));
 const LABEL = arg('label', path.basename(ROOT));
 const COLD = Number(arg('cold', 8));
 const WARM = Number(arg('warm', 15));
+const JITTER = process.argv.includes("--jitter");   // random gaps between posts (a fixed gap can phase-lock with the sidecar poll)
 const PROFILE = 'toastlat';
 const USER_DATA = path.join(os.tmpdir(), `mantle-test-${PROFILE}`);
 const PORT_FILE = path.join(USER_DATA, 'DevToolsActivePort');
@@ -199,13 +200,13 @@ const STAMP = `(function () {
     for (let i = 0; i < COLD; i++) {
       const gone = await until(async () => { const d = await call('toasts.debug'); return d && d.win === false; }, 60000, 500);
       if (!gone) { console.log('  the banner window never closed; cold sample skipped'); continue; }
-      await sleep(300);
+      await sleep(JITTER ? 100 + Math.random() * 800 : 300);
       await sample('cold');
     }
     // WARM: one primer opens the window, then posts while it is open
     await poster.post(`Mantle lat ${++k}`); await stampOf(k, 6000);
     for (let i = 0; i < WARM; i++) {
-      await sleep(900);
+      await sleep(JITTER ? 600 + Math.random() * 800 : 900);   // random gaps: a fixed one can phase-lock with the poll
       const d = await call('toasts.debug');
       if (!d || !d.win || !d.ready) { console.log('  the window was not open and ready; warm sample skipped'); continue; }
       await sample('warm');

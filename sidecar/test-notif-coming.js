@@ -49,6 +49,9 @@ function gaming() {
     t.check('watch: says whether Windows\' change event is on, with the reason when it is not',
       (w.changes === 'event' && w.changesWhy == null) || (w.changes === 'poll' && /would not send Mantle notification changes/.test(w.changesWhy || '')), JSON.stringify([w.changes, w.changesWhy]));
     console.log(`  Windows' change event: ${w.changes}${w.changesWhy ? ` (${w.changesWhy})` : ''}`);
+    t.check('watch: each look reads the WAL-index header (the cheapest), or says why not',
+      w.looks === 'wal-index header' ? w.looksWhy == null : typeof w.looksWhy === 'string' && w.looksWhy.length > 0, JSON.stringify([w.looks, w.looksWhy]));
+    console.log(`  looks: ${w.looks}${w.looksWhy ? ` (${w.looksWhy})` : ''}`);
 
     p = await P.open();
     const toComing = [], toList = [];
@@ -82,7 +85,7 @@ function gaming() {
     await sleep(1500);
     const after = stamps.slice(from);
     t.check('removing the toasts brings a list change and no "coming"', after.some((e) => e.ev === 'notifications') && !after.some((e) => e.ev === 'notifications.coming'), JSON.stringify(after.map((e) => e.ev)));
-    t.check('the data_version shortcut never had to be turned off', !stamps.some((e) => e.ev === 'log' && /data_version/.test(e.message || '')),
+    t.check('neither look shortcut (WAL-index header, data_version) ever had to be turned off', !stamps.some((e) => e.ev === 'log' && /data_version moving|WAL-index header did not/.test(e.message || '')),
       JSON.stringify(stamps.filter((e) => e.ev === 'log').map((e) => e.message)).slice(0, 300));
     await s.call('notifications', { op: 'watch', on: false }, 8000);
   } catch (e) {

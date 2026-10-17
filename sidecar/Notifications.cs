@@ -428,6 +428,8 @@ namespace Mantle {
         string why;
         _db = NotifDb.Open(out why);
         _dbReason = why;
+        if (_db != null && _db.ShmWhy != null)
+          Program.EmitLog("info", "notifications: " + _db.ShmWhy + "; each 100 ms look asks SQLite instead (a little more CPU, same speed)");
         if (_db == null) {
           _dbRetryTs = Now() + DbRetryMs;
           return null;
@@ -636,6 +638,9 @@ namespace Mantle {
                         // whether Windows' change event is on or the poll alone carries the watch, and why.
                         "coming", _db != null || _changes == "event", "comings", _comings,
                         "changes", _changes, "changesWhy", _changesWhy,
+                        // how each look is made: the WAL-index header, else data_version, else the full query
+                        "looks", _db == null ? null : _db.ShortcutWhy != null ? "full signature" : _db.ShmWhy != null ? "data_version" : "wal-index header",
+                        "looksWhy", _db == null ? null : (_db.ShortcutWhy ?? _db.ShmWhy),
                         "detail", _db != null ? null : _dbReason,
                         "reason", _snapReason);
       });
@@ -1112,6 +1117,7 @@ namespace Mantle {
           why = "Windows' notification database is not laid out the way Mantle knows (a Windows update may have changed it)";
           return null;
         }
+        db.MapShm(path + "-shm");
         return db;
       } catch (DllNotFoundException) {
         if (h != IntPtr.Zero) sqlite3_close_v2(h);
@@ -1182,17 +1188,86 @@ namespace Mantle {
       } finally { sqlite3_reset(_sigSt); }
     }
 
+    // THE CHEAPEST LOOK (same lane, after the hold's 180 s idle run still put the 100 ms watch at ~2.8x
+    // the 400 ms one's share): what each look cost was the SQLite READ TRANSACTION itself (its -shm
+    // locks and WAL header read), not the prepare, and 100 ms is four times the transactions. So before
+    // any SQLite call, the look compares the WAL-INDEX HEADER: the first 48 bytes of the database's
+    // -shm file, which every commit rewrites (SQLite's documented WAL-index format,
+    // sqlite.org/walformat.html; it is how SQLite's own readers notice a write). It is read through
+    // our own read-only mapping of that file, so a quiet look makes no system call. Only when those
+    // bytes moved does the look ask data_version and then the full signature. The forced full look
+    // every FullEvery still runs, and if the signature moved while every look since saw the header
+    // unchanged, the header shortcut is switched off and logged (ShmWhy). Without the mapping (no -shm
+    // file, a different layout) every look takes the data_version path, as before.
+    // MEASURED with exact cycles (QueryProcessCycleTime, passive, watch on, 151 s side by side): 4.1 M
+    // cycles/s for the 400 ms sidecar, 4.3 M for this one, 3.0 M with no watch at all, so the 100 ms
+    // watch costs ~0.2 M cycles/s more, about 0.006% of a core: what is left is the 4x thread wakes.
+    // Process "CPU ms" (15.6 ms clock ticks) is too coarse for this: the same run read 234 ms for all three.
+    IntPtr _shmView;
+    readonly byte[] _shmNow = new byte[48], _shmLast = new byte[48];
+    bool _shmHave, _shmQuietRun = true;
+    public string ShmWhy;             // null = the header shortcut is in use
+
+    const uint GENERIC_READ = 0x80000000, FILE_SHARE_ALL = 0x7, OPEN_EXISTING = 3, PAGE_READONLY = 0x02, FILE_MAP_READ = 0x4;
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sa, uint disp, uint flags, IntPtr tmpl);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateFileMappingW(IntPtr file, IntPtr sa, uint protect, uint hi, uint lo, IntPtr name);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr MapViewOfFile(IntPtr map, uint access, uint offHi, uint offLo, UIntPtr bytes);
+    [DllImport("kernel32.dll")] static extern bool UnmapViewOfFile(IntPtr view);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+
+    /// Maps the first 96 bytes of the -shm file read-only (the view keeps the mapping alive, so both
+    /// handles close at once). Shares read, write and delete, so it never stands in SQLite's way.
+    public void MapShm(string shm) {
+      IntPtr f = CreateFileW(shm, GENERIC_READ, FILE_SHARE_ALL, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+      if (f == new IntPtr(-1)) { ShmWhy = "the notification database's -shm file could not be opened (error " + Marshal.GetLastWin32Error() + ")"; return; }
+      IntPtr m = CreateFileMappingW(f, IntPtr.Zero, PAGE_READONLY, 0, 0, IntPtr.Zero);
+      int err = Marshal.GetLastWin32Error();
+      CloseHandle(f);
+      if (m == IntPtr.Zero) { ShmWhy = "the notification database's -shm file could not be mapped (error " + err + ")"; return; }
+      _shmView = MapViewOfFile(m, FILE_MAP_READ, 0, 0, new UIntPtr(96));
+      err = Marshal.GetLastWin32Error();
+      CloseHandle(m);
+      if (_shmView == IntPtr.Zero) ShmWhy = "the notification database's -shm file could not be viewed (error " + err + ")";
+    }
+
+    /// True when the WAL-index header is byte-identical to the last look (nothing was committed).
+    bool ShmQuiet() {
+      if (_shmView == IntPtr.Zero || ShmWhy != null) return false;
+      Marshal.Copy(_shmView, _shmNow, 0, 48);
+      bool same = _shmHave;
+      for (int i = 0; same && i < 48; i++) same = _shmNow[i] == _shmLast[i];
+      Buffer.BlockCopy(_shmNow, 0, _shmLast, 0, 48);
+      _shmHave = true;
+      return same;
+    }
+
     /// Changes whenever a toast is added, replaced (new rowid) or removed.
     public string Signature() {
-      long v = DataVersion();
-      bool same = _sigCache != null && v == _ver;
-      if (same && ShortcutWhy == null && ++_sinceFull < FullEvery) return _sigCache;
-      string s = FullSignature();
-      if (same && ShortcutWhy == null && s != _sigCache) {
-        ShortcutWhy = "the notification database changed without its data_version moving, so every look now reads the full signature";
-        Program.EmitLog("warn", "notifications: " + ShortcutWhy);
+      bool quiet = ShmQuiet();
+      if (_sigCache != null && ShortcutWhy == null && _sinceFull + 1 < FullEvery) {
+        _sinceFull++;
+        _shmQuietRun &= quiet;
+        if (quiet) return _sigCache;                  // nothing committed: no SQLite call at all
+        long dv = DataVersion();
+        if (dv == _ver) return _sigCache;
+        _ver = dv; _sigCache = FullSignature(); _sinceFull = 0; _shmQuietRun = true;
+        return _sigCache;
       }
-      _ver = v; _sigCache = s; _sinceFull = 0;
+      // the first look, the forced full look every FullEvery, or every look once data_version is off
+      _shmQuietRun &= quiet;
+      long v = DataVersion();
+      string s = FullSignature();
+      if (_sigCache != null && ShortcutWhy == null && s != _sigCache) {
+        if (_shmQuietRun && _shmView != IntPtr.Zero && ShmWhy == null) {
+          ShmWhy = "the notification database changed while its WAL-index header did not, so every look now asks SQLite";
+          Program.EmitLog("warn", "notifications: " + ShmWhy);
+        }
+        if (v == _ver) {
+          ShortcutWhy = "the notification database changed without its data_version moving, so every look now reads the full signature";
+          Program.EmitLog("warn", "notifications: " + ShortcutWhy);
+        }
+      }
+      _ver = v; _sigCache = s; _sinceFull = 0; _shmQuietRun = true;
       return s;
     }
 
@@ -1233,6 +1308,7 @@ namespace Mantle {
     }
 
     public void Dispose() {
+      if (_shmView != IntPtr.Zero) { UnmapViewOfFile(_shmView); _shmView = IntPtr.Zero; }
       if (_verSt != IntPtr.Zero) { sqlite3_finalize(_verSt); _verSt = IntPtr.Zero; }
       if (_sigSt != IntPtr.Zero) { sqlite3_finalize(_sigSt); _sigSt = IntPtr.Zero; }
       if (_h != IntPtr.Zero) { sqlite3_close_v2(_h); _h = IntPtr.Zero; }
