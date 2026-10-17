@@ -103,9 +103,38 @@
     return now;
   }
 
+  // WHEN THE CLOCK TICKS (lane idlefix, 2026-10-17). It ticks only while its digits can be
+  // seen. Three things park it:
+  //   - Mantle resting while a game runs (mantle.rest below);
+  //   - the page hidden (visibilitychange: minimised, or a Chromium that does report occlusion);
+  //   - a window sitting over the clock pane (widgethide.cover below: the pane wears .covered).
+  // The third is the one that matters all day. main.js turns off Chromium's covered-window
+  // detection (disable-features=CalculateNativeWinOcclusion), so under a maximised window
+  // visibilitychange never fires, and before this the clock painted a frame every second
+  // behind it, all day. The widgethide answer is the page's own knowledge of "covered", so
+  // the clock keys off that.
+  // No stale time, ever: a covered pane keeps ticking until its fade-out has actually
+  // finished (the computed visibility is 'hidden', which desktop.css flips at the END of the
+  // exit fade), so the digits never freeze while they are still visible; and the way back
+  // paints first, in the same task that takes .covered off, so the pane is never shown with
+  // an old second. Unknown cover answers arrive as "nothing covered" (fail open), and so does
+  // an off feature: then the clock simply runs, the safe way round.
+  let restingNow = false;     // Mantle resting while a game runs
+  let clockCovered = false;   // widgethide: a window sits over the clock pane
+  let statsCovered = false;   // widgethide: a window sits over the System tile
+  const pageHidden = () => document.visibilityState === 'hidden';
+  // true once a covered pane's exit fade has finished: nothing of it is drawn any more
+  function fadedOut(key) {
+    const el = document.querySelector('.pane[data-cover="' + key + '"]');
+    if (!el || typeof window.getComputedStyle !== 'function') return true;
+    try { return window.getComputedStyle(el).visibility === 'hidden'; } catch (_) { return true; }
+  }
+
   function startClock() {
-    clearTimeout(clockTimer);
+    clearTimeout(clockTimer); clockTimer = 0;
     const now = paintClock();
+    if (restingNow || pageHidden()) return;
+    if (clockCovered && fadedOut('clock')) return;   // parked under a window; uncovering paints and restarts it
     // re-aimed at the boundary after every tick, so it never drifts. The floor
     // is there so a clock that is woken a hair early cannot spin.
     clockTimer = setTimeout(startClock, Math.max(60, 1000 - now.getMilliseconds()));
@@ -116,9 +145,8 @@
   // the way back paint before re-aiming, so a resumed clock is never a second
   // late. Deliberately NOT keyed off visibilityState at load: if the event never
   // fires here, the clock keeps running, which is the safe way round.
-  let restingNow = false;   // Mantle resting while a game runs: the clock stays stopped (mantle.rest below)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') { clearTimeout(clockTimer); clockTimer = 0; }
+    if (pageHidden()) { clearTimeout(clockTimer); clockTimer = 0; }
     else if (!restingNow) startClock();
   });
 
@@ -177,8 +205,20 @@
       els.statsNote.textContent = 'System numbers unavailable: ' + err.message;
     }
   }
-  tickStats();
-  let statsTimer = setInterval(tickStats, 5000);
+  // The 5 s numbers follow the clock's rule (see WHEN THE CLOCK TICKS): parked once the System
+  // tile has faded out under a window, and read at once on the way back, so the tile comes back
+  // with this moment's numbers rather than the ones from when it was covered.
+  let statsTimer = 0;
+  function statsTick() {
+    if (restingNow || (statsCovered && fadedOut('stats'))) { clearInterval(statsTimer); statsTimer = 0; return; }
+    tickStats();
+  }
+  function startStats() {
+    clearInterval(statsTimer);
+    tickStats();
+    statsTimer = setInterval(statsTick, 5000);
+  }
+  startStats();
 
   // ---------------------------------------------------------------------
   // Mission Control (the local dashboard on 127.0.0.1:7373).
@@ -873,6 +913,13 @@
   }
   function applyCover(p) {
     const covered = (p && p.on && p.covered) || {};
+    // The clock and the 5 s numbers park under a window (WHEN THE CLOCK TICKS). Coming back,
+    // they paint BEFORE .covered comes off, in this same task, so a pane is never shown stale.
+    // Going under, they keep running until the fade-out has finished; each tick checks.
+    clockCovered = covered.clock === true;
+    statsCovered = covered.stats === true;
+    if (!clockCovered && !clockTimer && !restingNow && !pageHidden()) startClock();
+    if (!statsCovered && !statsTimer && !restingNow) startStats();
     coverPanes().forEach((el) => el.classList.toggle('covered', covered[el.dataset.cover] === true));
     window.__desktopCover = p || null;
   }
@@ -900,6 +947,7 @@
     // behind the game, so the clock, the 5 s numbers and Mission Control's frame (a whole live page)
     // stop until it exits, and the panel says why. Everything restarts the way the page starts it.
     window.mantle.on('mantle.rest', (r) => {
+      const wasResting = restingNow;
       restingNow = !!(r && r.on);
       if (r && r.on) {
         clearTimeout(clockTimer); clockTimer = 0;
@@ -907,9 +955,10 @@
         stopMissionControl();
         unmountMissionControl('closed while Mantle rests (' + r.why + ')');
         els.mcNote.textContent = 'Mission Control closed while Mantle rests (' + r.why + '); back when the game exits.';
-      } else if (r && !statsTimer) {
-        startClock();
-        tickStats(); statsTimer = setInterval(tickStats, 5000);
+      } else if (r && wasResting) {
+        // (keyed off wasResting, not !statsTimer: a covered System tile also parks statsTimer)
+        startClock();   // paints, then parks itself again if the pane is still under a window
+        startStats();   // reads now; the next 5 s tick parks it if the tile is still covered
         startMissionControl();   // clears any pending probe first: never two chains
       }
     });
