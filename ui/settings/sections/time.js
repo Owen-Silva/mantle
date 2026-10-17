@@ -149,7 +149,82 @@
 
     read();
     kit.every(15000, read);
+    el.append(kit.group('Google Calendar', { row: 'time.datetime.gcal.group' }), gcalGroup(kit));
     return { update: read, dispose() {} };
+  }
+
+  // ============================================================== Google Calendar (lane mantle-gcal, 2026-10-16)
+  /* The clock's calendar shows Google Calendar events (lib/features/gcal.js, ui/bar/gcal.js). Read-only:
+   * one scope, calendar.readonly. Everything here talks to the gcal feature's own commands and redraws
+   * from its 'gcal.status' push; only the "Last synced" line ticks on its own. */
+  const agoText = (ms) => {
+    const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 60) return 'just now';
+    const m = Math.round(s / 60);
+    if (m < 60) return m + ' min ago';
+    const h = Math.round(m / 60);
+    return h < 48 ? h + ' h ago' : Math.round(h / 24) + ' days ago';
+  };
+  function gcalGroup(kit) {
+    const box = kit.h('div', {});
+    const G = (name, args) => kit.call('gcal.' + name, args || {});
+    let st = null, sig = null, synced = null;
+    const syncedValue = (s) => (s.syncedAt ? agoText(s.syncedAt) : s.syncing ? 'Syncing now…' : 'Not yet');
+    const syncedReason = (s) => (s.error && !s.needsSignIn ? s.error.reason.charAt(0).toUpperCase() + s.error.reason.slice(1) : null);
+    function draw() {
+      const s = st;
+      synced = null;
+      if (!s || s.enabled === false) {
+        box.replaceChildren(kit.card(kit.status({ row: 'time.datetime.gcal', label: 'Google Calendar', value: 'Off',
+          reason: !s ? 'Mantle\'s Google Calendar part is not running, so nothing can be connected (it may be turned off in Mantle\'s tray menu)' : 'Turned off in Mantle\'s tray menu: the clock\'s calendar shows no Google events' })));
+        return;
+      }
+      const rows = [];
+      rows.push(kit.status({ row: 'time.datetime.gcal', label: 'Google Calendar',
+        value: s.signedIn ? (s.account ? 'Signed in as ' + s.account : 'Signed in') : 'Not connected', tone: s.signedIn && !s.needsSignIn ? 'ok' : 'info',
+        help: 'Read-only: your events show in the clock\'s calendar; Mantle never changes them',
+        reason: s.needsSignIn ? (s.error && s.error.reason) || 'Google ended Mantle\'s sign-in; sign in again' : (!s.canEncrypt ? 'Windows encryption (DPAPI) is not available, so Mantle will not store a Google sign-in' : null) }));
+      if (!s.signedIn || s.needsSignIn) {
+        rows.push(kit.button({ row: 'time.datetime.gcal.signin', label: 'Sign in with Google', text: s.signingIn ? 'Waiting for your browser…' : 'Sign in with Google', tone: 'acc',
+          help: s.client ? 'Opens Google\'s sign-in page in your default browser' : 'Choose your Google client file first (below)',
+          disabled: !s.client || s.signingIn || !s.canEncrypt,
+          onClick: () => G('signIn') }));
+      }
+      if (s.signedIn) {
+        synced = kit.status({ row: 'time.datetime.gcal.synced', label: 'Last synced', value: syncedValue(s), tone: s.error ? 'warn' : 'ok', reason: syncedReason(s) });
+        rows.push(synced);
+      }
+      const card = [kit.card(...rows)];
+      if (s.signedIn && s.calendars && s.calendars.length) {
+        card.push(kit.card(...s.calendars.map((c) => kit.toggle({ row: 'time.datetime.gcal.cal.' + keyOf(c.id), label: c.name,
+          help: c.primary ? 'Your main calendar' : null, value: !!c.on,
+          onChange: (on) => G('setCalendar', { calendar: c.id, on }) }))));
+      }
+      const tail = [];
+      if (s.signedIn) {
+        tail.push(kit.button({ row: 'time.datetime.gcal.signout', label: 'Sign out', text: 'Sign out',
+          help: 'Ends Mantle\'s access at Google and deletes the sign-in and the cached events from this PC',
+          onClick: () => G('signOut') }));
+      }
+      tail.push(kit.button({ row: 'time.datetime.gcal.client', label: 'Google client file', text: 'Choose Google client file…',
+        help: s.client ? 'A Desktop app client is saved on this PC, encrypted' : 'The JSON you downloaded for your "Desktop app" client in Google Cloud',
+        reason: s.clientReason || null,
+        onClick: () => G('pickClient') }));
+      card.push(kit.card(...tail));
+      box.replaceChildren(...card);
+    }
+    /* Redrawn only when something but the clock changed: a push every sync must not rebuild the rows. */
+    const apply = (s) => {
+      st = s || null;
+      const k = JSON.stringify(st ? Object.assign({}, st, { syncedAt: !!st.syncedAt, nextAt: 0, ver: 0, error: st.error && st.error.reason, syncing: !st.syncedAt && st.syncing }) : null);
+      if (k !== sig) { sig = k; draw(); }
+      else if (synced && st) synced.set({ value: syncedValue(st), reason: syncedReason(st), tone: st.error ? 'warn' : 'ok' });
+    };
+    G('status').then((r) => { if (!kit.disposed) apply(r && r.ok === false ? null : r); });
+    kit.watch('gcal.status', apply);
+    kit.every(30000, () => { if (synced && st) synced.set({ value: syncedValue(st) }); });
+    draw();
+    return box;
   }
 
   // ============================================================== Language & region
@@ -364,7 +439,12 @@
           row('time.datetime.trayClock', 'Show time and date in the system tray', 'taskbar clock hide clock'),
           row('time.datetime.calendar', 'Show additional calendars in the taskbar', 'lunar calendar chinese calendar'),
           row('time.datetime.clock1', 'Additional clock 1', 'additional clocks world clock second time zone'),
-          row('time.datetime.clock2', 'Additional clock 2', 'additional clocks world clock another time zone')],
+          row('time.datetime.clock2', 'Additional clock 2', 'additional clocks world clock another time zone'),
+          row('time.datetime.gcal', 'Google Calendar', 'google calendar gcal events agenda sync connect account'),
+          row('time.datetime.gcal.signin', 'Sign in with Google', 'google calendar sign in connect login account'),
+          row('time.datetime.gcal.synced', 'Google Calendar last synced', 'google calendar sync status offline'),
+          row('time.datetime.gcal.signout', 'Sign out of Google Calendar', 'google calendar sign out disconnect revoke'),
+          row('time.datetime.gcal.client', 'Choose Google client file', 'google cloud oauth client json desktop app credentials')],
         render: dateTimePage },
       { id: 'region', title: 'Language & region', icon: '<circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12"/>', help: 'Display language, country or region, regional format',
         search: [row('time.region.display', 'Windows display language', 'display language ui language interface', 'ms-settings:regionlanguage'),

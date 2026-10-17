@@ -1197,8 +1197,83 @@
     return null;
   }
 
+  /* ---------------------------------------------------------------- Google Calendar (lane mantle-gcal)
+     ?gcal=X  what lib/features/gcal.js replays: off (default: the feature is not there, nothing is added),
+              disconnected, events, empty (signed in, nothing today), offline / ratelimit (cached events +
+              the error line), expired (Google ended the sign-in), syncing (signed in, never synced),
+              many (500 events over three months, the open-time budget case).
+     ?gcalAgo=MIN  how long ago the last good sync was (default 1; offline/ratelimit default 12).
+     __mockMain.gcal(X) pushes a new case to an open page. Event times are made relative to TODAY. */
+  var GCAL = q.get('gcal') || 'off';
+  var GCAL_CALS = [
+    { id: 'owen@example.com', name: 'Owen', color: '#039be5' },
+    { id: 'club@group.calendar.google.com', name: 'Club', color: '#33b679' },
+    { id: 'personal@group.calendar.google.com', name: 'Personal', color: '#f6bf26' },
+    { id: 'work@group.calendar.google.com', name: 'Work', color: '#8e24aa' }
+  ];
+  function gcalDay(off) { var t = new Date(); return new Date(t.getFullYear(), t.getMonth(), t.getDate() + off); }
+  function gcalYmd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function gcalAt(off, h, m) { var d = gcalDay(off); d.setHours(h, m || 0, 0, 0); return d.getTime(); }
+  var gcalN = 0;
+  function gcalEv(cal, title, off, h, m, mins) {
+    var s = gcalAt(off, h, m);
+    return { k: 'm' + (++gcalN), cal: GCAL_CALS[cal].id, title: title, allDay: false, s: s, e: s + (mins || 60) * 60000 };
+  }
+  function gcalAll(cal, title, off, days) {
+    return { k: 'm' + (++gcalN), cal: GCAL_CALS[cal].id, title: title, allDay: true, s: gcalYmd(gcalDay(off)), e: gcalYmd(gcalDay(off + (days || 1))) };
+  }
+  function gcalSpan() { var t = new Date(); return [{ from: new Date(t.getFullYear(), t.getMonth() - 1, 1).getTime(), to: new Date(t.getFullYear(), t.getMonth() + 2, 1).getTime() }]; }
+  function gcalList(kind) {
+    gcalN = 0;
+    if (kind === 'many') {
+      var out = [], span = gcalSpan()[0], days = Math.round((span.to - span.from) / 86400000);
+      for (var i = 0; i < 500; i++) {
+        var off = Math.floor((i * 7919) % days) - Math.round((Date.now() - span.from) / 86400000);
+        out.push(i % 9 === 0 ? gcalAll(i % 4, 'All-day thing ' + i, off, 1 + (i % 3)) : gcalEv(i % 4, 'Event number ' + i, off, 7 + (i % 13), (i % 4) * 15, 30 + (i % 4) * 30));
+      }
+      return out;
+    }
+    var l = [
+      gcalAll(1, 'Away weekend: club retreat', 0, 3),
+      gcalEv(1, 'Morning run', 0, 6, 45, 75),
+      gcalEv(3, 'Quarterly review (Q4)', 0, 10, 30, 50),
+      gcalEv(2, 'Dinner at Jamie\u2019s', 0, 18, 0, 90),
+      gcalEv(0, 'Plan next week', 0, 20, 30, 45),
+      gcalEv(1, 'Shuttle leaves', 1, 7, 0, 30), gcalEv(1, 'Session 1: workshops', 1, 11, 15, 120), gcalEv(1, 'Session 2: panel discussion', 1, 16, 40, 120),
+      gcalEv(0, 'Call with the landlord', 1, 19, 0, 30), gcalEv(2, 'Hotel pool', 1, 20, 0, 60), gcalEv(3, 'Read the Q3 report', 1, 21, 30, 45),
+      gcalEv(1, 'Session 3', 2, 9, 0, 120),
+      gcalEv(3, 'Report due', 4, 23, 0, 59),
+      gcalEv(0, 'Dentist', 6, 15, 30, 60),
+      gcalAll(2, 'Jamie\u2019s birthday', 9, 1),
+      gcalEv(1, 'Gym session', -2, 17, 0, 90),
+      gcalEv(3, 'Expense report', -5, 14, 0, 60),
+      gcalEv(0, 'Night train home', 3, 22, 30, 600)
+    ];
+    if (kind === 'empty') l = l.filter(function (e) { return e.allDay ? gcalDay(0) < new Date(e.s.replace(/-/g, '/')) || gcalYmd(gcalDay(0)) >= e.e : new Date(e.s).toDateString() !== gcalDay(0).toDateString(); });
+    return l;
+  }
+  function gcalStatus() {
+    var k = GCAL, ago = Number(q.get('gcalAgo') || (k === 'offline' || k === 'ratelimit' ? 12 : 1));
+    var signed = k !== 'disconnected';
+    var err = k === 'offline' ? { kind: 'offline', reason: 'no internet connection', at: Date.now() }
+      : k === 'ratelimit' ? { kind: 'rate', reason: 'Google asked Mantle to slow down; it will try again later', at: Date.now() }
+      : k === 'expired' ? { kind: 'auth', reason: 'Google ended Mantle\u2019s sign-in; sign in again in Settings', at: Date.now() } : null;
+    return { enabled: true, test: false, client: k !== 'disconnected', clientReason: null, connected: signed && k !== 'expired', signedIn: signed,
+      needsSignIn: k === 'expired', signingIn: false, account: signed ? 'owen@example.com' : null,
+      calendars: GCAL_CALS.map(function (c, i) { return { id: c.id, name: c.name, color: c.color, primary: i === 0, on: true }; }),
+      syncedAt: k === 'syncing' ? 0 : Date.now() - ago * 60000, syncing: k === 'syncing', error: err, nextAt: 0, canEncrypt: true, ver: 1 };
+  }
+  function gcalEvents() {
+    if (GCAL === 'disconnected' || GCAL === 'syncing') return { ver: 1, spans: [], calendars: [], events: [] };
+    return { ver: 1, spans: gcalSpan(), calendars: GCAL_CALS, events: gcalList(GCAL) };
+  }
+
   function reply(channel, payload) {
     switch (channel) {
+      case 'gcal.opened': return { ok: true, synced: false };
+      case 'gcal.want': return { ok: true, covered: false, loading: true };
+      case 'gcal.open': return { ok: true };
+      case 'settings.open': return { ok: true, opened: 'settings' };
       case 'spotify.status': return spqStatus();
       case 'spotify.info':
         return { ok: true, state: 'connected', window: spqWin(), running: true, visible: SPQ === 'hidefail' || SPQ_SHOWN,
@@ -1527,6 +1602,8 @@
         else if (channel === 'qstiles.state') cb(qxState());   // lib/features/qstiles.js replays its state (lane qstiles)
         else if (channel === 'project.state') cb(pjState());   // lib/features/project.js replays its state
         else if (channel === 'state') cb(state());
+        else if (channel === 'gcal.status') { if (GCAL !== 'off') cb(gcalStatus()); }   // lib/features/gcal.js replays (?gcal=)
+        else if (channel === 'gcal.events') { if (GCAL !== 'off') cb(gcalEvents()); }
         else if (channel === 'downloads.state') cb(dlState());   // lib/features/downloads.js replays its state (sync)
         else if (channel === 'spotify.status') cb(SPQ === 'checking' ? { ok: true, state: 'checking', reason: 'checking Spotify…', port: 47292 } : spqStatus());   // lib/features/spotify.js replays its last state (sync)
       }, 30);
@@ -1583,6 +1660,8 @@
     media: function (name) { MEDIA = name; emit('media', mediaPayload()); },
     /* Any push main can send, for the functional page tests (bar lane, 2026-09-29). */
     emit: function (channel, payload) { emit(channel, payload); },
+    /* Google Calendar: a new ?gcal= case pushed to the open page (status, then events). */
+    gcal: function (k) { GCAL = k; emit('gcal.status', gcalStatus()); emit('gcal.events', gcalEvents()); },
     /* The same window list again, as main re-sends it after any window event. */
     pushWindows: function () { emit('windows', flatWindows()); },
     reveal: function (why) { revealed = true; emit('bar.reveal', { why: why || 'mock: harness reveal', mode: MODE, ms: DUR_IN }); },
