@@ -69,6 +69,13 @@ namespace Mantle {
     }
 
     const int PeriodMs = 1000;
+    // THE GPU EVERY 2 S (lane mantle-idlefix-stats, 2026-10-17): \GPU Engine(*) has one instance per process
+    // per engine (hundreds), the costliest counter here to collect and parse, so it is its own query,
+    // collected every GpuEveryMs (every tick while a dropdown's detail is asked: its top processes stay 1 s).
+    // The figure keeps its meaning: Utilization Percentage is a rate between two collections, so a 2 s
+    // collection is the same busiest-engine utilization, averaged over 2 s; the tick between repeats it
+    // (gpu.at says when it was read). Its memory (GPU Adapter Memory, a few instances) stays every second.
+    const int GpuEveryMs = 2000;
     const uint PDH_FMT_DOUBLE = 0x200, PDH_FMT_NOCAP100 = 0x8000;
     static readonly object _gate = new object();
     static Thread _thread;
@@ -105,14 +112,14 @@ namespace Mantle {
       }
       if (on && existed && !_wasOn) _wake.Set();   // resume a paused loop; a new one samples at once by itself
       _wasOn = on;
-      result = Json.Obj("on", on, "periodMs", PeriodMs, "pingEveryMs", TopbarPing.EveryMs, "watch", _watch != null ? _watch.Why : "no watch window");
+      result = Json.Obj("on", on, "periodMs", PeriodMs, "gpuEveryMs", GpuEveryMs, "pingEveryMs", TopbarPing.EveryMs, "watch", _watch != null ? _watch.Why : "no watch window");
       return null;
     }
 
     // ------------------------------------------------------------------ the sampler thread
 
     sealed class Query {
-      public IntPtr Q, CpuAll, Gpu, GpuDed, GpuShr, NetRx, NetTx;
+      public IntPtr Q, GQ, CpuAll, Gpu, GpuDed, GpuShr, NetRx, NetTx;   // GQ: the GPU engines' own query (GpuEveryMs)
       public string CpuErr, GpuErr, GpuMemErr, NetErr;
     }
 
@@ -121,7 +128,9 @@ namespace Mantle {
       int rc = StatsNative.PdhOpenQueryW(null, IntPtr.Zero, out q.Q);
       if (rc != 0) { q.CpuErr = q.GpuErr = q.NetErr = "Windows would not open a performance-counter query (PDH 0x" + rc.ToString("X8") + ")"; return q; }
       q.CpuErr = Add(q.Q, "\\Processor Information(*)\\% Processor Utility", out q.CpuAll);
-      q.GpuErr = Add(q.Q, "\\GPU Engine(*)\\Utilization Percentage", out q.Gpu);
+      int grc = StatsNative.PdhOpenQueryW(null, IntPtr.Zero, out q.GQ);
+      if (grc != 0) { q.GQ = IntPtr.Zero; q.GpuErr = "Windows would not open the GPU's performance-counter query (PDH 0x" + grc.ToString("X8") + ")"; }
+      else { q.GpuErr = Add(q.GQ, "\\GPU Engine(*)\\Utilization Percentage", out q.Gpu); StatsNative.PdhCollectQueryData(q.GQ); }   // its baseline
       q.GpuMemErr = Add(q.Q, "\\GPU Adapter Memory(*)\\Dedicated Usage", out q.GpuDed) ?? Add(q.Q, "\\GPU Adapter Memory(*)\\Shared Usage", out q.GpuShr);
       q.NetErr = Add(q.Q, "\\Network Interface(*)\\Bytes Received/sec", out q.NetRx) ?? Add(q.Q, "\\Network Interface(*)\\Bytes Sent/sec", out q.NetTx);
       StatsNative.PdhCollectQueryData(q.Q);   // rates need two collections; the first is the baseline
@@ -189,7 +198,7 @@ namespace Mantle {
           long k0, u0, x, y;
           StatsNative.GetThreadTimes(StatsNative.GetCurrentThread(), out x, out y, out k0, out u0);
           var sw = Stopwatch.StartNew();
-          IDictionary sample = Sample(q);
+          IDictionary sample = Sample(q, at0);
           sample["ping"] = TopbarPing.Step(clock.ElapsedMilliseconds);   // starts an echo every 2 s; the reply lands off this thread
           long k1, u1;
           StatsNative.GetThreadTimes(StatsNative.GetCurrentThread(), out x, out y, out k1, out u1);
@@ -207,7 +216,52 @@ namespace Mantle {
     static readonly Regex GpuInst = new Regex("^pid_(\\d+)_luid_(0x[0-9A-Fa-f]+_0x[0-9A-Fa-f]+)_phys_(\\d+)_eng_(\\d+)_engtype_(.*)$", RegexOptions.Compiled);
     static string _gpuName;
 
-    static IDictionary Sample(Query q) {
+    // the last GPU engine read (GpuEveryMs): repeated on the tick between two reads
+    sealed class GpuRead { public object Pct; public List<object> Engines; public Dictionary<int, double> PerPid; public string Reason; public long At; }
+    static GpuRead _gpuLast;
+
+    /// True when the GPU engines are read this tick: none read yet, a detail asked (its top processes are
+    /// per tick), or GpuEveryMs since the last read (half a period of slack: a 1 s grid tick that lands
+    /// a few ms early still reads every 2nd tick, not every 3rd).
+    static bool GpuDue(GpuRead last, bool detail, long nowMs) {
+      return last == null || detail || nowMs - last.At >= GpuEveryMs - PeriodMs / 2;
+    }
+
+    static GpuRead ReadGpu(Query q, long nowMs) {
+      var g = new GpuRead();
+      g.At = nowMs;
+      int grc = q.GQ == IntPtr.Zero ? -1 : StatsNative.PdhCollectQueryData(q.GQ);
+      List<KeyValuePair<string, double>> ge = grc == 0 ? Read(q.Gpu, PDH_FMT_DOUBLE | PDH_FMT_NOCAP100) : null;
+      if (ge == null) { g.Reason = q.GpuErr ?? "the GPU counters could not be read this time"; return g; }
+      var engine = new Dictionary<string, double>();     // luid|phys|eng -> summed over processes
+      var engType = new Dictionary<string, string>();
+      var perPid = new Dictionary<int, double>();
+      foreach (var kv in ge) {
+        Match mm = GpuInst.Match(kv.Key);
+        if (!mm.Success) continue;
+        string key = mm.Groups[2].Value + "|" + mm.Groups[3].Value + "|" + mm.Groups[4].Value;
+        double v; engine.TryGetValue(key, out v); engine[key] = v + kv.Value;
+        engType[key] = mm.Groups[5].Value;
+        int pid = int.Parse(mm.Groups[1].Value, CultureInfo.InvariantCulture);
+        double pv; perPid.TryGetValue(pid, out pv); perPid[pid] = Math.Max(pv, kv.Value);
+      }
+      double busiest = 0;
+      var byType = new Dictionary<string, double>();
+      foreach (var kv in engine) {
+        busiest = Math.Max(busiest, kv.Value);
+        string ty = engType[kv.Key];
+        double tv; byType.TryGetValue(ty, out tv); byType[ty] = Math.Max(tv, kv.Value);
+      }
+      var engs = new List<object>();
+      foreach (var kv in byType) if (kv.Value >= 0.05 || kv.Key == "3D") engs.Add(Json.Obj("type", kv.Key, "pct", Math.Round(Clamp(kv.Value), 1)));
+      g.Pct = engine.Count == 0 ? null : (object)Math.Round(Clamp(busiest), 1);
+      g.Engines = engs;
+      g.PerPid = perPid;
+      g.Reason = engine.Count == 0 ? "no GPU engine reported any work in the last reading" : null;
+      return g;
+    }
+
+    static IDictionary Sample(Query q, long nowMs) {
       int rc = StatsNative.PdhCollectQueryData(q.Q);
       bool detail = DateTime.UtcNow.Ticks < Interlocked.Read(ref _detailUntil);
       Dictionary<int, double> cpuByPid = null;
@@ -244,35 +298,15 @@ namespace Mantle {
 
       // GPU (Task Manager's method)
       IDictionary gpu;
-      List<KeyValuePair<string, double>> ge = rc == 0 ? Read(q.Gpu, PDH_FMT_DOUBLE | PDH_FMT_NOCAP100) : null;
-      if (ge == null) gpu = Json.Obj("pct", null, "reason", q.GpuErr ?? "the GPU counters could not be read this second");
+      if (GpuDue(_gpuLast, detail, nowMs)) _gpuLast = ReadGpu(q, nowMs);
+      GpuRead gr = _gpuLast;
+      if (gr.Engines == null) gpu = Json.Obj("pct", null, "reason", gr.Reason, "at", gr.At, "everyMs", GpuEveryMs);
       else {
-        var engine = new Dictionary<string, double>();     // luid|phys|eng -> summed over processes
-        var engType = new Dictionary<string, string>();
-        var perPid = new Dictionary<int, double>();
-        foreach (var kv in ge) {
-          Match mm = GpuInst.Match(kv.Key);
-          if (!mm.Success) continue;
-          string key = mm.Groups[2].Value + "|" + mm.Groups[3].Value + "|" + mm.Groups[4].Value;
-          double v; engine.TryGetValue(key, out v); engine[key] = v + kv.Value;
-          engType[key] = mm.Groups[5].Value;
-          int pid = int.Parse(mm.Groups[1].Value, CultureInfo.InvariantCulture);
-          double pv; perPid.TryGetValue(pid, out pv); perPid[pid] = Math.Max(pv, kv.Value);
-        }
-        double busiest = 0;
-        var byType = new Dictionary<string, double>();
-        foreach (var kv in engine) {
-          busiest = Math.Max(busiest, kv.Value);
-          string ty = engType[kv.Key];
-          double tv; byType.TryGetValue(ty, out tv); byType[ty] = Math.Max(tv, kv.Value);
-        }
-        var engs = new List<object>();
-        foreach (var kv in byType) if (kv.Value >= 0.05 || kv.Key == "3D") engs.Add(Json.Obj("type", kv.Key, "pct", Math.Round(Clamp(kv.Value), 1)));
         double ded = SumAll(rc == 0 ? Read(q.GpuDed, PDH_FMT_DOUBLE) : null), shr = SumAll(rc == 0 ? Read(q.GpuShr, PDH_FMT_DOUBLE) : null);
-        gpu = Json.Obj("pct", engine.Count == 0 ? null : (object)Math.Round(Clamp(busiest), 1), "name", GpuName(), "engines", engs,
+        gpu = Json.Obj("pct", gr.Pct, "name", GpuName(), "engines", gr.Engines,
                        "dedicated", double.IsNaN(ded) ? null : (object)ded, "shared", double.IsNaN(shr) ? null : (object)shr,
-                       "top", names == null ? null : Top(perPid, names, 5, false),
-                       "reason", engine.Count == 0 ? "no GPU engine reported any work this second" : (q.GpuMemErr));
+                       "top", names == null ? null : Top(gr.PerPid, names, 5, false),
+                       "reason", gr.Reason ?? q.GpuMemErr, "at", gr.At, "everyMs", GpuEveryMs);
       }
 
       // NET

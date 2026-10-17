@@ -644,6 +644,55 @@ namespace Mantle {
     /// ownSession, fgPid, ms (the read), waitMs (this request), stale?, ageMs?, staleWhy?}
     /// `pending`: a detail row whose first look is still running (only in a stale answer); the plan
     /// leaves it out until the next scan.
+    /// DIFF-ONLY ANSWERS (lane mantle-idlefix-game, 2026-10-17). A caller that names itself ("key":
+    /// game mode's shared game watch, lib/features/_game-watch.js) is remembered: the rows of its last
+    /// answer (pid, parent, exe, session) under a number, sent as "procsGen". When it sends that number
+    /// back ("since") on a names-only read, the answer carries only what changed since: "came" = the rows
+    /// of pids that are new or whose row differs (a reused pid), "gone" = the pids no longer there, and
+    /// "procsSince" = the number they apply to; no "procs" (~310 rows at rest, every read). Any other
+    /// since (or none, a detail read, a failed list) gets the whole list as before, so an answer the
+    /// caller never got costs one whole list, never a wrong one. Returns true when it answered with changes.
+    class ProcBase { public int Gen; public Dictionary<uint, string> Rows; }
+    static readonly Dictionary<string, ProcBase> _procBases = new Dictionary<string, ProcBase>();
+    static int _procGen;
+    const int ProcBaseKeys = 8;   // a handful of callers at most; more = a caller making up keys: start over
+
+    static string RowSig(Proc p) {
+      return p.Ppid.ToString(CultureInfo.InvariantCulture) + "|" + (p.File ?? "") + "|" +
+             (p.Session == uint.MaxValue ? "-" : p.Session.ToString(CultureInfo.InvariantCulture));
+    }
+
+    static bool DiffOnly(Dictionary<string, object> req, ScanRead r, bool detail, List<object> rows, IDictionary res) {
+      string key = Json.GetString(req, "key");
+      if (string.IsNullOrEmpty(key) || r.ProcErr != null || r.Procs == null) return false;
+      var now = new Dictionary<uint, string>(r.Procs.Count);
+      foreach (Proc p in r.Procs) now[p.Pid] = RowSig(p);
+      bool asked = !detail && Json.HasKey(req, "since");
+      int since = asked ? Json.GetInt(req, "since", -1) : -1;
+      lock (_procBases) {
+        ProcBase b;
+        bool have = _procBases.TryGetValue(key, out b);
+        int gen = ++_procGen;
+        res["procsGen"] = (long)gen;
+        if (!have && _procBases.Count >= ProcBaseKeys) _procBases.Clear();
+        _procBases[key] = new ProcBase { Gen = gen, Rows = now };
+        if (!asked || !have || b.Gen != since) return false;
+        var came = new List<object>();
+        int i = 0;
+        foreach (Proc p in r.Procs) {
+          string was;
+          if (!b.Rows.TryGetValue(p.Pid, out was) || was != now[p.Pid]) came.Add(rows[i]);
+          i++;
+        }
+        var gone = new List<object>();
+        foreach (KeyValuePair<uint, string> e in b.Rows) if (!now.ContainsKey(e.Key)) gone.Add((long)e.Key);
+        res["came"] = came;
+        res["gone"] = gone;
+        res["procsSince"] = (long)since;
+        return true;
+      }
+    }
+
     static string Scan(Dictionary<string, object> req, ref object result) {
       var wait = Stopwatch.StartNew();
       // TESTS ONLY, and only in passive (a scan writes nothing either way): the read this request starts
@@ -713,7 +762,7 @@ namespace Mantle {
           }
           rows.Add(row);
         }
-        res["procs"] = rows;
+        if (!DiffOnly(req, r, detail, rows, res)) res["procs"] = rows;
         res["sessionAsks"] = r.Asks;
         res["opened"] = r.Opened;
         if (pending > 0) res["pending"] = pending;

@@ -99,17 +99,24 @@
     underRendered();   // the colour under: the new items take their inks (dark only, lane mantle-topbar-under)
   }
 
+  // the cells as last drawn (stats-view.js): a 1 s sample that keeps their shape only rewrites text nodes
+  const SV = window.TopbarStatsView || null;
+  const statsFrame = () => (S.note || '') + '\u0001' + visibleWidth() + '/' + window.innerWidth;   // no layout read
   function renderStats(fromBar) {
     let html = '';
     if (S.note) html += `<span class="warn" title="${esc(S.note)}">${esc(S.note.length > 60 ? S.note.slice(0, 57) + '…' : S.note)}</span>`;
+    const views = S.paused || !SV ? null : SV.views(M.statCells(S.stats), S.open && S.open.stat);
     if (S.paused) html += `<span class="paused" title="${esc(S.paused)}">stats paused</span>`;
-    else {
+    else if (views) html += views.map((v) => SV.cellHtml(v, esc)).join('');
+    else {   // (stats-view.js did not load: the old drawing, rebuilt every sample)
       html += M.statCells(S.stats).map((c) =>
         `<button class="t st${c.why ? ' na' : ''}${c.warn ? ' hi' : ''}${S.open && S.open.stat === c.key ? ' open' : ''}" data-k="${c.key}"` +
         ` title="${esc(c.title || c.why || '')}"><span class="k">${c.label}</span><span class="v">${esc(c.value)}</span></button>`).join('');
     }
     html += toolsHtml();
     rightEl.innerHTML = html;
+    S.drawn = views ? { views, els: [...rightEl.querySelectorAll('.st')], frame: statsFrame() } : null;
+    S.statsDrawn = (S.statsDrawn || 0) + 1;
     // a note or "stats paused" changes how much room the left side has: re-fit it (not on every
     // 1 s sample: the cells keep their width, so the key does not change). The window's width is in
     // the key too, so the 1 s samples also catch a resize whose event never came.
@@ -775,8 +782,20 @@
     S.paused = null;
     S.stats = ev;
     if (S.open && S.open.stat) { renderStatMenu(S.open); renewDetail(S.open); }   // in place: no re-fade, scroll kept
-    renderStats();
+    tickStats();
   });
+  // THE 1 S SAMPLE (lane mantle-idlefix-stats): the same cells in the same shape get their new text in
+  // place (stats-view.js tick: no innerHTML, no layout read, no under re-plan; the clicks are delegated
+  // to #right, so the kept buttons behave as new ones). A new cell, label, class (no reading, a high
+  // ping, an open dropdown), width shape, note, pause or window width is the full render, as before;
+  // the width check reads no layout, so a resize whose event never came is still caught each second.
+  function tickStats() {
+    const d = S.drawn;
+    if (!SV || S.paused || !d || d.frame !== statsFrame()) { renderStats(); return; }
+    const r = SV.tick(d, SV.views(M.statCells(S.stats), S.open && S.open.stat));
+    S.statsTick = r;
+    if (r === 'rebuild') renderStats();
+  }
   mantle.on('topbar.note', (ev) => setNote(ev && ev.text));
   mantle.on('topbar.close', () => closeAll(false));
   // PEEK (lane tbpeek): hidden by hand, the bar came out because the cursor rested on the top edge.
