@@ -168,6 +168,8 @@
       help: 'New notifications pop up as Mantle banners; Windows\' own pop-up is turned off for each app and put back when Mantle stops',
       onChange: (on) => kit.call('settings.enable', { feature: 'toasts', on }).then((r) => { setTimeout(update, 400); return r && r.ok ? { ok: true, value: !!(r.feature && r.feature.enabled) } : r; }) });
     const bannersNow = kit.status({ row: 'notifications.banners.state', label: 'Mantle\'s banners now', value: 'Reading…' });
+    // which banners show and why, from main's toasts.state status (No Silent Failures: the fallbacks are ON the page)
+    const bannersStatus = kit.status({ row: 'notifications.banners.status', label: 'Notification status', help: 'Reading…' });
     let fixUri = 'ms-settings:privacy-notifications';
     const bannersFix = kit.button({ row: 'notifications.banners.access', label: 'Notification access',
       help: 'Mantle can only show banners once Windows lets it read notifications', text: 'Open Windows\' setting',
@@ -184,11 +186,25 @@
       kit.group('Notifications'), kit.card(G.toasts, dnd, rules),
       kit.group('Focus'), kit.card(focusLen, focus),
       kit.group('Sounds and lock screen'), kit.card(G.sound, G.lockScreen, G.criticalLock),
-      kit.group('Mantle'), kit.card(panels, banners, bannersNow, bannersFix),
+      kit.group('Mantle'), kit.card(panels, banners, bannersNow, bannersStatus, bannersFix),
       kit.group('Notifications from apps and other senders', { aside: 'Sound and lock screen per app are Windows-only; see each app\'s note' }), kit.card(apps));
     let byApp = {};
     const PRI = { 0: 'Normal', 1: 'High', 99: 'Top' };
+    /* one quiet line, `${line} (${why})`: muted help words, or the warn words line when tone is warn.
+       An older main sends no status: say only what toasts.state itself says, never a made-up reason. */
+    function paintStatus(t) {
+      const words = (s) => (s == null ? '' : String((window.SettingsModel && window.SettingsModel.plain ? window.SettingsModel.plain(s) : s))).trim().replace(/[.\s]+$/, '');
+      let line, wy, tone;
+      if (!t || !t.ok) [line, wy, tone] = ['Banners: Windows\' own', `Mantle's banners are not running; ${words(fail('Mantle\'s banners', t))}`, 'warn'];
+      else if (t.status && typeof t.status === 'object' && t.status.line) [line, wy, tone] = [String(t.status.line), words(t.status.why), t.status.tone];
+      else if (t.on && t.accessOk && !t.reason) [line, wy, tone] = ['Banners: Mantle', '', 'ok'];
+      else if (!t.on) [line, wy, tone] = ['Banners: Windows\' own', 'Mantle\'s style is off', 'info'];
+      else [line, wy, tone] = ['Banners: Windows\' own', words(!t.accessOk ? (t.accessWhy || 'Windows is not letting Mantle read notifications, so Windows keeps showing its own pop-ups') : t.reason), 'warn'];
+      const text = wy ? `${line} (${wy})` : line;
+      bannersStatus.set(tone === 'warn' ? { help: null, reason: text } : { help: text, reason: null });
+    }
     function paintBanners(t) {
+      paintStatus(t);
       // the value stays short (it shares the row with its label); the words go in the help line
       if (!t || !t.ok) {
         banners.set({ reason: fail('Mantle\'s banners', t), disabled: true });
