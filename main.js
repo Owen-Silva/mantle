@@ -3133,6 +3133,8 @@ function startFeatures() {
         // notification centre's list, and a click reaches the app's window or the bell's list
         toasts: {
           onList: (fn) => notifications.onPublish(fn),
+          // lane mantle-toastfast: a new toast is coming (before its list read), so the banner window can start
+          onIncoming: (fn) => notifications.onIncoming(fn),
           last: () => notifications.lastPayload(),
           // the app's window, through the bar's own grouping (AUMID first, exe second: groupRunning)
           targetFor: (aumid) => {

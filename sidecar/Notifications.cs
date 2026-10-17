@@ -4,7 +4,10 @@
 //   {cmd:"notifications"}                                 list (op defaults to "list")
 //   {cmd:"notifications", op:"list", fresh:true}          fresh: re-read now instead of the watch's copy
 //   {cmd:"notifications", op:"watch", on:true|false}      emits {ev:"notifications", rev, count, ok, reason}
-//                                                         ONLY when the set of toasts (or its health) changes
+//                                                         ONLY when the set of toasts (or its health) changes,
+//                                                         and {ev:"notifications.coming", rev, aumid} the moment
+//                                                         a NEW toast shows in the signature, BEFORE the list is
+//                                                         read (see TOAST INCOMING below)
 //   {cmd:"notifications", op:"remove", ids:[n, ...]}      dismiss these toasts
 //   {cmd:"notifications", op:"clear", aumid:"<optional>"} dismiss every toast (or one app's)
 //   {cmd:"notifications", op:"open", toast:n}             what clicking it in Windows would do, as far as
@@ -52,6 +55,29 @@
 //   plainer (text only), and the reply says so.
 //   A FileSystemWatcher on that folder saw ZERO events for a post and a remove
 //   (the WAL is written through a mapped view), so it is no signal at all.
+//
+// TOAST INCOMING (lane mantle-toastfast, 2026-10-16: Owen's banners should be up
+//   within 300 ms of a toast). The chain was: the poll wait (0-400 ms) + the
+//   listener read (median 67 ms) + main making the banner window when none is
+//   open (median 206 ms), all in series. Now:
+//   - PollMs is 100 (was 400): the signature costs ~0.06 ms, so ten looks a
+//     second stay a rounding error of a core (measured before/after in the
+//     lane's hold, see the commit).
+//   - when the signature's max [Order] rises (a toast was ADDED, not removed),
+//     {ev:"notifications.coming", rev, aumid} goes out BEFORE Refresh(), so main
+//     starts the banner window while the listener read runs. aumid is the new
+//     row's app (NotificationHandler.PrimaryId, the same join SysNotify.cs
+//     reads) or null if that read failed; main uses it to skip apps it draws no
+//     banner for. It is a hint only: the banner itself still waits for the
+//     listener's list, the source of truth.
+//   - NotificationChanged is TRIED once per process when the watch starts. If
+//     Windows accepts the handler, an "added" change wakes the thread at once
+//     (the poll stays on as the safety net); if it throws, the watch reply
+//     says so (changes:"poll", changesWhy) and the poll alone carries it.
+//     Re-checked 2026-10-16 from this exe (passive, watch on): it still throws
+//     0x80070490 Element not found (no package identity), so today the 100 ms
+//     poll is the path; the try stays so a packaged/identity build gets the
+//     event without a code change.
 //
 // DISMISS: RemoveNotification(id) 8-37 ms, and the toast is gone from Windows'
 //   own centre too. It does NOT throw for an id that does not exist, so every
@@ -192,7 +218,7 @@ namespace Mantle {
 #else
     const int CallMs = 3000;          // one WinRT call (the list read peaked at 765 ms under load)
     const int RequestMs = 3500;       // a whole request, under the client's timeout
-    const int PollMs = 400;           // the database signature: ~0.06 ms a look
+    const int PollMs = 100;           // the database signature: ~0.06 ms a look (was 400: TOAST INCOMING)
     const int SlowPollMs = 5000;      // no database: the listener itself, ~70-800 ms a read
     const int ReconcileMs = 60000;    // a full listener read even when the signature says "same"
     const int DbRetryMs = 60000;      // a database that would not open is tried again this often
@@ -319,10 +345,79 @@ namespace Mantle {
     static void Tick() {
       string sig = DbSignature();
       long now = Now();
-      bool due = !_haveSnap || now >= _nextReconcileTs ||
+      bool kicked = _kick, added = _kickAdded;
+      _kick = false; _kickAdded = false;
+      bool due = kicked || !_haveSnap || now >= _nextReconcileTs ||
                  (sig != null ? sig != _sig : now >= _nextSlowTs);
       if (!due) return;
+      // TOAST INCOMING: say so BEFORE the 70-800 ms listener read, so main can start the banner window.
+      if (_haveSnap && (sig != null ? Added(sig) : added)) EmitComing();
       Refresh(sig);
+    }
+
+    /// The signature's max [Order] ("count/maxOrder/sumIds"), or -1 when there is none to compare.
+    static long MaxOrder(string sig) {
+      if (sig == null) return -1;
+      string[] p = sig.Split('/');
+      long v;
+      return p.Length == 3 && long.TryParse(p[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out v) ? v : -1;
+    }
+
+    /// A toast was ADDED since the snapshot's signature: its max [Order] rose. False when either side
+    /// has no signature (the database just opened or came back: that is not a new toast).
+    static bool Added(string sig) {
+      long was = MaxOrder(_sig);
+      return was >= 0 && MaxOrder(sig) > was;
+    }
+
+    static string _comingTrouble;     // the last reason the new toast's app could not be read (logged once)
+    static long _comings;             // how many "coming" events went out (the watch reply carries it)
+
+    /// Thread. {ev:"notifications.coming"}: a toast was just ADDED; the list read follows at once.
+    static void EmitComing() {
+      if (!_watching) return;
+      string aumid = null;
+      if (_db != null) {
+        try {
+          aumid = _db.NewestAumid();
+          _comingTrouble = null;
+        } catch (Exception ex) {
+          // Not fatal and not the list's health: main makes the window without knowing the app.
+          string why = "the new toast's app could not be read from the database (" + Why(ex) + "); main is told a toast is coming without it";
+          if (why != _comingTrouble) { _comingTrouble = why; Program.EmitLog("warn", "notifications: " + why); }
+        }
+      }
+      _comings++;
+      Program.Emit(Json.Obj("ev", "notifications.coming", "rev", _rev, "aumid", aumid));
+    }
+
+    // ---- NotificationChanged: tried once per process (TOAST INCOMING)
+    static volatile bool _kick, _kickAdded;   // set by the event's thread, read by Tick
+    static string _changes;                   // null = not tried yet, "event" or "poll"
+    static string _changesWhy;                // why it is "poll" (null when the event is on)
+
+    /// Thread. Subscribes NotificationChanged if Windows lets this exe; says why not otherwise.
+    static void TryChangeEvent() {
+      if (_changes != null) return;
+      try {
+        UserNotificationListener.Current.NotificationChanged += OnChanged;
+        _changes = "event";
+        _changesWhy = null;
+        Program.EmitLog("info", "notifications: Windows sends notification changes; the " + PollMs + " ms check stays on as a safety net");
+      } catch (Exception ex) {
+        _changes = "poll";
+        _changesWhy = "Windows would not send Mantle notification changes (" + Why(ex) + "), so Mantle checks for new ones every " + PollMs + " ms";
+        Program.EmitLog("info", "notifications: " + _changesWhy);
+      }
+    }
+
+    /// Windows' thread: an added toast wakes the notifications thread now instead of at the next poll.
+    static void OnChanged(UserNotificationListener sender, UserNotificationChangedEventArgs args) {
+      try {
+        if (args.ChangeKind == UserNotificationChangedKind.Added) _kickAdded = true;
+      } catch (Exception) { _kickAdded = true; }
+      _kick = true;
+      _wake.Set();
     }
 
     /// Thread. The signature, or null when the database cannot be used (the
@@ -333,6 +428,8 @@ namespace Mantle {
         string why;
         _db = NotifDb.Open(out why);
         _dbReason = why;
+        if (_db != null && _db.ShmWhy != null)
+          Program.EmitLog("info", "notifications: " + _db.ShmWhy + "; each 100 ms look asks SQLite instead (a little more CPU, same speed)");
         if (_db == null) {
           _dbRetryTs = Now() + DbRetryMs;
           return null;
@@ -528,9 +625,22 @@ namespace Mantle {
     static IDictionary Watch(bool on) {
       _watching = on;
       return OnThread(on ? "starting the notification watch" : "stopping the notification watch", delegate {
-        if (on) Refresh(DbSignature());
+        if (on) {
+          TryChangeEvent();
+          string sig = DbSignature();
+          // A watch re-armed after a pause: a toast added meanwhile is "coming" like any other.
+          if (_haveSnap && sig != null && Added(sig)) EmitComing();
+          Refresh(sig);
+        }
         return Json.Obj("ok", _snapReason == null, "watching", on, "rev", _rev,
                         "via", Via(), "pollMs", _db != null ? PollMs : SlowPollMs,
+                        // TOAST INCOMING: this exe emits notifications.coming (main checks for it), and
+                        // whether Windows' change event is on or the poll alone carries the watch, and why.
+                        "coming", _db != null || _changes == "event", "comings", _comings,
+                        "changes", _changes, "changesWhy", _changesWhy,
+                        // how each look is made: the WAL-index header, else data_version, else the full query
+                        "looks", _db == null ? null : _db.ShortcutWhy != null ? "full signature" : _db.ShmWhy != null ? "data_version" : "wal-index header",
+                        "looksWhy", _db == null ? null : (_db.ShortcutWhy ?? _db.ShmWhy),
                         "detail", _db != null ? null : _dbReason,
                         "reason", _snapReason);
       });
@@ -966,6 +1076,7 @@ namespace Mantle {
     [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_bind_int64(IntPtr st, int i, long v);
     [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_step(IntPtr st);
     [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_finalize(IntPtr st);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_reset(IntPtr st);
     [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern long sqlite3_column_int64(IntPtr st, int i);
     [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_column_type(IntPtr st, int i);
     [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern IntPtr sqlite3_column_blob(IntPtr st, int i);
@@ -1006,6 +1117,7 @@ namespace Mantle {
           why = "Windows' notification database is not laid out the way Mantle knows (a Windows update may have changed it)";
           return null;
         }
+        db.MapShm(path + "-shm");
         return db;
       } catch (DllNotFoundException) {
         if (h != IntPtr.Zero) sqlite3_close_v2(h);
@@ -1043,14 +1155,120 @@ namespace Mantle {
       } finally { sqlite3_finalize(st); }
     }
 
+    // THE LOOK, 10 times a second (TOAST INCOMING, 2026-10-16). Preparing the signature query on every
+    // look made the 100 ms poll cost ~0.19% of a core against ~0.10% at 400 ms (lane mantle-toastfast,
+    // 301 s idle, passive). So both statements are prepared ONCE and reset after each step (a reset
+    // also ends the read, so the platform's WAL checkpoints are never held up), and the full signature
+    // runs only when `pragma data_version` says another connection committed since the last one.
+    // data_version is SQLite's documented "did anyone else write" counter; it is still checked against
+    // the full signature at least every FullEvery looks, and the first time the two disagree the
+    // shortcut is turned off for good and the log says why (ShortcutWhy).
+    const int FullEvery = 20;         // 2 s at PollMs 100
+    IntPtr _verSt, _sigSt;
+    long _ver = long.MinValue;
+    string _sigCache;
+    int _sinceFull;
+    public string ShortcutWhy;        // null = data_version is trusted
+
+    long DataVersion() {
+      if (_verSt == IntPtr.Zero) _verSt = Prepare("pragma data_version");
+      try {
+        int rc = sqlite3_step(_verSt);
+        if (rc != SQLITE_ROW) throw new IOException("SQLite " + rc + ": " + Marshal.PtrToStringUni(sqlite3_errmsg16(_h)));
+        return sqlite3_column_int64(_verSt, 0);
+      } finally { sqlite3_reset(_verSt); }
+    }
+
+    string FullSignature() {
+      if (_sigSt == IntPtr.Zero) _sigSt = Prepare("select count(*), coalesce(max([Order]), 0), coalesce(sum(Id), 0) from Notification where Type = 'toast'");
+      try {
+        int rc = sqlite3_step(_sigSt);
+        if (rc != SQLITE_ROW) throw new IOException("SQLite " + rc + ": " + Marshal.PtrToStringUni(sqlite3_errmsg16(_h)));
+        return sqlite3_column_int64(_sigSt, 0) + "/" + sqlite3_column_int64(_sigSt, 1) + "/" + sqlite3_column_int64(_sigSt, 2);
+      } finally { sqlite3_reset(_sigSt); }
+    }
+
+    // THE CHEAPEST LOOK (same lane, after the hold's 180 s idle run still put the 100 ms watch at ~2.8x
+    // the 400 ms one's share): what each look cost was the SQLite READ TRANSACTION itself (its -shm
+    // locks and WAL header read), not the prepare, and 100 ms is four times the transactions. So before
+    // any SQLite call, the look compares the WAL-INDEX HEADER: the first 48 bytes of the database's
+    // -shm file, which every commit rewrites (SQLite's documented WAL-index format,
+    // sqlite.org/walformat.html; it is how SQLite's own readers notice a write). It is read through
+    // our own read-only mapping of that file, so a quiet look makes no system call. Only when those
+    // bytes moved does the look ask data_version and then the full signature. The forced full look
+    // every FullEvery still runs, and if the signature moved while every look since saw the header
+    // unchanged, the header shortcut is switched off and logged (ShmWhy). Without the mapping (no -shm
+    // file, a different layout) every look takes the data_version path, as before.
+    // MEASURED with exact cycles (QueryProcessCycleTime, passive, watch on, 151 s side by side): 4.1 M
+    // cycles/s for the 400 ms sidecar, 4.3 M for this one, 3.0 M with no watch at all, so the 100 ms
+    // watch costs ~0.2 M cycles/s more, about 0.006% of a core: what is left is the 4x thread wakes.
+    // Process "CPU ms" (15.6 ms clock ticks) is too coarse for this: the same run read 234 ms for all three.
+    IntPtr _shmView;
+    readonly byte[] _shmNow = new byte[48], _shmLast = new byte[48];
+    bool _shmHave, _shmQuietRun = true;
+    public string ShmWhy;             // null = the header shortcut is in use
+
+    const uint GENERIC_READ = 0x80000000, FILE_SHARE_ALL = 0x7, OPEN_EXISTING = 3, PAGE_READONLY = 0x02, FILE_MAP_READ = 0x4;
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sa, uint disp, uint flags, IntPtr tmpl);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateFileMappingW(IntPtr file, IntPtr sa, uint protect, uint hi, uint lo, IntPtr name);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr MapViewOfFile(IntPtr map, uint access, uint offHi, uint offLo, UIntPtr bytes);
+    [DllImport("kernel32.dll")] static extern bool UnmapViewOfFile(IntPtr view);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+
+    /// Maps the first 96 bytes of the -shm file read-only (the view keeps the mapping alive, so both
+    /// handles close at once). Shares read, write and delete, so it never stands in SQLite's way.
+    public void MapShm(string shm) {
+      IntPtr f = CreateFileW(shm, GENERIC_READ, FILE_SHARE_ALL, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+      if (f == new IntPtr(-1)) { ShmWhy = "the notification database's -shm file could not be opened (error " + Marshal.GetLastWin32Error() + ")"; return; }
+      IntPtr m = CreateFileMappingW(f, IntPtr.Zero, PAGE_READONLY, 0, 0, IntPtr.Zero);
+      int err = Marshal.GetLastWin32Error();
+      CloseHandle(f);
+      if (m == IntPtr.Zero) { ShmWhy = "the notification database's -shm file could not be mapped (error " + err + ")"; return; }
+      _shmView = MapViewOfFile(m, FILE_MAP_READ, 0, 0, new UIntPtr(96));
+      err = Marshal.GetLastWin32Error();
+      CloseHandle(m);
+      if (_shmView == IntPtr.Zero) ShmWhy = "the notification database's -shm file could not be viewed (error " + err + ")";
+    }
+
+    /// True when the WAL-index header is byte-identical to the last look (nothing was committed).
+    bool ShmQuiet() {
+      if (_shmView == IntPtr.Zero || ShmWhy != null) return false;
+      Marshal.Copy(_shmView, _shmNow, 0, 48);
+      bool same = _shmHave;
+      for (int i = 0; same && i < 48; i++) same = _shmNow[i] == _shmLast[i];
+      Buffer.BlockCopy(_shmNow, 0, _shmLast, 0, 48);
+      _shmHave = true;
+      return same;
+    }
+
     /// Changes whenever a toast is added, replaced (new rowid) or removed.
     public string Signature() {
-      IntPtr st = Prepare("select count(*), coalesce(max([Order]), 0), coalesce(sum(Id), 0) from Notification where Type = 'toast'");
-      try {
-        int rc = sqlite3_step(st);
-        if (rc != SQLITE_ROW) throw new IOException("SQLite " + rc + ": " + Marshal.PtrToStringUni(sqlite3_errmsg16(_h)));
-        return sqlite3_column_int64(st, 0) + "/" + sqlite3_column_int64(st, 1) + "/" + sqlite3_column_int64(st, 2);
-      } finally { sqlite3_finalize(st); }
+      bool quiet = ShmQuiet();
+      if (_sigCache != null && ShortcutWhy == null && _sinceFull + 1 < FullEvery) {
+        _sinceFull++;
+        _shmQuietRun &= quiet;
+        if (quiet) return _sigCache;                  // nothing committed: no SQLite call at all
+        long dv = DataVersion();
+        if (dv == _ver) return _sigCache;
+        _ver = dv; _sigCache = FullSignature(); _sinceFull = 0; _shmQuietRun = true;
+        return _sigCache;
+      }
+      // the first look, the forced full look every FullEvery, or every look once data_version is off
+      _shmQuietRun &= quiet;
+      long v = DataVersion();
+      string s = FullSignature();
+      if (_sigCache != null && ShortcutWhy == null && s != _sigCache) {
+        if (_shmQuietRun && _shmView != IntPtr.Zero && ShmWhy == null) {
+          ShmWhy = "the notification database changed while its WAL-index header did not, so every look now asks SQLite";
+          Program.EmitLog("warn", "notifications: " + ShmWhy);
+        }
+        if (v == _ver) {
+          ShortcutWhy = "the notification database changed without its data_version moving, so every look now reads the full signature";
+          Program.EmitLog("warn", "notifications: " + ShortcutWhy);
+        }
+      }
+      _ver = v; _sigCache = s; _sinceFull = 0; _shmQuietRun = true;
+      return s;
     }
 
     /// id -> payload XML for every toast row (about 2 ms for ten rows).
@@ -1068,6 +1286,19 @@ namespace Mantle {
       return d;
     }
 
+    /// The app (AUMID) of the newest toast row, or null when there is none. The same
+    /// Notification -> NotificationHandler join SysNotify.cs reads.
+    public string NewestAumid() {
+      IntPtr st = Prepare("select h.PrimaryId from Notification n join NotificationHandler h on h.RecordId = n.HandlerId " +
+                          "where n.Type = 'toast' order by n.[Order] desc limit 1");
+      try {
+        int rc = sqlite3_step(st);
+        if (rc == SQLITE_ROW) return Blob(st, 0);
+        if (rc == SQLITE_DONE) return null;
+        throw new IOException("SQLite " + rc + ": " + Marshal.PtrToStringUni(sqlite3_errmsg16(_h)));
+      } finally { sqlite3_finalize(st); }
+    }
+
     public string PayloadFor(uint id) {
       IntPtr st = Prepare("select Payload from Notification where Id = ?1 and Type = 'toast'");
       try {
@@ -1077,6 +1308,9 @@ namespace Mantle {
     }
 
     public void Dispose() {
+      if (_shmView != IntPtr.Zero) { UnmapViewOfFile(_shmView); _shmView = IntPtr.Zero; }
+      if (_verSt != IntPtr.Zero) { sqlite3_finalize(_verSt); _verSt = IntPtr.Zero; }
+      if (_sigSt != IntPtr.Zero) { sqlite3_finalize(_sigSt); _sigSt = IntPtr.Zero; }
       if (_h != IntPtr.Zero) { sqlite3_close_v2(_h); _h = IntPtr.Zero; }
     }
   }
