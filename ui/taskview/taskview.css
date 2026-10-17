@@ -228,6 +228,14 @@ body.is-idle > * { visibility: hidden; }     /* between sessions: nothing stale 
   text-align: center; color: var(--lg-ink-2); font-size: 14px;
 }
 .empty:empty { display: none; }
+/* its icon tile (ui/shared/empty-state.css): 12 px above the words, which stay exactly where they were
+   (the tile's 40 px + 12 px come out of the 80 px of air under the search line); shown only when the
+   words are, so a page with windows never has a stray tile */
+.tv-es {
+  position: absolute; left: 50%; top: calc(var(--strip-h) + var(--search-h) + 80px - 52px);
+  margin: 0 0 0 -20px;
+}
+.tv-es:has(+ .empty:empty) { display: none; }
 .foot {
   position: absolute; left: 0; right: 0; bottom: 10px;
   display: flex; flex-direction: column; align-items: center; gap: 3px;

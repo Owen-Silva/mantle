@@ -208,6 +208,27 @@ for (const edge of ['bottom', 'top']) {
   p = place({ a: tLink, w: W, h: H, vw, vh, edge: 'top', pill: tPill, inPill: false, vis: { top: 0, bottom: tPanel.bottom }, canAsk: false, panel: tPanel, avoid: [], measure });
   ok(p.side === 'below' && Math.abs(p.y - (tLink.bottom + GAP)) < 0.01, `top bar panel: below the element first (${p.side} y ${p.y})`);
 
+  // A full-width row in a list (the quick-settings sound view's device rows, overlap audit
+  // qs-sound/dark, 2026-10-17): every spot above or below it is on the next row's words, and its own
+  // side spots would straddle the panel's edge. Wholly beside the panel, covering nothing, wins over
+  // covering a neighbour inside it; never straddling the edge, never on the pill.
+  {
+    const lp = { left: 790, right: 1136, top: 260, bottom: 591 };
+    const rows = [0, 1, 2, 3].map((k) => ({ left: 802, right: 1124, top: 310 + k * 32, bottom: 341 + k * 32 }));
+    const names = rows.map((r) => ({ left: r.left + 31, right: r.left + 200, top: r.top + 9, bottom: r.top + 22, warn: false }));
+    const header = { left: 803, right: 888, top: 452, bottom: 464, warn: false };
+    const lvis = { top: lp.top, bottom: vh };
+    for (let k = 0; k < rows.length; k++) {
+      const others = names.filter((_, j) => j !== k).concat([header]);
+      const q = place({ a: rows[k], w: 300, h: 49, vw: 1280, vh, edge: 'bottom', pill: { left: 0, right: 1280, top: 598, bottom: 646 }, inPill: false, vis: lvis, canAsk: false, panel: lp, avoid: others, measure });
+      const qb = { left: q.x, right: q.x + q.w, top: q.y, bottom: q.y + q.h };
+      const straddles = qb.left < lp.left && qb.right > lp.left || qb.left < lp.right && qb.right > lp.right;
+      ok(q.covers && q.covers.text === 0 && q.covers.warn === 0, `full-width row ${k + 1}: the tip covers no other row's words (${q.side} ${q.x},${q.y} covers ${JSON.stringify(q.covers)})`);
+      ok(!straddles && (qb.right <= lp.left - GAP + 0.01 || qb.left >= lp.right + GAP - 0.01), `full-width row ${k + 1}: wholly beside the panel, a gap from its edge (${qb.left}..${qb.right})`);
+      ok(qb.bottom <= 597 + 0.01 && qb.top >= lvis.top && qb.left >= MARGIN - 0.01, `full-width row ${k + 1}: inside the band, off the pill`);
+    }
+  }
+
   // Too big to fit anywhere: the old clamp takes over (inside what is visible, never an ask).
   p = place(Object.assign({}, base, { w: 1100, h: 500, avoid: warn, measure: () => 500 }));
   ok(p.need === 0 && (p.side === 'over' || p.side === 'out' || p.side === 'in'), `panel, a tip bigger than the room: clamped as before (${p.side})`);

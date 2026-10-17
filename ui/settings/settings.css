@@ -214,22 +214,27 @@ button.row:focus-visible { outline-offset: -2px; }
 .pip.warn { background: var(--lg-warn); }
 
 /* ---------------------------------------------------------------- controls */
+/* the switch: Helm's toggle (ui/styles/components.css .toggle) in both themes. 32 x 18 outer with a 1px
+   edge, a 12px knob 2px inside it, on = translateX(14px); the knob travels on the shared spring and the
+   colours cross-fade over the UI beat. Each theme keeps its own colours (dark: the block further down). */
 .sw {
   position: relative; flex: 0 0 auto;
-  width: 40px; height: 20px; padding: 0;
-  border: 1px solid var(--lg-ink-3); border-radius: 10px;
+  width: 32px; height: 18px; padding: 0;
+  border: 1px solid var(--lg-ink-3); border-radius: var(--lg-r-pill);
   background: transparent;
-  transition: background-color 160ms var(--lg-ease), border-color 160ms var(--lg-ease);
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), border-color var(--lg-dur-ui) var(--lg-ease-ui);
 }
 .sw::after {
-  content: ''; position: absolute; top: 3px; left: 3px;
+  content: ''; position: absolute; top: 2px; left: 2px;
   width: 12px; height: 12px; border-radius: 50%;
   background: var(--lg-ink-2);
-  transition: transform 160ms var(--lg-ease), background-color 160ms var(--lg-ease);
+  box-shadow: var(--shadow-knob);
+  transition: transform var(--m-dur-xs) var(--m-spring), background-color var(--lg-dur-ui) var(--lg-ease-ui);
 }
+@media (prefers-reduced-motion: reduce) { .sw::after { transition: background-color var(--lg-dur-ui) var(--lg-ease-ui); } }
 .sw:hover { background: var(--lg-hover); }
 .sw[aria-checked="true"] { background: var(--lg-acc); border-color: var(--lg-acc); }
-.sw[aria-checked="true"]::after { transform: translateX(20px); background: var(--lg-acc-on); }
+.sw[aria-checked="true"]::after { transform: translateX(14px); background: var(--lg-acc-on); }
 .sw:disabled { opacity: .4; }
 .sw.pending { opacity: .6; }
 .sw-l { min-width: 24px; text-align: right; font-size: 12.5px; color: var(--lg-ink-2); }
@@ -486,12 +491,11 @@ html.glass[data-theme="dark"]:not(.inactive) body { background: transparent; }
 /* icon buttons in the strip: hover --lg-press (Helm's icon-btn), pressed back to the card */
 :root[data-theme="dark"] .winbtn:not(.close):hover, :root[data-theme="dark"] .winbtn.close:active { background: var(--lg-press); }
 :root[data-theme="dark"] .winbtn:not(.close):active { background: var(--lg-card); }
-/* the switch: Helm's toggle (32 x 18, pill, the strong edge on surface-3; on = the accent) */
-:root[data-theme="dark"] .sw { width: 32px; height: 18px; border: 1px solid var(--lg-edge-strong); border-radius: var(--lg-r-chip); background: var(--lg-press); transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), border-color var(--lg-dur-ui) var(--lg-ease-ui); }
-:root[data-theme="dark"] .sw::after { top: 2px; left: 2px; background: var(--lg-ink-2); transition: transform var(--lg-dur-ui) var(--lg-ease-ui), background-color var(--lg-dur-ui) var(--lg-ease-ui); }
+/* the switch: geometry, knob and motion are the base .sw (Helm's toggle); dark keeps Helm's colours
+   (the strong edge on surface-3; on = the accent, no edge) */
+:root[data-theme="dark"] .sw { border-color: var(--lg-edge-strong); background: var(--lg-press); }
 :root[data-theme="dark"] .sw:hover { background: var(--lg-press); }
 :root[data-theme="dark"] .sw[aria-checked="true"] { background: var(--lg-acc); border-color: transparent; }
-:root[data-theme="dark"] .sw[aria-checked="true"]::after { transform: translateX(14px); background: var(--lg-acc-on); }
 /* chips: Helm's pill */
 :root[data-theme="dark"] .testchip { border-radius: var(--lg-r-chip); background: var(--lg-card); font-size: 12px; font-weight: 500; padding: 0 9px; }
 /* rows: hover --lg-hover, pressed --lg-press; the chosen nav item / result / segment --lg-press + inset hairline, no tick */

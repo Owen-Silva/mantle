@@ -33,7 +33,7 @@ kbd { display: inline-grid; place-items: center; min-width: 22px; height: 20px; 
 .seg { display: flex; gap: 2px; padding: 2px; border-radius: calc(var(--lg-r-ctl) + 2px); background: var(--lg-sunk); }
 .sb { position: relative; height: 26px; padding: 0 10px; border-radius: var(--lg-r-ctl); color: var(--lg-ink-2); white-space: nowrap; transition: background-color 120ms var(--lg-ease-ui, ease), color 120ms; }
 .sb:hover { color: var(--lg-ink); }
-.sb.on { background: var(--lg-fill-strong); color: var(--lg-ink); font-weight: 600; box-shadow: 0 0 0 1px var(--lg-edge-out), 0 1px 2px rgba(0, 0, 0, .06); }
+.sb.on { background: var(--lg-fill-strong); color: var(--lg-ink); font-weight: 600; box-shadow: 0 0 0 1px var(--lg-edge-out), var(--shadow-ctl); }
 .sb .n { margin-left: 2px; font-weight: 400; color: var(--lg-ink-3); font-variant-numeric: tabular-nums; }
 .btn { height: 30px; padding: 0 12px; display: inline-flex; align-items: center; gap: 7px; border-radius: var(--lg-r-ctl); background: var(--lg-sunk); white-space: nowrap; transition: background-color 120ms var(--lg-ease-ui, ease); }
 .btn:hover { background: var(--lg-hover); }
@@ -83,11 +83,9 @@ kbd { display: inline-grid; place-items: center; min-width: 22px; height: 20px; 
 
 /* ---- nothing yet ---- */
 .empty { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding-bottom: 40px; text-align: center; }
-.em-art { position: relative; width: 120px; height: 76px; margin-bottom: 10px; }
-.em-art i { position: absolute; width: 84px; height: 48px; border-radius: 8px; background: var(--lg-tile); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
-.em-art i:nth-child(1) { left: 0; top: 18px; transform: rotate(-8deg); }
-.em-art i:nth-child(2) { left: 36px; top: 20px; transform: rotate(7deg); }
-.em-art i:nth-child(3) { left: 18px; top: 6px; background: var(--lg-fill-strong); }
+/* the icon tile (ui/shared/empty-state.css; it replaced the three-card drawing so every Mantle empty state
+   is one recipe): 12 px above the title = the column's 8 px gap + 4 */
+.empty .es-tile { margin-bottom: 4px; }
 .em-title { font: 600 15px/20px var(--lg-font-display, sans-serif); }
 .em-sub { max-width: 360px; color: var(--lg-ink-2); line-height: 22px; }
 
@@ -114,7 +112,7 @@ kbd { display: inline-grid; place-items: center; min-width: 22px; height: 20px; 
 .track { position: absolute; left: 0; right: 0; top: 12px; height: 10px; border-radius: 5px; background: var(--lg-tile); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
 .range { position: absolute; top: 0; bottom: 0; border-radius: 5px; background: var(--lg-acc-soft, rgba(68, 54, 232, .18)); box-shadow: inset 0 0 0 1.5px var(--lg-acc); }
 .head-line { position: absolute; top: -6px; bottom: -6px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--lg-ink); }
-.handle { position: absolute; top: 7px; width: 12px; height: 20px; margin-left: -6px; border-radius: 4px; background: var(--lg-acc); box-shadow: 0 1px 2px rgba(0, 0, 0, .2); cursor: ew-resize; transition: transform 260ms var(--spring); }
+.handle { position: absolute; top: 7px; width: 12px; height: 20px; margin-left: -6px; border-radius: 4px; background: var(--lg-acc); box-shadow: var(--shadow-knob); cursor: ew-resize; transition: transform 260ms var(--spring); }
 .handle:hover, .handle.drag { transform: scaleY(1.15); }
 .handle::after { content: ''; position: absolute; left: 5px; top: 6px; width: 2px; height: 8px; border-radius: 1px; background: var(--lg-acc-on); opacity: .8; }
 .tl.image { display: none; }
