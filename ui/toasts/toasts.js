@@ -240,35 +240,12 @@
     items.slice().forEach(function (it) { if (!set.has(it.b.id) && !it.leaving) leave(it, 'it left the notification list'); });
   }
 
-  /* ---- the glide with the bar (lane mantle-corner, 2026-10-16). Owen: "this ... needs to go in the
-     corner not up like this ... just have them smoothly move up if the taskbar comes up". Main sends
-     toasts.lift { px, kind, ms } on the tick the bar's own page is told: px = how far above the corner
-     the stack rests now, kind 'up' = the bar's spring (toasts.css #stack.glide-up), 'down' = its exit.
-     A CSS transition, as the bar's: a reversal half-way goes back from where it is, the same way the
-     bar's does, so the two stay together through rapid toggles. ms 0, nothing on screen, or reduced
-     motion: no travel, it is simply there (reduced motion: a 120 ms fade-up of what is on screen). */
-  var lift = 0, waitT = null;
-  /* Reduced motion (lane mantle-corner3): the bar's pill does not move then, it only fades where it rests
-     (ui/bar/bar.css), so a stack jumping DOWN at once would sit on the fading pill. It waits out the bar's
-     fade (the ms main sends for a down is longer than it) and then jumps; up jumps at once (out of the way). */
-  function glide(p) {
-    clearTimeout(waitT); waitT = null;
-    var px = Math.max(0, Math.round(Number(p && p.px) || 0));
-    var ms = Math.max(0, Math.round(Number(p && p.ms) || 0));
-    var shown = live().length > 0;
-    if (reduced && shown && ms && px < lift) { waitT = setTimeout(function () { waitT = null; glide({ px: px, kind: p.kind, ms: 0 }); }, ms); return; }
-    var still = !ms || reduced || !shown;
-    stack.classList.toggle('glide-up', !!(p && p.kind === 'up'));
-    if (still) stack.classList.add('still');
-    else stack.style.setProperty('--glide-ms', ms + 'ms');
-    stack.style.setProperty('--lift', px + 'px');
-    if (still) {
-      void stack.offsetWidth;   // commit the jump before transitions come back on
-      stack.classList.remove('still');
-      if (reduced && shown && px !== lift && stack.animate) stack.animate([{ opacity: 0.5 }, { opacity: 1 }], { duration: 120, easing: 'linear' });
-    }
-    lift = px;
-  }
+  /* ---- the glide with the bar (lane mantle-corner, 2026-10-16; ui/shared/bar-follow.js since lane
+     mantle-corner-follow). Owen: "this ... needs to go in the corner not up like this ... just have them
+     smoothly move up if the taskbar comes up". Main sends toasts.lift { px, kind, ms } on the tick the bar's
+     own page is told; the shared follow runs the transition (and reduced motion's wait-then-jump). */
+  var follow = window.MantleBarFollow.attach(stack, { shown: function () { return live().length > 0; } });
+  var glide = follow.glide;
 
   /* ---- main */
   mantle.on('toasts.show', function (p) { add(p && p.banners); if (p && Array.isArray(p.ids)) keep(p.ids); });
@@ -287,7 +264,7 @@
         }),
         more: more && !more.hidden ? more.textContent : null,
         last: last,
-        lift: lift, glideUp: stack.classList.contains('glide-up'), transform: getComputedStyle(stack).transform,
+        lift: follow.lift(), glideUp: stack.classList.contains('glide-up'), transform: getComputedStyle(stack).transform,
       };
     },
   };

@@ -40,6 +40,8 @@ const FAKE = () => {
         ] });
       }
       if (ch === 'qs.audio.session') return Promise.resolve({ ok: true, session: { key: args.key, level: args.level !== undefined ? args.level : 50, muted: !!args.muted, active: true } });
+      // dark only (block 9): main's refusal, so each request settles at once and the next one is a new call
+      if (ch === 'hud.backdrop') return Promise.resolve({ ok: false, reason: 'the page test has no screen to photograph' });
       return Promise.resolve({ ok: true });
     },
   };
@@ -201,6 +203,73 @@ const FAKE = () => {
       const polls = (await calls(page, 'qs.audio.sessions')).length;
       await page.waitForTimeout(1700);
       check('closed: the apps poll stops (no timer left running)', (await calls(page, 'qs.audio.sessions')).length === polls);
+      await ctx.close();
+    }
+    // ---- 9. THE GLIDE WITH THE BAR (lane corner-follow-osd, 2026-10-17). The window is the pane plus the
+    //    reach (Owen's: 324 x 82 + 62 = 144); main sends osd.lift {px, kind, ms} (lib/bar-follow.js).
+    const ty = (page) => page.evaluate(() => { const m = getComputedStyle(document.getElementById('lift')).transform; return m === 'none' ? 0 : Math.round(new DOMMatrix(m).m42 * 10) / 10; });
+    {
+      const { ctx, page, errs } = await fresh({ viewport: { width: 324, height: 144 } });
+      await emit(page, 'osd.show', { kind: 'volume', state: { ok: true, level: 40, muted: false }, seq: 1, hold: true });
+      const s0 = await page.evaluate(() => window.__osd.state());
+      check('glide: the pane sits at the BOTTOM of the taller window (the 18 px margin under it)', s0.pane.bottomGap === 18 && s0.pane.height >= 40 && s0.pane.height < 60, s0.pane);
+      check('glide: the pane carries no transform of its own (the wrapper does), its fade is its own',
+        await page.evaluate(() => getComputedStyle(document.getElementById('osd')).transform === 'none' && /opacity/.test(getComputedStyle(document.getElementById('osd')).transitionProperty) &&
+          /transform/.test(getComputedStyle(document.getElementById('lift')).transitionProperty)));
+      const size0 = (await calls(page, 'osd.size')).slice(-1)[0].args;
+      await emit(page, 'osd.lift', { px: 62, kind: 'up', ms: 336 });
+      const tf = await page.evaluate(() => getComputedStyle(document.getElementById('lift')).transitionTimingFunction);
+      check('up: on the bar\'s spring (the linear() curve)', /linear\(/.test(tf), tf);
+      await page.waitForTimeout(120);
+      const mid = await ty(page);
+      check('up: it travels (mid-way between 0 and -62)', mid < -2 && mid > -62, mid);
+      await page.waitForTimeout(400);
+      check('up: it lands at -reach', (await ty(page)) === -62, await ty(page));
+      const s1 = await page.evaluate(() => window.__osd.state());
+      check('up: the page says where it is (lift 62, glide-up)', s1.lift === 62 && s1.glideUp === true, s1);
+      check('a lift never changes the size the page reports (offset box, not the screen box)', (await calls(page, 'osd.size')).slice(-1)[0].args.h === size0.h, size0);
+      await emit(page, 'osd.lift', { px: 0, kind: 'down', ms: 300 });
+      const tf2 = await page.evaluate(() => getComputedStyle(document.getElementById('lift')).transitionTimingFunction);
+      check('down: on the bar\'s accelerate (cubic-bezier)', /cubic-bezier/.test(tf2), tf2);
+      await page.waitForTimeout(80);
+      const mid2 = await ty(page);
+      check('down: it travels', mid2 < 0 && mid2 > -62, mid2);
+      await page.waitForTimeout(380);
+      check('down: it lands back at 0', (await ty(page)) === 0, await ty(page));
+      await emit(page, 'osd.lift', { px: 62, kind: 'up', ms: 0 });
+      check('ms 0: no travel, it is simply there', (await ty(page)) === -62, await ty(page));
+      await page.waitForTimeout(2300);
+      check('a held show (main\'s --test testShow, hold:true) does not fade by itself', (await calls(page, 'osd.faded')).length === 0 && (await page.evaluate(() => window.__osd.state().shown)));
+      await emit(page, 'osd.hide', { why: 'test' });
+      check('...and goes when main says', (await page.evaluate(() => window.__osd.state().shown)) === false);
+      check('no page errors', errs.length === 0, errs);
+      await ctx.close();
+    }
+    // reduced motion: up jumps at once (out of the pill's way); down waits out the bar's fade, then jumps
+    {
+      const { ctx, page } = await fresh({ viewport: { width: 324, height: 144 }, reducedMotion: 'reduce' });
+      await emit(page, 'osd.show', { kind: 'volume', state: { ok: true, level: 40, muted: false }, seq: 1, hold: true });
+      await emit(page, 'osd.lift', { px: 62, kind: 'up', ms: 336 });
+      check('reduced motion, up: at once', (await ty(page)) === -62, await ty(page));
+      await emit(page, 'osd.lift', { px: 0, kind: 'down', ms: 300 });
+      check('reduced motion, down: still up while the bar fades', (await ty(page)) === -62, await ty(page));
+      await page.waitForTimeout(380);
+      check('reduced motion, down: then down, with no travel', (await ty(page)) === 0, await ty(page));
+      await ctx.close();
+    }
+    // dark: after a glide that travelled, ONE fresh picture of what is behind the pane (no hold)
+    {
+      const { ctx, page } = await fresh({ viewport: { width: 324, height: 144 } });
+      await page.evaluate(() => { document.documentElement.setAttribute('data-theme', 'dark'); });
+      await emit(page, 'osd.show', { kind: 'volume', state: { ok: true, level: 40, muted: false }, seq: 1, hold: true });
+      const n = (await calls(page, 'hud.backdrop')).length;
+      await emit(page, 'osd.lift', { px: 62, kind: 'up', ms: 200 });
+      await page.waitForTimeout(320);
+      const after = (await calls(page, 'hud.backdrop')).slice(n);
+      check('dark: a glide asks for one fresh picture once it is over', after.length === 1 && /glided with the bar/.test(after[0].args.why), after);
+      await emit(page, 'osd.lift', { px: 62, kind: 'up', ms: 0 });
+      await page.waitForTimeout(120);
+      check('dark: a stand where it already is asks for nothing', (await calls(page, 'hud.backdrop')).slice(n).length === 1);
       await ctx.close();
     }
   } finally {

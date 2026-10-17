@@ -61,6 +61,11 @@ body {
   padding: var(--m);
 }
 body[data-below] { align-items: flex-start; }
+/* THE GLIDE WITH THE BAR (lane corner-follow-osd, 2026-10-17): #lift is what ui/shared/bar-follow.js
+   moves (a transform on the bar's own clock); the pane keeps its own fade, so the two never share one
+   `transition`. The window is the pane plus the reach (main shapes it to the pane); the pane sits at
+   its bottom as before, and the lift raises it above the bar's pill while the bar is up. */
+.lift { flex: none; }
 
 .osd {
   flex: none;          /* never squeezed by the window: the page reports its true size and main fits the window to it */

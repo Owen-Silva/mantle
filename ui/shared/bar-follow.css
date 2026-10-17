@@ -1,0 +1,21 @@
+/* ui/shared/bar-follow.css - GLIDING WITH THE BAR (lane mantle-corner-follow, 2026-10-17; lane mantle-corner's
+   #stack rules for the banners, moved here so every surface shares them: ui/shared/bar-follow.js).
+   With the bar hidden the surface sits low; --lift (from main) raises it above the bar when the bar is up.
+   Up on the bar's own spring (--m-spring, the 41 points of ui/bar/bar.css body.up --bar-move), down on the
+   bar's exit (--m-accel), over the time main sends (--glide-ms: shorter than the bar's going up, longer going
+   down, so never on the pill: lib/bar-follow.js). Only transform moves (no layout, no paint: the compositor
+   runs it). The fallbacks are the same values, for a page without the --m-* set. The element must carry no
+   transform of its own (put .bar-follow on a wrapper). */
+.bar-follow {
+  --lift: 0px; --glide-ms: 240ms;
+  transform: translateY(calc(-1 * var(--lift)));
+  transition: transform var(--glide-ms) var(--m-accel, cubic-bezier(.3, 0, .8, .15));
+}
+.bar-follow.glide-up {
+  transition: transform var(--glide-ms) var(--m-spring, linear(0, 0.0208, 0.0739, 0.1478, 0.2337, 0.3245, 0.4153, 0.5025, 0.5838, 0.6577, 0.7235,
+    0.7808, 0.8301, 0.8716, 0.906, 0.9341, 0.9566, 0.9742, 0.9876, 0.9977, 1.0049, 1.0098, 1.0128, 1.0145,
+    1.0151, 1.015, 1.0143, 1.0132, 1.012, 1.0106, 1.0092, 1.0079, 1.0066, 1.0055, 1.0044, 1.0035, 1.0028,
+    1.0021, 1.0015, 1.0011, 1));
+}
+.bar-follow.still { transition: none; }
+@media (prefers-reduced-motion: reduce) { .bar-follow, .bar-follow.glide-up { transition: none; } }

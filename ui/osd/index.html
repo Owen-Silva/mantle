@@ -13,6 +13,8 @@
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="osd.css">
 <link rel="stylesheet" href="../shared/hud-backdrop.css">
+<!-- the glide with the bar (lib/bar-follow.js): #lift carries the transform, the pane keeps its own fade -->
+<link rel="stylesheet" href="../shared/bar-follow.css">
 </head>
 <body>
 <!-- ONE surface. Collapsed it is the pill: glyph (a click mutes), the level as a bar you can drag,
@@ -20,6 +22,7 @@
      over the pill: every app playing sound, each with its own slider and mute (Android's volume
      panel, Owen 2026-09-24). The window never takes focus: it is a non-activating window that
      takes clicks, so whatever Owen was typing into keeps the keyboard. -->
+<div id="lift" class="lift">
 <div id="osd" class="osd" data-kind="volume" hidden>
   <div id="panel" class="panel" hidden>
     <div class="phead">
@@ -39,9 +42,11 @@
   </div>
   <div id="why" class="why" hidden></div>
 </div>
+</div>
 <script src="mock-mantle.js"></script>
 <script src="../bar/qs-send.js"></script>
 <script src="osd-model.js"></script>
+<script src="../shared/bar-follow.js"></script>
 <script src="osd.js"></script>
 <!-- dark only: the blurred picture of the screen behind this window, once main sends osd.backdrop (lane see-huds) -->
 <script src="../shared/glass-adapt.js"></script>

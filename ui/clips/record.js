@@ -115,7 +115,8 @@
     if (l.thumb) { if (lastImg.getAttribute('src') !== l.thumb) lastImg.src = l.thumb; lastImg.hidden = false; } else { lastImg.hidden = true; lastImg.removeAttribute('src'); }
   }
   function sendSize() {
-    var h = Math.ceil(card.getBoundingClientRect().height);
+    // offsetHeight: the open's pop (a scale) and the bar's lift (a transform) never change what is asked for
+    var h = card.offsetHeight;
     if (!h || card.hidden || h === S.sentH) return;
     S.sentH = h;
     call('clips.size', { h: h });
@@ -198,6 +199,15 @@
     else if ((k === 'o' || k === 'O') && !e.repeat) { e.preventDefault(); openClips(null); }
   });
   if (window.ResizeObserver) new ResizeObserver(function () { sendSize(); }).observe(card);
+  /* lane corner-follow: main's clips.lift {px, kind, ms} glides the card above the bar's pill and back
+     (ui/shared/bar-follow.js on #lift). Dark: the baked backdrop is drawn at the card's box when it was baked,
+     and a shot taken with the bar up has the pill in it, so one fresh picture is asked for once a glide that moved
+     the card has landed (ui/shared/bar-follow.js reshoot). */
+  var follow = window.MantleBarFollow ? window.MantleBarFollow.attach($('lift'), {
+    event: 'clips.lift', shown: function () { return S.shown; },
+    backdrop: 'the record panel glided with the bar',
+  }) : null;
+  P.lift = function () { return follow ? follow.lift() : 0; };
 
   function snapshot() {
     return {

@@ -10,12 +10,15 @@
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="record.css">
 <link rel="stylesheet" href="../shared/hud-backdrop.css">
+<!-- lane corner-follow: the card glides above the bar's pill while the bar is up (#lift owns the transform) -->
+<link rel="stylesheet" href="../shared/bar-follow.css">
 </head>
 <body>
 <!-- Win+G: Mantle's Record panel (lib/features/clips.js). Bottom right, over the app in front; it never
      takes the foreground (focusable:false), so the app Owen is in is the one Windows records, and it is
      excluded from every capture. Windows records (Game Bar's own engine, Win+Alt+R); Mantle watches the
      file. Everything on it comes from main's clips.state; the page keeps only the running clock. -->
+<div id="lift">
 <section id="card" class="card" role="dialog" aria-label="Record" hidden>
   <header class="top">
     <span class="title">Record</span>
@@ -65,7 +68,9 @@
     <button id="open" class="open" type="button" title="Open Clips (O)">Open Clips<svg viewBox="0 0 8 8" width="8" height="8" aria-hidden="true"><path d="M2.5 1.2 5.3 4 2.5 6.8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </footer>
 </section>
+</div>
 <script src="mock-mantle.js"></script>
+<script src="../shared/bar-follow.js"></script>
 <script src="record.js"></script>
 <!-- dark only: the blurred picture of the screen behind this window, once main sends clips.backdrop -->
 <script src="../shared/glass-adapt.js"></script>
