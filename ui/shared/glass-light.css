@@ -123,6 +123,51 @@
   --lg-tile:  rgba(11,14,26,.08);            /* the letter tile behind an app with no icon */
   --lg-sunk:  rgba(11,14,26,.05);            /* a chip: a recess, Northwind's quiet-button fill */
 
+  /* ---- THE REST OF THE SET, in light too (lane mantle-premium, 2026-10-16) ---------------------
+     These names were dark-only, so a light rule that reached one (the Win+. emoji picker's search field,
+     its tab pill, its selection ring and footer line) resolved to NOTHING and drew no field, no ring, no
+     line. One theme means one set of names with two sets of values. Light values are Mantle's own light
+     palette at Helm's light strengths (helm ui/styles/tokens.css html[data-theme="light"]): a card is
+     white at Helm's surface-2 .70, a field is the --lg-sunk recess (Helm's --code-bg is the same .05 ink),
+     the strong edge is Helm's hairline-strong .18, the accent line Helm's .40 on Mantle's indigo. The
+     semantic colours (--lg-ok/--lg-danger), the fonts and the radii stay dark-only: giving them a light
+     value would recolour or reshape surfaces that rely on their light fallbacks. */
+  --lg-card:        rgba(255,255,255,.70);
+  --lg-field:       rgba(11,14,26,.05);
+  --lg-scrim:       rgba(30,31,32,.22);
+  --lg-edge-strong: rgba(11,14,26,.18);
+  --lg-edge-inner:  rgba(255,255,255,.62);
+  --lg-divider:     rgba(11,14,26,.10);
+  --lg-acc-strong:  #3628D6;
+  --lg-acc-line:    rgba(68,54,232,.40);
+  --lg-acc-select:  rgba(68,54,232,.22);
+  --lg-scroll:       rgba(11,14,26,.20);
+  --lg-scroll-hover: rgba(11,14,26,.34);
+  --lg-disabled: .45;
+  --lg-dur-ui:      120ms;
+  --lg-dur-ui-slow: 200ms;
+  --lg-ease-ui:     cubic-bezier(.2,0,0,1);
+
+  /* ---- ELEVATION AND CONTROL SHADOWS, Helm's names and values (lane mantle-premium, 2026-10-16) ----
+     One recipe per level, the same names as Helm (ui/styles/tokens.css, helm-premium) and Quartz, so
+     look-sync can carry them: every level is a 1 px top lip plus that level's drop.
+       --elev-raised  inside a pane: a card, an empty state's icon tile
+       --elev-panel   a pane on the desktop (Helm's panels)
+       --elev-tip     small transient floats: a tooltip, a pill over a scroller
+       --elev-float   anything over the panes: pop-ups, menus, dialogs (= the lip + --lg-shadow)
+     A surface whose WINDOW cuts its drop keeps the dark lip-only rule (ui/shared/clipped-shadow.test.js).
+     --shadow-ctl / -tight / -knob are the small control shadows: a pressed segment, a slider or switch
+     knob. Light is ink-tinted at about half the dark strength: a black .2-.5 drop under a white knob
+     read as a grey smudge on the light glass. -tight (1 px blur) is for parts 1 px apart. */
+  --elev-lip:    inset 0 1px 0 var(--lg-edge-in);
+  --elev-raised: var(--elev-lip), 0 1px 1px rgba(14,18,38,.05), 0 2px 8px rgba(14,18,38,.06);
+  --elev-panel:  var(--elev-lip), 0 1px 1px rgba(14,18,38,.05), 0 10px 28px -12px rgba(14,18,38,.22);
+  --elev-tip:    var(--elev-lip), 0 1px 1px rgba(14,18,38,.05), 0 10px 28px -12px rgba(14,18,38,.22);
+  --elev-float:  var(--elev-lip), var(--lg-shadow);
+  --shadow-ctl:       0 1px 2px rgba(14,18,38,.14);
+  --shadow-ctl-tight: 0 1px 1px rgba(14,18,38,.14);
+  --shadow-knob:      0 0 0 .5px rgba(14,18,38,.10), 0 1px 3px rgba(14,18,38,.20);
+
   /* The running dot sits over a blurred photograph of the desktop, so what is behind it can be
      light or dark from one minute to the next. A 1px white ring separates it from both. */
   --lg-dot-ring: rgba(255,255,255,.7);   /* UNUSED since the dot became a line (which needs no ring); kept for any round pip a later surface adds */
@@ -224,6 +269,16 @@
   --lg-drop-dn-0: 0 2px 6px rgba(0,0,0,0),   0 12px 32px rgba(0,0,0,0);
   --lg-drop-up:   0 -2px 6px rgba(0,0,0,.30), 0 -12px 32px rgba(0,0,0,.32);
   --lg-drop-up-0: 0 -2px 6px rgba(0,0,0,0),   0 -12px 32px rgba(0,0,0,0);
+
+  /* elevation and control shadows: Helm's dark values (shadow-1 / -2 / -3, --shadow-ctl / -tight / -knob) */
+  --elev-lip:    inset 0 1px 0 var(--lg-edge-in);
+  --elev-raised: var(--elev-lip), 0 1px 2px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.16);
+  --elev-panel:  var(--elev-lip), 0 2px 6px rgba(0,0,0,.30), 0 12px 32px rgba(0,0,0,.32);
+  --elev-tip:    var(--elev-lip), 0 2px 6px rgba(0,0,0,.30), 0 12px 32px rgba(0,0,0,.32);
+  --elev-float:  var(--elev-lip), var(--lg-shadow);
+  --shadow-ctl:       0 1px 2px rgba(0,0,0,.26);
+  --shadow-ctl-tight: 0 1px 1px rgba(0,0,0,.22);
+  --shadow-knob:      0 1px 3px rgba(0,0,0,.36);
 
   --lg-lip-up:    inset 0 1px 0 rgba(255,255,255,.07);
   --lg-lip-up-0:  inset 0 1px 0 rgba(255,255,255,0);
