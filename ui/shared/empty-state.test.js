@@ -201,7 +201,11 @@ async function run() {
         }
         if (res.light && res.dark && !res.light.missing && !res.dark.missing) {
           t.check(`${s.name}: light and dark fill the tile differently (the theme reaches it)`, res.light.bg !== res.dark.bg, { light: res.light.bg, dark: res.dark.bg });
-          t.check(`${s.name}: the tile is the same place in both themes (nothing moved)`, near(res.light.tile.top, res.dark.tile.top, 1) && near(res.light.tile.left, res.dark.tile.left, 1), { light: res.light.tile, dark: res.dark.tile });
+          /* relative to the title, not the page: a surface may lay out a few px differently per theme on its
+             own (the notifications pop-up's dark rows are ~4 px shorter), which is not this recipe's doing */
+          const off = (r) => ({ dy: r.tile.top - r.titleBox.top, dx: (r.tile.left + r.tile.right) / 2 - (r.titleBox.left + r.titleBox.right) / 2 });
+          const lo = off(res.light), dk = off(res.dark);
+          t.check(`${s.name}: the tile sits the same way over its title in both themes`, near(lo.dy, dk.dy, 1) && near(lo.dx, dk.dx, 1), { light: lo, dark: dk });
         }
       } finally {
         await ctx.close();
