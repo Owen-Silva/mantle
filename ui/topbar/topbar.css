@@ -371,11 +371,13 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 .ap-p button { font: inherit; color: inherit; cursor: default; outline: none; }
 .ap-p button:focus-visible { box-shadow: var(--lg-focus, 0 0 0 2px var(--lg-acc)); }
 .ap-p button:disabled { opacity: .5; }
-/* switch: Settings' .sw at 32 x 18 */
-.ap-sw { position: relative; flex: 0 0 auto; width: 32px; height: 18px; padding: 0; border: 1px solid var(--lg-ink-3); border-radius: 9px; background: transparent;
-  transition: background-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)), border-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)); }
+/* switch: Settings' .sw = Helm's toggle (32 x 18 outer with a 1px border, a 12 px knob 2px inside it,
+   on = translateX(14px); the knob travels on the shared spring, colours on the UI beat) */
+.ap-sw { position: relative; flex: 0 0 auto; width: 32px; height: 18px; padding: 0; border: 1px solid var(--lg-ink-3); border-radius: var(--lg-r-pill); background: transparent;
+  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), border-color var(--lg-dur-ui) var(--lg-ease-ui); }
 .ap-sw i { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--lg-ink-2);
-  transition: transform var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)), background-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, var(--lg-ease)); }
+  box-shadow: var(--shadow-knob);
+  transition: transform var(--m-dur-xs) var(--m-spring), background-color var(--lg-dur-ui) var(--lg-ease-ui); }
 .ap-sw:hover { background: var(--lg-hover); }
 .ap-sw[aria-checked="true"] { background: var(--lg-acc); border-color: var(--lg-acc); }
 .ap-sw[aria-checked="true"] i { transform: translateX(14px); background: var(--lg-acc-on); }

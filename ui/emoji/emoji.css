@@ -89,7 +89,7 @@ html, body {
 .tabs button.on { color: var(--lg-ink); }
 .pill {
   position: absolute; top: 3px; left: 3px; height: 26px; border-radius: var(--lg-r-pill, 999px);
-  background: var(--lg-card); box-shadow: 0 0 0 1px var(--lg-edge-out), 0 1px 2px rgba(0, 0, 0, 0.08);
+  background: var(--lg-card); box-shadow: 0 0 0 1px var(--lg-edge-out), var(--shadow-ctl);
   transition: transform var(--m-dur-s) var(--m-spring);   /* width snaps: only transform moves (lane mantle-motion) */
 }
 :root[data-theme="dark"] .pill { box-shadow: 0 0 0 1px var(--lg-edge-out); }

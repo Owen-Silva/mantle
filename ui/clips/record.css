@@ -127,8 +127,9 @@ kbd {
 .rl { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rn { flex: none; font-size: 11px; color: var(--lg-ink-3); }
 .chev { flex: none; color: var(--lg-ink-3); }
-.sw { flex: none; position: relative; width: 32px; height: 18px; border-radius: 9px; background: var(--lg-tile); box-shadow: inset 0 0 0 1px var(--lg-edge-out); transition: background-color 160ms var(--lg-ease-ui, ease); }
-.sw i { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--lg-ink-2); transition: transform 380ms var(--spring), background-color 160ms linear; }
+/* the switch: Helm's toggle (32 x 18 outer, the 1px edge an inset ring, a 12 px knob 3px in, on = translateX(14px)) */
+.sw { flex: none; position: relative; width: 32px; height: 18px; border-radius: var(--lg-r-pill); background: var(--lg-tile); box-shadow: inset 0 0 0 1px var(--lg-edge-out); transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), box-shadow var(--lg-dur-ui) var(--lg-ease-ui); }
+.sw i { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--lg-ink-2); box-shadow: var(--shadow-knob); transition: transform var(--m-dur-xs) var(--m-spring), background-color var(--lg-dur-ui) var(--lg-ease-ui); }
 .row[aria-checked="true"] .sw { background: var(--lg-acc); box-shadow: none; }
 .row[aria-checked="true"] .sw i { transform: translateX(14px); background: var(--lg-acc-on); }
 .row[aria-disabled="true"] { opacity: var(--lg-disabled, .5); }
