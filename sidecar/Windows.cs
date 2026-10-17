@@ -33,14 +33,34 @@ namespace Mantle {
 
     static Win32.WinEventProc _evProc;      // static: the GC must never collect a live hook proc
     static IntPtr _hookSystem, _hookObject;
-    static Timer _timer;                    // Forms timer: ticks on the message-loop thread
-    static bool _dirty;                     // a WinEvent arrived since the last emit
+    static Timer _timer;                    // Forms timer: ticks on the message-loop thread; ONE-SHOT, see Arm
+    static Timer _pollTimer;                // the 2 s safety-net poll, always running
+    static bool _dirty;                     // a structural WinEvent arrived since the last build
+    static bool _titleDirty;                // a listed window's title changed and has not been sent yet
     static string _sig = null;              // signature of the last emitted list
-    static int _ticks;
+    static string _shapeSig = null;         // the same, titles left out: what the consumers react to at once
     static bool _firstEmitted;
+    static int _lastEmitAt;                 // Environment.TickCount of the last `ev windows`
+    // The hwnds in the last built list. Read by the hook proc (same thread) to tell a listed
+    // window's title change (coalesced) from anything else (immediate). Replaced, never mutated.
+    static HashSet<long> _listed = new HashSet<long>();
+    // The icon last SENT for each hwnd in the last emitted list. An entry whose icon is the same
+    // is sent without its "icon" key, and main puts the one it kept back (lib/winlist-icons.js).
+    static Dictionary<string, string> _sentIcons = new Dictionary<string, string>(StringComparer.Ordinal);
 
-    const int TickMs = 250;                 // coalescing window
-    const int PollEveryTicks = 8;           // 8 * 250ms = the 2 s safety-net poll
+    const int TickMs = 250;                 // coalescing window for structural changes
+    const int PollMs = 2000;                // the safety-net poll
+    const int TitleEveryMs = 1000;          // title-only changes go out at most once a second
+
+    // IDLE CPU (idlefix-winlist, 2026-10-17). A terminal with a spinner in its title (Claude Code)
+    // renames its window ~4 times a second. Each rename used to be a full Build, an `ev windows`
+    // carrying every window's icon data-URL, and in main a broadcast to every renderer plus a pinned
+    // rebuild: ~4 Hz forever. Now (1) the 250 ms timer only runs while something is owed (the hook
+    // proc arms it), the 2 s poll stays; (2) a rename of a window already in the list is held to one
+    // list a second -- anything structural (a window appearing or going, minimised, foreground, an
+    // unlisted window's rename, which can make it listable) still goes out on the next 250 ms tick,
+    // and carries any held titles with it; (3) icons ride a list only when they changed for that
+    // hwnd (or the hwnd is new); main reassembles the exact same full list for every consumer.
 
     /// Called once on the message-loop thread. Read-only, so it runs in passive
     /// mode too - watching windows never touches the live shell.
@@ -61,7 +81,18 @@ namespace Mantle {
       _timer = new Timer();
       _timer.Interval = TickMs;
       _timer.Tick += OnTick;
-      _timer.Start();
+      _timer.Start();                     // the first list is owed: it runs until that is sent
+      _pollTimer = new Timer();
+      _pollTimer.Interval = PollMs;
+      _pollTimer.Tick += OnPoll;
+      _pollTimer.Start();
+    }
+
+    /// Start the 250 ms timer if it is not running. Loop thread only (the hook proc, Build, OnTick):
+    /// a Forms timer belongs to the thread that made it. Cheap: a field read when it already runs.
+    static void Arm() {
+      Timer t = _timer;
+      if (t != null && !t.Enabled) t.Start();
     }
 
     /// Idempotent, callable from any thread - but ONLY THE LOOP THREAD CAN UNHOOK.
@@ -74,6 +105,7 @@ namespace Mantle {
     /// (Program.ParkLoopForExit) finishes the job. True when both are off.
     public static bool Stop() {
       try { if (_timer != null) _timer.Stop(); } catch (Exception) { }
+      try { if (_pollTimer != null) _pollTimer.Stop(); } catch (Exception) { }
       _hookSystem = Unhook(_hookSystem);
       _hookObject = Unhook(_hookObject);
       return _hookSystem == IntPtr.Zero && _hookObject == IntPtr.Zero;
@@ -85,20 +117,26 @@ namespace Mantle {
     }
 
     /// Hook procs must return in microseconds: no I/O, no allocation, no work.
-    /// All we do is raise a flag the 250 ms timer picks up.
+    /// All we do is raise a flag and arm the 250 ms timer that picks it up.
     static void OnWinEvent(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time) {
       // Exiting: a burst of these can keep the loop from ever reaching the
       // posted park request, so the first one to arrive parks it instead.
       if (Program.ParkWanted) Program.ParkLoopIfAsked();
       if (idObject != Win32.OBJID_WINDOW) return;   // ignore caret/menu/focus sub-objects
       if (hwnd == IntPtr.Zero) return;
-      _dirty = true;
+      // A rename of a window the list already has is a title change and nothing else: held to one
+      // list a second. Any other rename (a child control, a hidden window, a window whose first
+      // title makes it listable) is structural, as before: built on the next tick.
+      if (ev == Win32.EVENT_OBJECT_NAMECHANGE && _listed.Contains(hwnd.ToInt64())) _titleDirty = true;
+      else _dirty = true;
+      Arm();
     }
 
-    static void OnTick(object sender, EventArgs e) {
+    static void OnTick(object sender, EventArgs e) { Step(false); }
+    static void OnPoll(object sender, EventArgs e) { Step(true); }
+
+    static void Step(bool poll) {
       if (Program.ParkWanted) Program.ParkLoopIfAsked();
-      _ticks++;
-      bool poll = (_ticks % PollEveryTicks) == 0;
       // Icons read off the ui lane have landed (QueueIcon): the list is sent again even though the
       // signature (which leaves icons out) has not moved. Same when an app's exe changed on disk
       // and its new picture was read in the background (Icons.TakeRefreshed: a rebuilt app), or a
@@ -110,25 +148,71 @@ namespace Mantle {
       // The desktop widgets' covered check (WidgetCover.cs) rides the same hooks: a window event since
       // the last tick (a move is LOCATIONCHANGE, in the object range above), or the 2 s safety poll.
       if (_dirty || poll) WidgetCover.Tick();
-      if (!_dirty && !poll && _firstEmitted && !landed) return;
-      _dirty = false;
-      try {
-        EmitIfChanged(!_firstEmitted || landed);
-      } catch (Exception ex) {
-        Program.EmitLog("error", "window poll failed: " + ex.Message);
+      bool titleDue = _titleDirty && unchecked(Environment.TickCount - _lastEmitAt) >= TitleEveryMs;
+      if (_dirty || poll || landed || !_firstEmitted || titleDue) {
+        _dirty = false;
+        try {
+          EmitIfChanged(!_firstEmitted || landed);
+        } catch (Exception ex) {
+          Program.EmitLog("error", "window poll failed: " + ex.Message);
+        }
+      }
+      // One-shot: the 250 ms timer stops once nothing is owed -- no structural change waiting, no
+      // held title, no icon being read, the first list sent. The next window event arms it again.
+      if (!_dirty && !_titleDirty && _firstEmitted && !WarmBusy()) {
+        Timer t = _timer;
+        if (t != null) t.Stop();
       }
     }
 
     /// Rebuild, compare, and emit only when something a human would notice moved.
     /// `force` makes the very first emit unconditional so the Electron side has a
-    /// list within the first 2 s without having to ask for one.
+    /// list within the first 2 s without having to ask for one. A change of titles
+    /// alone is held until a second has passed since the last emit (_titleDirty
+    /// keeps the timer running until then); any other change goes now, titles and all.
     public static void EmitIfChanged(bool force) {
       var list = Build();
-      string sig = Signature(list);
-      if (!force && sig == _sig) return;
+      var listed = new HashSet<long>();
+      foreach (IDictionary d in list) {
+        long h;
+        if (long.TryParse((string)d["hwnd"], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out h)) listed.Add(h);
+      }
+      _listed = listed;
+      string shape = ShapeSignature(list);
+      string sig = shape + "\u0003" + TitleSignature(list);
+      if (!force && sig == _sig) { _titleDirty = false; return; }
+      if (!force && shape == _shapeSig && unchecked(Environment.TickCount - _lastEmitAt) < TitleEveryMs) {
+        _titleDirty = true;   // titles only, and a list went out under a second ago: hold it
+        Arm();                // (found by the 2 s poll with no hook event: the 250 ms timer sends it)
+        return;
+      }
       _sig = sig;
+      _shapeSig = shape;
+      _titleDirty = false;
       _firstEmitted = true;
-      Program.Emit(Json.Obj("ev", "windows", "list", list));
+      _lastEmitAt = Environment.TickCount;
+      Program.Emit(Json.Obj("ev", "windows", "list", WithoutSentIcons(list), "iconDiff", true));
+    }
+
+    /// The emitted copy of the list: an entry whose icon is the one last sent for its hwnd has no
+    /// "icon" key (main fills it back in, lib/winlist-icons.js); a new hwnd or a changed icon has it.
+    /// _sentIcons then holds exactly this list's hwnds, so a closed window's icon is not kept.
+    static List<object> WithoutSentIcons(List<object> list) {
+      var sent = new Dictionary<string, string>(StringComparer.Ordinal);
+      var outList = new List<object>(list.Count);
+      foreach (IDictionary d in list) {
+        string h = (string)d["hwnd"];
+        string icon = d["icon"] as string;
+        string prev;
+        bool same = _sentIcons.TryGetValue(h, out prev) && string.Equals(prev, icon, StringComparison.Ordinal);
+        sent[h] = icon;
+        if (!same) { outList.Add(d); continue; }
+        var e = new System.Collections.Specialized.OrderedDictionary();
+        foreach (DictionaryEntry kv in d) if ((string)kv.Key != "icon") e[kv.Key] = kv.Value;
+        outList.Add(e);
+      }
+      _sentIcons = sent;
+      return outList;
     }
 
     /// Per-hwnd app identity (who really owns the window, its AUMID, its exe).
@@ -207,6 +291,9 @@ namespace Mantle {
             else if (icon != null) iconFrom = "exe";
           }
           if (pending) pending = QueueIcon(pkg ? app.Aumid : null, exe);
+          // Build runs on the loop thread (OnTick, or the ui lane's `windows` request), so the
+          // one-shot timer can be armed here: the list with the icon follows within ~1 s.
+          if (pending) Arm();
 
           found.Add(Json.Obj(
             "hwnd", hwnd.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -290,7 +377,9 @@ namespace Mantle {
       while (true) {
         string[] job;
         lock (_warmLock) {
-          if (_warmQueue.Count == 0) { _warmThread = null; break; }
+          // _iconsLanded BEFORE _warmThread goes null, both under the lock: WarmBusy never sees
+          // "not reading" without "landed", so the one-shot timer cannot stop in between.
+          if (_warmQueue.Count == 0) { _iconsLanded = true; _warmThread = null; break; }
           job = _warmQueue[0];
           _warmQueue.RemoveAt(0);
         }
@@ -303,7 +392,12 @@ namespace Mantle {
         }
         lock (_warmLock) { _warmQueued.Remove(job[2]); _warmTried.Add(job[2]); }
       }
-      _iconsLanded = true;   // all read: one fresh list on the next tick, not one per icon
+      // all read: _iconsLanded was set above, so one fresh list goes on the next tick, not one per icon
+    }
+
+    /// Icons are being read, or have landed and not been sent: the 250 ms timer must keep running.
+    static bool WarmBusy() {
+      lock (_warmLock) { return _warmThread != null || _iconsLanded; }
     }
 
     // ------------------------------------------------------ a window's OWN icon
@@ -346,16 +440,22 @@ namespace Mantle {
       return url;
     }
 
-    /// Cheap fingerprint of the things the bar renders. Icons are excluded
-    /// because they are a pure function of the exe path.
-    static string Signature(List<object> list) {
-      var sb = new StringBuilder(list.Count * 48);
+    /// Cheap fingerprint of the things the bar renders, in two halves: the shape (which windows,
+    /// in which order, minimised, in front) and the titles. Together they are the old signature.
+    /// Icons are excluded because they are a pure function of the exe path.
+    static string ShapeSignature(List<object> list) {
+      var sb = new StringBuilder(list.Count * 32);
       foreach (IDictionary d in list) {
         sb.Append(d["hwnd"]).Append('\u0001')
-          .Append(d["title"]).Append('\u0001')
           .Append(d["minimized"]).Append('\u0001')
           .Append(d["foreground"]).Append('\u0002');
       }
+      return sb.ToString();
+    }
+
+    static string TitleSignature(List<object> list) {
+      var sb = new StringBuilder(list.Count * 32);
+      foreach (IDictionary d in list) sb.Append(d["title"]).Append('\u0002');
       return sb.ToString();
     }
 

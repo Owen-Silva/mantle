@@ -46,7 +46,10 @@ async function cold(exe) {
   let settled = null;
   const t0 = Date.now();
   while (Date.now() - t0 < 6000) {
-    const evs = n.s.collect('windows');
+    // Pushed lists leave an unchanged icon out (iconDiff, idlefix-winlist 2026-10-17): put them back
+    // the way lib/sidecar.js does, in order, so the settled list compared below is the full one.
+    const icons = new (require('../lib/winlist-icons').WindowIconCache)();
+    const evs = n.s.collect('windows').map((e) => (e.iconDiff === true ? { list: icons.take(e.list).list } : e));
     const last = evs.length ? evs[evs.length - 1].list : null;
     if (last && !last.some((x) => x.iconPending) && (pend.length === 0 || evs.length >= 1)) { settled = last; break; }
     await lib.sleep(100);
