@@ -598,3 +598,12 @@ html:root:root[data-theme="dark"] *::-webkit-scrollbar-thumb:hover { background-
 :where(:root[data-theme="dark"]) .ib:disabled,
 :where(:root[data-theme="dark"]) .cmd:disabled,
 :where(:root[data-theme="dark"]) .btn:disabled { opacity: var(--lg-disabled); }
+
+/* THE DIALOG POP-IN (lane mantle-motion, 2026-10-16): the bar's spring (glass-light.css --m-*). A dialog,
+   so --m-dur-m: the card rises 10 px and settles from .96 while the scrim fades in. Only transform and
+   opacity move; a keyframe, so it runs each time a dialog appears. */
+.modal:not([hidden]) { animation: m-fade var(--m-dur-xs) var(--m-fade-in) backwards; }
+.modal:not([hidden]) .dlg {
+  animation: m-dlg-rise var(--m-dur-m) var(--m-spring) backwards, m-fade calc(var(--m-dur-m) * .4) var(--m-fade-in) backwards;
+}
+@keyframes m-dlg-rise { from { transform: translateY(10px) scale(.96); } }

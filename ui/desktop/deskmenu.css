@@ -48,3 +48,17 @@ html.dm-root[data-theme="dark"] { --dm-shadow: 0 1px 2px rgba(0,0,0,.30), 0 8px 
 .dm-sep { height: 1px; margin: 4px 8px; background: var(--lg-edge-out); }
 .dm-note { padding: 6px 10px 4px; white-space: normal; color: var(--lg-warn); font-size: 12px; }
 .dm-note[hidden] { display: none; }
+
+/* THE POP-IN (lane mantle-motion, 2026-10-16): the bar's spring (glass-light.css --m-*), a small menu,
+   so --m-dur-xs. It drops 4 px out of the click and fades in over the first 40 %; deskmenu.js puts
+   .dm-in on its first frame on screen. Only transform and opacity move (a translate: size() still
+   reads the true size). The close stays instant: main hides the window on the click that picks. */
+.dm-panel { opacity: 0; transform: translateY(-4px); }
+.dm-panel.dm-in {
+  opacity: 1; transform: none;
+  transition: transform var(--m-dur-xs) var(--m-spring), opacity calc(var(--m-dur-xs) * .4) var(--m-fade-in);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dm-panel { transform: none; }
+  .dm-panel.dm-in { transition: opacity 120ms linear; }
+}

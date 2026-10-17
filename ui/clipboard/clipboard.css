@@ -379,3 +379,18 @@ body.noting .note { display: block; }
 /* the chosen row's wash lifts the ground under its meta line: --lg-ink-2 measured 4.0:1 there over a
    bright photo, so on the chosen row the meta is --lg-ink (4.5:1+) */
 :root[data-theme="dark"] .row.sel .meta { color: var(--lg-ink); }
+
+/* THE POP-IN (lane mantle-motion, 2026-10-16): the bar's spring, shared by every Mantle pop-in
+   (glass-light.css --m-*). The panel rests 8 px down and see-through; ../shared/motion-in.js puts
+   html.m-shown on the frame after main shows the window, and the panel rises in over --m-dur-s with
+   the fade done in its first 40 %. Only transform and opacity move. The hide stays instant: main
+   hides the window before it pastes, and a paste must never wait on an animation. */
+.panel { opacity: 0; transform: translateY(8px); }
+html.m-shown .panel {
+  opacity: 1; transform: none;
+  transition: transform var(--m-dur-s) var(--m-spring), opacity calc(var(--m-dur-s) * .4) var(--m-fade-in);
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel { transform: none; }
+  html.m-shown .panel { transition: opacity 120ms linear; }
+}

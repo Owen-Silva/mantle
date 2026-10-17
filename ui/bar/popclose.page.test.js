@@ -49,6 +49,18 @@ async function run() {
     t.check('a pop-up opens again after being closed from outside', await popOpen(pg));
     await pg.emit('bar.popclose', { why: 'Esc' });
 
+    // ---- a pop-up opened while the last one's exit copy still holds the room (bar.js closePop, lane
+    // mantle-motion): the old close reaches main FIRST and once, so main (one room owner) never shuts the
+    // new pop-up's room with a close that arrived late
+    await pg.click('#network', { wait: 400 });
+    await pg.reset();
+    await pg.emit('bar.popclose', { why: 'a left click outside it' });
+    await pg.click('#clock', { wait: 400 });
+    const seq = (await pg.calls('bar.popover')).map((c) => (c.p && c.p.open ? 'open:' + c.p.key : 'close'));
+    t.check('a pop-up opened inside the last one\'s exit: main hears its close, then the open, and no close after it',
+      seq[0] === 'close' && seq.indexOf('close', 1) === -1 && seq.some((x) => x.indexOf('open:') === 0) && await popOpen(pg), seq);
+    await pg.emit('bar.popclose', { why: 'Esc' });
+
     // ---- bar.keyboard.lost: the Wi-Fi password box closes and says why; quick settings stays
     const q = await open('?mode=pill', W);
     await q.click('#network', { wait: 400 });

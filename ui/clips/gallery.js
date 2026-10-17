@@ -21,7 +21,19 @@
   var tl = $('tl'), tlRange = $('tlRange'), tlHead = $('tlHead'), tlIn = $('tlIn'), tlOut = $('tlOut'), vTrimInfo = $('vTrimInfo'), vNote = $('vNote');
   var aTrim = $('aTrim'), aReset = $('aReset');
   var toast = $('toast'), toastText = $('toastText'), toastUndo = $('toastUndo');
-  var SPRING = 'linear(0, .096 2.4%, .33 5.4%, .62 9.3%, .84 13.6%, .96 18.3%, 1.02 23.5%, 1.035 28.4%, 1.03 33.6%, 1.012 41.9%, 1 52%, .997 64%, 1)';
+  // the shared spring (glass-light.css --m-spring, lane mantle-motion), proven parseable, or the old local one.
+  // Read on first use, not at load: a getComputedStyle at load is a forced style pass on the cold open.
+  var SPRING = null;
+  function spring() {
+    if (SPRING) return SPRING;
+    var old = 'linear(0, .096 2.4%, .33 5.4%, .62 9.3%, .84 13.6%, .96 18.3%, 1.02 23.5%, 1.035 28.4%, 1.03 33.6%, 1.012 41.9%, 1 52%, .997 64%, 1)';
+    try {
+      var s = getComputedStyle(document.documentElement).getPropertyValue('--m-spring').replace(/\s+/g, ' ').trim();
+      if (s) document.documentElement.animate([], { duration: 1, easing: s }).cancel();
+      SPRING = s || old;
+    } catch (_) { SPRING = old; }
+    return SPRING;
+  }
   var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var S = { filter: 'all', items: [], byName: {}, counts: {}, recording: null, thumbs: {}, asked: {}, sel: null, view: null,
     trim: null, busy: false, undo: null, toastT: null, listT: null, lists: 0, focusWant: null, encoding: null, error: null };
@@ -216,7 +228,7 @@
       if (from.width && to.width) {
         var sx = from.width / to.width, sy = from.height / to.height;
         stage.animate([{ transform: 'translate(' + (from.left - to.left) + 'px,' + (from.top - to.top) + 'px) scale(' + sx + ',' + sy + ')', transformOrigin: '0 0', borderRadius: '14px' },
-          { transform: 'none', transformOrigin: '0 0' }], { duration: 480, easing: SPRING });
+          { transform: 'none', transformOrigin: '0 0' }], { duration: 440, easing: spring() });   // --m-dur-m
       }
     }
     vBig.focus({ preventScroll: true });

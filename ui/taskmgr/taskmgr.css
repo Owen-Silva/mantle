@@ -197,7 +197,7 @@ html { background: var(--lg-fill-strong); }
   position: fixed; z-index: 10; min-width: 200px; padding: 4px; display: flex; flex-direction: column;
   background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r);
   box-shadow: var(--lg-shadow);
-  animation: menuin var(--lg-dur-out, 120ms) var(--lg-ease);
+  animation: menuin var(--m-dur-xs) var(--m-spring), m-fade calc(var(--m-dur-xs) * .4) var(--m-fade-in) backwards;   /* the shared pop-in (lane mantle-motion) */
 }
 @keyframes menuin { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
 .menu button { height: 30px; display: flex; align-items: center; gap: 16px; padding: 0 10px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; text-align: left; white-space: nowrap; }
@@ -354,3 +354,6 @@ html:root:root[data-theme="dark"] *::-webkit-scrollbar-thumb:hover { background-
 :where(:root[data-theme="dark"]) .btn:disabled,
 :where(:root[data-theme="dark"]) .btn:disabled:hover,
 :where(:root[data-theme="dark"]) .btn:disabled:active { opacity: var(--lg-disabled); }
+
+/* reduced motion: the menu still fades, opacity only, 120 ms (the shared rule, lane mantle-motion) */
+@media (prefers-reduced-motion: reduce) { .menu { animation: m-fade 120ms linear backwards !important; } }

@@ -82,7 +82,7 @@ body[data-edge="top"] { justify-content: flex-start; }
    --lg-dur-out only let main tune the numbers. The exit is deliberately quicker than the entry:
    main hides the window 350ms after the event, so 260 lands with margin. */
 body { --dur: var(--lg-dur-out, 260ms); }
-body.up { --dur: var(--lg-dur, 560ms); }
+body.up { --dur: var(--lg-dur, var(--m-dur-l)); }
 
 /* THE CURVES (lane mantle-barpolish, 2026-10-15). Owen: the load-in must feel like "a big
    businesses product", cutting edge and calm. IN is a damped spring (damping ratio 0.8, sampled
@@ -90,18 +90,18 @@ body.up { --dur: var(--lg-dur, 560ms); }
    220 ms, a 1.5 % overshoot (under a pixel of the rise) that settles by itself, so the island
    arrives quicker than the old ease (which crept for half a second) and lands like an object with
    weight, the way the macOS Dock and visionOS windows do. OUT is a plain accelerate: leaving is
-   not an event. --bar-fade-k is how much of the duration the opacity takes. */
+   not an event. --bar-fade-k is how much of the duration the opacity takes.
+   Since lane mantle-motion (2026-10-16) the curves are the shared tokens in ../shared/glass-light.css:
+   --m-spring holds these same 41 points, and every Mantle, Quartz and Helm pop-in plays it, each
+   over its own --m-dur-*. The bar is the reference, so it reads them unchanged. */
 body {
-  --bar-move: cubic-bezier(.3, 0, .8, .15);
-  --bar-fade: cubic-bezier(.4, 0, 1, 1);
+  --bar-move: var(--m-accel);
+  --bar-fade: var(--m-fade-out);
   --bar-fade-k: 1;
 }
 body.up {
-  --bar-move: linear(0, 0.0208, 0.0739, 0.1478, 0.2337, 0.3245, 0.4153, 0.5025, 0.5838, 0.6577, 0.7235,
-    0.7808, 0.8301, 0.8716, 0.906, 0.9341, 0.9566, 0.9742, 0.9876, 0.9977, 1.0049, 1.0098, 1.0128, 1.0145,
-    1.0151, 1.015, 1.0143, 1.0132, 1.012, 1.0106, 1.0092, 1.0079, 1.0066, 1.0055, 1.0044, 1.0035, 1.0028,
-    1.0021, 1.0015, 1.0011, 1);
-  --bar-fade: cubic-bezier(.2, 0, 0, 1);
+  --bar-move: var(--m-spring);
+  --bar-fade: var(--m-fade-in);
   --bar-fade-k: .4;
 }
 
@@ -227,7 +227,7 @@ body.no-backdrop .bar { --pane-fill: var(--lg-fill-fb); }
   .bar, body.edge .bar { --pane-y: 0px; --pane-s: 1; }
   body, body.up { --bar-fade: linear; --bar-fade-k: 1; }
   body { --dur: 120ms; }
-  body.up { --dur: 160ms; }
+  body.up { --dur: 120ms; }   /* the shared rule (motion-unison.md): opacity only, 120 ms, in and out */
 }
 
 /* --- the two shapes. Geometry only, applied on the frame the mode arrives. --- */
@@ -426,7 +426,7 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
 }
 .cell .ico img { width: var(--cell-icon); height: var(--cell-icon); display: block; }
 /* pressed = slightly smaller, the only transform besides the slide */
-.cell:active .ico { transform: scale(.92); }
+/* pressed: the cell's --lg-press fill only, never a scale (motion-unison.md; lane mantle-motion) */
 /* the letter tile, for an item the sidecar could not give an icon for (its reason is in the
    tooltip — an unexplained blank square is exactly the silent failure we refuse) */
 .cell .ico.tile { background: var(--lg-tile); }
@@ -496,7 +496,7 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
 }
 .ovf-app:hover { background: var(--lg-hover); color: var(--lg-ink); }
 .ovf-app:active { background: var(--lg-press); }
-.ovf-app:active .ovf-ico { transform: scale(.92); }
+/* pressed: --lg-press only, never a scale (lane mantle-motion) */
 .ovf-ico {
   width: var(--cell-icon); height: var(--cell-icon);
   display: grid; place-items: center; overflow: hidden; border-radius: 6px;
@@ -706,11 +706,39 @@ body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
    no longer changes size, so the same wipe is drawn here: uncovered from its bottom edge up, 200 ms
    on the Northwind curve (POP_WIPE_MS in main). display:none restarts it, so it runs on every open and
    never when one flyout replaces another in place. -60px keeps the shadow (56px blur) uncut, and
-   `backwards` drops the clip once it has run. */
-.pop { animation: pop-wipe 200ms var(--lg-ease) backwards; }
-body[data-edge="top"] .pop { animation-name: pop-wipe-down; }
-@keyframes pop-wipe { from { clip-path: inset(100% -60px -60px -60px); } to { clip-path: inset(-60px); } }
-@keyframes pop-wipe-down { from { clip-path: inset(-60px -60px 100% -60px); } to { clip-path: inset(-60px); } }
+   `backwards` drops the clip once it has run.
+   NOW (lane mantle-motion, 2026-10-16): the bar's own spring, the motion every Mantle pop-in shares.
+   The pop-up rises 8 px out of the bar on --m-spring over --m-dur-s and fades in over the first 40 %
+   of that, in BOTH themes (the wipe animated clip-path, and dark had no entrance at all). Only
+   transform and opacity move. Still a keyframe restarted by display:none, so a flyout replacing a
+   flyout in place does not replay it, and dark's .bdwait still holds it, paused, until the picture
+   is on it. A flyout only fades: main lays DWM's live pictures over its card boxes and those cannot
+   ride a transform. The picture is pinned against the resting rect (bar.js popRestRect).
+   THE EXIT: closePop leaves a copy (.pop-ghost) that sinks back 4 px on --m-accel and fades on
+   --m-fade-out in 45 % of the entrance; main is asked for the room back when it has gone. */
+.pop {
+  animation: m-pop-rise var(--m-dur-s) var(--m-spring) backwards,
+             m-pop-fade calc(var(--m-dur-s) * .4) var(--m-fade-in) backwards;
+}
+.pop.fly { animation-name: none, m-pop-fade; }
+body[data-edge="top"] .pop { animation-name: m-pop-drop, m-pop-fade; }
+body[data-edge="top"] .pop.fly { animation-name: none, m-pop-fade; }
+@keyframes m-pop-rise { from { transform: translateY(8px); } }
+@keyframes m-pop-drop { from { transform: translateY(-8px); } }
+@keyframes m-pop-fade { from { opacity: 0; } }
+.pop-ghost {
+  pointer-events: none;
+  animation: m-pop-sink calc(var(--m-dur-s) * .45) var(--m-accel) forwards,
+             m-pop-out  calc(var(--m-dur-s) * .45) var(--m-fade-out) forwards;
+}
+body[data-edge="top"] .pop-ghost { animation-name: m-pop-lift, m-pop-out; }
+@keyframes m-pop-sink { to { transform: translateY(4px); } }
+@keyframes m-pop-lift { to { transform: translateY(-4px); } }
+@keyframes m-pop-out  { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .pop, body[data-edge="top"] .pop { animation: m-pop-fade 120ms linear backwards; }
+  .pop-ghost, body[data-edge="top"] .pop-ghost { animation: m-pop-out 120ms linear forwards; }
+}
 
 .pop h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 600; color: var(--lg-ink-3); letter-spacing: .04em; text-transform: uppercase; }
 .pop .row { display: flex; align-items: center; gap: 10px; }
@@ -1294,9 +1322,9 @@ body.pill .chips { display: none; }
    the bar window's shape ends 10 DIP above a pop-up and at its sides, so --lg-shadow was cut into a
    hard dark edge there (lane clipped-shadow, 2026-10-10; the why is at body.up .bar above). */
 :root[data-theme="dark"] .pop { border-color: var(--lg-edge-out); box-shadow: var(--lg-lip-up); }
-/* row 24: "menus and popovers: no open animation; no exit animations" */
-:root[data-theme="dark"] .pop,
-:root[data-theme="dark"] body[data-edge="top"] .pop { animation: none; }
+/* row 24 ("menus and popovers: no open animation; no exit animations") is superseded by the shared
+   motion (lane mantle-motion, 2026-10-16; Owen: all three apps "in unison"): dark plays the same
+   spring entrance and accelerate exit as light, the .pop rules above. */
 /* row 18: every divider is Helm's hairline */
 :root[data-theme="dark"] .sep,
 :root[data-theme="dark"] .dock .div { background: var(--lg-divider); }

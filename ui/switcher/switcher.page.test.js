@@ -281,7 +281,7 @@ async function liveList(p) {
   let t = await tilesNow();
   check('live open: one more tile, in the merged order', t.length === 10 && t.map((x) => x.hwnd).join() === list.map((x) => x.hwnd).join(), t.map((x) => x.hwnd).join());
   check('live open: every tile that was there is the same element (re-rendered in place, no rebuild)', t.filter((x) => x.hwnd !== fresh.hwnd).every((x) => x.born && x.born.startsWith('open-')), JSON.stringify(t.map((x) => x.born)));
-  check('live open: the new tile fades in on the UI motion token (tile-in, --lg-dur-ui-slow)', t[3].isNew && t[3].anim === 'tile-in' && (t[3].dur === '0.2s' || t[3].dur === '0.13s') && !t[3].born, JSON.stringify(t[3]));
+  check('live open: the new tile fades in on the shared motion token (tile-in, --m-dur-xs, lane mantle-motion)', t[3].isNew && t[3].anim === 'tile-in' && t[3].dur === '0.24s' && !t[3].born, JSON.stringify(t[3]));
   check('live open: no other tile animates', t.filter((x, i) => i !== 3).every((x) => x.anim === 'none' || !x.isNew));
   check('live open: the selection stays on the same window', t[1].sel && t[1].aria === 'true' && t.filter((x) => x.sel).length === 1);
   check('live open: indexes follow the new order (a click is the right tile)', t.every((x, i) => x.i === i));
@@ -319,7 +319,8 @@ async function liveList(p) {
   w1 = await panelBox();
   const glide = await p.evaluate(() => ({ live: document.body.classList.contains('is-live'), tp: getComputedStyle(document.getElementById('panel')).transitionProperty, td: getComputedStyle(document.getElementById('panel')).transitionDuration }));
   check('live shrink: 5 tiles, one row', t.length === 5 && lay.rows === 1);
-  check('live shrink: the panel loses its row by gliding (height, --lg-dur-ui-slow)', glide.live && /height/.test(glide.tp) && /^0.(2|13)s$/.test(glide.td), JSON.stringify(glide));
+  // lane mantle-motion: only transform and opacity ever animate (motion-unison.md), so the row goes at once, not by a height glide
+  check('live shrink: the panel takes its new height at once (no height transition: no layout per frame)', glide.live && !/height/.test(glide.tp), JSON.stringify(glide));
   await p.waitForTimeout(260);
   w1 = await panelBox();
   check('live shrink: same width, same centre, same top; only the height changed', Math.abs(w1.w - w0.w) < 0.5 && Math.abs(w1.x - w0.x) < 0.5 && Math.abs(w1.y - w0.y) < 0.5 && w1.h < w0.h - 50, JSON.stringify({ w0, w1 }));

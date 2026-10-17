@@ -213,13 +213,16 @@ body.snap .bdrop, body.snap .panel::after { transition: none; }
    on Helm's UI curve; a panel that loses a row glides up (body.is-live, set only for a shrink: a
    growing one snaps, since a DWM preview in the new row cannot be clipped by a panel still growing). */
 /* dark has Helm's UI motion tokens; light has only the bar's, so it takes the tile ring's own (half of --lg-dur-out) */
-.tile.is-new { animation: tile-in var(--lg-dur-ui-slow, calc(var(--lg-dur-out) / 2)) var(--lg-ease-ui, var(--lg-ease)) both; }
+.tile.is-new { animation: tile-in var(--m-dur-xs) var(--m-fade-in) both; }   /* the shared fade (lane mantle-motion) */
 /* opacity ONLY: a scaled tile would be measured scaled (report), and its preview registered too small */
 @keyframes tile-in { from { opacity: 0; } }
-body.is-live .panel { transition: height var(--lg-dur-ui-slow, calc(var(--lg-dur-out) / 2)) var(--lg-ease-ui, var(--lg-ease)); }
+/* body.is-live .panel no longer eases its HEIGHT (a layout every frame, and the live previews are registered
+   against the final boxes anyway): the panel takes its new size at once (lane mantle-motion, unison rule:
+   only transform and opacity move). The overlay itself has no entrance: DWM's live previews are drawn
+   over the page by DWM and can follow neither a transform nor a fade. */
 @media (prefers-reduced-motion: reduce) {
   .tile.is-new { animation: none; }
-  body.is-live .panel { transition: none; }
+
 }
 .tile.is-sel {
   background: var(--lg-hover);

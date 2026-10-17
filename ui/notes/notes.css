@@ -37,7 +37,7 @@ body {
   color: var(--lg-ink);
 }
 /* the top bar dropdown's entrance, once per open */
-.pad.anim { animation: pad-in 140ms var(--lg-ease) backwards; }
+.pad.anim { animation: pad-in var(--m-dur-xs) var(--m-spring) backwards, m-fade calc(var(--m-dur-xs) * .4) var(--m-fade-in) backwards; }   /* the shared pop-in (lane mantle-motion) */
 @keyframes pad-in { from { opacity: 0; transform: translateY(-3px); } }
 
 /* ---- tabs: one per note, its first line; sideways scroll when many ---- */
@@ -258,3 +258,6 @@ body.mock .pad { top: 30px; }
 @media (prefers-reduced-motion: reduce) {
   :root[data-theme="dark"] .tab, :root[data-theme="dark"] .add, :root[data-theme="dark"] .ico, :root[data-theme="dark"] .undo { transition: none; }
 }
+
+/* reduced motion: opacity only, 120 ms (the shared rule, lane mantle-motion) */
+@media (prefers-reduced-motion: reduce) { .pad.anim { animation: m-fade 120ms linear backwards; } }

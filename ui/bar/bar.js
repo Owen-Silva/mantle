@@ -65,6 +65,10 @@
   function call(channel, payload) {
     if (!mantle || typeof mantle.call !== 'function')
       return Promise.reject(new Error('window.mantle is not present (preload did not run)'));
+    // A room asked for while a closed pop-up's exit copy still holds the old one (closePop, popFreeFn): that
+    // close goes out FIRST, so main hears open:false before this open, the order it always had. Sent late,
+    // main (one room owner, a close shuts whatever is open) would shut this new room instead.
+    if (channel === 'bar.popover' && payload && payload.open && popFreeFn) popFreeNow();
     try {
       var p = mantle.call(channel, payload);
       return (p && typeof p.then === 'function') ? p : Promise.resolve(p);
@@ -534,6 +538,19 @@
       return null;
     }
   }
+  /* The pop-up's RESTING rect. Its entrance (bar.css, .pop: the shared --m-spring rise, lane
+     mantle-motion) is a translate, and the picture is pinned while the pop-up is still held at the
+     start of that rise (.bdwait pauses it), so the moving rect would pin the glass 8 px off for good.
+     A translate never changes the size, so taking it back out of the rect is the whole fix. */
+  function popRestRect() {
+    var r = el.pop.getBoundingClientRect(), tx = 0, ty = 0;
+    try {
+      var tf = getComputedStyle(el.pop).transform;
+      if (tf && tf !== 'none' && window.DOMMatrixReadOnly) { var m = new DOMMatrixReadOnly(tf); tx = m.m41; ty = m.m42; }
+    } catch (_) { /* no matrix: the rect as drawn */ }
+    return { left: r.left - tx, top: r.top - ty, width: r.width, height: r.height };
+  }
+
   function placePopBd() {
     var s = el.pop.style;
     if (!popBd || !popBd.img || el.pop.hidden || popBd.key !== popKey || !isDark()) return;
@@ -542,7 +559,7 @@
     var ax = popBd.at.x * ww, aw = popBd.at.w * ww, ah = popBd.at.h * wh;
     var ay = popBd.at.y * wh;
     if (el.body.getAttribute('data-edge') !== 'top') ay = H - (wh - ay);   // pinned to the bottom edge
-    var r = el.pop.getBoundingClientRect();
+    var r = popRestRect();
     var G = window.MantleGlassAdapt, T = guardTokens(), res = null;
     if (G && T && aw > 0 && ah > 0) {
       var sx = popBd.img.naturalWidth / aw, sy = popBd.img.naturalHeight / ah;
@@ -2265,8 +2282,50 @@
   }
   if (window.ResizeObserver) new ResizeObserver(popResized).observe(el.pop);
 
-  function closePop() {
+  /* THE EXIT (lane mantle-motion, 2026-10-16). The pop-up itself closes at once, exactly as before:
+     hidden, emptied, its watches stopped, so nothing that asks "is it open?" ever waits on an
+     animation. What leaves the screen is a COPY (.pop-ghost, no ids, inert) that sinks 4 px on
+     --m-accel and fades in 45 % of the entrance (bar.css). main is told the room is free only once
+     the copy is gone, or the shrinking window would cut it off; a pop-up opened meanwhile sends that
+     close first, so main hears the same open:false / open:true pair it always has. No copy for a
+     flyout (main has already taken its live pictures off), for a pop-up replaced by another one, or
+     in a window nobody can see. */
+  var popGhost = null, popGhostT = 0, popFreeT = 0, popFreeFn = null;
+  function popOutMs() {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return 120;
+    var d = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--m-dur-s'));
+    return Math.round((d > 0 ? d : 320) * 0.45);
+  }
+  function popGhostDrop() {
+    if (popGhostT) { clearTimeout(popGhostT); popGhostT = 0; }
+    if (popGhost && popGhost.parentNode) popGhost.parentNode.removeChild(popGhost);
+    popGhost = null;
+  }
+  function popFreeNow() {
+    if (popFreeT) { clearTimeout(popFreeT); popFreeT = 0; }
+    var fn = popFreeFn; popFreeFn = null;
+    if (fn) fn();
+  }
+  function popLeave() {
+    popGhostDrop();
+    var g = el.pop.cloneNode(true);
+    g.removeAttribute('id');
+    var ids = g.querySelectorAll('[id]');
+    for (var i = 0; i < ids.length; i++) ids[i].removeAttribute('id');
+    g.classList.remove('bdwait');
+    g.classList.add('pop-ghost');
+    g.setAttribute('aria-hidden', 'true');
+    g.inert = true;
+    el.pop.parentNode.insertBefore(g, el.pop.nextSibling);   // after the real one: a query finds the real pop-up first
+    popGhost = g;
+    var ms = popOutMs();
+    popGhostT = setTimeout(popGhostDrop, ms + 40);
+    return ms;
+  }
+
+  function closePop(o) {
     if (!popKey) return;
+    var leave = !(o && o.swap) && !isFlyKey(popKey) && !el.pop.hidden && document.visibilityState === 'visible';
     /* The quick-settings watch exists only for the open panel: leaving it on would have main
        pushing the whole system state at a closed popover every 2 seconds, on a bar whose entire
        point is that it costs nothing at rest. */
@@ -2287,6 +2346,7 @@
     if (popKey === 'dl' && window.MantleDownloads) MantleDownloads.closed();             // its 30 s age ticker stops
     if (popKey === 'cal' && window.MantleGcal) MantleGcal.closed();                      // gives the keyboard back
     if (isFlyKey(popKey)) flyTeardown();
+    var outMs = leave ? popLeave() : 0;
     popKey = null;
     popLast = null;
     el.pop.hidden = true;
@@ -2295,9 +2355,14 @@
     el.pop.style.maxHeight = '';       // a cap belongs to the panel that was held to it
     el.pop.textContent = '';
     if (popTimer) { clearTimeout(popTimer); popTimer = 0; }
-    call('bar.popover', { open: false }).catch(function () {});   // shrink request; failure is reported on open, not here
-    // the leave that was suppressed while the popover held the bar open (see mouseleave)
-    if (!pointerIn) hover(false);
+    popFreeNow();                      // an earlier close still waiting on its copy goes first
+    popFreeFn = function () {
+      call('bar.popover', { open: false }).catch(function () {});   // shrink request; failure is reported on open, not here
+      // the leave that was suppressed while the popover held the bar open (see mouseleave)
+      if (!pointerIn && !popKey) hover(false);
+    };
+    if (outMs) popFreeT = setTimeout(popFreeNow, outMs);
+    else popFreeNow();
     if (reChip) paintMediaChip();
   }
 
@@ -2312,8 +2377,10 @@
        the height changed, and main takes the old pictures down on that call. */
     // ...and keeps its picture: the window and what is behind it are the same, only the card moved
     var keepBd = o.swap && isFlyKey(popKey) && popBd && popBd.img ? popBd : null;
+    popGhostDrop();                    // a pop-up still leaving makes way at once (lane mantle-motion)
+    popFreeNow();                      // ...and main hears its close before this open, as it always has
     if (o.swap && isFlyKey(popKey)) { flyTeardown(); el.pop.className = 'pop'; el.pop.style.maxHeight = ''; }
-    else closePop();
+    else closePop({ swap: true });     // replaced in place: no exit copy, the room is handed straight on
     popKey = key;
     el.pop.textContent = '';
     // measured from the left edge: a stale left from the previous popover would squeeze this one
