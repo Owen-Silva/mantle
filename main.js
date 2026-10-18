@@ -2118,6 +2118,15 @@ const popwatch = require('./lib/popwatch');
 
 /** A pop-up key as the log may say it: its KIND, never the app or file it belongs to (the flyout's
     and the jump list's keys carry an app's pin name, e.g. "app:<name>.lnk"). */
+/* Does this pop-up hold the bar up wherever the cursor is? Every pop-up Owen OPENED does (Quick
+   Settings, the calendar, a flyout, a menu: they close like macOS menus, on a click away, Esc or an
+   app switch, lib/popwatch.js). A TOOLTIP's room (ui/shared/tips.js, key 'tip') does not (lane
+   mantle-barhover, 10-17): it is only shaped in, so the cursor in that room counts as on the bar
+   (zone(): win = the shaped rect), but a cursor that has left it hides the bar like any other leave,
+   and the room goes with it. Before, a tip the page failed to close held the bar up with the cursor
+   anywhere (live 10-16 21:18: "did not close its pop-up (tip) within 1 s"). */
+function popHoldsBar(p) { return !!p && p.key !== 'tip'; }
+
 function popKind(key) {
   const k = String(key || 'unnamed');
   const head = k.split(':')[0];
@@ -2232,7 +2241,7 @@ async function hoverTick() {
   }
 
   if (!barRevealed) {
-    if (barPopover) {
+    if (popHoldsBar(barPopover)) {
       revealBar('a bar popover is open');
     } else if (inBand) {
       const fg = await foregroundBlocksReveal();
@@ -2252,7 +2261,7 @@ async function hoverTick() {
   // pulls a sliding-away bar back, so resting in the overshoot band can never bounce it.
   const where = BarIntent.zone(pt, { rest: barGeometry().rest.dip, win: barRect(), screen: b, edge: flags.barEdge, pill: BAR_SHAPE === 'pill', inBand });
   const rendererSaysInside = Date.now() - rendererHoverAt < HIDE_GRACE_MS;
-  if (where === 'in' || barPopover || rendererSaysInside) {
+  if (where === 'in' || popHoldsBar(barPopover) || rendererSaysInside) {
     barLeftAt = null;
     barOutAt = null;
     // If the bar was already sliding away, the page has to be told to come back
@@ -2266,6 +2275,8 @@ async function hoverTick() {
   barLeftAt = step.leftAt;
   barOutAt = step.outAt;
   if (step.hide) {
+    // a tooltip's room goes with the bar: the page closes it, or main takes the room back after 1 s
+    if (barPopover && !popHoldsBar(barPopover) && !hideTimer) closeBarPop('the cursor left the bar and its tooltip');
     beginHide(step.outAt !== null
       ? `the cursor has been away from the bar (and the ${BarIntent.KEEP_ABOVE_DIP} DIP above it) for ${HIDE_GRACE_MS} ms`
       : `the cursor has rested ${BarIntent.KEEP_ABOVE_DIP + 1}..${BarIntent.OVERSHOOT_ABOVE_DIP} DIP off the bar for ${BarIntent.OVERSHOOT_MS} ms`);

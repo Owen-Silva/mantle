@@ -178,6 +178,30 @@ async function main() {
       }
     } else check('pop-up open: the bar reveals', false);
 
+    // ---- a tooltip's room (what ui/shared/tips.js asks main for): kept while the cursor is in the room, and
+    //      once the cursor has left it the bar goes after the grace and the room goes with it
+    if (await reveal()) {
+      const tip = await bar.ev(call('bar.popover', { open: true, height: 58, key: 'tip' }));
+      const st = await until(async () => { const v = await cur(); return v.popover && v.popover.kind === 'tip' ? v : null; }, 2000, 60);
+      if (check('tooltip: its room is shaped in (bar.popover key tip)', !!st, { tip, now: await cur() })) {
+        await cur(cx, R.y - 40);
+        await sleep(HOLD_MS);
+        const inRoom = await cur();
+        check('tooltip: the cursor in the tooltip\'s room (40 DIP above the pill) keeps the bar', inRoom.up, inRoom);
+        await cur(cx, R.y - 200);
+        const t0 = Date.now();
+        const gone = await until(async () => { const v = await cur(); return !v.up ? v : null; }, 3000, 30);
+        const ms = Date.now() - t0;
+        notes.push(`tooltip: the cursor 200 DIP above, out of the room: the hide started after ${gone ? ms : 'never (3 s)'} ms`);
+        check('tooltip: 200 DIP above, out of its room, the bar goes after the grace (a tooltip no longer holds it)', !!gone && grace(ms), { ms, gone });
+        const freed = await until(async () => { const v = await cur(); return !v.popover ? v : null; }, 3000, 100);
+        check('tooltip: the room goes with the bar (the page, or main\'s 1 s fallback)', !!freed, await cur());
+        await sleep(600);
+        const after = await cur();
+        check('tooltip: the hidden bar stays hidden (a tooltip room never re-reveals it)', !after.revealed, after);
+      }
+    } else check('tooltip: the bar reveals', false);
+
     // ---- a corner banner showing
     const tb = await bar.ev(call('toasts.testShow', { n: 1, title: 'Bar hover e2e' }));
     if (tb && tb.ok) {
