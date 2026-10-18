@@ -129,11 +129,16 @@ async function main() {
     /** Rest at (x, y) after a reveal: ms until the hide started, or null if the bar stayed HOLD_MS. */
     async function restAt(x, y) {
       if (!(await reveal())) return 'no-reveal';
-      await cur(x, y);
+      const moved = await cur(x, y);
       const t0 = Date.now();
+      restAt.seen = null;   // ms from the move to main's first tick that saw the cursor off the bar (barLeftAt), for the notes
       for (;;) {
         const s = await cur();
-        if (!s.up) return Date.now() - t0;
+        if (s.leftAt && moved && moved.movedAt > 0 && s.leftAt >= moved.movedAt) restAt.seen = s.leftAt - moved.movedAt;
+        // Timed on MAIN's clock, from the move main was handed to the hide it started: this poll's own CDP and
+        // IPC round trips are not the product's (on a loaded PC they added ~300 ms: 29 DIP read 523, 10-17 21:37).
+        // The wall clock is the fallback for a main without the stamps.
+        if (!s.up) return (moved && moved.movedAt > 0 && s.hideAt >= moved.movedAt) ? s.hideAt - moved.movedAt : Date.now() - t0;
         if (Date.now() - t0 >= HOLD_MS) return null;
         await sleep(30);
       }
@@ -143,8 +148,9 @@ async function main() {
     const grace = (v) => typeof v === 'number' && v >= GRACE - 40 && v <= GRACE + 320;
 
     async function sweep(label) {
-      const up = {};
-      for (const off of [0, 4, KEEP, KEEP + 1, 20, OVER, OVER + 1, 60, 200]) up[off] = await restAt(cx, R.y - off);
+      const up = {}, seen = {};
+      for (const off of [0, 4, KEEP, KEEP + 1, 20, OVER, OVER + 1, 60, 200]) { up[off] = await restAt(cx, R.y - off); if (up[off] !== null) seen[off] = restAt.seen; }
+      notes.push(`${label}: main's first tick off the bar came (ms after the move): ${Object.keys(seen).map((o) => `${o}:${seen[o] === null ? '?' : seen[o]}`).join(' ')}`);
       const side = { [KEEP]: await restAt(R.x - KEEP, pillY), [KEEP + 1]: await restAt(R.x - KEEP - 1, pillY) };
       const band = Math.max(...Object.keys(up).map(Number).filter((o) => holds(up[o])));
       notes.push(`${label}: hover band ${band} DIP above the pill; hide starts (ms) by DIP above: ${Object.keys(up).map((o) => `${o}:${up[o] === null ? 'kept' : up[o]}`).join(' ')}; side ${KEEP}:${side[KEEP] === null ? 'kept' : side[KEEP]} ${KEEP + 1}:${side[KEEP + 1] === null ? 'kept' : side[KEEP + 1]}`);

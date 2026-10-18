@@ -630,8 +630,10 @@
 
   /* Hover is the signal main hides on: it cannot see the pointer inside this window. */
   var pointerIn = false;
-  function hover(inside) {
-    callR('bar.hover', { inside: inside }).then(function () { clearFail('hover'); }, function (e) {
+  function hover(inside, drag) {
+    var p = { inside: inside };
+    if (drag !== undefined) p.drag = drag;   // an icon lifted (true) / dropped (false): main holds the bar for the drag
+    callR('bar.hover', p).then(function () { clearFail('hover'); }, function (e) {
       fail('hover', 'Bar may not hide', 'Mantle did not hear that the pointer moved, so the bar may stay up: ' + msg(e), 'warn', 'bar.hover');
     });
   }
@@ -1756,7 +1758,7 @@
   var DRAG_OUT = 24;            // px past the bar's edge that cancels
   var SETTLE_MS = 150;          // the dropped icon's glide into its slot (matches bar.css .settle)
   var ORDER_HOLD_MS = 4000;     // how long a dropped order outranks replies built before its save
-  var DRAG_HOVER_MS = 100;      // "the pointer is in the bar", re-said while lifted (main hides 180 ms after the last)
+  var DRAG_HOVER_MS = 100;      // "an icon is lifted" ({drag:true}), re-said while lifted (main holds the bar 1.5 s a beat)
   var drag = null;              // the press, then the lift (dragLift), until the button comes up
   var dragSettle = 0;           // the glide is running: renders wait for dragCommit
   var dragPending = null;       // a bar.pinned reply that arrived mid-drag
@@ -1835,9 +1837,9 @@
     if (flyDwell) { clearTimeout(flyDwell); flyDwell = 0; }
     if (popKey) closePop();
     dragQuietOn();
-    // the bar stays up for the whole drag, even with the pointer just above the strip
-    hover(true);
-    d.hover = setInterval(function () { hover(true); }, DRAG_HOVER_MS);
+    // the bar stays up for the whole drag, wherever the pointer is (main: DRAG_HOLD_MS a beat, ended by the drop)
+    hover(true, true);
+    d.hover = setInterval(function () { hover(true, true); }, DRAG_HOVER_MS);
     try { b.setPointerCapture(d.pid); } catch (_) { /* a pointer that is already gone: the window listeners still follow it */ }
     el.dock.classList.add('dragging');
     b.classList.add('lifted');
@@ -1877,6 +1879,8 @@
     if (d.raf) { cancelAnimationFrame(d.raf); d.raf = 0; }
     if (d.hover) { clearInterval(d.hover); d.hover = 0; }
     if (!d.lifted) return;
+    // the drag's hold ends here: from now on main's usual 180 ms grace, as after the last beat it ever had
+    hover(true, false);
     try { if (d.b.hasPointerCapture && d.b.hasPointerCapture(d.pid)) d.b.releasePointerCapture(d.pid); } catch (_) { /* already released */ }
     if (cancel) { d.to = d.from; dragShift(d); }
     d.b.classList.add('settle');

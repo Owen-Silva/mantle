@@ -873,6 +873,12 @@ const POLL_HIDDEN_MS = 80;     // cheap: one cursor read, no Win32 call
  */
 const POLL_SHOWN_MS = 60;
 const HIDE_GRACE_MS = 180;     // cursor outside the bar this long before it goes
+/* An icon lifted for a drag holds the bar up WHEREVER the cursor is (lane mantle-barhover2, 10-17). The
+   page re-says {drag:true} every 100 ms while lifted and {drag:false} at the drop; a beat holds the bar
+   this long, so a busy main or renderer that delays a beat or two can never slide the bar out from under
+   a drag (the 180 ms page-hover window could: e2e 10-17 21:39, "bar is leaving" mid-drag), and a page
+   that died mid-drag still lets the bar go 1.5 s later. */
+const DRAG_HOLD_MS = 1500;
 const HIDE_SLIDE_MS = 350;     // between the 'bar.hide' event and barWin.hide(): the page's 320 ms exit, plus 30
 
 /*
@@ -914,7 +920,10 @@ let barLeftAt = null;          // when the cursor last left the bar, or null whi
 let barOutAt = null;           // when it last left the overshoot band too (lib/bar-intent.js), or null
 // TEST ONLY: the hover poll's stand-in cursor (bar.testCursor), off the screen until a test moves it
 let testCursor = flags.test && process.env.MANTLE_BAR_TEST_CURSOR === '1' ? { x: -10000, y: -10000 } : null;
+let testCursorAt = 0;          // TEST ONLY: when bar.testCursor last moved it (main's clock)
+let barHideAt = 0;             // when beginHide last started a hide (main's clock; bar.testCursor reports it)
 let rendererHoverAt = 0;       // last 'bar.hover' {inside:true} from lane B's page
+let barDragAt = 0;             // last 'bar.hover' {drag:true}: an icon is lifted (DRAG_HOLD_MS), 0 once dropped
 /*
  * THE BAR IS NEVER hide()-DEN: it is PARKED below the screen edge (build 29).
  *
@@ -2073,6 +2082,7 @@ function parkBar(geo, why) {
 
 function beginHide(why) {
   if (!barRevealed || hideTimer) return;
+  barHideAt = Date.now();
   process.stdout.write(`mantle: hide: ${why}\n`);
   const geo = barGeometry();
   // The previews go FIRST: DWM draws them, not the page, so the page's 320 ms exit would slide
@@ -2261,7 +2271,8 @@ async function hoverTick() {
   // pulls a sliding-away bar back, so resting in the overshoot band can never bounce it.
   const where = BarIntent.zone(pt, { rest: barGeometry().rest.dip, win: barRect(), screen: b, edge: flags.barEdge, pill: BAR_SHAPE === 'pill', inBand });
   const rendererSaysInside = Date.now() - rendererHoverAt < HIDE_GRACE_MS;
-  if (where === 'in' || popHoldsBar(barPopover) || rendererSaysInside) {
+  const dragging = barDragAt > 0 && Date.now() - barDragAt < DRAG_HOLD_MS;   // an icon is lifted: wherever the cursor is
+  if (where === 'in' || popHoldsBar(barPopover) || rendererSaysInside || dragging) {
     barLeftAt = null;
     barOutAt = null;
     // If the bar was already sliding away, the page has to be told to come back
@@ -5343,11 +5354,19 @@ const COMMANDS = {
   // The renderer's own hover truth. The cursor poll cannot see a mouse that is
   // over the bar's popover or mid-drag inside it, so the page says so and the
   // hide clock is held off for as long as it keeps saying it.
+  // {drag:true} while an icon is lifted holds the bar for DRAG_HOLD_MS a beat, wherever the cursor is;
+  // {drag:false} (the drop, or a cancel) ends that hold at once; a stray {inside:false} mid-drag does not.
   'bar.hover': async (a) => {
+    if (a && a.drag === true) barDragAt = Date.now();
+    else if (a && a.drag === false) barDragAt = 0;
     if (a && a.inside) {
       rendererHoverAt = Date.now();
       if (!barRevealed) revealBar('the bar page reported the cursor is in it');
-      else cancelPendingHide();
+      // Mid-slide, the page has already been told 'bar.hide' and is animating itself away: cancelling the
+      // hide timer alone (as this did until 10-17) left main thinking the bar was up while the page sat off
+      // the bottom of its window, so the next drag found no icons under the pointer. revealBar() cancels
+      // the hide AND tells the page to come back.
+      else if (hideTimer) revealBar('the bar page reported the cursor is in it before the bar finished sliding away');
     } else {
       rendererHoverAt = 0;
     }
@@ -8738,7 +8757,7 @@ if (flags.test) {
      what the bar is doing, so a test can sweep the keep band through the real hoverTick. */
   COMMANDS['bar.testCursor'] = async (a) => {
     if (!testCursor) return { ok: false, reason: 'start the test with MANTLE_BAR_TEST_CURSOR=1, or the poll reads the real cursor' };
-    if (a && Number.isFinite(a.x) && Number.isFinite(a.y)) testCursor = { x: a.x, y: a.y };
+    if (a && Number.isFinite(a.x) && Number.isFinite(a.y)) { testCursor = { x: a.x, y: a.y }; testCursorAt = Date.now(); }
     let geo = null;
     try { geo = barGeometry(); } catch (_) { /* no display */ }
     return {
@@ -8746,6 +8765,8 @@ if (flags.test) {
       popover: barPopover ? { kind: popKind(barPopover.key), height: barPopover.height } : null,
       rect: barRect(), rest: geo ? geo.rest.dip : null, screen: screen.getPrimaryDisplay().bounds, tall: barTall(),
       polling: !!hoverTimer,
+      // main's own clock, so a test times a hide without its own CDP/IPC round trips: the last move, the last hide start
+      movedAt: testCursorAt, hideAt: barHideAt, leftAt: barLeftAt,
     };
   };
   COMMANDS['bar.testMove'] = async (a) => {

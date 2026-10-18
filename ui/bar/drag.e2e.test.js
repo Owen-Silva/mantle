@@ -165,9 +165,18 @@ async function run() {
     // ---- the drag: press the first pin, move two slots right in 12 steps, hold still, let go
     await c.mouse('mouseMoved', x0, y, 0);
     await sleep(30);
-    await holdUp(c, false);   // from here the drag alone keeps the bar up (main cannot see this pointer)
     await c.mouse('mousePressed', x0, y, 1);
-    for (let i = 1; i <= 12; i++) { await c.mouse('mouseMoved', Math.round(x0 + (x1 - x0) * i / 12), y, 1); await sleep(16); }
+    let released = false;
+    for (let i = 1; i <= 12; i++) {
+      await c.mouse('mouseMoved', Math.round(x0 + (x1 - x0) * i / 12), y, 1);
+      // From the lift on, the drag alone keeps the bar up (main cannot see this pointer). The stand-in for
+      // Owen's pointer ON the bar is let go only once the icon has lifted: let go before the press (as until
+      // 10-17), nothing held the bar through those CDP round trips, which a real press (made on the bar)
+      // never has; on a loaded PC that gap passed main's 180 + 180 ms and the bar began to leave (10-17 21:39).
+      if (!released && await c.ev("!!document.querySelector('#dock .cell.lifted')")) { await holdUp(c, false); released = true; }
+      await sleep(16);
+    }
+    if (!released) await holdUp(c, false);   // it never lifted: the 'lifted' check below says so
     await sleep(700);         // longer than main's 180 ms hide grace plus the 350 ms slide
     const mid = await c.ev(`(() => { const s = ${PINNED}; const tx = (e) => { const m = /translateX\\((-?[\\d.]+)px\\)/.exec(e.style.transform); return m ? Number(m[1]) : 0; };
       return { lifted: s[0].classList.contains('lifted'), t: s.slice(0, 4).map(tx), up: document.body.classList.contains('up') }; })()`);
