@@ -36,7 +36,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, ms, step) { const end = Date.now() + ms; for (;;) { const v = await fn(); if (v) return v; if (Date.now() > end) return null; await sleep(step || 250); } }
 function gaming() {
   try {
-    const n = spawnSync('powershell', ['-NoProfile', '-Command', '@(Get-Process VALORANT*,RiotClientServices,javaw,Minecraft*,RobloxPlayerBeta -ErrorAction SilentlyContinue).Count'], { encoding: 'utf8', windowsHide: true });
+    // the games notes/scratch/slot2/game-guard.ps1 counts (the Riot launcher alone is not a game), and its flag
+    if (fs.existsSync(path.join(os.tmpdir(), 'claude-heavytest.gaming'))) return 1;
+    const n = spawnSync('powershell', ['-NoProfile', '-Command', "@(Get-Process VALORANT*,'League of Legends',FortniteClient*,RocketLeague,cs2,javaw,Minecraft*,RobloxPlayerBeta -ErrorAction SilentlyContinue).Count"], { encoding: 'utf8', windowsHide: true });
     return parseInt((n.stdout || '').trim(), 10) || 0;
   } catch (_) { return -1; }
 }
