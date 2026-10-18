@@ -87,6 +87,7 @@
     const gen = ++S.gen;
     S.index = i; saveQueue(); paintQueue();
     const p = S.items[i];
+    saveResume(true); S.cur = null;                                // the old item's spot, saved now; the pause event below saves nothing
     v.pause(); clearTracks(); notice(null); $('nope').hidden = true;
     const r = await call('player.prepare', { path: p });
     if (gen !== S.gen) return;                                      // a newer pick won
@@ -235,7 +236,9 @@
     paintPlay();
   });
   function saveResume(now, ended) {
-    const c = cur(); if (!c || !S.cur || !isFinite(v.duration) || v.duration <= 0) return;
+    // the PREPARED item's path, never cur(): while playAt switches, S.index already names the next file but v still
+    // holds the old one, and its spot must not be saved against the new file (lane mantle-player2)
+    const c = S.cur && S.cur.path; if (!c || !v.getAttribute('src') || !isFinite(v.duration) || v.duration <= 0) return;
     S.lastSave = Date.now();
     call('player.resume', { path: c, t: ended ? v.duration : v.currentTime, d: v.duration, now: !!now });
   }
@@ -349,7 +352,7 @@
     S.win = Object.assign({}, S.win, st);
     root.classList.toggle('full', !!S.win.full); root.classList.toggle('mini', !!S.win.mini);
     setIc($('full'), S.win.full ? 'unfull' : 'full'); $('full').title = S.win.full ? 'Exit full screen (F or Esc)' : 'Full screen (F)';
-    setIc($('wmax'), S.win.max ? 'restore' : 'max'); $('wmax').title = S.win.max ? 'Restore' : 'Maximise';
+    setIc($('wmax'), S.win.max ? 'restore' : 'max'); $('wmax').title = S.win.max ? 'Restore' : 'Maximize';
     if (S.win.full || S.win.mini) setView('now', true);
     idleArm();
   }
