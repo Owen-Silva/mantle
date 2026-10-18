@@ -921,6 +921,8 @@ let barOutAt = null;           // when it last left the overshoot band too (lib/
 // TEST ONLY: the hover poll's stand-in cursor (bar.testCursor), off the screen until a test moves it
 let testCursor = flags.test && process.env.MANTLE_BAR_TEST_CURSOR === '1' ? { x: -10000, y: -10000 } : null;
 let testCursorAt = 0;          // TEST ONLY: when bar.testCursor last moved it (main's clock)
+let hoverTickAt = 0;           // TEST ONLY (stand-in cursor): the last hover tick, and the longest gap between
+let hoverGapMax = 0;           //   two since the last move, so a test can tell a stalled main from the hover rule
 let barHideAt = 0;             // when beginHide last started a hide (main's clock; bar.testCursor reports it)
 let rendererHoverAt = 0;       // last 'bar.hover' {inside:true} from lane B's page
 let barDragAt = 0;             // last 'bar.hover' {drag:true}: an icon is lifted (DRAG_HOLD_MS), 0 once dropped
@@ -2210,6 +2212,7 @@ popwatch.configure({
  */
 async function hoverTick() {
   hoverTimer = null;
+  if (testCursor) { const n = Date.now(); if (hoverTickAt) hoverGapMax = Math.max(hoverGapMax, n - hoverTickAt); hoverTickAt = n; }
   if (shuttingDown || flags.dock) return;
   if (!barWin || barWin.isDestroyed()) return;   // nothing left to reveal; stop polling
   // Resting for a GAME the edge never reveals the bar (gameQuiet), so this 80 ms poll only woke the CPU
@@ -8757,7 +8760,7 @@ if (flags.test) {
      what the bar is doing, so a test can sweep the keep band through the real hoverTick. */
   COMMANDS['bar.testCursor'] = async (a) => {
     if (!testCursor) return { ok: false, reason: 'start the test with MANTLE_BAR_TEST_CURSOR=1, or the poll reads the real cursor' };
-    if (a && Number.isFinite(a.x) && Number.isFinite(a.y)) { testCursor = { x: a.x, y: a.y }; testCursorAt = Date.now(); }
+    if (a && Number.isFinite(a.x) && Number.isFinite(a.y)) { testCursor = { x: a.x, y: a.y }; testCursorAt = Date.now(); hoverGapMax = 0; }
     let geo = null;
     try { geo = barGeometry(); } catch (_) { /* no display */ }
     return {
@@ -8766,7 +8769,7 @@ if (flags.test) {
       rect: barRect(), rest: geo ? geo.rest.dip : null, screen: screen.getPrimaryDisplay().bounds, tall: barTall(),
       polling: !!hoverTimer,
       // main's own clock, so a test times a hide without its own CDP/IPC round trips: the last move, the last hide start
-      movedAt: testCursorAt, hideAt: barHideAt, leftAt: barLeftAt,
+      movedAt: testCursorAt, hideAt: barHideAt, leftAt: barLeftAt, gapMax: hoverGapMax,
     };
   };
   COMMANDS['bar.testMove'] = async (a) => {

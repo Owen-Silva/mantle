@@ -28,6 +28,7 @@ const PROFILE = 'barhovere2e';
 const USER_DATA = path.join(os.tmpdir(), `mantle-test-${PROFILE}`);
 const PORT_FILE = path.join(USER_DATA, 'DevToolsActivePort');
 const KEEP = 8, OVER = 28, OVER_MS = 500, GRACE = 180;
+const STALL_MS = 200;           // main's hover poll runs every 60 ms while the bar is up; a gap past this is a stall
 const HOLD_MS = 1600;            // a rest this long with no hide = the bar keeps there
 
 let passed = 0; const failures = []; const notes = [];
@@ -127,7 +128,21 @@ async function main() {
       return !!s && (await cur()).up;
     }
     /** Rest at (x, y) after a reveal: ms until the hide started, or null if the bar stayed HOLD_MS. */
+    /* A rest during which main's own hover poll stalled (a gap of more than STALL_MS between two ticks, while it
+       runs every 60 ms) measures the stall, not the hover rule: it is taken again, up to 3 times, and the notes
+       count the retakes. A rest that stalled every time is reported as 'stalled' and fails its check. */
     async function restAt(x, y) {
+      let v = null;
+      for (let k = 0; k < 3; k++) {
+        v = await restOnce(x, y);
+        if (restOnce.gap === null || restOnce.gap <= STALL_MS) return v;
+        restAt.retakes = (restAt.retakes || 0) + 1;
+        restAt.worst = Math.max(restAt.worst || 0, restOnce.gap);
+      }
+      return v === 'no-reveal' ? v : 'stalled';
+    }
+    async function restOnce(x, y) {
+      restOnce.gap = null;
       if (!(await reveal())) return 'no-reveal';
       const moved = await cur(x, y);
       const t0 = Date.now();
@@ -135,6 +150,7 @@ async function main() {
       for (;;) {
         const s = await cur();
         if (s.leftAt && moved && moved.movedAt > 0 && s.leftAt >= moved.movedAt) restAt.seen = s.leftAt - moved.movedAt;
+        if (Number.isFinite(s.gapMax)) restOnce.gap = s.gapMax;
         // Timed on MAIN's clock, from the move main was handed to the hide it started: this poll's own CDP and
         // IPC round trips are not the product's (on a loaded PC they added ~300 ms: 29 DIP read 523, 10-17 21:37).
         // The wall clock is the fallback for a main without the stamps.
@@ -225,6 +241,7 @@ async function main() {
       await sweep('corner card showing');
       await bar.ev(call('toasts.corner', { rect: null }));
     } else notes.push(`corner card: NOT RUN, toasts.corner said ${JSON.stringify(tc).slice(0, 200)}`);
+    notes.push(`rests retaken because main's hover poll stalled (a tick gap over ${STALL_MS} ms): ${restAt.retakes || 0}${restAt.retakes ? `, the worst gap ${restAt.worst} ms` : ''}`);
     check('banner and corner-card states ran (toasts.testShow / toasts.corner in --test)', !!(tb && tb.ok) && !!(tc && tc.ok), { tb, tc });
   } finally {
     if (bar) bar.close();
