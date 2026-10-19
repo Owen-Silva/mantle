@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* wall-player.test.js -- the desktop page's wallpaper player, driven through its real events (lane
  * launch-desk, 2026-09-29).
  *
@@ -48,7 +48,7 @@ const PNG_B = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS
 const pic = (id, url) => ({ ok: true, reason: '', paused: false, unload: false, item: { id, title: id, type: 'picture', url, look: { fit: 'cover', filter: '', rate: 1 }, props: [] } });
 
 async function run() {
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true, args: ['--autoplay-policy=no-user-gesture-required', '--allow-file-access-from-files'] });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mantle-wallplayer-'));
   try {

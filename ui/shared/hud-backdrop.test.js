@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* hud-backdrop.test.js - the blurred picture under a floating HUD (ui/shared/hud-backdrop.js), lanes
  * see-huds 2026-10-09. Static: every HUD page links it with an event and a pane that exists. In a
  * headless page (the volume pop-up over its mock): light never moves; dark keeps ONE --lg-fill-pop face
@@ -8,7 +8,7 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+const { chromium } = require('../../tools/dev-env.js').playwright();
 
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL ' + m); } };

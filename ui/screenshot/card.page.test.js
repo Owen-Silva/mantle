@@ -14,10 +14,10 @@
  *   node ui/screenshot/card.page.test.js   -> "SCREENSHOT CARD PAGE TEST: n passed, m failed"
  * LINE 1 is not optional: lowcpu.js pins this process and its browser.
  */
-try { require('C:/Users/user/dev-tools/tools/lowcpu.js'); } catch (e) { if (process.env.CI !== 'true') throw e; }
+require('../../tools/dev-env.js').lowcpu();
 const path = require('path');
 let chromium;
-try { ({ chromium } = require('playwright-core')); } catch (_) { ({ chromium } = require('C:/Users/user/other-app/node_modules/playwright-core')); }
+({ chromium } = require('../../tools/dev-env.js').playwright());
 
 const PAGE = 'file:///' + path.join(__dirname, 'card.html').replace(/\\/g, '/');
 let passed = 0; const failures = [];

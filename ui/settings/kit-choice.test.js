@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* kit-choice.test.js — a category page's dropdown (kit.choice() with style 'dropdown') wears the chevron,
  * in the light AND the dark theme (lane mn-suite, 2026-10-12).
  *
@@ -28,7 +28,7 @@ const check = (name, ok, detail) => { if (ok) passed++; else failures.push(name 
   if (!check('system-pages.test.js still has its FAKE() bridge to play the Power page', a >= 0 && b > a)) return;
   const fake = '(' + src.slice(a, b + 2) + ')();';
 
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   const browser = await require('./test-browser.js').launch(chromium);
   try {
     for (const theme of ['light', 'dark']) {

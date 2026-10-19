@@ -7,12 +7,12 @@
  *   node ui/toasts/toasts.page.test.js   -> "TOASTS PAGE TEST: n passed, m failed"
  * LINE 1 is not optional: lowcpu.js pins this process and its browser.
  */
-try { require('C:/Users/user/dev-tools/tools/lowcpu.js'); } catch (e) { if (process.env.CI !== 'true') throw e; }
+require('../../tools/dev-env.js').lowcpu();
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 let chromium;
-try { ({ chromium } = require('playwright-core')); } catch (_) { ({ chromium } = require('C:/Users/user/other-app/node_modules/playwright-core')); }
+({ chromium } = require('../../tools/dev-env.js').playwright());
 
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const SHOTS = path.resolve(process.env.MANTLE_SHOTS_DIR || path.join(os.tmpdir(), 'mantle-toasts-shots'));

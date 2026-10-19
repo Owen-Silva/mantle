@@ -14,7 +14,7 @@
  * every shot, for an A/B of a treatment that is not in bar.css (BAR_SUFFIX=-b names the files).
  * BAR_THEME=dark shoots the dark glass; BAR_DESK and BAR_STRIP change what is behind it (see THEME).
  */
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 
 const fs = require('fs');
 const path = require('path');
@@ -24,8 +24,7 @@ const os = require('os');
    one already installed on the machine, and say plainly which candidates were tried if none is
    there — a "cannot find module" stack would not tell anyone what to install. */
 const PW_CANDIDATES = [
-  'C:/Users/user/other-app/node_modules/playwright-core',
-  'C:/Users/user/Downloads/other-app/node_modules/playwright-core',
+  ...require('../../tools/dev-env.js').playwrightPaths(),
   'playwright-core'
 ];
 let chromium = null, pwFrom = '';
@@ -40,7 +39,7 @@ if (!chromium) {
 /* The browser binary: the newest ms-playwright chromium already downloaded on this machine.
    Never a download, never the system Chrome. */
 function findChrome() {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  const base = require('../../tools/dev-env.js').msPlaywrightDir();
   for (const d of fs.readdirSync(base).filter(n => n.startsWith('chromium-')).sort().reverse())
     for (const sub of ['chrome-win/chrome.exe', 'chrome-win64/chrome.exe']) {
       const p = path.join(base, d, sub);

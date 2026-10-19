@@ -1,5 +1,5 @@
 // The CPU cap and the one-browser lock on Owen's PC; a CI runner (cloudtest) has neither file nor need.
-try { require('C:/Users/user/dev-tools/tools/lowcpu.js'); } catch (e) { if (process.env.CI !== 'true') throw e; }
+require('../../tools/dev-env.js').lowcpu();
 /* welcome.page.test.js - the first-start cards (index.html + welcome.js + welcome.css on mock-mantle.js),
  * clicked and typed through in headless Chromium over file:// (lane mantle-firstrun, 2026-10-15).
  *
@@ -15,7 +15,7 @@ const os = require('os');
 const path = require('path');
 
 let chromium = null;
-for (const c of ['C:/Users/user/other-app/node_modules/playwright-core', 'C:/Users/user/Downloads/other-app/node_modules/playwright-core', 'playwright-core']) { try { chromium = require(c).chromium; break; } catch (_) { /* next */ } }
+for (const c of require('../../tools/dev-env.js').playwrightCandidates()) { try { chromium = require(c).chromium; break; } catch (_) { /* next */ } }
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const SHOTS = path.resolve(process.env.MANTLE_SHOTS_DIR || path.join(os.tmpdir(), 'mantle-welcome-shots'));
 const W = 624, H = 564;   // lib/welcome.js WIN_W x WIN_H

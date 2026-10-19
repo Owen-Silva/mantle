@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* apppower-bench.js — does App power make the CPU dropdown slower to open? (lane mantle-power-ui, 2026-10-14)
  *
  * The SAME harness on two trees of the top bar page: BASE = topbar.js / topbar.css / index.html as they
@@ -83,7 +83,7 @@ const median = (a) => { const s = a.slice().sort((x, y) => x - y); return s.leng
 (async () => {
   const base = baseTree();
   const pages = { base: 'file:///' + path.join(base, 'ui/topbar/index.html').replace(/\\/g, '/'), new: 'file:///' + path.join(ROOT, 'ui/topbar/index.html').replace(/\\/g, '/') };
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   const browser = await require('../settings/test-browser.js').launch(chromium);
   const R = { base: { h: [], p: [], b: [], ap: 0 }, new: { h: [], p: [], b: [], ap: 0 } };
   try {

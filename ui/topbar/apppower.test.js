@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* apppower.test.js — App power in the CPU / RAM / GPU dropdowns (lane mantle-power-ui, 2026-10-14).
  *
  * Headless Chromium over file:// (never Electron, never a real app): the REAL top bar page
@@ -327,7 +327,7 @@ async function run(browser, theme) {
 }
 
 (async () => {
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   fs.mkdirSync(OUT, { recursive: true });
   const browser = await require('../settings/test-browser.js').launch(chromium);
   try {

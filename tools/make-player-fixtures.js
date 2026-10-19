@@ -26,7 +26,7 @@ const { spawnSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const OUT = path.join(ROOT, 'lib', 'features', 'fixtures', 'player');
 const FF = (process.argv.find((a) => a.startsWith('--ffmpeg=')) || '').slice('--ffmpeg='.length) ||
-  'C:/Users/user/media-tools/video/node_modules/@remotion/compositor-win32-x64-msvc/ffmpeg.exe';
+  require('./dev-env.js').ffmpeg() || 'ffmpeg';
 const TMP = path.join(OUT, '.tmp');
 
 function ff(args, what) {

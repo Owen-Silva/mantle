@@ -22,14 +22,13 @@
  * LINE 1 below is not optional, for the same reason as in shoot.js: one pinned, low-priority
  * headless browser at a time on Owen's machine.
  */
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 
 const fs = require('fs');
 const path = require('path');
 
 const PW_CANDIDATES = [
-  'C:/Users/user/other-app/node_modules/playwright-core',
-  'C:/Users/user/Downloads/other-app/node_modules/playwright-core',
+  ...require('../../tools/dev-env.js').playwrightPaths(),
   'playwright-core'
 ];
 let chromium = null;
@@ -41,7 +40,7 @@ if (!chromium) {
   process.exit(1);
 }
 function findChrome() {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  const base = require('../../tools/dev-env.js').msPlaywrightDir();
   for (const d of fs.readdirSync(base).filter(n => n.startsWith('chromium-')).sort().reverse())
     for (const sub of ['chrome-win/chrome.exe', 'chrome-win64/chrome.exe']) {
       const p = path.join(base, d, sub);

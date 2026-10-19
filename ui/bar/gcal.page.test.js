@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* gcal.page.test.js - Google Calendar in the clock's calendar, CLICKED (ui/bar/gcal.js + gcal.css).
  *
  * WHAT: opens the real bar (ui/bar/index.html) over the mock bridge with MOCK Google events

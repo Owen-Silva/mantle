@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* shoot.js — headless screenshots of Mantle Settings (ui/settings), on the mock only.
  *
  * Line 1 is the machine-wide CPU cap and browser lock (one headless browser at a time). Nothing here
@@ -16,7 +16,7 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
-const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+const { chromium } = require('../../tools/dev-env.js').playwright();
 
 const PAGE = 'file:///C:/Users/user/mantle/ui/settings/index.html';
 const OUT = process.env.MANTLE_SHOOT_OUT ||

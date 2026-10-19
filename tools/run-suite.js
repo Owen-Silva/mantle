@@ -31,7 +31,7 @@
  *
  * Output: one line per file and a total on stdout; <out>/suite.json (every file: status, counts, FAIL lines,
  * seconds, log path), <out>/suite.txt (the printed report) and <out>/logs/<file>.log (full output).
- * Progress goes to --status (default C:\Users\user\mantle-notes\suite-status.md when that folder exists).
+ * Progress goes to --status (default suite-status.md in the tools/dev-env.js scratch folder, when one is configured and exists).
  */
 const fs = require('fs');
 const os = require('os');
@@ -55,8 +55,8 @@ const TIMEOUT_S = Number(opt('timeout', 600)) || 600;
 const LANE = String(opt('lane', path.basename(ROOT))).replace(/[^A-Za-z0-9_-]/g, '') || 'suite';
 const STAMP = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const OUT = path.resolve(String(opt('out', path.join(os.tmpdir(), 'mantle-suite-' + LANE, STAMP))));
-const NIGHT = 'C:\\Users\\user\\mantle-notes';
-const STATUS = opt('status', fs.existsSync(NIGHT) ? path.join(NIGHT, 'suite-status.md') : '');
+const NIGHT = require('./dev-env.js').scratch();
+const STATUS = opt('status', NIGHT && fs.existsSync(NIGHT) ? path.join(NIGHT, 'suite-status.md') : '');
 const LIST_ONLY = !!opt('list', false);
 const PERF = !!opt('perf', false);        // add the opt-in budget gate (perf:budget) to this run
 

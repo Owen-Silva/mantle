@@ -13,21 +13,20 @@
  * main's ONE-owner rule (the latest open wins, any close shuts it), so the checks can prove the
  * tip never closes a popover's room.
  */
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 
 const fs = require('fs');
 const path = require('path');
 
 const PW_CANDIDATES = [
-  'C:/Users/user/other-app/node_modules/playwright-core',
-  'C:/Users/user/Downloads/other-app/node_modules/playwright-core',
+  ...require('../../tools/dev-env.js').playwrightPaths(),
   'playwright-core'
 ];
 let chromium = null;
 for (const c of PW_CANDIDATES) { try { chromium = require(c).chromium; break; } catch (e) { /* next */ } }
 if (!chromium) { console.error('FAILED: playwright-core not found. Tried:\n  ' + PW_CANDIDATES.join('\n  ')); process.exit(1); }
 function findChrome() {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  const base = require('../../tools/dev-env.js').msPlaywrightDir();
   for (const d of fs.readdirSync(base).filter(n => n.startsWith('chromium-')).sort().reverse())
     for (const sub of ['chrome-win/chrome.exe', 'chrome-win64/chrome.exe']) {
       const p = path.join(base, d, sub);

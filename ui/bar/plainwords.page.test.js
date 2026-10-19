@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* plainwords.page.test.js - a raw error code never reaches the bar's rendered text
  * (lane mn-plainwords-bar, 2026-10-12; Owen's bar: "plain words, no raw codes", and still no
  * silent failures).

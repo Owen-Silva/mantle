@@ -258,7 +258,7 @@ namespace Mantle {
     /// the file name and is localised.
     public const uint SIGDN_NORMALDISPLAY = 0;
     /// SIGDN_DESKTOPABSOLUTEPARSING: the name that identifies an item from the
-    /// desktop down, and can be parsed back - "C:\Users\user" for a folder,
+    /// desktop down, and can be parsed back - "C:\Users\name" for a folder,
     /// "::{20D04FE0-...}" for This PC. It is what a launcher can actually open.
     public const uint SIGDN_DESKTOPABSOLUTEPARSING = 0x80028000;
 

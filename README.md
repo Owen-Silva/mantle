@@ -5,7 +5,7 @@
 Run this. It needs no Node, no Electron and no Mantle running:
 
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user\mantle\tools\restore-windows.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "<path to your Mantle checkout>\tools\restore-windows.ps1"
 ```
 
 (or `npm run restore` from the repo). It stops Mantle — and only Mantle, never

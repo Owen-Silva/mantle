@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('./dev-env.js').lowcpu();
 /*
  * tools/measure-emoji-glyphs.js - which emoji SEQUENCES Segoe UI Emoji draws as one picture (lane
  * mantle-emoji, 2026-10-15). A ZWJ sequence, a keycap, a flag or a toned person is one picture only
@@ -18,7 +18,7 @@ const SRC = arg('src'), OUT = arg('out');
 if (!SRC || !OUT) { console.error('usage: node tools/measure-emoji-glyphs.js --src=<dir> --out=<json>'); process.exit(2); }
 
 let chromium = null;
-for (const c of ['C:/Users/user/other-app/node_modules/playwright-core', 'C:/Users/user/Downloads/other-app/node_modules/playwright-core', 'playwright-core']) {
+for (const c of require('./dev-env.js').playwrightCandidates()) {
   try { chromium = require(c).chromium; break; } catch (_) { /* next */ }
 }
 

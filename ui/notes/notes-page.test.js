@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* notes-page.test.js — the quick notes pad's PAGE (ui/notes), driven for real (lane topbar-notes,
  * quality pass 2026-09-29). Headless chromium over file:// with the pad's own mock-mantle.js playing
  * main: it TYPES and CLICKS through tabs, a new note, delete + Undo, keyboard (Ctrl+N, Ctrl+Tab,
@@ -25,7 +25,7 @@ function gaming() {
 }
 
 async function run() {
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true });
   const ctx = await browser.newContext({ viewport: { width: 420, height: 380 }, deviceScaleFactor: 1.5, colorScheme: 'light' });
   const errors = [];

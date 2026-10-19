@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* page.test.js — Mantle Files, the REAL page (index.html + model/list/panes/files.js) on its MOCK
  * (mock-mantle.js: made-up folders; nothing reads or writes a real disk), driven by clicks and keys in
  * headless Chromium over file://. Lane files-ui, 2026-09-29: a first, short pass that covers what that
@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 
 let chromium = null;
-for (const c of ['C:/Users/user/other-app/node_modules/playwright-core', 'C:/Users/user/Downloads/other-app/node_modules/playwright-core', 'playwright-core']) { try { chromium = require(c).chromium; break; } catch (e) { /* next */ } }
+for (const c of require('../../tools/dev-env.js').playwrightCandidates()) { try { chromium = require(c).chromium; break; } catch (e) { /* next */ } }
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const HOME = 'C:\\Users\\Robin';
 let passed = 0;

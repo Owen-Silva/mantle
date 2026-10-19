@@ -26,11 +26,11 @@
  *   <name>.png         256 px
  *   png/<name>-<n>.png every size on its own (the bar and launcher read the 32 and 64)
  *
- * The renderer is the ms-playwright headless Chromium through playwright-core, borrowed from
- * another project on this machine exactly as ui/bar/shoot.js does (this repo ships no browser).
+ * The renderer is the ms-playwright headless Chromium through playwright-core, found through
+ * tools/dev-env.js exactly as ui/bar/shoot.js does (this repo ships no browser).
  */
 'use strict';
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('./dev-env.js').lowcpu();
 
 const fs = require('fs');
 const path = require('path');
@@ -45,8 +45,7 @@ const ICONS = ['mantle-settings', 'mantle-taskmgr', 'mantle-files', 'mantle-play
 const GLASS = '#C9CEDB';
 
 const PW_CANDIDATES = [
-  'C:/Users/user/other-app/node_modules/playwright-core',
-  'C:/Users/user/Downloads/other-app/node_modules/playwright-core',
+  ...require('./dev-env.js').playwrightPaths(),
   'playwright-core',
 ];
 
@@ -58,7 +57,7 @@ function loadChromium() {
 }
 
 function findChrome() {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  const base = require('./dev-env.js').msPlaywrightDir();
   const dirs = fs.existsSync(base) ? fs.readdirSync(base) : [];
   for (const d of dirs.filter((n) => n.startsWith('chromium_headless_shell-')).sort().reverse()) {
     for (const sub of ['chrome-headless-shell-win64/chrome-headless-shell.exe', 'chrome-win/headless_shell.exe']) {

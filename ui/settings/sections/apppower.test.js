@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../../tools/dev-env.js').lowcpu();
 /* apppower.test.js — Mantle Settings > App power (lane mantle-power-ui, 2026-10-14).
  *
  * PART 1 (node): the page file loads in an empty vm (only MantleSettings.section exists, as the launcher's
@@ -87,7 +87,7 @@ function FAKE() {
 }
 
 async function browserTests() {
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../../tools/dev-env.js').playwright();
   fs.mkdirSync(OUT, { recursive: true });
   const browser = await require('../test-browser.js').launch(chromium);
   try {

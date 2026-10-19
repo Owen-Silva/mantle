@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* shoot.js — headless screenshots of the Win+V clipboard panel, plus what they must prove.
  *
  * Line 1 is the machine-wide CPU cap and browser lock (required). Nothing here runs Electron or
@@ -19,7 +19,7 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
-const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+const { chromium } = require('../../tools/dev-env.js').playwright();
 
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');   // this checkout's page
 const OUT = process.env.MANTLE_SHOOT_OUT ||

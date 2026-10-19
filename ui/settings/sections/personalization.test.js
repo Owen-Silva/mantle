@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../../tools/dev-env.js').lowcpu();
 /* personalization.test.js — Mantle Settings > Personalization (lane perso, 2026-09-29).
  *
  * PART 1 (node, always): the main half (lib/features/_settings-sections/personalization.js) against
@@ -22,7 +22,7 @@ const { execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 // playwright-core 1.63 finds its own installed chromium (the pinned chromium-1234 build was removed 2026-10-05)
-const PLAYWRIGHT = 'C:/Users/user/other-app/node_modules/playwright-core';
+
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/perso-shots';
@@ -751,7 +751,7 @@ function galleryShots(t) {
 async function browserTests() {
   const g = gaming();
   if (g !== 0) { console.log(g > 0 ? 'PART 2 SKIPPED: a game is running' : 'PART 2 SKIPPED: could not check for a running game'); failures.push('part 2 (the page on the mock) was not run'); return; }
-  const { chromium } = require(PLAYWRIGHT);
+  const { chromium } = require('../../../tools/dev-env.js').playwright();
   fs.mkdirSync(OUT, { recursive: true });
   // lowcpu.js queues the launch behind the machine-wide one-browser lock for up to 8 minutes; playwright's
   // default 3-minute launch timeout gave up on a queued launch first (2026-10-08, other lanes shooting)

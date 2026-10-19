@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* overlay.page.test.js - the screenshot overlay (index.html + overlay.js, on mock-mantle.js) when the
  * frozen frame of the screen will not decode (lane pagewords, 2026-10-14). A REAL broken image: a PNG
  * cut off after its header, handed over as the frame's data URL, so Chromium's own decode() fails.
@@ -10,7 +10,7 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 const path = require('path');
 
 let chromium = null;
-for (const c of ['C:/Users/user/other-app/node_modules/playwright-core', 'C:/Users/user/Downloads/other-app/node_modules/playwright-core', 'playwright-core']) { try { chromium = require(c).chromium; break; } catch (e) { /* next */ } }
+for (const c of require('../../tools/dev-env.js').playwrightCandidates()) { try { chromium = require(c).chromium; break; } catch (e) { /* next */ } }
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 let passed = 0;
 const failures = [];

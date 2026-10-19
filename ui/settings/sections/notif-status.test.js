@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../../tools/dev-env.js').lowcpu();
 /* notif-status.test.js - Settings > System > Notifications says which banners are showing and why
  * (lane mantle-notif-safety-ui, 2026-10-17). No Silent Failures: polling because Windows sends no change
  * events, the notification helper dying and Windows' banners being put back used to reach only the log.
@@ -83,7 +83,7 @@ function probe(row) {
 async function browserTests() {
   const g = gaming();
   if (g !== 0) { console.log(g > 0 ? 'PAGE PART SKIPPED: a game is running' : 'PAGE PART SKIPPED: could not check for a running game'); failures.push('the page part was not run'); return; }
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../../tools/dev-env.js').playwright();
   fs.mkdirSync(OUT, { recursive: true });
   const seen = {};
   for (const theme of ['light', 'dark']) {

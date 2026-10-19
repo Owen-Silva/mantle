@@ -1,6 +1,6 @@
 'use strict';
 // The CPU cap and the one-browser lock on Owen's PC; a CI runner (cloudtest) has neither file nor need.
-try { require('C:/Users/user/dev-tools/tools/lowcpu.js'); } catch (e) { if (process.env.CI !== 'true') throw e; }
+require('../../../tools/dev-env.js').lowcpu();
 /*
  * ui/settings/sections/sysrows.e2e.test.js - the Settings rows that were taken out on 09-29 for missing sidecar
  * work and came back on 10-12 (8201879, 5ae1f59, 4da0968), driven END TO END: the real Settings page, the real

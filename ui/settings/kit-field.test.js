@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* kit-field.test.js — a kit text / number box springs back ON SCREEN when its change does not take, even
  * while the box still has focus (lane mn-suite, 2026-10-12).
  *
@@ -78,7 +78,7 @@ async function runCase(page, c) {
 }
 
 (async () => {
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   const browser = await require('./test-browser.js').launch(chromium);
   try {
     const page = await browser.newPage({ viewport: { width: 900, height: 600 } });

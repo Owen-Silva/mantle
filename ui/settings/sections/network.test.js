@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../../tools/dev-env.js').lowcpu();
 /* network.test.js — the Network & internet PAGES (sections/internet.js) on the mock (lane net2,
  * 2026-09-28). Headless chromium over file://, never Electron, never a real setting: the settings
  * lane's mock (mock-mantle.js) plays main, and _devnet-fake.js plays settings.internet.* with
@@ -13,7 +13,7 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
-const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+const { chromium } = require('../../../tools/dev-env.js').playwright();
 
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
 const FAKE = path.join(__dirname, '_devnet-fake.js');

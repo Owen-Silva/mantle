@@ -24,8 +24,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const PW_CANDIDATES = [
-  'C:/Users/user/other-app/node_modules/playwright-core',
-  'C:/Users/user/Downloads/other-app/node_modules/playwright-core',
+  ...require('../../tools/dev-env.js').playwrightPaths(),
   'playwright-core'
 ];
 
@@ -36,7 +35,7 @@ function chromium() {
 
 /* The newest ms-playwright chromium already on the machine. Never a download, never the system Chrome. */
 function findChrome() {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  const base = require('../../tools/dev-env.js').msPlaywrightDir();
   for (const d of fs.readdirSync(base).filter((n) => n.startsWith('chromium-')).sort().reverse())
     for (const sub of ['chrome-win/chrome.exe', 'chrome-win64/chrome.exe']) {
       const p = path.join(base, d, sub);

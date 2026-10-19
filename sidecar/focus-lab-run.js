@@ -4,7 +4,7 @@
 //   node sidecar/focus-lab-run.js [--techniques] [--exe=<sidecar>] [--trials=3]
 //
 // ONLY inside the visible slot (BRIEF.md): it refuses unless the machine has been idle >= 3 min and
-// it can take C:\Users\user\mantle-notes\visible.lock (released at the end, held < 2 min). It stops
+// it can take visible.lock in the tools/dev-env.js scratch folder (released at the end, held < 2 min). It stops
 // at the first real (not injected) key or mouse event and reports the run as NOT RUN.
 'use strict';
 
@@ -13,7 +13,7 @@ const path = require('path');
 const Lab = require('./focus-lab');
 const T = require('./test-lib');
 
-const LOCK = 'C:\\Users\\user\\mantle-notes\\visible.lock';
+const LOCK = path.join(require('../tools/dev-env.js').scratch() || require('os').tmpdir(), 'visible.lock');
 const TECHNIQUES = ['direct', 'attach', 'alt', 'altdummy', 'althold', 'switch'];
 
 /**

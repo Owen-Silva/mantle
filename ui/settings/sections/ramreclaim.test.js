@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../../tools/dev-env.js').lowcpu();
 /* ramreclaim.test.js — Mantle Settings > Windows pieces (lane mantle-ramreclaim, 2026-10-15).
  *
  * PART 1 (node): the page file loads in an empty vm (as the launcher's claims sandbox runs it) with the
@@ -112,7 +112,7 @@ function FAKE() {
 }
 
 async function browserTests() {
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../../tools/dev-env.js').playwright();
   fs.mkdirSync(OUT, { recursive: true });
   const browser = await require('../test-browser.js').launch(chromium);
   try {

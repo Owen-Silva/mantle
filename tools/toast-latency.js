@@ -17,7 +17,7 @@
  * Runs BELOW NORMAL (children inherit it) under lowcpu.js; MANTLE_TEST_MIN_FREE_GB=0. Stops at once and
  * kills only the tree it started (by PID) if a Riot/VALORANT process shows up.
  */
-try { require('C:/Users/user/dev-tools/tools/lowcpu.js'); } catch (e) { if (process.env.CI !== 'true') throw e; }
+require('./dev-env.js').lowcpu();
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

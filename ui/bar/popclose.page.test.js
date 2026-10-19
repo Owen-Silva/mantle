@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* popclose.page.test.js - the bar's pop-ups close when main says the click or the Esc happened
  * OUTSIDE the bar, and a box that held the keyboard stops looking typeable when the keyboard goes
  * (lane mn-pop, 2026-10-12, audit #1 and #8).

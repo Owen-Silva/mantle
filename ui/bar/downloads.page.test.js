@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* downloads.page.test.js - the Downloads shelf, CLICKED (ui/bar/downloads.js + downloads.css).
  *
  * WHAT: opens the real bar (ui/bar/index.html) over the mock bridge (mock-mantle.js, ?dl=<case>) in

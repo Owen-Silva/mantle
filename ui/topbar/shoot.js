@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* shoot.js — headless shots of the top bar page over file:// with mock-mantle.js playing main
  * (no Electron, no sidecar, nothing from Owen's machine). Also CHECKS, not just photographs:
  *   1. the tiny-numbers rule: every stat cell keeps its width when its number changes
@@ -16,7 +16,7 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 'use strict';
 const path = require('path');
 const fs = require('fs');
-const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+const { chromium } = require('../../tools/dev-env.js').playwright();
 
 const PAGE = process.env.MANTLE_TOPBAR_PAGE || 'file:///' + path.join(__dirname, 'index.html').split(path.sep).join('/');   // this checkout's page (a worktree shoots its own)
 // MANTLE_THEME=dark: the shot list above in dark (<html data-theme="dark"> before the first paint)

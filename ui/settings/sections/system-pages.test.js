@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../../tools/dev-env.js').lowcpu();
 /* system-pages.test.js - the smaller System pages: About's "Rename this PC" and Power & battery
  * (lane settings-system, 2026-09-29). Power: on a PC with no battery the on-battery rows (which can never
  * apply) and a lid it does not have are hidden, the plugged-in rows lose "(plugged in)", timeouts are words.
@@ -155,7 +155,7 @@ const SHOTS = [
 async function browserTests() {
   const g = gaming();
   if (g !== 0) { console.log(g > 0 ? 'PART 2 SKIPPED: a game is running' : 'PART 2 SKIPPED: could not check for a running game'); failures.push('part 2 (the page on the mock) was not run'); return; }
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../../tools/dev-env.js').playwright();
   fs.mkdirSync(OUT, { recursive: true });
   const browser = await require('../test-browser.js').launch(chromium);
   try {

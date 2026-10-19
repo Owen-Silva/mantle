@@ -2,11 +2,11 @@
  * here; never one of Owen's captures). Headless Chromium, nothing on screen.
  *   node ui/clips/shoot.js [outDir] [theme]   -> clips-1.png (Record panel), clips-2.png (gallery)
  */
-try { require('C:/Users/user/dev-tools/tools/lowcpu.js'); } catch (e) { if (process.env.CI !== 'true') throw e; }
+require('../../tools/dev-env.js').lowcpu();
 const fs = require('fs');
 const path = require('path');
 let chromium;
-try { ({ chromium } = require('playwright-core')); } catch (_) { ({ chromium } = require('C:/Users/user/other-app/node_modules/playwright-core')); }
+({ chromium } = require('../../tools/dev-env.js').playwright());
 const UI = 'file:///' + __dirname.replace(/\\/g, '/') + '/';
 const OUT = path.resolve(process.argv[2] || path.join(require('os').tmpdir(), 'mantle-clips-shots'));
 const THEME = process.argv[3] || 'dark';

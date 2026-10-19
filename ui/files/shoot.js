@@ -15,19 +15,19 @@
  *   FILES_THEME=dark|light              force <html data-theme> before first paint and fire 'mantle-theme'
  *                                       (the harness stand-in for --theme=; lane dm-files, 2026-10-08)
  */
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const PW_CANDIDATES = ['C:/Users/user/other-app/node_modules/playwright-core', 'C:/Users/user/Downloads/other-app/node_modules/playwright-core', 'playwright-core'];
+const PW_CANDIDATES = require('../../tools/dev-env.js').playwrightCandidates();
 let chromium = null;
 for (const c of PW_CANDIDATES) { try { chromium = require(c).chromium; break; } catch (e) { /* next */ } }
 if (!chromium) { console.error('FAILED: playwright-core not found'); process.exit(1); }
 
 function findChrome() {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  const base = require('../../tools/dev-env.js').msPlaywrightDir();
   for (const d of fs.readdirSync(base).filter((n) => n.startsWith('chromium-')).sort().reverse())
     for (const sub of ['chrome-win/chrome.exe', 'chrome-win64/chrome.exe']) { const p = path.join(base, d, sub); if (fs.existsSync(p)) return p; }
   return null;

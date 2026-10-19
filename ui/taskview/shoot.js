@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* shoot.js - headless screenshots of Task View on the mock bridge, plus what can be measured there.
  *
  *   node ui/taskview/shoot.js            (ONLY=1536x864-n7,... for a subset; MANTLE_SHOOT_OUT=dir)
@@ -12,7 +12,7 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
-const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+const { chromium } = require('../../tools/dev-env.js').playwright();
 
 const PAGE = 'file:///C:/Users/user/mantle/ui/taskview/index.html';
 const OUT = process.env.MANTLE_SHOOT_OUT ||

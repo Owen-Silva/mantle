@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* taskmgr.page.test.js — the task manager's PAGE, clicked and typed through (lane sysmon, 2026-09-29).
  *
  * Headless chromium over file:// (never Electron, never a real process): the REAL page files
@@ -14,7 +14,7 @@ const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
 
-const CHROME_BASE = 'C:/Users/user/AppData/Local/ms-playwright';
+const CHROME_BASE = require('../../tools/dev-env.js').msPlaywrightDir();
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 let passed = 0;
 const failures = [];
@@ -26,7 +26,7 @@ function gaming() {
 
 (async () => {
   if (gaming() > 0) { console.log('TASKMGR PAGE TEST: skipped (a game is running)'); process.exit(0); }
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   const browser = await require('../settings/test-browser.js').launch(chromium, { timeout: 0, headless: true });
   const errors = [];
   async function open(mock, w, h) {

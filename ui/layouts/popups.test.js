@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 'use strict';
 /* popups.test.js - the window layouts pop-up (ui/layouts), the keep-on-top pop-up (ui/ontop) and the
  * bar's on-top badge (ui/bar/ontop.js), FUNCTIONALLY (lane windows-layouts, 2026-09-29): the REAL page
@@ -40,7 +40,7 @@ const FAKE = `
   };`;
 
 async function main() {
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true });
   try {
     const ctx = await browser.newContext({ viewport: { width: 496, height: 190 }, deviceScaleFactor: 1 });

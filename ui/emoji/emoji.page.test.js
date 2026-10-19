@@ -10,13 +10,13 @@
  * C:\Users\user\notes\morning-shots.
  * LINE 1 is not optional: lowcpu.js pins this process and its browser.
  */
-try { require('C:/Users/user/dev-tools/tools/lowcpu.js'); } catch (e) { if (process.env.CI !== 'true') throw e; }
+require('../../tools/dev-env.js').lowcpu();
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
 let chromium;
-try { ({ chromium } = require('playwright-core')); } catch (_) { ({ chromium } = require('C:/Users/user/other-app/node_modules/playwright-core')); }
+({ chromium } = require('../../tools/dev-env.js').playwright());
 
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const MOCK = path.join(__dirname, 'mock-mantle.js');

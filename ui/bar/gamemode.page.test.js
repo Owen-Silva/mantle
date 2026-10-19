@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 'use strict';
 /* gamemode.page.test.js - the Game mode tile CLICKED in the real bar (lane sysmon-game, 2026-09-29).
  * Opens ui/bar/index.html headless with the mock bridge (page-harness.js), opens quick settings and

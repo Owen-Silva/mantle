@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* seethru.test.js - every dark pop-up shows the WALLPAPER lined up under Helm's panel tint (lane
  * mantle-seethru-popups, 2026-10-10).
  *

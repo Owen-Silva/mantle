@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* bar.page.test.js - the bar's own controls, CLICKED through the real ui/bar code (bar lane, 2026-09-29).
  *
  * WHAT: headless Chromium over file:// (never Electron, never a real window of Owen's), the real

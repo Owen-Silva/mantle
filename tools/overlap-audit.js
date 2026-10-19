@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('./dev-env.js').lowcpu();
 'use strict';
 /*
  * overlap-audit.js - finds the "my hover box covers the next button" class of bug on every Mantle surface
@@ -51,10 +51,10 @@ const THR = 14;                 // a channel difference that counts as paint (0-
 const MAX_STATES_PER_SURFACE = 48;
 
 // ------------------------------------------------------------------ browser (the page harness's lookup)
-const PW_CANDIDATES = ['C:/Users/user/other-app/node_modules/playwright-core', 'C:/Users/user/Downloads/other-app/node_modules/playwright-core', 'playwright-core'];
+const PW_CANDIDATES = require('./dev-env.js').playwrightCandidates();
 function chromium() { for (const c of PW_CANDIDATES) { try { return require(c).chromium; } catch (e) { /* next */ } } throw new Error('playwright-core not found. Tried: ' + PW_CANDIDATES.join(', ')); }
 function findChrome() {
-  const base = 'C:/Users/user/AppData/Local/ms-playwright';
+  const base = require('./dev-env.js').msPlaywrightDir();
   for (const d of fs.readdirSync(base).filter((n) => n.startsWith('chromium-')).sort().reverse())
     for (const sub of ['chrome-win/chrome.exe', 'chrome-win64/chrome.exe']) { const p = path.join(base, d, sub); if (fs.existsSync(p)) return p; }
   return null;

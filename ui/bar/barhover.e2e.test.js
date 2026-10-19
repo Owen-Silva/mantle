@@ -17,7 +17,7 @@
  *
  *   node ui/bar/barhover.e2e.test.js          one summary line: "BAR HOVER E2E TEST: n passed, m failed"
  */
-try { require('C:/Users/user/dev-tools/tools/lowcpu.js'); } catch (e) { if (process.env.CI !== 'true') throw e; }
+require('../../tools/dev-env.js').lowcpu();
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

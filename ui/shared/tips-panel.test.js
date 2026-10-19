@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* tips-panel.test.js - a tooltip inside an open panel never lies over the panel's words (2026-10-17).
  *
  * Owen's rule: no overlapping UI anywhere. The overlap audit (tools/overlap-audit.js, qs-sound/dark)

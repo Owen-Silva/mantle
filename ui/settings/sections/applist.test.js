@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../../tools/dev-env.js').lowcpu();
 /* applist.test.js — Mantle Settings > Apps (lane appsacct, 2026-09-29).
  *
  * PART 1 (node, always): the main half (lib/features/_settings-sections/applist.js) against
@@ -316,7 +316,7 @@ const SHOTS = [
 async function browserTests() {
   const g = gaming();
   if (g !== 0) { console.log(g > 0 ? 'PART 2 SKIPPED: a game is running' : 'PART 2 SKIPPED: could not check for a running game'); failures.push('part 2 (the page on the mock) was not run'); return; }
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../../tools/dev-env.js').playwright();
   fs.mkdirSync(OUT, { recursive: true });
   const browser = await require('../test-browser.js').launch(chromium);
   const open = async (ctx, query) => {

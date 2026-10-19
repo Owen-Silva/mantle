@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* clipped-shadow.test.js - no CUT-OFF drop shadows in dark (lane clipped-shadow, 2026-10-10).
  *
  * Owen: "i wanted you to fix this black sharp stuff around the outside of a lot of it." Mantle's dark

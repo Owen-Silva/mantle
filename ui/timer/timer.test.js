@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* timer.test.js - the "Timer done" pop-up's PAGE (lane topbar-timer, 2026-09-29). Headless Chromium
  * over file:// (never Electron, never a sound: the mock sends mute, or has no working audio), the REAL
  * ui/timer/index.html + timer.js + _timer-core.js on ui/timer/mock-mantle.js. It CLICKS and TYPES
@@ -35,7 +35,7 @@ function gaming() {
 
 (async () => {
   if (gaming() > 0) { console.log('TIMER PAGE TEST: skipped (a game is running)'); return; }
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   const fs = require('fs');
   fs.mkdirSync(OUT, { recursive: true });
   const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true });

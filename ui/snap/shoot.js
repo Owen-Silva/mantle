@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* shoot.js - headless screenshots of the snap window (picker, Snap Assist, notice), plus checks.
  *
  * Line 1 is the machine-wide CPU cap and browser lock. Required, not optional.
@@ -19,7 +19,7 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 const path = require('path');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
-const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+const { chromium } = require('../../tools/dev-env.js').playwright();
 
 const PAGE = 'file:///C:/Users/user/mantle/ui/snap/index.html';
 const OUT = process.env.MANTLE_SHOOT_OUT ||

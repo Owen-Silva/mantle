@@ -11,13 +11,13 @@
  * Nothing reaches Windows; shots in MANTLE_SHOTS_DIR (default %TEMP%\mantle-clips-shots).
  *   node ui/clips/clips.page.test.js   -> "CLIPS PAGE TEST: n passed, m failed"
  */
-try { require('C:/Users/user/dev-tools/tools/lowcpu.js'); } catch (e) { if (process.env.CI !== 'true') throw e; }
+require('../../tools/dev-env.js').lowcpu();
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
 let chromium;
-try { ({ chromium } = require('playwright-core')); } catch (_) { ({ chromium } = require('C:/Users/user/other-app/node_modules/playwright-core')); }
+({ chromium } = require('../../tools/dev-env.js').playwright());
 const UI = 'file:///' + __dirname.replace(/\\/g, '/') + '/';
 const SHOTS = path.resolve(process.env.MANTLE_SHOTS_DIR || path.join(os.tmpdir(), 'mantle-clips-shots'));
 let passed = 0; const failures = [];

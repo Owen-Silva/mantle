@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* launcher.page.test.js — the REAL launcher page (index.html + calc/groups/launcher.js) on its MOCK
  * (mock-mantle.js: a fake index, every launch/power/file/web call a dry run; nothing opens), driven by
  * keys and clicks in headless Chromium over file://. Round 3 (2026-09-30): proves the launch-ui lane's
@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 
 let chromium = null;
-for (const c of ['C:/Users/user/other-app/node_modules/playwright-core', 'C:/Users/user/Downloads/other-app/node_modules/playwright-core', 'playwright-core']) { try { chromium = require(c).chromium; break; } catch (e) { /* next */ } }
+for (const c of require('../../tools/dev-env.js').playwrightCandidates()) { try { chromium = require(c).chromium; break; } catch (e) { /* next */ } }
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 let passed = 0;
 const failures = [];

@@ -9,9 +9,9 @@
  * HEAVY (Chromium): run only in the parent's queue hold, never in a lane.
  *   node ui/clips/record-follow.page.test.js   -> "RECORD FOLLOW PAGE TEST: n passed, m failed"
  */
-try { require('C:/Users/user/dev-tools/tools/lowcpu.js'); } catch (e) { if (process.env.CI !== 'true') throw e; }
+require('../../tools/dev-env.js').lowcpu();
 let chromium;
-try { ({ chromium } = require('playwright-core')); } catch (_) { ({ chromium } = require('C:/Users/user/other-app/node_modules/playwright-core')); }
+({ chromium } = require('../../tools/dev-env.js').playwright());
 const UI = 'file:///' + __dirname.replace(/\\/g, '/') + '/';
 let passed = 0; const failures = [];
 function check(name, ok, detail) { if (ok) passed++; else failures.push(`${name}${detail !== undefined ? ` (${String(typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 300)})` : ''}`); return ok; }

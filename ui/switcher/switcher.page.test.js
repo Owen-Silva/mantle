@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* switcher.page.test.js — the Alt+Tab overlay's page, driven through its REAL code (quality pass,
  * switcher lane, 2026-09-29).
  *
@@ -378,7 +378,7 @@ async function liveList(p) {
   const g = gaming();
   if (g !== 0) { console.log(g > 0 ? 'NOT RUN: a game is running' : 'NOT RUN: could not check for a running game'); console.log('switcher page tests: 0 passed, 1 failed'); process.exitCode = 1; return; }
   fs.mkdirSync(OUT, { recursive: true });
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   const browser = await require('../settings/test-browser.js').launch(chromium, { timeout: 0, headless: true });
   themeEvery(browser);   // MANTLE_THEME=dark|light: <html data-theme> + the mantle-theme event, as dm-core's plumbing does
   try {

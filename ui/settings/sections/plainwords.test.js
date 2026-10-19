@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../../tools/dev-env.js').lowcpu();
 /* plainwords.test.js - no raw error code on the Windows Update pages (lane mn-plainwords, 2026-10-12).
  *
  * The settings lane found Settings > Windows Update showing "COMException (0x8024...)" when the update
@@ -61,7 +61,7 @@ function FAKE(replies) {
 }
 
 async function run() {
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../../tools/dev-env.js').playwright();
   const raw = fixtures();
   const plain = {};
   for (const [k, v] of Object.entries(raw)) plain[k] = toPage(k, v);

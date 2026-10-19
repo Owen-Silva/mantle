@@ -8,13 +8,13 @@
  *   node ui/osd/shoot.js                 every shot   (ONLY=vol,exp to pick by name prefix)
  *   MANTLE_SHOOT_OUT=<dir>               where the PNGs go (default %TEMP%\mantle-osd\shots)
  */
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFileSync } = require('child_process');
-const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+const { chromium } = require('../../tools/dev-env.js').playwright();
 
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');   // this checkout's page
 const OUT = process.env.MANTLE_SHOOT_OUT || path.join(os.tmpdir(), 'mantle-osd', 'shots');

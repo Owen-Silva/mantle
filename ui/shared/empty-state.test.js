@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* empty-state.test.js - every full-surface empty state is ONE recipe (lane premium-empty, 2026-10-16).
  *
  * Mantle's empty states were a bold title and a grey sentence floating in an empty pane. Helm's premium

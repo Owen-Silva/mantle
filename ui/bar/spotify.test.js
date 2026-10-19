@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* spotify.test.js — the Spotify section of the now-playing card (ui/bar/spotify.js + spotify.css),
  * media-ui lane, 2026-09-29.
  *
@@ -197,7 +197,7 @@ async function pageTests() {
   fs.writeFileSync(file, pageHtml());
   const URL = 'file:///' + file.replace(/\\/g, '/');
   if (SHOTS) fs.mkdirSync(OUT, { recursive: true });
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   const browser = await require('../settings/test-browser.js').launch(chromium, { headless: true });
   const errors = [];
   try {

@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* shoot.js — headless screenshots of the launcher, plus a real contrast check.
  *
  * Line 1 is the machine-wide CPU cap and browser lock: it pins this process to
@@ -20,7 +20,7 @@ require('C:/Users/user/dev-tools/tools/lowcpu.js');
 'use strict';
 const path = require('path');
 const fs = require('fs');
-const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+const { chromium } = require('../../tools/dev-env.js').playwright();
 
 /* MANTLE_THEME=dark|light forces <html data-theme> before first paint and fires 'mantle-theme',
    the harness stand-in for the CLI's --theme= (lane dm-launcher, 2026-10-08) */

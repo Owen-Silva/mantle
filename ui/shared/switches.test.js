@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* switches.test.js - ONE switch across Mantle, both themes (lane mantle-premium-switches, 2026-10-16).
  *
  * Mantle had five switch implementations that disagreed (Settings 40 x 20 travelling 20 px on 160 ms,

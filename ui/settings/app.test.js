@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* app.test.js — Mantle Settings as a person drives it: the whole app with every REAL category file, on
  * the mock (lane settings, 2026-09-29 quality pass). Headless chromium over file://, never Electron,
  * never a real setting: mock-mantle.js ?real=1 lists the eleven real section files and answers each
@@ -59,7 +59,7 @@ const settle = (p, ms) => p.waitForTimeout(ms || 250);
 (async () => {
   const g = gaming();
   if (g !== 0) { process.stdout.write((g > 0 ? 'a game is running' : 'could not check for a running game') + ': page test skipped\nSETTINGS APP TEST: 0 passed, 0 failed (skipped)\n'); return; }
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   fs.mkdirSync(OUT, { recursive: true });
   const browser = await require('./test-browser.js').launch(chromium);
   const ctx = await browser.newContext({ viewport: { width: 1040, height: 700 }, deviceScaleFactor: 1, colorScheme: 'light' });

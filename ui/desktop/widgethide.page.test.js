@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* widgethide.page.test.js - the desktop widgets stepping aside under a window, in the REAL page
  * (ui/desktop/index.html + desktop.js + desktop.css) in headless Chromium over file://. Never
  * Electron, never the sidecar, nothing on Owen's screen.
@@ -204,7 +204,7 @@ async function run(browser, theme) {
 (async () => {
   let browser = null;
   try {
-    const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+    const { chromium } = require('../../tools/dev-env.js').playwright();
     browser = await require('../settings/test-browser.js').launch(chromium, { timeout: 0, headless: true });
     await run(browser, 'light');
     await run(browser, 'dark');

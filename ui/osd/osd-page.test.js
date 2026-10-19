@@ -6,8 +6,8 @@
  *   bash <lanes>/bin/uislot.sh <lane> node ui/osd/osd-page.test.js
  * LINE 1 is not optional: lowcpu.js pins this process and its browser.
  */
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
-const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+require('../../tools/dev-env.js').lowcpu();
+const { chromium } = require('../../tools/dev-env.js').playwright();
 
 // this checkout's page, not ~/mantle's: a worktree or a merged ship tree must test its own files
 const PAGE = 'file:///' + require('path').join(__dirname, 'index.html').replace(/\\/g, '/');

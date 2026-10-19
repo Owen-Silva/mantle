@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 'use strict';
 /* qstiles.page.test.js - lane qstiles (2026-10-15): quick settings' new tiles CLICKED in the real bar, the
  * QS paint budget measured, and Win+P's pop-up page driven by the keyboard. Headless Chromium over file://

@@ -1,7 +1,7 @@
 // AppPower.cs - `apppower.*`: per-app CPU / memory / GPU controls for the top bar's CPU, RAM and GPU
 // dropdowns (lane mantle-power-sidecar, 2026-10-14). Owen: Efficiency mode, priority, CPU limit,
 // lower memory priority, free up memory, memory limit, lower graphics priority, graphics preference,
-// remembered per app. The contract is C:\Users\user\mantle-notes\power-CONTRACT.md sections 2-3; Node
+// remembered per app. The contract is sections 2-3 of the App power design notes (not in this repo); Node
 // (lib/apppower-core.js, lib/features/apppower.js) decides WHAT, this file only does it to Windows.
 //
 // WHAT EACH SETTING IS:

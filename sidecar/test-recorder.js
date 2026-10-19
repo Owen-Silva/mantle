@@ -8,7 +8,7 @@
  *
  *   node sidecar/test-recorder.js            -> "RECORDER TEST: n passed, m failed"
  *   MANTLE_SIDECAR_EXE=<exe> to test another build; MANTLE_FFPROBE=<ffprobe.exe> for the independent check
- *   (else the Remotion copy in media-tools is used if present). --quick runs the 5 s window test only.
+ *   (else the ffprobe named in tools/dev-env.js config, if present). --quick runs the 5 s window test only.
  */
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
@@ -16,7 +16,7 @@ const os = require('os');
 const path = require('path');
 
 const EXE = process.env.MANTLE_SIDECAR_EXE ? path.resolve(process.env.MANTLE_SIDECAR_EXE) : path.join(__dirname, 'bin', 'Mantle.Sidecar.exe');
-const FFPROBE = [process.env.MANTLE_FFPROBE, 'C:/Users/user/media-tools/video/node_modules/@remotion/compositor-win32-x64-msvc/ffprobe.exe'].find((p) => p && fs.existsSync(p)) || null;
+const FFPROBE = [require('../tools/dev-env.js').ffprobe()].find((p) => p && fs.existsSync(p)) || null;
 const FFMPEG = FFPROBE ? path.join(path.dirname(FFPROBE), 'ffmpeg.exe') : null;
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'mantle-rec-test-'));
 const QUICK = process.argv.includes('--quick');

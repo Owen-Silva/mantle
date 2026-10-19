@@ -1,4 +1,4 @@
-require('C:/Users/user/dev-tools/tools/lowcpu.js');
+require('../../tools/dev-env.js').lowcpu();
 /* wallpapers.test.js -- the Wallpapers window, clicked and typed through (lane launch-desk, 2026-09-29).
  *
  * Headless chromium over file:// (never Electron, never Owen's library): the REAL ui/wallpapers page with
@@ -130,7 +130,7 @@ const PRESETS = JSON.parse(fs.readFileSync(path.join(BG, 'catalog.json'), 'utf8'
 
 async function run() {
   fs.mkdirSync(OUT, { recursive: true });
-  const { chromium } = require('C:/Users/user/other-app/node_modules/playwright-core');
+  const { chromium } = require('../../tools/dev-env.js').playwright();
   const browser = await require('../settings/test-browser.js').launch(chromium, { timeout: 0, headless: true, args: ['--allow-file-access-from-files'] });
   themeEvery(browser);   // MANTLE_THEME=dark|light: <html data-theme> + the mantle-theme event, as dm-core's plumbing does
   try {
