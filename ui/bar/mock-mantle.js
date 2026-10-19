@@ -823,7 +823,7 @@
     var now = Date.now(), m = 60000;
     var chat = tile(32, ['#2f6fe0', '#6d8ff0'], 'D'), mail = tile(32, ['#1f8f4e', '#6cc39a'], 'S'), sec = tile(32, ['#3a4250', '#6b7688'], 'W');
     var base = [
-      { id: 104, aumid: 'com.squirrel.Discord.Discord', app: 'Discord', icon: chat, timeMs: now - 2 * m, title: 'Alex', body: 'are you still coming to dinner tonight? we moved it to 7', attribution: '#general', logo: tile(64, ['#b23fd0', '#e0a059'], 'M'), logoCircle: true, opens: 'app', unread: true },
+      { id: 104, aumid: 'com.squirrel.Discord.Discord', app: 'Discord', icon: chat, timeMs: now - 2 * m, title: 'Alex', body: 'are you still coming to dinner tonight? we moved it to 7', attribution: '#general', logo: tile(64, ['#b23fd0', '#e0a059'], 'A'), logoCircle: true, opens: 'app', unread: true },
       { id: 103, aumid: 'com.squirrel.Discord.Discord', app: 'Discord', icon: chat, timeMs: now - 26 * m, title: 'Jordan', body: 'sent a picture', attribution: '#clips', hero: tile(180, ['#2f6fe0', '#1f8f4e']), opens: 'app', unread: true },
       { id: 101, aumid: 'com.readdle.SparkDesktop', app: 'Spark', icon: mail, timeMs: now - 3 * 60 * m, title: 'Calendar update', body: 'Your Saturday meeting has moved to 8:15 AM.\nReply to confirm.', opens: 'app', unread: false },
       { id: 37517, aumid: 'Windows.Defender.SecurityCenter', app: 'Windows Security', icon: sec, timeMs: now - 2 * 24 * 60 * m, title: 'Virus & threat protection', body: 'Windows Security scanned your device. No action needed.', opens: 'protocol', unread: false },
@@ -1018,7 +1018,7 @@
   }
 
   /* ---- The Downloads shelf (lane downloads, 2026-09-27): lib/features/downloads.js's replies, in its
-       shapes. The names are invented (a student's worksheets, a developer's installers). ?dl=
+       shapes. The names are invented (a household's paperwork, a developer's installers). ?dl=
          some (default)  12 items, nothing new            new        2 new (the button's dot), 1 still downloading
          none            an empty folder                  missing    the folder was moved away (reason + path)
          unreadable      access denied                    plain      the sidecar could not answer (the plain read's note)
@@ -1046,7 +1046,7 @@
     ['northwind-site-assets.zip', 25794560, 64 * MIN, dlIcon('ZIP', '#b8872a')],
     ['Screenshot 2026-09-27 101522.png', 1258291, 3 * HR, dlIcon('PNG', '#7a55c7')],
     ['node-v22.12.0-x64.msi', 31561728, 5 * HR, dlIcon('MSI', '#56606b')],
-    ['Book Club Chapter 7 Notes.pdf', 2411724, 27 * HR, dlIcon('PDF', '#d8453b')],
+    ['Car Insurance Policy.pdf', 2411724, 27 * HR, dlIcon('PDF', '#d8453b')],
     ['garden-schedule-fall.xlsx', 19456, 30 * HR, dlIcon('XLSX', '#1f8a4c')],
     ['fly-connectome-sample', 0, 2 * DAY + 3 * HR, null, true],
     ['drone-footage-clip.mp4', 155189248, 3 * DAY, dlIcon('MP4', '#1a8a8f')],
