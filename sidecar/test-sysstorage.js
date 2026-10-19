@@ -5,7 +5,7 @@
 // NEVER deletes or changes anything of Owen's: every Storage Sense change and every cleanup is sent with
 // dryRun (and a re-read proves nothing moved), every real write goes to a PASSIVE sidecar and must answer
 // the passive refusal. The real guard + delete run ONLY inside the test sandbox
-// (MANTLE_STORAGE_SANDBOX, default %TEMP%\mantle-test\storage\sandbox), on files this test
+// (MANTLE_STORAGE_SANDBOX, default %TEMP%\mantle-test\lanes\storage\sandbox), on files this test
 // made there, and the test proves a file outside it, a ".." path, a path through a junction and a
 // Windows file are all REFUSED and still there afterwards. Reads are real (drives, Storage Sense, disks,
 // the cleanup kinds' sizes, one full category scan). Output: counts and shapes only - never a file,
@@ -21,7 +21,7 @@ const VERBOSE = process.argv.includes('--verbose');
 const NO_SCAN = process.argv.includes('--no-scan');
 const REFUSAL = T.PASSIVE_REFUSAL || 'refused: sidecar is passive (test mode)';
 const SANDBOX = process.env.MANTLE_STORAGE_SANDBOX ||
-  path.join(os.tmpdir(), 'mantle-test', 'storage', 'sandbox');
+  path.join(os.tmpdir(), 'mantle-test', 'lanes', 'storage', 'sandbox');
 const OUTSIDE = path.join(path.dirname(SANDBOX), 'outside');
 const KINDS = ['temp', 'thumbnails', 'systemTemp', 'deliveryOptimization', 'windowsUpdate', 'recycleBin', 'downloads'];
 const CATS = ['apps', 'documents', 'pictures', 'videos', 'music', 'temp', 'system', 'otherUsers', 'other'];
