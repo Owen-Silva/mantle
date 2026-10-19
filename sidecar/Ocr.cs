@@ -1,7 +1,7 @@
 // Ocr.cs - Windows' own OCR (Windows.Media.Ocr) for the screenshot overlay's "Copy text" mode
 // (ocr lane, 2026-09-27).
 //
-// WHAT IT IS FOR. Owen drags over a paused lesson video, a slide, an image or a PDF that will not
+// WHAT IT IS FOR. Owen drags over a paused video, a slide, an image or a PDF that will not
 // select, and gets the TEXT on his clipboard. The pixels are the SAME frozen frame `shot.grab`
 // took (Screenshot.cs keeps it in memory until `shot.release`): `shot.ocr` crops the selection out
 // of it and hands the crop to Recognize() here, in memory. No second capture, no file.

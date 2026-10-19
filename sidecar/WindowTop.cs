@@ -1,7 +1,7 @@
 // WindowTop.cs - "Keep on top": pin any window above every other one (lane ontop, 2026-09-27).
 //
 // WHY: Windows has no way to keep a window above the others (only PowerToys adds one). Owen watches
-// lesson videos, codes and games: a video, his notes or a calculator pinned over whatever he is
+// videos, codes and games: a video, his notes or a calculator pinned over whatever he is
 // working in is the win. Win+Ctrl+T (PowerToys' own key, free on this machine: RegisterHotKey
 // probe 2026-09-27) or "Keep on top" in the bar's right-click menu; lib/features/ontop.js decides,
 // this file only does the Windows half.

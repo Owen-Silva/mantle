@@ -171,7 +171,7 @@ function start(args) {
 /*
  * WI-FI NETWORKS, OUTPUT DEVICES, THE MIXER (qsx lane, 2026-09-23: Wlan.cs, AudioMixer.cs).
  *
- * Owen is at the machine and may be recording lessons with audio, so against his machine this is
+ * Owen is at the machine and may be recording with audio, so against his machine this is
  * READ ONLY: listing and scanning networks, listing devices and apps. Nothing here connects,
  * disconnects or saves a Wi-Fi profile: the passive sidecar refuses all three, and the profile XML
  * is built by a passive-only test op that writes nothing. The write entry points are proved to

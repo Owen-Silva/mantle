@@ -1,6 +1,6 @@
 // Layouts.cs - Window layouts: the Windows half (lane layouts, 2026-09-27).
 //
-// WHY: Owen arranges the same windows again and again ("Work": Quartz with the lesson, his notes;
+// WHY: Owen arranges the same windows again and again ("Work": Quartz with a video, his notes;
 // "Code": terminals and editors). Windows' Snap Groups vanish on a reboot. lib/features/layouts.js
 // saves an arrangement by name and puts it back with one click; this file only reads windows and
 // moves ONE window at a time. The matching, the rect maths and the launching are the JS side's

@@ -1,5 +1,5 @@
 // Media.cs - "now playing": the system media sessions (Spotify, a browser tab,
-// LessonPlayer, ...) read and driven through WinRT's
+// a video app, ...) read and driven through WinRT's
 // Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager.
 //
 //   {cmd:"media"}                                  get (op defaults to "get")
@@ -59,8 +59,8 @@
 // Measured on this machine, 2026-09-22, under Owen's usual load: RequestAsync
 // 14-48 ms, GetSessions under 5 ms, TryGetMediaPropertiesAsync 3-20 ms,
 // hooking a session's three events 9 ms, unhooking 2 ms. The one live session
-// was LessonPlayer (Contoso.LessonPlayer_8wekyb3d8bbwe!App): title "LessonPlayer",
-// artist "Student", no artwork, a timeline that it last updated minutes ago.
+// was a Store app (Publisher.App_hash!App): title the app's own name,
+// artist a placeholder, no artwork, a timeline that it last updated minutes ago.
 // Artwork cost is the image decode: a 3840x2400 JPEG took ~3 s to decode and
 // downscale, so the PNG is cached per track (album art is usually ~300-600 px
 // and far cheaper).
@@ -1116,7 +1116,7 @@ namespace Mantle {
       return null;
     }
 
-    /// "Spotify.exe" -> "Spotify"; "Pub.LessonPlayer_hash!App" -> "LessonPlayer".
+    /// "Spotify.exe" -> "Spotify"; "Pub.Player_hash!App" -> "Player".
     static string GuessName(string aumid) {
       if (string.IsNullOrEmpty(aumid)) return "An app";
       string s = aumid;
