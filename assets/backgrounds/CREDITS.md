@@ -1,15 +1,14 @@
 # Background credits
 
-Mantle's built-in wallpapers are copied as-is from Helm (~/helm/ui/assets/
-backgrounds/, 2026-10-09): the same 23 photos, thumbs and catalog.json that
-Helm and Quartz offer, so all three apps share one gallery. Helm's
-`wallpaper.png` (Owen's own dev copy of his wallpaper, not one of the
-defaults) was NOT copied. lib/wallpaper-presets.js reads catalog.json; the
-Wallpapers window and Settings > Personalization > Background show each
-photo's credit line. The rest of this file is Helm's, unchanged.
+Mantle's built-in wallpapers: 23 photos, their thumbs and catalog.json, shared with
+the author's Helm and Quartz apps so all three offer one gallery. lib/wallpaper-presets.js
+reads catalog.json; the Wallpapers window and Settings > Personalization > Background
+show each photo's credit line.
 
-These are Helm's bundled default backgrounds. `wallpaper.png` in this folder is
-Owen's own dev copy (gitignored) and is not one of the defaults.
+**These photos are NOT covered by Mantle's GPL-3.0 licence.** They are under the
+Unsplash License (https://unsplash.com/license): free to use, but it does not allow
+selling unaltered copies or compiling them into a similar or competing service. If you
+redistribute Mantle, keep this file with them, or remove the photos.
 
 Every photo is from Unsplash under the Unsplash License (free photos only, no
 Unsplash+). Full images are 2560px wide JPEGs (<= 600 KB), re-encoded by the

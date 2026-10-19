@@ -1,5 +1,17 @@
 # Mantle
 
+A shell layer for Windows 11: its own bar, launcher, desktop, notifications and system pop-ups,
+drawn in Electron, with Explorer still running underneath so one keystroke, one tray click or one
+crash puts Windows back exactly as it was.
+
+![Mantle on a Windows 11 desktop](docs/screenshot.png)
+
+<!-- TODO: add docs/screenshot.png, a real capture of the bar, the launcher and the desktop. -->
+
+> **At your own risk.** Mantle takes over parts of the Windows shell (the taskbar, the Win key,
+> Alt+Tab, notification banners, the desktop layer). It has been built and tested on one
+> Windows 11 machine. Read the next section before your first live run, and keep it to hand.
+
 ## If the Windows taskbar disappears
 
 Run this. It needs no Node, no Electron and no Mantle running:
@@ -33,8 +45,8 @@ seconds before it touches anything.
 2026-09-21, the first live run: Mantle hid the `Shell_TrayWnd` window with
 `ShowWindow(SW_HIDE)`. Owen's taskbar is set to **auto-hide**, and hiding the
 window of an auto-hiding taskbar wedges explorer's own show/hide state machine —
-`SW_SHOW` on the way out did not bring it back, and he had to **reboot**, mid
-task.
+`SW_SHOW` on the way out did not bring it back, and the PC had to be
+**rebooted**.
 
 Everything above follows from the rule that came out of it: **a killed Mantle
 must leave Windows exactly as usable as before.** No shell state may need a
@@ -66,6 +78,89 @@ talks to Windows.
                                             ├── volume + the notification area
                                             └── the shell-state file, written first
 ```
+
+## Requirements
+
+- **Windows 11** (developed on 25H2). Windows 10 is not supported.
+- **Node.js 24** and npm. `npm install` brings Electron 44 and koffi.
+- **.NET Framework 4.x**, which ships with Windows: the sidecar is compiled by the in-box
+  `C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`. No .NET SDK and no Visual Studio needed.
+- Optional: the Spotify desktop app (for the bar's Spotify controls), a Google Cloud project (for
+  Google Calendar in the clock, see below), and playwright-core with its Chromium (only for the
+  page tests and screenshot tools).
+
+## Install
+
+```
+git clone https://github.com/Owen-Silva/mantle.git
+cd mantle
+npm install
+npm run build:sidecar     # compiles sidecar\*.cs into sidecar\bin\Mantle.Sidecar.exe
+npm test                  # test mode: the sidecar refuses every shell change, Windows untouched
+npm run live              # the real thing: prints the recovery command, waits 3 s, then starts
+```
+
+To start Mantle at sign-in, `npm run autostart` registers a "Mantle" logon task
+(`tools/mantle-logon-task.xml`) and starts it. To remove Mantle: `npm run autostart:remove`, then
+`npm run quit` (or `npm run restore` if it is not running).
+
+## Configure
+
+Mantle's own settings live in its Settings window and in `%APPDATA%\mantle`. Nothing personal is
+read from the repo.
+
+**Google Calendar (optional): bring your own OAuth client.** Mantle shows your calendar in the
+clock's flyout, read-only. It ships with no Google client ID, so each user registers their own:
+
+1. In Google Cloud Console, create a project and enable the **Google Calendar API**.
+2. Configure the OAuth consent screen with your own app name and **your own privacy-policy URL**,
+   and add the scope `https://www.googleapis.com/auth/calendar.readonly`.
+3. Create an OAuth client of type **Desktop app** and download its JSON file.
+4. In Mantle Settings, Date & time, Google Calendar: **Choose Google client file…** (it opens
+   Downloads), then **Sign in with Google**. The sign-in is a PKCE loopback flow in your browser.
+
+While the consent screen is in **Testing** mode, only the test users you list can sign in, and
+Google expires their sign-in after 7 days. Publishing it for anyone means Google's verification
+for `calendar.readonly`, a sensitive scope; until then users see the "unverified app" screen. The
+client file and the sign-in token are stored encrypted with Windows DPAPI (Electron safeStorage) in
+`%APPDATA%\mantle\gcal`; signing out revokes the token and deletes it and the cache.
+
+**Links.** http(s) links open in an Electron browser checked out at `%USERPROFILE%\browser` (the
+author's Quartz) when that folder exists; set `MANTLE_BROWSER_DIR` to use another folder. Without
+one, links go to the Windows default browser.
+
+**Tests and tools.** The page tests and screenshot tools need playwright-core; other machine
+paths (an optional CPU-cap module, ffmpeg/ffprobe, a scratch folder) come from environment
+variables or `%USERPROFILE%\.mantle-dev.json`. See `tools/dev-env.js` for the keys.
+
+**Spotify.** The bar's Spotify controls drive the Spotify desktop app through its local debugging
+port and Spotify's own internal web API. That is unofficial and can break whenever Spotify
+updates. Mantle is not affiliated with Spotify or Microsoft.
+
+## How it works, and why it is built this way
+
+- **A layer, not a replacement.** Mantle never replaces `explorer.exe` as the shell. It sets the
+  taskbar's own auto-hide flag (`ABM_SETSTATE`), registers its bar as a real app bar and parents
+  its desktop under the wallpaper window. Each of those is state Windows itself owns and cleans up
+  when the window dies, so a crashed or killed Mantle cannot leave the PC unusable. The original
+  state is written to a file *before* anything changes, and `tools/restore-windows.ps1` can put it
+  back with no Node, no Electron and no Mantle.
+- **Two processes, one job each.** Electron draws every pixel: HTML and CSS make the glass look,
+  the animations and the many small surfaces quick to build. One C# sidecar makes every Win32 and
+  WinRT call (window lists, focus, keyboard hooks, audio, media sessions, notifications) and talks
+  to Electron in JSON lines over stdin/stdout. A slow or hung system call stalls the sidecar, not
+  the UI; the sidecar can be restarted without restarting the shell, and a supervisor brings Mantle
+  back after a crash (three crashes in two minutes and it gives up and restores Windows).
+- **No toolchain to install.** The sidecar compiles with the C# compiler that ships with Windows,
+  and reaches WinRT through the system's own metadata files, so a clone builds on a stock PC.
+- **Nothing fails silently.** Every fallback shows its state and the reason on screen, and raw
+  error codes become plain sentences (see "Nothing fails silently" below).
+- **RAM first.** Settings, Task Manager, Files and the other windows open cold by default; nothing
+  sits pre-loaded in the background unless you ask for it per surface.
+- **Testable without touching Windows.** `--test` runs invisible windows against a passive sidecar
+  that refuses every shell change. Features have plain-Node unit tests, page tests in headless
+  Chromium, and Electron end-to-end tests; `node tools/run-suite.js` runs them all and judges each
+  file by its summary line.
 
 ## Running it
 
@@ -219,7 +314,7 @@ mantle.on(event, cb)    -> unsubscribe()
 | `bar.popover` | `{open, height, key}`: borrow up to 320px of extra window height so a popover is not clipped by the 44px bar. Grows away from the bar's screen edge; `{open:false}` gives it back |
 | `apps.index` `apps.search` `apps.launch` | the launcher's index (`lib/launcher-index.js`) |
 | `volume.get` `volume.set` | `{level, muted}` |
-| `open` | `{target}`: `ms-settings:*` (Mantle Settings when it has the page), `ms-availablenetworks:`, or an http(s) link (Owen's browser); anything else is refused. A --test run opens nothing |
+| `open` | `{target}`: `ms-settings:*` (Mantle Settings when it has the page), `ms-availablenetworks:`, or an http(s) link (see Links under Configure); anything else is refused. A --test run opens nothing |
 | `sys.stats` | `{cpu, memUsed, memTotal, battery}` |
 | `tray.list` `tray.click` | the Windows notification area, mirrored |
 | `shell.restore` `shell.quit` `shell.restart` | restore pauses Mantle until a restart |
@@ -246,7 +341,7 @@ lib/apps.js          lane D's index module, wrapped so a missing one is a visibl
 lib/sys-stats.js     cpu from os.cpus() deltas, memory, battery via one WMI probe
 lib/tray-icon.js     the tray icon, drawn in code so the accent colour has one home
 lib/placeholder.js   the "this file does not exist yet" page
-lib/open-target.js   http(s) -> Owen's browser, scheme: -> shell, path -> shell
+lib/open-target.js   http(s) -> ~/browser or default, scheme: -> shell, path -> shell
 lib/net-probe.js     loopback reachability with a real reason
 ui/shared/tokens.css the palette. Every colour in Mantle comes from here
 ui/bar/              the bar
@@ -270,6 +365,16 @@ powershell -NoProfile -File tools/kill-test.ps1 -Match mainlane   # to stop it
 ```
 
 `--profile-name` is what both scripts match, as the whole flag. Never
-`taskkill electron.exe`: Owen's browser is an Electron app too.
+`taskkill electron.exe`: other apps (browsers, editors) are Electron apps too.
 
-Status: first slice, 2026-09-21.
+## Licence
+
+Mantle is free software under the **GNU General Public License v3.0** (`LICENSE`).
+
+Not covered by the GPL: the wallpaper photos in `assets/backgrounds/` are under the Unsplash
+License (`assets/backgrounds/CREDITS.md`), and the emoji data is built from Unicode data under the
+Unicode License v3 (`ui/emoji/DATA-LICENSE.txt`). See `CREDITS.md`.
+
+## Contributing
+
+Issues are welcome. Pull requests are not accepted right now.

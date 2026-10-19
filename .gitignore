@@ -7,3 +7,21 @@ shots/
 .DS_Store
 Thumbs.db
 sidecar/bin-int/
+
+# Personal and machine-local files: never commit these.
+.cloudtest/
+.cloudtest-job/
+suite-out/
+*.lock
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+client_secret*.json
+*oauth-client*.json
+.secrets/
+.mantle-dev.json
+look.json
+stills/
+assets/backgrounds/wallpaper.png
