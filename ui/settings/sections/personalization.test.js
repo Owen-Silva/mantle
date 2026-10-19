@@ -9,7 +9,7 @@ require('../../../tools/dev-env.js').lowcpu();
  * PART 2 (headless chromium over file://, never Electron, never a real setting): the REAL page file on
  * the settings lane's mock (mock-mantle.js), with settings.personalization.*, wallpaper.list and
  * settings.mantle played by FAKE() over MADE-UP fixtures. Every page is opened and must draw every
- * search row it declares; shots go to MANTLE_SHOOT_OUT (default scratchpad/lanes/perso-shots).
+ * search row it declares; shots go to MANTLE_SHOOT_OUT (default %TEMP%/mantle-shots/perso).
  *
  *   node ui/settings/sections/personalization.test.js      (ONLY=perso-02 for some shots)
  * Prints "PERSONALIZATION PAGE TEST: n passed, m failed". A game running = part 2 is skipped (and said).
@@ -25,7 +25,7 @@ const ROOT = path.resolve(__dirname, '..', '..', '..');
 
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/perso-shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'perso');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 // the built-in wallpapers as lib/wallpaper.js lists them: the real catalog and real thumbs, in catalog order
 const BG = path.join(ROOT, 'assets', 'backgrounds');

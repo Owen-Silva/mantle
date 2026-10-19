@@ -17,7 +17,7 @@
 //   --hook: a LIVE sidecar with a pass-through hook (hotkey {observe:['VolumeUp']}: swallows
 //     nothing) - the REAL hook thread, same commits. Seconds long; nothing is pressed.
 //   --onscreen (or MANTLE_TEST_VISIBLE=1; the visible slot only: idle >= 3 min and
-//     mantle-notes\visible.lock): the focus lab's own windows under a real foreground lock
+//     visible.lock in the tools/dev-env.js scratch folder): the focus lab's own windows under a real foreground lock
 //     (sidecar/focus-lab.js), the real switch onto the lab's window B from the switch thread,
 //     with the real hook thread pinged meanwhile. Without the slot it is reported NOT RUN.
 //
@@ -31,7 +31,7 @@ const T = require('./test-lib');
 
 const wantHook = process.argv.includes('--hook');
 const onscreen = process.argv.includes('--onscreen') || process.env.MANTLE_TEST_VISIBLE === '1';
-const LOCK = 'C:\\Users\\user\\mantle-notes\\visible.lock';
+const LOCK = path.join(require('../tools/dev-env.js').scratch() || os.tmpdir(), 'visible.lock');
 
 // A switch slower than LowLevelHooksTimeout's ~1 s would be if it ran on the hook thread.
 const SLOW = 900;

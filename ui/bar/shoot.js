@@ -49,8 +49,8 @@ function findChrome() {
 }
 
 let OUT = process.env.BAR_SHOTS ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/edd3247c-6214-4642-9069-bbf7e50b1555/scratchpad/lanes/bar';
-let PAGE = process.env.BAR_PAGE || 'file:///C:/Users/user/mantle/ui/bar/index.html';   // BAR_PAGE: a snapshot copy, for a before/after
+  path.join(require('os').tmpdir(), 'mantle-shots', 'bar');
+let PAGE = process.env.BAR_PAGE || require('url').pathToFileURL(path.join(__dirname, 'index.html')).href;   // BAR_PAGE: a snapshot copy, for a before/after
 
 /* Step sequences for the quick-settings sub-views (qs-more.js): open the panel from the Wi-Fi
    readout, take the tile's '>' and let the mock's scan finish; or take the volume row's '>'. */
@@ -350,7 +350,7 @@ const PASSES = process.env.BAR_PASSES ? JSON.parse(fs.readFileSync(process.env.B
 function usePass(p) {
   const env = (k, v) => { if (v === undefined || v === null || v === '') delete process.env[k]; else process.env[k] = String(v); };
   OUT = p.out || OUT;
-  PAGE = p.page || 'file:///C:/Users/user/mantle/ui/bar/index.html';
+  PAGE = p.page || require('url').pathToFileURL(path.join(__dirname, 'index.html')).href;
   THEME = p.theme || '';
   env('BAR_STRIP', p.strip); env('BAR_DESK', p.desk); env('BAR_SCENE', p.scene); env('BAR_SUFFIX', p.suffix); env('BAR_SKIP_EXISTING', p.skipExisting ? '1' : '');
   RUN = p.only && p.only.length ? SHOTS.filter(s => p.only.some(w => s.name.includes(w))) : SHOTS;

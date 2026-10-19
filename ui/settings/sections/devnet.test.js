@@ -18,7 +18,7 @@ const { chromium } = require('../../../tools/dev-env.js').playwright();
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
 const FAKE = path.join(__dirname, '_devnet-fake.js');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/devnet-shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'devnet');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 const SECS = process.env.DEVNET_SECS || 'devices,network';
 

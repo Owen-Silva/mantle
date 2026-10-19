@@ -7,7 +7,7 @@
  *   node ui/emoji/emoji.page.test.js   -> "EMOJI PAGE TEST: n passed, m failed"
  * Shots: MANTLE_SHOTS_DIR (default %TEMP%\mantle-emoji-shots); with --morning also emoji-1.png (the
  * default view) and emoji-2.png (a search in progress), cropped to the panel, + emoji.txt captions, in
- * C:\Users\user\notes\morning-shots.
+ * MANTLE_MORNING_DIR (default %TEMP%\mantle-morning-shots).
  * LINE 1 is not optional: lowcpu.js pins this process and its browser.
  */
 require('../../tools/dev-env.js').lowcpu();
@@ -21,7 +21,7 @@ let chromium;
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const MOCK = path.join(__dirname, 'mock-mantle.js');
 const SHOTS = path.resolve(process.env.MANTLE_SHOTS_DIR || path.join(os.tmpdir(), 'mantle-emoji-shots'));
-const MORNING = process.argv.includes('--morning') ? 'C:/Users/user/notes/morning-shots' : null;
+const MORNING = process.argv.includes('--morning') ? path.resolve(process.env.MANTLE_MORNING_DIR || path.join(os.tmpdir(), 'mantle-morning-shots')) : null;
 const W = 360 + 36, H = 424 + 36, M = 18;
 
 let passed = 0; const failures = [];

@@ -11,7 +11,7 @@ require('../../../tools/dev-env.js').lowcpu();
  * sections/system.js on the settings lane's mock (mock-mantle.js), with settings.system.* played by
  * FAKE() below over MADE-UP fixtures (two displays, a change waiting to be kept, a declined administrator
  * prompt, read-only rows with their reasons). Screenshots go to MANTLE_SHOOT_OUT (default
- * scratchpad/lanes/sysset-shots). Line 1 is the machine-wide CPU cap and browser lock.
+ * %TEMP%/mantle-shots/sysset). Line 1 is the machine-wide CPU cap and browser lock.
  *
  *   node ui/settings/sections/system-display.test.js      (ONLY=disp-02,disp-05 for some shots)
  * Prints "SYSDISPLAY PAGE TEST: n passed, m failed". A game running = part 2 is skipped (and said).
@@ -25,7 +25,7 @@ const { execSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/sysset-shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'sysset');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 
 let passed = 0;

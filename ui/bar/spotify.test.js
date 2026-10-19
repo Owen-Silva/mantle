@@ -23,7 +23,7 @@ const { execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/7e5085b9-5bec-43fe-aecd-5fe5701b290a/scratchpad/lanes/media/shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'media');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 const SHOTS = process.env.SHOTS !== '0';
 

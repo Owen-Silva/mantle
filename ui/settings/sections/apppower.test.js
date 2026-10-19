@@ -9,7 +9,7 @@ require('../../../tools/dev-env.js').lowcpu();
  * "Only until Mantle restarts"), Remove sends forget + Undo puts the exact rule back, Reset all sends
  * resetAll + Undo puts every removed rule back, the empty state's words, the error state (the reason, Reset
  * all disabled), App power off and a test copy say so. Shots (light + dark): MANTLE_SHOOT_OUT, default
- * C:/Users/user/mantle-notes/power-shots.
+ * power-shots in the tools/dev-env.js scratch folder (else the temp folder).
  *
  *   node ui/settings/sections/apppower.test.js     Prints "APP POWER SETTINGS TEST: n passed, m failed".
  */
@@ -19,7 +19,7 @@ const fs = require('fs');
 const vm = require('vm');
 
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
-const OUT = process.env.MANTLE_SHOOT_OUT || 'C:/Users/user/mantle-notes/power-shots';
+const OUT = process.env.MANTLE_SHOOT_OUT || path.join(require('../../../tools/dev-env.js').scratch() || require('os').tmpdir(), 'power-shots');
 let passed = 0;
 const failures = [];
 const check = (name, ok, detail) => { if (ok) passed++; else failures.push(detail != null ? `${name} (${String(detail).slice(0, 300)})` : name); return ok; };

@@ -33,7 +33,7 @@ function findChrome() {
   return null;
 }
 
-const OUT = process.env.FILES_SHOTS || 'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/files-shots';
+const OUT = process.env.FILES_SHOTS || path.join(require('os').tmpdir(), 'mantle-shots', 'files');
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const HOME = 'C:\\Users\\Robin';
 const LOCK = path.join(os.tmpdir(), 'mantle-electron-lock');

@@ -9,7 +9,8 @@ require('../../../tools/dev-env.js').lowcpu();
  * the locked "your call" rows say why (shield on the administrator ones), the kept Start menu row, a click
  * sends ramreclaim.set and reads back, a refused change springs back with the reason, Windows turning a
  * piece back on is said, a failed read says why and locks the switches, the feature off and a test copy
- * say so. Both themes. Shots: MANTLE_SHOOT_OUT, default C:/Users/user/mantle-notes/ramreclaim-shots.
+ * say so. Both themes. Shots: MANTLE_SHOOT_OUT, default ramreclaim-shots in the
+ * tools/dev-env.js scratch folder (else the temp folder).
  *
  *   node ui/settings/sections/ramreclaim.test.js     Prints "RAMRECLAIM SETTINGS TEST: n passed, m failed".
  */
@@ -20,7 +21,7 @@ const os = require('os');
 const vm = require('vm');
 
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
-const OUT = process.env.MANTLE_SHOOT_OUT || 'C:/Users/user/mantle-notes/ramreclaim-shots';
+const OUT = process.env.MANTLE_SHOOT_OUT || path.join(require('../../../tools/dev-env.js').scratch() || os.tmpdir(), 'ramreclaim-shots');
 let passed = 0;
 const failures = [];
 const check = (name, ok, detail) => { if (ok) passed++; else failures.push(detail != null ? `${name} (${String(detail).slice(0, 300)})` : name); return ok; };

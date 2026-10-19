@@ -10,7 +10,7 @@ require('../../../tools/dev-env.js').lowcpu();
  * PART 2 (headless chromium over file://, never Electron, never a real setting): the REAL page file on the
  * settings mock, with settings.system.* played by FAKE() over MADE-UP devices and apps (a declined
  * administrator prompt, a microphone test's events, read-only rows with their reasons). Shots go to
- * MANTLE_SHOOT_OUT (default scratchpad/lanes/syssnd-shots). Line 1 is the CPU cap and browser lock.
+ * MANTLE_SHOOT_OUT (default %TEMP%/mantle-shots/syssnd). Line 1 is the CPU cap and browser lock.
  *
  *   node ui/settings/sections/system-sound.test.js      (ONLY=snd-02 for some shots)
  * Prints "SYSSOUND PAGE TEST: n passed, m failed". A game running = part 2 is skipped (and said).
@@ -24,7 +24,7 @@ const { execSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/syssnd-shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'syssnd');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 
 let passed = 0;

@@ -11,7 +11,7 @@ require('../../../tools/dev-env.js').lowcpu();
  *
  * PART 2 (headless chromium over file://, never Electron, never a real setting): the REAL page file
  * on the settings lane's mock (mock-mantle.js), with settings.time.* played by FAKE() below over
- * MADE-UP fixtures. Screenshots go to MANTLE_SHOOT_OUT (default scratchpad/lanes/timelang-shots).
+ * MADE-UP fixtures. Screenshots go to MANTLE_SHOOT_OUT (default %TEMP%/mantle-shots/timelang).
  * Line 1 is the machine-wide CPU cap and browser lock.
  *
  *   node ui/settings/sections/time.test.js      (ONLY=time-02,time-05 for some shots)
@@ -26,7 +26,7 @@ const { execSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/timelang-shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'timelang');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 
 let passed = 0;

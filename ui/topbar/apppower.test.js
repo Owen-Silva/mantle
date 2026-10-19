@@ -14,7 +14,7 @@ require('../../tools/dev-env.js').lowcpu();
  * limit's warning; GPU: priority hidden with its reason when Windows refuses it, the preference only
  * with 2 GPUs, the honest line; a failed change says why on the row and springs back; no jargon; with the
  * feature off the rows are exactly the old ones. Shots (light + dark, CPU / RAM / GPU with a row open):
- * MANTLE_SHOOT_OUT, default C:/Users/user/mantle-notes/power-shots.
+ * MANTLE_SHOOT_OUT, default power-shots in the tools/dev-env.js scratch folder (else the temp folder).
  *
  *   node ui/topbar/apppower.test.js        Prints "APP POWER DROPDOWN TEST: n passed, m failed".
  */
@@ -23,7 +23,7 @@ const path = require('path');
 const fs = require('fs');
 
 const PAGE = 'file:///' + path.resolve(__dirname, 'index.html').replace(/\\/g, '/');
-const OUT = process.env.MANTLE_SHOOT_OUT || 'C:/Users/user/mantle-notes/power-shots';
+const OUT = process.env.MANTLE_SHOOT_OUT || path.join(require('../../tools/dev-env.js').scratch() || require('os').tmpdir(), 'power-shots');
 
 let passed = 0;
 const failures = [];
