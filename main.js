@@ -15,6 +15,7 @@ const iconFresh = require('./lib/icon-fresh');
 const fgGrant = require('./lib/fg-grant');
 const { stats } = require('./lib/sys-stats');
 const MediaPick = require('./lib/media-pick');
+const MediaGuard = require('./lib/media-guard');
 const { trayImage } = require('./lib/tray-icon');
 const { openTarget } = require('./lib/open-target');
 const { openRouted } = require('./lib/open-route');
@@ -421,24 +422,16 @@ flags.trace = flags.test && TRACE_ARG ? TRACE_ARG.slice('--test-trace='.length) 
 const REVEAL_BY = flags.osMorph ? 'morph' : 'page';
 
 /*
- * --lessonplayer-media-controls: let the bar's play/pause/next reach an LESSONPLAYER media session.
- *
- * Absent by default, which means THE LESSONPLAYER RULE IS ON (Owen, 2026-09-22). He records his
- * school lessons in LessonPlayer, and LessonPlayer publishes a system media session like any music player
- * (measured: Contoso.LessonPlayer_8wekyb3d8bbwe!App, title "LessonPlayer", artist "Student").
- * One stray click on a play/pause glyph would pause the lesson under the recording, and nothing
- * on screen would say why. So by default:
- *   - an LessonPlayer session gets NO transport controls anywhere in Mantle; the media card says
- *     "LessonPlayer lesson · controls off so a stray click can't pause it" instead of drawing buttons,
- *   - main REFUSES media.control aimed at one, whatever a page asks (the page is not the guard),
- *   - the now-playing chip shows any other session in preference to it when both exist, and
- *     there is NO chip at all when an LessonPlayer lesson is the only session (Owen, same day).
- * Add this flag to the logon task's arguments to lift all three.
+ * --media-guard / --media-controls: the PROTECTED MEDIA APPS rule (lib/media-guard.js says what
+ * it does and why). The apps it protects come from media-guard.json in Mantle's data folder; with
+ * none listed (the default) the rule is inert. --media-guard turns the rule on for this run;
+ * --media-controls turns it off and wins. mediaGuardOn() (NOW PLAYING, below) reads both.
  */
 // 2026-09-24: THE DEFAULT FLIPPED. Owen, looking at the card's "controls off" note: "i want to be
-// able to pause it". LessonPlayer now gets play/pause like any player; --lessonplayer-guard puts the rule
-// above back on for a recording session (--lessonplayer-media-controls is still accepted, and wins).
-flags.lessonplayerMediaControls = ARGV.includes('--lessonplayer-media-controls') || !ARGV.includes('--lessonplayer-guard');
+// able to pause it". A protected app's config can say "guard": false to stay controllable, and
+// --media-guard puts the rule back on for a run.
+flags.mediaGuard = ARGV.includes(MediaGuard.FLAG_ON);
+flags.mediaControls = ARGV.includes(MediaGuard.FLAG_OFF);
 
 // A test instance gets its own userData directory, which is ALSO what keys
 // Electron's single-instance lock -- that is the whole reason the profile name
@@ -1947,8 +1940,8 @@ async function revealByPage(geo, why, visible) {
 let raiseComplaint = null;      // what was last found covering us, so it is logged once
 async function raiseBar(why) {
   if (!barWin || barWin.isDestroyed()) return;
-  // --test --flyout drives the bar with no one at it, possibly while Owen works (or records a
-  // lesson) in front: every "raise" becomes "send to the back", so the test bar never covers
+  // --test --flyout drives the bar with no one at it, possibly while Owen works (or records his
+  // screen) in front: every "raise" becomes "send to the back", so the test bar never covers
   // him. Its pictures are captured with PrintWindow, which does not need it on top.
   if (flags.test && (flags.flyout !== null || flags.testLiveBar)) { thumbs.toBack(hwndOf(barWin)); return; }
   try { barWin.moveTop(); } catch (_) { /* free when it works, nothing when it does not */ }
@@ -2811,7 +2804,7 @@ const launcherBackdrop = makeBackdrop({
  * first backdrop frame while the window is still hidden, then shows it. That shot rides the sidecar's
  * capture lane with a 4 s limit, and when the lane was busy (the top bar's colour reads share it) the Win
  * key showed nothing for the whole wait: 2424 ms median with the lane held 2.5 s, against 27 ms
- * normally (C:\Users\user\mantle-notes\speed.md, launcherStall). Past LAUNCHER_PICTURE_WAIT_MS the
+ * normally (the night speed notes, launcherStall). Past LAUNCHER_PICTURE_WAIT_MS the
  * launcher opens on its flat tint, says so in State, and the picture lands when it comes. That late shot
  * was asked for UNPROTECTED (the window was hidden then), so the launcher is excluded from capture until
  * it lands, on the same per-window count the protected shots use (captureBackdrop), or the shot could
@@ -4659,21 +4652,18 @@ async function qsKeyboard(on) {
  * card says so and why.
  *
  * WHICH SESSION the chip shows, in order: the one Owen picked in the card's source switcher
- * (until that session goes away), else Windows' current session, except that under the LessonPlayer
- * rule (flags.lessonplayerMediaControls, top of this file) any non-LessonPlayer session wins over an
- * LessonPlayer one, a playing one first, and an LessonPlayer lesson on its own shows no chip at all.
+ * (until that session goes away), else Windows' current session, except that under the
+ * protected media apps rule (lib/media-guard.js; flags.mediaGuard, top of this file) any other
+ * session wins over a protected one, a playing one first, and protected apps alone show no chip.
  *
  * CONTROL IS GUARDED HERE, not only in the page: media.control needs the target session's
  * AUMID (so a press can never land on whichever app happens to be current a moment later), and
- * under the LessonPlayer rule an LessonPlayer target is refused whatever the page asked. Measured:
+ * under the rule a protected app's target is refused whatever the page asked. Measured:
  * control has never been exercised on a real session; a --test instance's sidecar is --passive
  * and refuses every control before it reaches WinRT.
  */
 const MEDIA_POLL_MS = 10000;          // only when the sidecar could not hook the change events
 const MEDIA_ACTIONS = new Set(['play', 'pause', 'toggle', 'next', 'previous', 'seek']);
-const LESSONPLAYER_RE = /lessonplayer/i;
-const LESSONPLAYER_GUARD_REASON = "LessonPlayer lesson · controls off so a stray click can't pause it";
-const LESSONPLAYER_GUARD_HOW = 'Mantle was started with --lessonplayer-guard for a recording session; start it without that flag to allow them';
 let lastMedia = null;       // the last payload pushed to the bar, for replay and the guard
 let mediaPick = null;       // the pick Owen made in the card's switcher (lib/media-pick.js's shape), or null for automatic
 let mediaPickDropped = null; // the last pick that timed out: said in the card until the next pick
@@ -4685,21 +4675,33 @@ const mediaListeners = new Set(); // features that read the sessions (ctx.host.o
 
 function sameAumid(a, b) { return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase(); }
 
-/** An LessonPlayer session, by AUMID (the Store app), app name, or title (its web player in a browser). */
-function isLessonPlayer(s) {
-  if (!s) return false;
-  return LESSONPLAYER_RE.test(String(s.aumid || '')) ||
-    LESSONPLAYER_RE.test(String((s.app && s.app.name) || '')) ||
-    LESSONPLAYER_RE.test(String(s.title || ''));
+/* The protected media apps (lib/media-guard.js), read from the data folder once, on the first
+   use: a test instance's data folder is only settled after the flags are read. */
+let mediaGuardCfg = null;
+function mediaGuard() {
+  if (mediaGuardCfg) return mediaGuardCfg;
+  mediaGuardCfg = MediaGuard.read(app.getPath('userData'));
+  if (mediaGuardCfg.found || (mediaGuardCfg.reason && !/^no /.test(mediaGuardCfg.reason))) {
+    const st = MediaGuard.state(mediaGuardCfg, ARGV);
+    process.stdout.write(`mantle: protected media apps: ${mediaGuardCfg.apps.length ? mediaGuardCfg.apps.join(', ') : 'none'}, rule ${st.on ? 'on' : 'off'} (${st.by})${mediaGuardCfg.reason ? `; ${mediaGuardCfg.reason}` : ''}\n`);
+  }
+  return mediaGuardCfg;
 }
 
-function mediaGuardOn() { return !flags.lessonplayerMediaControls; }
+/** The protected app a session belongs to (by AUMID, app name, or title for a web player), or null. */
+function protectedAppOf(s) { return MediaGuard.match(mediaGuard(), s); }
+
+function mediaGuardOn() { return MediaGuard.state(mediaGuard(), ARGV).on; }
+
+/** The card's "controls off" words for a protected app: { ok:false, reason, how }. */
+function mediaGuardControls(name) {
+  const st = MediaGuard.state(mediaGuard(), ARGV);
+  return { ok: false, reason: MediaGuard.reasonFor(mediaGuard(), name), how: MediaGuard.howFor(st) };
+}
 
 /** Read the sessions and pick the one to show. Never throws: a failure is a payload with a reason. */
 async function mediaRead() {
-  const guard = mediaGuardOn()
-    ? { on: true, reason: LESSONPLAYER_GUARD_REASON, how: LESSONPLAYER_GUARD_HOW }
-    : { on: false, reason: 'LessonPlayer media controls are on (start Mantle with --lessonplayer-guard to turn them off while recording)', how: null };
+  const guard = MediaGuard.summary(mediaGuard(), ARGV);
   // `retry`: whether reading again can help (mediaPollArm). An old exe will never grow the command.
   const failed = (reason, retry) => ({ ok: false, present: false, reason, retry: retry !== false, rev: null, guard, sessions: [], shown: null, pick: null, events: false, eventsReason: null });
   const ask = async (extra) => {
@@ -4722,7 +4724,7 @@ async function mediaRead() {
   // lane mantle-player: a session from Mantle's own process (its AUMID com.owensilva.mantle) is Mantle Player's,
   // named and drawn as such, not "com.owensilva.mantle" / Electron (lib/mantle-apps.js mediaApp)
   const ownMedia = (aumid) => (mantleApps && typeof mantleApps.mediaApp === 'function' ? mantleApps.mediaApp(aumid) : null);
-  const sessions = (Array.isArray(snap.sessions) ? snap.sessions : []).map((s) => ({
+  const sessions = (Array.isArray(snap.sessions) ? snap.sessions : []).map((s) => [s, protectedAppOf(s)]).map(([s, prot]) => ({
     aumid: s.aumid || null,
     app: ownMedia(s.aumid) || (s.app ? { name: s.app.name || null, icon: s.app.icon || null } : null),
     title: s.title || null,
@@ -4730,17 +4732,18 @@ async function mediaRead() {
     status: s.status || 'unknown',
     playing: !!s.playing,
     current: !!s.current,
-    lessonplayer: isLessonPlayer(s),
+    protectedApp: !!prot,
+    label: (prot && mediaGuard().label) || null,   // the source switcher's word in place of the title (media-guard.json "label")
   }));
 
   /* THE PICK IS STICKY (lane mediapick, 2026-09-25; lib/media-pick.js says how). Owen: "i press
-     spotify but it keeps switching to accelus or automatic". The pick used to drop the instant
+     spotify but it keeps switching to [the other app] or automatic". The pick used to drop the instant
      its session was missing from ONE read, so a session blinking out put the card back on
      automatic for good. Now an absent pick is held for 60 s of continuous absence (by 'waiting',
      automatic shown meanwhile, said in the card) and applies again the moment it is back.
      Read and written in the same tick, with no await between: a media.select that lands during
      the sidecar read above is seen here, never overwritten by a stale pick. */
-  const cur0 = snap.current ? Object.assign({}, snap.current, { lessonplayer: isLessonPlayer(snap.current) }) : null;
+  const cur0 = snap.current ? Object.assign({}, snap.current, { protectedApp: !!protectedAppOf(snap.current) }) : null;
   const choice = MediaPick.choose({ pick: mediaPick, sessions, current: cur0, guardOn: mediaGuardOn(), now: Date.now() });
   mediaPick = choice.pick;
   if (choice.dropped) {
@@ -4751,32 +4754,32 @@ async function mediaRead() {
   const pickNote = (p) => Object.assign(p, choice.waiting ? { waiting: choice.waiting, reason: choice.waiting.reason } : {},
     choice.auto ? { auto: choice.auto } : {}, !mediaPick && mediaPickDropped ? { dropped: mediaPickDropped } : {});
 
-  /* LESSONPLAYER ALONE = NO CHIP (Owen's call, 2026-09-22). With the rule on and nothing but an
-     LessonPlayer lesson publishing a session, the bar shows no now-playing chip at all: a chip that
-     can only ever say "LessonPlayer · Student" and offer nothing is noise over every lesson. With a
-     player alongside it, the chip shows the player (below), and the card's source switcher still
-     lets Owen pick the lesson, which then shows with its controls off. A pick of the lesson does
-     not outlive the player: once LessonPlayer is alone again, this wins (lib/media-pick.js drops it).
+  /* PROTECTED APPS ALONE = NO CHIP (Owen's call, 2026-09-22). With the rule on and nothing but
+     protected apps publishing a session, the bar shows no now-playing chip at all: a chip that
+     can only ever name the protected app and offer nothing is noise. With a player alongside it,
+     the chip shows the player (below), and the card's source switcher still lets Owen pick the
+     protected app, which then shows with its controls off. A pick of it does not outlive the
+     player: once protected apps are alone again, this wins (lib/media-pick.js drops it).
      A pick of a PLAYER survives this (2026-09-25): the player blinking out for a moment is not
      Owen changing his mind. Not a failure: ok stays true, and the reason says what happened for
      anyone reading the payload. */
-  if (choice.lessonplayerOnly) {
+  if (choice.protectedOnly) {
     return {
       ok: true,
       present: true,
-      reason: 'only an LessonPlayer lesson has a media session, so the now-playing chip stays hidden (the LessonPlayer rule)',
+      reason: 'only protected media apps have a media session, so the now-playing chip stays hidden (the protected media apps rule)',
       rev: snap.rev === undefined ? null : snap.rev,
       guard,
       sessions,
       shown: null,
-      pick: pickNote({ aumid: null, by: 'lessonplayer-only' }),
+      pick: pickNote({ aumid: null, by: 'protected-only' }),
       events: snap.events !== false,
       eventsReason: snap.eventsReason || null,
     };
   }
 
   /* Which session to show, and why: 'you' (the pick), 'waiting' (the pick's session is away,
-     `auto` says which rule chose what shows meanwhile), 'current', 'lessonplayer-rule' or 'first'.
+     `auto` says which rule chose what shows meanwhile), 'current', 'protected-rule' or 'first'.
      The card says each out loud. */
   const want = choice.want;
   const by = choice.by;
@@ -4789,10 +4792,11 @@ async function mediaRead() {
     else shownReason = (s2 && (s2.sessionReason || s2.reason)) || `the session from ${want} could not be read`;
   }
   if (shown) {
-    shown = Object.assign({}, shown, { lessonplayer: isLessonPlayer(shown) });
+    const prot = protectedAppOf(shown);
+    shown = Object.assign({}, shown, { protectedApp: !!prot });
     { const own = mantleApps && mantleApps.mediaApp ? mantleApps.mediaApp(shown.aumid) : null; if (own) shown.app = Object.assign({}, shown.app || {}, own); }   // lane mantle-player: Mantle's own session = Mantle Player
-    shown.controls = shown.lessonplayer && mediaGuardOn()
-      ? { ok: false, reason: LESSONPLAYER_GUARD_REASON, how: LESSONPLAYER_GUARD_HOW }
+    shown.controls = prot && mediaGuardOn()
+      ? mediaGuardControls(prot)
       : { ok: true, reason: null, how: null };
   }
   return {
@@ -5874,11 +5878,11 @@ const COMMANDS = {
   // rejects, like the quick-settings calls: the bar draws the reason.
   'media.get': async () => mediaPush('the bar asked'),
   'media.select': async (a) => {
-    // null / missing = back to automatic (Windows' current session, under the LessonPlayer rule).
+    // null / missing = back to automatic (Windows' current session, under the protected media apps rule).
     // A pick (even of the same source again) starts a fresh grace (lib/media-pick.js).
     const aumid = a && a.aumid ? String(a.aumid) : null;
     const known = aumid ? ((lastMedia && lastMedia.sessions) || []).find((s) => sameAumid(s.aumid, aumid)) : null;
-    mediaPick = MediaPick.makePick(aumid, known || { aumid, lessonplayer: isLessonPlayer({ aumid }) }, Date.now());
+    mediaPick = MediaPick.makePick(aumid, known || { aumid, protectedApp: !!protectedAppOf({ aumid }) }, Date.now());
     mediaPickDropped = null;
     return mediaPush(mediaPick ? `a source was picked in the media card (${mediaPick.aumid})` : 'the media card went back to automatic');
   },
@@ -5891,11 +5895,12 @@ const COMMANDS = {
     if (!aumid) {
       return { ok: false, action, reason: 'media.control needs the AUMID of the session the button belongs to, so a press can never land on a different app' };
     }
-    // THE LESSONPLAYER RULE, enforced here and not only in the page. Judged on main's own last read
-    // (title and app name included, for LessonPlayer's web player), then on the AUMID alone.
+    // THE PROTECTED MEDIA APPS RULE, enforced here and not only in the page. Judged on main's own
+    // last read (title and app name included, for a web player), then on the AUMID alone.
     if (mediaGuardOn()) {
       const known = ((lastMedia && lastMedia.sessions) || []).find((s) => sameAumid(s.aumid, aumid));
-      if (isLessonPlayer(known || { aumid })) return { ok: false, action, aumid, reason: `${LESSONPLAYER_GUARD_REASON}. ${LESSONPLAYER_GUARD_HOW}.` };
+      const prot = protectedAppOf(known || { aumid });
+      if (prot) { const c = mediaGuardControls(prot); return { ok: false, action, aumid, reason: `${c.reason}. ${c.how}.` }; }
     }
     const args = { op: 'control', action, aumid };
     if (action === 'seek') args.positionMs = Number(a && a.positionMs);
@@ -7698,8 +7703,8 @@ function armDesktopGoneTest() {
  * notification area like any other, so the sidecar lists it, and the bar drew a button for the
  * shell it is part of (or, in a test instance, for the LIVE shell). Measured 2026-09-22 through
  * the UIA tray: it lists as title "Electron", exe
- * C:\Users\user\mantle\node_modules\electron\dist\electron.exe, hidden. Owen's own browser is
- * ALSO electron.exe (C:\Users\user\browser\...), so the exe NAME alone would hide his browser's
+ * <repo>\node_modules\electron\dist\electron.exe, hidden. Owen's own browser is a browser built on
+ * Electron, ALSO electron.exe, so the exe NAME alone would hide his browser's
  * icon too. The match is an electron.exe that lives in a mantle checkout (mantle, mantle-live,
  * any mantle-*), this process's own exe, or a live tooltip in the "Mantle (live|test)" form
  * updateTray() writes.

@@ -112,11 +112,11 @@ const SHOTS = [
   { name: 'media-compact', w: 1000, h: 60, q: '?mode=pill&media=playing' },   // too narrow: the title gives way
   { name: 'media-card', w: 1280, h: 330, q: '?mode=pill&media=playing', click: '#mchip' },
   { name: 'media-noctl', w: 1280, h: 330, q: '?mode=pill&media=noctl', click: '#mchip' },
-  /* LessonPlayer alone: NO chip (Owen's call, 2026-09-22), so nothing is clicked: the shot proves absence */
-  { name: 'media-lessonplayer', w: 1280, h: 60, q: '?mode=pill&media=lessonplayer' },
+  /* A protected media app alone: NO chip (Owen's call, 2026-09-22), so nothing is clicked: the shot proves absence */
+  { name: 'media-protected', w: 1280, h: 60, q: '?mode=pill&media=protected' },
   { name: 'media-both', w: 1280, h: 480, q: '?mode=pill&media=both', click: '#mchip' },   // 480: + the collapsed Up next row (spotq), 400 cut the card's top off in the SHOT
-  /* LessonPlayer picked in the switcher while a player also plays: the controls-off card */
-  { name: 'media-lessonplayer-picked', w: 1280, h: 480, q: '?mode=pill&media=both&pick=lessonplayer', click: '#mchip' },
+  /* The protected app picked in the switcher while a player also plays: the controls-off card */
+  { name: 'media-protected-picked', w: 1280, h: 480, q: '?mode=pill&media=both&pick=protected', click: '#mchip' },
   { name: 'media-off', w: 1280, h: 330, q: '?mode=pill&media=off', click: '#more' },   // the chip's reason, in words
   /* The source list holds still (mediapick lane, 2026-09-25): before a pick (Automatic lit), after
      picking Spotify (same rows, same tops, Spotify lit), Spotify's session blinking out (its row
@@ -136,7 +136,7 @@ const SHOTS = [
   { name: 'spq-long-1x', dsf: 1, w: 1280, h: 560, q: '?mode=pill&media=playing&spq=long', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },
   { name: 'spq-long-both', w: 1280, h: 560, q: '?mode=pill&media=both&spq=long', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },   // + the source list: the tallest card
   { name: 'spq-noport-both', w: 1280, h: 560, q: '?mode=pill&media=both&spq=noport', steps: ['#mchip', '.spq-head', { wait: 300 }, { probe: SPQ_FIT }] },   // the Restart state + the source list
-  { name: 'spq-lessonplayer', w: 1280, h: 560, q: '?mode=pill&media=both&pick=lessonplayer&spq=queue', steps: ['#mchip', { probe: SPQ_FIT }] },   // LessonPlayer shown: NO Up next row (probe queue:false)
+  { name: 'spq-protected', w: 1280, h: 560, q: '?mode=pill&media=both&pick=protected&spq=queue', steps: ['#mchip', { probe: SPQ_FIT }] },   // the protected app shown: NO Up next row (probe queue:false)
   { name: 'spq-collapsed', w: 1280, h: 420, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', { probe: SPQ_FIT }] },
   { name: 'spq-search', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'macklemore' }, { wait: 700 }, { probe: SPQ_FIT }] },
   { name: 'spq-played', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-list > :nth-child(5) .spq-row', { wait: 300 }, { probe: SPQ_FIT }] },   // a Next-up row: the queued ones before it are used up

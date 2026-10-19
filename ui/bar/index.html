@@ -65,8 +65,8 @@
   <div class="right">
     <div id="chips" class="chips" role="status" aria-live="polite"></div>
     <!-- NOW PLAYING: hidden while no app has a media session. The art and title open the media
-         card; the glyph is play/pause for the session shown, and is absent (not greyed) for an
-         LessonPlayer lesson under the LessonPlayer rule. bar.js fills both from main's 'media' push. -->
+         card; the glyph is play/pause for the session shown, and is absent (not greyed) for a
+         protected media app under its rule (lib/media-guard.js). bar.js fills both from main's 'media' push. -->
     <div id="media" class="media" role="group" aria-label="Now playing" hidden>
       <button id="mchip" class="btn mchip" type="button"><span class="mart" aria-hidden="true"></span><span class="mtxt"></span></button>
       <button id="mtog" class="btn mtog" type="button"></button>

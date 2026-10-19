@@ -92,7 +92,7 @@
   ];
   var TITLES = [
     'Inbox - Outlook',
-    'LessonPlayer - Algebra II - Unit 4, Lesson 12: Solving Systems of Three Linear Equations in Three Variables by Elimination and Substitution (Part 2 of 3) - Video Lecture with Captions',
+    'Contoso Player - Season 2 - Episode 12: Building a Timber Cabin by Hand from the Foundation to the Roof Using Only Reclaimed Wood (Part 2 of 3) - Video with Captions',
     'mantle - main.js - Visual Studio Code',
     'Spotify Premium',
     'Windows PowerShell',

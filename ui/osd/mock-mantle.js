@@ -42,7 +42,7 @@
     { key: 'pid:4120', pid: 4120, name: 'Spotify', path: 'C:\\Users\\user\\AppData\\Roaming\\Spotify\\Spotify.exe', active: true, level: 64, muted: false, sessions: 1, icon: icon('#1db954') },
     { key: 'pid:9876', pid: 9876, name: 'Microsoft Edge', path: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', active: true, level: 100, muted: false, sessions: 3, icon: icon('#2f6fe0') },
     { key: 'pid:2231', pid: 2231, name: 'Discord', path: 'C:\\Users\\user\\AppData\\Local\\Discord\\app-1.0.9212\\Discord.exe', active: true, level: 45, muted: true, sessions: 2, iconReason: 'no icon (Discord.exe: the mock has none)' },
-    { key: 'pid:5512', pid: 5512, name: 'LessonPlayer Learning Accelerator - Algebra II, Unit 4 Lesson 14 video player', path: 'C:\\Program Files\\LessonPlayer\\LessonPlayer.exe', active: true, level: 80, muted: false, sessions: 1, icon: icon('#c2410c') },
+    { key: 'pid:5512', pid: 5512, name: 'Contoso Player Studio - Season 2, Episode 14: The Long Way Round video player', path: 'C:\\Program Files\\Contoso\\ContosoPlayer.exe', active: true, level: 80, muted: false, sessions: 1, icon: icon('#c2410c') },
     { key: 'pid:3302', pid: 3302, name: 'Zoom Workplace', path: 'C:\\Users\\user\\AppData\\Roaming\\Zoom\\bin\\Zoom.exe', active: true, level: 72, muted: false, sessions: 1, icon: icon('#0b5cff') },
     { key: 'system', pid: 0, system: true, name: 'System Sounds', path: null, active: true, level: 100, muted: false, sessions: 1 },
     { key: 'pid:7710', pid: 7710, name: 'Minecraft Launcher', path: 'C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe', active: true, level: 90, muted: false, sessions: 1, icon: icon('#3f7d20') },

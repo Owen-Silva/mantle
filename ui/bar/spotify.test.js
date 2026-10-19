@@ -182,7 +182,7 @@ function pageHtml() {
     <button class="mc-btn" type="button">${G('<path d="M12 3.5v9M4 3.5v9L10 8z" fill="currentColor" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>')}</button></div>
   <div class="mc-src" hidden><div class="sub mc-srcwhy">Automatic: showing the session Windows calls current</div><div class="mc-srclist">
     <button class="mc-s on" type="button"><span class="mc-sico">S</span><span class="mc-stxt">Spotify · Pink + White</span></button>
-    <button class="mc-s" type="button"><span class="mc-sico">A</span><span class="mc-stxt">LessonPlayer · lesson</span></button>
+    <button class="mc-s" type="button"><span class="mc-sico">C</span><span class="mc-stxt">Contoso Player · recording</span></button>
     <button class="mc-s mc-auto" type="button">Automatic</button></div></div>
 </div></div>
 </body></html>`;
@@ -703,8 +703,8 @@ async function pageTests() {
       await H.fresh();
       await H.open();
       check('autopause: no line before anything is pushed', !(await H.vis('.spq-ap')));
-      await H.push('autopause.status', { ok: true, state: 'holding', words: 'Paused while LessonPlayer plays', card: 'Paused while LessonPlayer plays', mode: 'media' });
-      check('autopause: holding shows its line', (await H.text('.spq-ap')) === 'Paused while LessonPlayer plays' && (await H.vis('.spq-ap')), await H.text('.spq-ap'));
+      await H.push('autopause.status', { ok: true, state: 'holding', words: 'Paused while Contoso Player plays', card: 'Paused while Contoso Player plays', mode: 'media' });
+      check('autopause: holding shows its line', (await H.text('.spq-ap')) === 'Paused while Contoso Player plays' && (await H.vis('.spq-ap')), await H.text('.spq-ap'));
       await H.push('autopause.status', { ok: true, state: 'error', words: 'Spotify could not be paused: Windows did not answer', card: 'Couldn’t pause Spotify', mode: 'media' });
       check('autopause: a failure is said in the warn colour, its reason on hover', String(await H.attr('.spq-ap', 'class')).includes('bad') && String(await H.attr('.spq-ap', 'title')).includes('Windows did not answer'));
       await H.push('autopause.status', { ok: true, state: 'standby', words: 'The separate Spotify auto-pause helper on this PC is in charge, so Mantle’s stays off', card: '', mode: 'media' });
@@ -723,7 +723,7 @@ async function pageTests() {
     await run('autopause-switch', async (H) => {
       await H.fresh();
       await H.open();
-      await H.push('autopause.status', { ok: true, state: 'holding', words: 'Paused while LessonPlayer plays', card: 'Paused while LessonPlayer plays', mode: 'media' });
+      await H.push('autopause.status', { ok: true, state: 'holding', words: 'Paused while Contoso Player plays', card: 'Paused while Contoso Player plays', mode: 'media' });
       await H.expand();
       check('switch: hidden while More is closed (the closed card does not move)', !(await H.vis('.spq-apsw')));
       await H.clickText('More');

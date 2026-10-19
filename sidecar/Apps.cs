@@ -9,7 +9,7 @@
 // machine they fail badly:
 //
 //   * 5 of the 14 taskbar pins are Store apps with NO .lnk anywhere - Calculator,
-//     Settings, Terminal, LessonPlayer, Xbox. A launcher that scans .lnk files simply
+//     Settings, Terminal, Xbox and one more. A launcher that scans .lnk files simply
 //     cannot see them.
 //   * every UWP window belongs to ApplicationFrameHost.exe, not to the app, so
 //     grouping windows by exe puts all of them in one bogus pile and none of
