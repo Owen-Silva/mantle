@@ -1,7 +1,7 @@
 'use strict';
 /*
  * tools/build-emoji-data.js - builds ui/emoji/emoji-data.js, the emoji picker's bundled data (lane
- * mantle-emoji, 2026-10-15; plan notes/mantle-replace-windows.md P11). Run by hand when the data
+ * mantle-emoji, 2026-10-15; plan design notes: mantle-replace-windows P11). Run by hand when the data
  * should move to a newer Unicode release; the output is committed, so Mantle never fetches anything.
  *
  * SOURCES (all Unicode, Inc. data under the Unicode License v3, a permissive licence that asks for its

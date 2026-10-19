@@ -1,6 +1,6 @@
 'use strict';
 /*
- * tools/perf-budget.js - THE BUDGET GATE (P0 of notes/mantle-replace-windows.md; rules in PERF.md).
+ * tools/perf-budget.js - THE BUDGET GATE (P0 of design notes: mantle-replace-windows; rules in PERF.md).
  *
  *   node tools/perf-budget.js [--n=10] [--slack=1.5] [--surfaces=settings,files,...] [--strict]
  *                             [--no-lock] [--no-rerun] [--settle=15] [--out=<file.json>] [--json]

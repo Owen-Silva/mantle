@@ -4,7 +4,7 @@ Every new or changed surface meets these rules. A surface is anything Owen opens
 Settings, Task Manager, Files, the launcher, clipboard, notes, and every pop-up after them.
 `tools/perf-budget.js` (the gate) measures them; a broken budget fails it.
 
-Source: `notes/mantle-replace-windows.md`, section 3 (R1-R10) and P0. That plan was written when it
+Source: `design notes: mantle-replace-windows`, section 3 (R1-R10) and P0. That plan was written when it
 assumed some windows would be pre-made, so some rules below are changed. The changes are listed at the end.
 
 ## Owen's rule on RAM (2026-10-15)

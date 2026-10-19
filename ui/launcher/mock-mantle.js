@@ -166,7 +166,7 @@
     ['final report draft.docx', '~\\OneDrive\\Documents', 'file'],
     ['taxes', '~\\Documents', 'folder'],
     ['tax-notes.md', '~\\Documents\\taxes\\2025', 'file'],
-    ['chrome-profile', '~\\other-app', 'folder'],
+    ['chrome-profile', '~\\some-app', 'folder'],
     ['Steam screenshots', '~\\Pictures', 'folder'],
   ];
   function fileSearch(q) {

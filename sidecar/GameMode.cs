@@ -175,7 +175,7 @@ namespace Mantle {
       return "a helper of its app (only an app's pages are trimmed)";
     }
 
-    /// GAME-MODE BOOST (lane mantle-boost, 2026-10-15; notes/valorant-stutter.md section 6). ONE
+    /// GAME-MODE BOOST (lane mantle-boost, 2026-10-15; design notes: valorant-stutter section 6). ONE
     /// EmptyWorkingSet per idle background process, once per game, chosen by main (_gamemode-plan.js
     /// trimPlan) and checked AGAIN here. {items:[{pid, created, file}], dry?, testFgPid? (passive only)}
     /// -> {results:[{pid, file, ok, gone?, why?, kind?, wsBefore, wsAfter?, freed?}], trimmed, freed, passive}.

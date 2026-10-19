@@ -1,5 +1,5 @@
 /* qs-tiles.js - quick settings' new tiles: Airplane mode, Do not disturb, Focus, Project, Cast (lane
- * qstiles, 2026-10-15; plan notes/mantle-replace-windows.md P8).
+ * qstiles, 2026-10-15; plan design notes: mantle-replace-windows P8).
  *
  * WHAT IT TALKS TO: lib/features/qstiles.js (qstiles.state / .refresh / .set) and lib/features/project.js
  * (project.state / .refresh / .open / .cast). The words are _qstiles-core.js and _project-core.js, the

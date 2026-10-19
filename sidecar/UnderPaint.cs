@@ -30,7 +30,7 @@
 // than the hold (a few frames; a minimise / close animation longer) wins, the stale cache entry is dropped
 // and counted (`corrected`), and a hint that disagrees is reported to main (once per app; main says it).
 //
-// THE SWITCH FRAME (lane mn-underpaint, 2026-10-12, from the on-screen measurement in mantle-notes/toprow.md).
+// THE SWITCH FRAME (lane mn-underpaint, 2026-10-12, from the on-screen measurement in design notes: toprow).
 // EVENT_SYSTEM_FOREGROUND reaches this thread 14-20 ms before the window's first frame, but BEFORE Windows has
 // moved the window up the z-order (1-3 ms later for a plain activation, 7-18 ms for an attached one). Reading
 // the z-order on the event found the old window still on top in 105 of 105 switches, so nothing was predicted

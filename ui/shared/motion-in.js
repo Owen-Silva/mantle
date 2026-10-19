@@ -1,5 +1,5 @@
 /* motion-in.js - the shared pop-in trigger for a window that main shows and hides (lane mantle-motion,
- * 2026-10-16; the spec is notes/motion-unison.md, the curves are glass-light.css --m-*).
+ * 2026-10-16; the spec is design notes: motion-unison, the curves are glass-light.css --m-*).
  *
  * Puts html.m-shown on the frame AFTER the window comes on screen, and takes it off when the window
  * hides, so each surface's CSS can rest its pane in the "from" pose (a few px down, see-through) and

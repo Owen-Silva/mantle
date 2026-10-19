@@ -92,7 +92,7 @@
      tabs and icon buttons packed edge to edge never paint over their neighbours. tools/overlap-audit.js
      fails any ring that reaches another control or its text. Use: box-shadow: var(--lg-focus); outline: none */
   --lg-focus: inset 0 0 0 1.5px var(--lg-acc), inset 0 0 0 3px rgba(255,255,255,.9);
-  /* ---- MOTION IN UNISON (lane mantle-motion, 2026-10-16; the spec is notes/motion-unison.md) ----
+  /* ---- MOTION IN UNISON (lane mantle-motion, 2026-10-16; the spec is design notes: motion-unison) ----
      ONE motion for every pop-in in Mantle, Quartz and Helm, with the SAME names and values in all three
      theme files. Owen, on the bar's load-in: "we should make the rest ... similar so they are all in
      unison and its super professional".

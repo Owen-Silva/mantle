@@ -1,5 +1,5 @@
 // Emoji.cs - the sidecar half of Mantle's emoji picker (Win+. and Win+;), lane mantle-emoji 2026-10-15,
-// plan notes/mantle-replace-windows.md P11. lib/features/emoji.js is the main half, ui/emoji the page.
+// plan design notes: mantle-replace-windows P11. lib/features/emoji.js is the main half, ui/emoji the page.
 //
 // THE APP KEEPS THE FOCUS. Windows' own panel never takes the keyboard from the app you are typing in,
 // and neither does Mantle's: the panel window is WS_EX_NOACTIVATE (focusable:false), and while it is
