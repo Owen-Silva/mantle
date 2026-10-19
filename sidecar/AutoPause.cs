@@ -1,6 +1,6 @@
 // AutoPause.cs - `autopause.peaks`: how loud every app's audio is RIGHT NOW, and which process
 // tree it comes from. The read behind Spotify auto-pause (lib/features/autopause.js, r5-autopause
-// lane, 2026-09-30), which ports Owen's standalone PowerShell bridge (~/spotify-autopause) into
+// lane, 2026-09-30), which ports an earlier standalone PowerShell bridge into
 // Mantle.
 //
 //   {cmd:"autopause.peaks", everyMs?:250} -> {ok, warming, ageMs, readMs, devices,
@@ -9,11 +9,11 @@
 // READ ONLY. Nothing here writes a volume, a mute or a process; there is no write op at all, so a
 // --passive sidecar answers it like a live one.
 //
-// WHY THE CHAIN (measured on the bridge, 2026-09-10): LessonPlayer is a Store app, LessonPlayerApp.exe, and
-// its sound comes from a GRANDCHILD: LessonPlayerApp.exe -> msedgewebview2.exe -> msedgewebview2.exe.
+// WHY THE CHAIN (measured on the bridge, 2026-09-10): a Store lesson app (a WinUI 3 exe) plays its
+// sound from a GRANDCHILD: LessonApp.exe -> msedgewebview2.exe -> msedgewebview2.exe.
 // Metering the app's own pid reads 0.0000 for ever. So every session comes back with its process
 // and up to 8 ancestors (the bridge's hop limit), each with its exe name and, for a packaged app, its
-// package family ("Contoso.LessonPlayer_8wekyb3d8bbwe" = the part of the media session's
+// package family ("Publisher.App_<hash>" = the part of the media session's
 // AUMID before the '!'), and main matches a media session to a session here by either.
 //
 // WHY EVERY ACTIVE OUTPUT, not only the default: a headset that is not the default still plays the
