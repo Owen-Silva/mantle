@@ -25,9 +25,9 @@ const { chromium } = require('../../tools/dev-env.js').playwright();
 /* MANTLE_THEME=dark|light forces <html data-theme> before first paint and fires 'mantle-theme',
    the harness stand-in for the CLI's --theme= (lane dm-launcher, 2026-10-08) */
 const THEME = ['dark', 'light'].includes(process.env.MANTLE_THEME) ? process.env.MANTLE_THEME : null;
-const PAGE = 'file:///C:/Users/user/mantle/ui/launcher/index.html';
+const PAGE = require('url').pathToFileURL(path.join(__dirname, 'index.html')).href;
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/edd3247c-6214-4642-9069-bbf7e50b1555/scratchpad/lanes/launcher';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'launcher');
 /* ONLY=06,07 shoots just the scenarios whose names start with those numbers */
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 const DPR = 1.25;

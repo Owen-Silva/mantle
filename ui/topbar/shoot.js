@@ -22,7 +22,7 @@ const PAGE = process.env.MANTLE_TOPBAR_PAGE || 'file:///' + path.join(__dirname,
 // MANTLE_THEME=dark: the shot list above in dark (<html data-theme="dark"> before the first paint)
 const THEME = process.env.MANTLE_THEME === 'dark' ? 'dark' : 'light';
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/topbar/shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'topbar');
 
 const SHOTS = [
   ['01-npp-closed', 'app=npp'],
@@ -433,7 +433,7 @@ async function otherPages(browser, check) {
     const errs = [];
     p.on('pageerror', (e) => errs.push(e.message));
     try {
-      await p.goto('file:///C:/Users/user/mantle/' + file + '?' + q);
+      await p.goto(require('url').pathToFileURL(path.join(__dirname, '..', '..', file)).href + '?' + q);
       await p.waitForTimeout(500);
       await p.screenshot({ path: path.join(OUT, `${name}.png`) });
       const scroll = await p.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
@@ -452,9 +452,9 @@ async function otherPages(browser, check) {
    brightest ground pixel under each surface (a second shot with every word made transparent). Then the
    pre-show (no frame shows a dropdown before its glass; a slow or failed picture shows the fallback and
    says why), and the strip's bottom edge (Owen's dark line), row by row. */
-const SCENES_DIR = 'C:/Users/user/AppData/Local/Temp/claude/mantle-dark/see-glass/scenes/';
+const SCENES_DIR = (process.env.MANTLE_GLASS_SCENES || path.join(require('os').tmpdir(), 'mantle-shots', 'glass-scenes')).replace(/\\/g, '/') + '/';
 const SCENES = [['a', 'a-owen-snow-peak.jpg'], ['b', 'b-bright-sand-ripples.jpg'], ['c', 'c-dark-terminal.png']];
-const GLASS_OUT = process.env.MANTLE_GLASS_OUT || 'C:/Users/user/AppData/Local/Temp/claude/mantle-dark/shots-see/same-bars/topbar';
+const GLASS_OUT = process.env.MANTLE_GLASS_OUT || path.join(require('os').tmpdir(), 'mantle-shots', 'glass-topbar');
 const PRISTINE = process.env.MANTLE_TOPBAR_PRISTINE || '';   // a copy of the page before this lane (index.html URL), for before/after
 const FLAT = '#6a6a6a';
 const SURF = [   // [name, query, which box]

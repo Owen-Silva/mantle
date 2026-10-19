@@ -30,9 +30,9 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { chromium } = require('../../tools/dev-env.js').playwright();
 
-const PAGE = 'file:///C:/Users/user/mantle/ui/switcher/index.html';
+const PAGE = require('url').pathToFileURL(path.join(__dirname, 'index.html')).href;
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/alttab/shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'alttab');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 
 const SHOTS = [];

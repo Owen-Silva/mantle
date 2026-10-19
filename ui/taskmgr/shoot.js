@@ -27,7 +27,7 @@ function findChrome() {
   return null;
 }
 
-const OUT = process.env.TASKMGR_SHOTS || 'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/taskmgrfx-shots';
+const OUT = process.env.TASKMGR_SHOTS || path.join(require('os').tmpdir(), 'mantle-shots', 'taskmgrfx');
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const SHOTS = [
   ['1-apps', 'apps', 780, 640],

@@ -51,7 +51,7 @@ function findChrome() {
 
 /* BAR_PAGE=<file url> runs the same checks against another copy of the page, which is how the
    failure is shown on a copy of bar.js without the fix (the repo's own files are never edited). */
-const PAGE = process.env.BAR_PAGE || 'file:///C:/Users/user/mantle/ui/bar/index.html';
+const PAGE = process.env.BAR_PAGE || require('url').pathToFileURL(path.join(__dirname, 'index.html')).href;
 const DOWN = 0.62;             // bar.css --pane-w at rest: the pill's width before its entrance
 const H_PILL = 62, H_PARKED = 48;   // live: pill 1400x77 and parked 868x60 physical px at 125 %
 

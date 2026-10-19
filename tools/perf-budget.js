@@ -74,7 +74,7 @@ const SURFACES = [
 ];
 
 // ------------------------------------------------------------------ pure helpers (tools/perf-budget.test.js)
-/** Nearest-rank quantile, the same rule as mantle-notes/speed-work/measure.js. */
+/** Nearest-rank quantile, the same rule as the speed-work measuring script. */
 function quantile(a, p) {
   const s = a.filter((x) => typeof x === 'number' && isFinite(x)).sort((u, v) => u - v);
   if (!s.length) return null;

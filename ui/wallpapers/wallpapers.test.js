@@ -20,7 +20,7 @@ const fs = require('fs');
 const ROOT = path.resolve(__dirname, '..', '..');
 const PAGE = 'file:///' + path.join(ROOT, 'ui', 'wallpapers', 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/7e5085b9-5bec-43fe-aecd-5fe5701b290a/scratchpad/lanes/launch/shots/desk';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'launch-desk');
 const BASE = (process.argv.find((a) => a.startsWith('--base=')) || '').slice(7);
 
 let passed = 0;

@@ -31,7 +31,7 @@ const G = require('./geometry.js');
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');   // this checkout's pages
 const CARD = 'file:///' + path.join(__dirname, 'card.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/screenshot/shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'screenshot');
 const EXE = process.env.MANTLE_SIDECAR_EXE || '';
 
 let passed = 0;

@@ -1,7 +1,7 @@
 'use strict';
 // ON-SCREEN check for the dead-hook detector (lane mn-hook): the parts test-hook-health.js cannot
 // pretend, with REAL input. Run it ONLY in the visible slot (machine idle >= 3 min, holding
-// mantle-notes/visible.lock). It injects input only into its own probe window (sidecar/hook-probe.ps1:
+// visible.lock in the tools/dev-env.js scratch folder). It injects input only into its own probe window (sidecar/hook-probe.ps1:
 // the letter Q into its own text box, and a mouse move of 0,0), never a Win key, Alt or Tab.
 //   1. raw keyboard input really reaches the sidecar's message-only window, and a live hook resets
 //      the count (no false alarm while typing);

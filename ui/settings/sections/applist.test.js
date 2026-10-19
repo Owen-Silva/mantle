@@ -10,7 +10,7 @@ require('../../../tools/dev-env.js').lowcpu();
  * PART 2 (headless chromium over file://, never Electron, never a real setting): the REAL page file on
  * the settings lane's mock, settings.applist.* played by FAKE() over MADE-UP fixtures (Startup uses the
  * mock's own made-up startup list). Every page must draw every search row it declares; shots go to
- * MANTLE_SHOOT_OUT (default scratchpad/lanes/appsacct-shots).
+ * MANTLE_SHOOT_OUT (default %TEMP%/mantle-shots/appsacct).
  *
  *   node ui/settings/sections/applist.test.js      (ONLY=app-03 for some shots)
  * Prints "APPS PAGE TEST: n passed, m failed". A game running = part 2 is skipped (and said).
@@ -24,7 +24,7 @@ const { execSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const PAGE = 'file:///' + path.resolve(__dirname, '..', 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/lanes/appsacct-shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'appsacct');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 
 let passed = 0;

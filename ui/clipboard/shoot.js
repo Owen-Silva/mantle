@@ -23,7 +23,7 @@ const { chromium } = require('../../tools/dev-env.js').playwright();
 
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');   // this checkout's page
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/clip/shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'clip');
 
 const SHOTS = [];
 for (const dark of [0, 1]) {

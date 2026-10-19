@@ -4,7 +4,7 @@
  * LINE 1 below is not optional (same rule as ui/bar/shoot.js): lowcpu.js pins this process and
  * its browser to a few cores at below-normal priority and allows one headless browser at a time.
  *
- *   node ui/shared/tips-shoot.js      shots into TIPS_SHOTS (default: the lane scratchpad), then
+ *   node ui/shared/tips-shoot.js      shots into TIPS_SHOTS (default: %TEMP%/mantle-shots/tips), then
  *                                     one line per check and "TIPS HEADLESS: N passed, M failed"
  *
  * The viewport is the live pill window's width and taller than the pill, so there is room above it
@@ -36,8 +36,8 @@ function findChrome() {
 }
 
 const OUT = process.env.TIPS_SHOTS ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/fe6c395c-2ffc-4958-a961-d5833371924e/scratchpad/tips-shots';
-const PAGE = 'file:///C:/Users/user/mantle/ui/bar/index.html';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'tips');
+const PAGE = require('url').pathToFileURL(path.join(__dirname, '..', 'bar', 'index.html')).href;
 const WALL = {
   dark: 'html{background:#141619 !important;}',
   light: 'html{background:linear-gradient(160deg,#eef2f7 0%,#d9e2ee 55%,#c9d6e6 100%) !important;}'

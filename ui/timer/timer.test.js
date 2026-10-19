@@ -15,7 +15,7 @@ const { execSync } = require('child_process');
 
 const PAGE = 'file:///' + path.resolve(__dirname, 'index.html').replace(/\\/g, '/');
 const OUT = process.env.MANTLE_SHOOT_OUT ||
-  'C:/Users/user/AppData/Local/Temp/claude/C--Users-owens/7e5085b9-5bec-43fe-aecd-5fe5701b290a/scratchpad/lanes/topbar/timer/shots';
+  path.join(require('os').tmpdir(), 'mantle-shots', 'topbar-timer');
 const WIN = { w: 344, h: 132 };   // lib/features/timer.js: CARD 320 x 108 + PAD 12/12/6/18
 const CARD_MAX = 108;
 
