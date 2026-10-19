@@ -70,7 +70,7 @@
   for (var d = 0; d < D; d++) {
     var named = d === 1;
     desks.push({ id: 'D' + d + '000000-0000-0000-0000-000000000000', index: d, named: named,
-                 name: named ? (LONG ? 'Side projects, the long-named desktop for everything' : 'Work') : 'Desktop ' + (d + 1) });
+                 name: named ? (LONG ? 'Side projects, the long-named desktop for everything' : 'Projects') : 'Desktop ' + (d + 1) });
   }
   var current = desks[0].id;
   var items = [];

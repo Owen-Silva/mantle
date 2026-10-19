@@ -164,7 +164,7 @@
     ['Report - term 1 budget.pdf', '~\\Documents\\taxes', 'file'],
     ['repos', '~', 'folder'],
     ['final report draft.docx', '~\\OneDrive\\Documents', 'file'],
-    ['school', '~\\Documents', 'folder'],
+    ['taxes', '~\\Documents', 'folder'],
     ['tax-notes.md', '~\\Documents\\taxes\\2025', 'file'],
     ['chrome-profile', '~\\other-app', 'folder'],
     ['Steam screenshots', '~\\Pictures', 'folder'],
