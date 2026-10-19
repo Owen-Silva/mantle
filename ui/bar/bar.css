@@ -1267,7 +1267,7 @@ body.pill .chips { display: none; }
 .mc-btn.busy { opacity: .55; }
 .mc-btn:focus-visible { outline: 1px solid var(--lg-acc); outline-offset: -1px; }
 
-/* the LessonPlayer rule: said in place of the buttons, never a row of dead ones */
+/* the protected media apps rule (lib/media-guard.js): said in place of the buttons, never a row of dead ones */
 .mc-lock { margin-top: 12px; padding: 9px 10px; border-radius: var(--lg-r); background: var(--lg-sunk); line-height: 1.45; }
 .mc-lockhead { color: var(--lg-ink); }
 .mc-lock .sub { margin-top: 3px; }

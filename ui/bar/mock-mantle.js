@@ -33,10 +33,12 @@
  *   ?edge=top     pretend the bar is docked at the top (bar.js also honours this)
  *   ?media=X      now playing, in main's 'media' payload shape (main.js NOW PLAYING): playing,
  *                 paused, noctl (an app that refuses next/previous: greyed WITH reasons),
- *                 lessonplayer (only an LessonPlayer lesson: the LessonPlayer rule, NO CHIP at all), both (LessonPlayer
- *                 current AND a player: the chip shows the player), off (the old sidecar: a reason)
- *   ?pick=lessonplayer with media=both: as if LessonPlayer had been picked in the card's source switcher,
- *                 the one way left to see the LessonPlayer "controls off" card
+ *                 protected (only a protected media app, lib/media-guard.js: NO CHIP at all), both
+ *                 (the protected app current AND a player: the chip shows the player), off (the old
+ *                 sidecar: a reason). The mock plays main started with --media-guard and one
+ *                 protected app, the fictional "Contoso Player".
+ *   ?pick=protected with media=both: as if the protected app had been picked in the card's source
+ *                 switcher, the one way left to see the "controls off" card
  *   ?tray=1       a readable tray: a white icon, a coloured one, two hidden ones. A page that
  *                 sets window.__MOCK_TRAY__ before this file runs (ui/bar/shoot.js does, from a
  *                 real sidecar listing) gets that list instead, so real icons can be eyeballed
@@ -210,7 +212,7 @@
     var long = JL === 'long';
     r.sections.push({ name: 'Pinned', kind: 'pinned', items: jlItems(long ? 5 : 2, 'pinned', 'item', ICON_B, DOCS.slice(3)) });
     r.sections.push({ name: 'Recent', kind: 'recent', items: jlItems(long ? 12 : 6, 'recent', 'item', ICON_B, DOCS) });
-    if (long) r.sections.push({ name: 'Most visited', kind: 'custom', items: jlItems(8, 'Site', 'link', ICON_A, ['GitHub', 'Northwind dashboard', 'LessonPlayer', 'YouTube', 'Sports scores', 'Gmail', 'Robinhood', 'Claude']) });
+    if (long) r.sections.push({ name: 'Most visited', kind: 'custom', items: jlItems(8, 'Site', 'link', ICON_A, ['GitHub', 'Northwind dashboard', 'Wikipedia', 'YouTube', 'Weather', 'Gmail', 'Robinhood', 'Claude']) });
     r.sections.push({ name: 'Tasks', kind: 'tasks', items: long ? tasks.concat([{ sep: true }, { title: 'Settings', tip: 'msedge.exe edge://settings', icon: ICON_A, item: 'c:1:9', kind: 'task' }]) : tasks });
     return r;
   }
@@ -650,13 +652,13 @@
   }
   /* ---- now playing ----------------------------------------------------
      main's 'media' payload, built the way main.js builds it (NOW PLAYING): sessions, the one
-     shown (full, with `can`, timeline and artwork), the pick and why, and the LessonPlayer guard. The
+     shown (full, with `can`, timeline and artwork), the pick and why, and the media guard. The
      art is painted on a canvas here, not shipped: it only has to be a real PNG data URL. */
   var MEDIA = q.get('media') || '';
-  /* ?pick=lessonplayer starts as if Owen had picked LessonPlayer in the card's source switcher (the only
-     way to reach the controls-off card now that LessonPlayer alone shows no chip at all). */
-  var mediaPick = q.get('pick') === 'lessonplayer' ? 'Contoso.LessonPlayer_8wekyb3d8bbwe!App' : null;
-  /* ?pick=spotify: Spotify picked. With ?media=wait (LessonPlayer + Media Player, no Spotify) that is
+  /* ?pick=protected starts as if Owen had picked the protected app in the card's source switcher
+     (the only way to reach the controls-off card now that it alone shows no chip at all). */
+  var mediaPick = q.get('pick') === 'protected' ? 'Contoso.Player_abc123xyz!App' : null;
+  /* ?pick=spotify: Spotify picked. With ?media=wait (Contoso + Media Player, no Spotify) that is
      the HELD pick main keeps for 60 s while the picked session is away (lib/media-pick.js,
      mediapick lane 2026-09-25); __mockMain.media(name) swaps the sessions mid-shot. */
   if (q.get('pick') === 'spotify') mediaPick = 'Spotify.exe';
@@ -681,63 +683,63 @@
     }
     return c.toDataURL('image/png');
   }
-  var SPOT_ICON = null, ACEL_ICON = null, ART = null;
+  var SPOT_ICON = null, PROT_ICON = null, ART = null;
   function icons() {
     if (ART) return;
     SPOT_ICON = tile(32, ['#1ed760', '#169c46'], 'S');
-    ACEL_ICON = tile(32, ['#2b6cb0', '#1a4a80'], 'A');
+    PROT_ICON = tile(32, ['#2b6cb0', '#1a4a80'], 'C');
     ART = tile(96, ['#e0a059', '#b23fd0'], null);
   }
 
   var SPOTIFY = { aumid: 'Spotify.exe', app: { name: 'Spotify', icon: null }, title: 'Midnight City', artist: 'M83',
-    album: "Hurry Up, We're Dreaming", status: 'playing', playing: true, lessonplayer: false,
+    album: "Hurry Up, We're Dreaming", status: 'playing', playing: true, protectedApp: false,
     can: { play: true, pause: true, toggle: true, next: true, previous: true, stop: false, seek: true },
     timeline: { available: true, durationMs: 243000, positionMs: 71000, positionNowMs: 71000 }, rate: 1 };
-  var LESSONPLAYER = { aumid: 'Contoso.LessonPlayer_8wekyb3d8bbwe!App', app: { name: 'LessonPlayer', icon: null }, title: 'LessonPlayer',
-    artist: 'Student', album: null, status: 'playing', playing: true, lessonplayer: true,
+  var PROTECTED = { aumid: 'Contoso.Player_abc123xyz!App', app: { name: 'Contoso Player', icon: null }, title: 'Contoso Player',
+    artist: 'Recording', album: null, status: 'playing', playing: true, protectedApp: true, label: 'recording',
     can: { play: true, pause: true, toggle: true, next: false, previous: false, stop: false, seek: false },
-    timeline: { available: false, reason: 'LessonPlayer does not publish a position or length' }, rate: 1 };
+    timeline: { available: false, reason: 'Contoso Player does not publish a position or length' }, rate: 1 };
   var RADIO = { aumid: 'Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic', app: { name: 'Media Player', icon: null },
-    title: 'Morning news bulletin', artist: 'BBC Radio 4', album: null, status: 'playing', playing: true, lessonplayer: false,
+    title: 'Morning news bulletin', artist: 'BBC Radio 4', album: null, status: 'playing', playing: true, protectedApp: false,
     can: { play: false, pause: true, toggle: true, next: false, previous: false, stop: true, seek: false },
     timeline: { available: false, reason: 'Media Player does not publish a position or length' }, rate: 1 };
 
   function mediaSessions() {
     icons();
     SPOTIFY.app.icon = SPOT_ICON; SPOTIFY.artwork = ART;
-    LESSONPLAYER.app.icon = ACEL_ICON; LESSONPLAYER.artwork = null; LESSONPLAYER.artworkReason = 'LessonPlayer publishes no thumbnail';
+    PROTECTED.app.icon = PROT_ICON; PROTECTED.artwork = null; PROTECTED.artworkReason = 'Contoso Player publishes no thumbnail';
     if (MEDIA === 'playing') return [SPOTIFY];
     if (MEDIA === 'paused') { SPOTIFY.status = 'paused'; SPOTIFY.playing = false; return [SPOTIFY]; }
     if (MEDIA === 'noctl') return [RADIO];
-    if (MEDIA === 'lessonplayer') return [LESSONPLAYER];
-    if (MEDIA === 'both') return [LESSONPLAYER, SPOTIFY];
-    if (MEDIA === 'three') return [LESSONPLAYER, SPOTIFY, RADIO];
-    if (MEDIA === 'wait') return [LESSONPLAYER, RADIO];   // Spotify's session blinked out
+    if (MEDIA === 'protected') return [PROTECTED];
+    if (MEDIA === 'both') return [PROTECTED, SPOTIFY];
+    if (MEDIA === 'three') return [PROTECTED, SPOTIFY, RADIO];
+    if (MEDIA === 'wait') return [PROTECTED, RADIO];   // Spotify's session blinked out
     return [];
   }
 
   function mediaPayload() {
-    var guard = { on: true, reason: "LessonPlayer lesson \u00b7 controls off so a stray click can't pause it",
-      how: 'Mantle leaves LessonPlayer alone while you record lessons; start Mantle with --lessonplayer-media-controls to allow them' };
+    var guard = { on: true, apps: ['Contoso Player'], reason: "Contoso Player recording \u00b7 controls off so a stray click can't pause it",
+      how: 'Mantle was started with --media-guard; start it without that flag to allow them' };
     if (MEDIA === 'off')
       return { ok: false, present: false, reason: 'this sidecar exe has no "media" command yet (run npm run build:sidecar)',
         guard: guard, sessions: [], shown: null, pick: null, events: false };
     var all = mediaSessions();
-    /* Owen's call (2026-09-22), as main.js makes it: when the only session is LessonPlayer there is no
-       chip at all, and a pick of LessonPlayer does not outlive the other player. */
-    if (all.length && all.every(function (s) { return s.lessonplayer; })) {
-      if (mediaPick === LESSONPLAYER.aumid) mediaPick = null;   // a player pick is held (main.js, 2026-09-25)
-      return { ok: true, present: true, reason: 'only an LessonPlayer lesson has a media session, so the now-playing chip stays hidden (the LessonPlayer rule)',
+    /* Owen's call (2026-09-22), as main.js makes it: when the only sessions are protected apps there
+       is no chip at all, and a pick of one does not outlive the other player. */
+    if (all.length && all.every(function (s) { return s.protectedApp; })) {
+      if (mediaPick === PROTECTED.aumid) mediaPick = null;   // a player pick is held (main.js, 2026-09-25)
+      return { ok: true, present: true, reason: 'only protected media apps have a media session, so the now-playing chip stays hidden (the protected media apps rule)',
         rev: 1, guard: guard,
-        sessions: all.map(function (s) { return { aumid: s.aumid, app: s.app, title: s.title, artist: s.artist, status: s.status, playing: s.playing, current: true, lessonplayer: s.lessonplayer }; }),
-        shown: null, pick: { aumid: null, by: 'lessonplayer-only' }, events: true, eventsReason: null };
+        sessions: all.map(function (s) { return { aumid: s.aumid, app: s.app, title: s.title, artist: s.artist, status: s.status, playing: s.playing, current: true, protectedApp: s.protectedApp, label: s.label || null }; }),
+        shown: null, pick: { aumid: null, by: 'protected-only' }, events: true, eventsReason: null };
     }
     var cur = all[0] || null;               // Windows' current: the first, as the fixtures are ordered
     var shown = null, by = null;
     var picked = mediaPick && all.filter(function (s) { return s.aumid === mediaPick; })[0];
     if (picked) { shown = picked; by = 'you'; }
-    else if (cur && !cur.lessonplayer) { shown = cur; by = 'current'; }
-    else if (all.some(function (s) { return !s.lessonplayer; })) { shown = all.filter(function (s) { return !s.lessonplayer; })[0]; by = 'lessonplayer-rule'; }
+    else if (cur && !cur.protectedApp) { shown = cur; by = 'current'; }
+    else if (all.some(function (s) { return !s.protectedApp; })) { shown = all.filter(function (s) { return !s.protectedApp; })[0]; by = 'protected-rule'; }
     else if (cur) { shown = cur; by = 'current'; }
     // a picked session that is away: held, automatic shown meanwhile (main's by 'waiting')
     var waiting = null;
@@ -754,24 +756,24 @@
       // the sidecar's estimate at read time: the mock's clock moves it the way the real one does
       if (full.timeline && full.timeline.available && full.playing)
         full.timeline.positionNowMs = Math.min(full.timeline.durationMs, full.timeline.positionMs + (Date.now() - mediaAt));
-      full.controls = full.lessonplayer ? { ok: false, reason: guard.reason, how: guard.how } : { ok: true, reason: null, how: null };
+      full.controls = full.protectedApp ? { ok: false, reason: guard.reason, how: guard.how } : { ok: true, reason: null, how: null };
     }
     return {
       ok: true, present: all.length > 0, reason: all.length ? null : 'nothing is playing: no app has a media session open',
       rev: 1, guard: guard,
-      sessions: all.map(function (s) { return { aumid: s.aumid, app: s.app, title: s.title, artist: s.artist, status: s.status, playing: s.playing, current: s === cur, lessonplayer: s.lessonplayer }; }),
+      sessions: all.map(function (s) { return { aumid: s.aumid, app: s.app, title: s.title, artist: s.artist, status: s.status, playing: s.playing, current: s === cur, protectedApp: s.protectedApp, label: s.label || null }; }),
       shown: full, pick: full ? (waiting ? { aumid: full.aumid, by: 'waiting', auto: by, waiting: waiting, reason: waiting.reason } : { aumid: full.aumid, by: by }) : null,
       events: true, eventsReason: null
     };
   }
 
   /* Plays along for a player (flips play/pause, so the glyph can be watched changing) and refuses
-     what main refuses: an LessonPlayer target, a missing AUMID, a button the app does not accept. */
+     what main refuses: a protected app's target, a missing AUMID, a button the app does not accept. */
   function mediaControl(p) {
     var s = mediaSessions().filter(function (x) { return x.aumid === p.aumid; })[0];
     if (!p.aumid) return { ok: false, reason: 'media.control needs the AUMID of the session the button belongs to, so a press can never land on a different app' };
     if (!s) return { ok: false, reason: 'nothing to control: no media session from ' + p.aumid + ' is open' };
-    if (s.lessonplayer) return { ok: false, reason: "LessonPlayer lesson \u00b7 controls off so a stray click can't pause it. (mock: main refuses this whatever the page sends)" };
+    if (s.protectedApp) return { ok: false, reason: "Contoso Player recording \u00b7 controls off so a stray click can't pause it. (mock: main refuses this whatever the page sends)" };
     if (p.action === 'toggle') {
       if (s.timeline && s.timeline.available && s.playing) s.timeline.positionMs = Math.min(s.timeline.durationMs, s.timeline.positionMs + (Date.now() - mediaAt));
       mediaAt = Date.now();

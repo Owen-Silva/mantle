@@ -3289,9 +3289,9 @@
   /* ================================================================= now playing
 
      The chip in the right island and the card behind it (2026-09-22). MAIN does the choosing
-     and the guarding (main.js, NOW PLAYING): which session is shown, whether the LessonPlayer rule has
-     taken its controls away, and main refuses a control aimed at an LessonPlayer session whatever this
-     page sends. This page draws what it is given, and every button names its session by AUMID.
+     and the guarding (main.js, NOW PLAYING): which session is shown, whether the protected media
+     apps rule (lib/media-guard.js) has taken its controls away, and main refuses a control aimed
+     at a protected app's session whatever this page sends. This page draws what it is given, and every button names its session by AUMID.
 
      Idle cost stays ~0: the chip changes only when main pushes 'media' (the sidecar's change
      events, never a poll), and the card's progress bar ticks from a local clock ONLY while the
@@ -3429,7 +3429,7 @@
     el.mchip.title = s.idle ? 'Spotify is ready, nothing is playing\nClick to play something'
       : mediaLine(s) + '\n' + mediaApp(s) + ' · ' + mediaStatus(s) +
       (mediaGuarded(s) ? '\n' + s.controls.reason : '') + '\nClick for the media card';
-    /* Under the LessonPlayer rule there is no glyph at all, not a greyed one: a button that is there
+    /* Under the protected media apps rule there is no glyph at all, not a greyed one: a button that is there
        invites exactly the stray click the rule exists to stop. The card says why. */
     var guarded = mediaGuarded(s);
     el.mtog.hidden = guarded || !!s.idle;   // idle Spotify: nothing to play or pause until something is loaded
@@ -3543,7 +3543,7 @@
        keeps switching to accelus or automatic". The rows followed main's session order (which
        moves when Windows' current session does) and an "Automatic" row was APPENDED the moment a
        pick was made; the card grows upward from the bar, so every row jumped up by one and the
-       next click, or a double-click's second half, landed on LessonPlayer or Automatic. Now: one row
+       next click, or a double-click's second half, landed on another app or Automatic. Now: one row
        per app in NAME order, "Automatic" always last (lit when it is in charge), exactly one row
        lit (the choice, not merely what shows), rows reused in place and rebuilt only when the set
        of apps changes, a picked app whose session blinked out keeps its row while main holds the
@@ -3666,7 +3666,7 @@
           srcAuto = mk('button', 'mc-s mc-auto', 'Automatic');
           srcAuto.type = 'button';
           srcAuto.dataset.aumid = '';
-          srcAuto.title = 'Go back to the session Windows calls current (under the LessonPlayer rule, anything but LessonPlayer first)';
+          srcAuto.title = 'Go back to the session Windows calls current' + (m.guard && m.guard.on ? ' (under the protected media apps rule, anything but a protected app first)' : '');
           srcAuto.addEventListener('click', function () {
             if (srcAuto.classList.contains('on')) return;
             srcPick(null, 'Automatic');
@@ -3686,7 +3686,7 @@
             if (icon) { var im = document.createElement('img'); im.alt = ''; im.src = icon; ic.appendChild(im); }
             else ic.textContent = letterOf(name);
           }
-          b.lastChild.textContent = name + (x.gone ? ' · session gone, waiting for it' : x.lessonplayer ? ' · lesson' : (x.title ? ' · ' + x.title : ''));
+          b.lastChild.textContent = name + (x.gone ? ' · session gone, waiting for it' : x.label ? ' · ' + x.label : (x.title ? ' · ' + x.title : ''));
           b.title = x.gone
             ? name + "'s media session is missing right now. Your pick is kept for up to " + Math.round((wait.graceMs || 60000) / 1000) + ' s and applies again the moment it is back'
             : name + (x.title ? ': ' + x.title : '') + ' (' + mediaStatus(x) + ')';
@@ -3697,7 +3697,7 @@
       var autoWhy = by === 'waiting' ? pk.auto : by;
       srcWhy.textContent = by === 'you' ? 'Showing the source you picked'
         : wait ? (pk.reason || wait.reason || (wait.name || 'The picked app') + "'s session is missing; showing automatic until it's back")
-        : autoWhy === 'lessonplayer-rule' ? 'Automatic: showing ' + mediaApp(s) + ' rather than your LessonPlayer lesson (the LessonPlayer rule)'
+        : autoWhy === 'protected-rule' ? 'Automatic: showing ' + mediaApp(s) + ' rather than ' + (m.guard && m.guard.apps && m.guard.apps.length ? m.guard.apps.join(', ') : 'a protected app') + ' (the protected media apps rule)'
         : 'Automatic: showing the session Windows calls current';
       if (!held && pk.dropped && pk.dropped.reason) srcWhy.textContent += ' · ' + pk.dropped.reason;
       if (dup) srcWhy.textContent += ' · ' + dup + ' more from the same app' + (dup > 1 ? 's' : '') + ' (Windows gives them one address, so they share a row)';
@@ -3927,7 +3927,7 @@
         }
         var b = el.pop.querySelector('.mc-btn.main');
         if (b) b.click();
-        else fail('testclick', 'no play button', 'the test hook opened the media card and found no play/pause button (LessonPlayer rule, or no session)', 'warn');
+        else fail('testclick', 'no play button', 'the test hook opened the media card and found no play/pause button (protected media apps rule, or no session)', 'warn');
       }
       return;
     }

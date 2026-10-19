@@ -200,7 +200,7 @@
   /* One read at a time; a result that lands after the card closed (or re-opened) is dropped. A read
      also notices Spotify quitting or restarting: its answer then carries the new state. */
   function refresh(first) {
-    // not while the card shows another source (LessonPlayer): paint() reads it once Spotify is shown again
+    // not while the card shows another source: paint() reads it once Spotify is shown again
     if (!S || !expanded || !S.shown || !S.status || S.loading) return;
     var st = S.status.state;
     if (st === 'off' || st === 'missing' || st === 'starting') return;
@@ -1036,7 +1036,7 @@
     sc.style.maxHeight = LIST_PREF + 'px';
     var over = pop.offsetHeight + 16 - ROOM_MAX;
     var have = Math.min(LIST_PREF, sc.offsetHeight);
-    /* Two sources (Spotify + an LessonPlayer lesson) add the switcher's rows: with the queue open there
+    /* Two sources (Spotify + another app) add the switcher's rows: with the queue open there
        is then no room for a useful list, so the switcher folds away, SAID in the card, until Up next
        is closed again. */
     var src = pop.querySelector('.mc-src');
@@ -1116,7 +1116,7 @@
       var chev = mk('span', 'spq-chev'); chev.innerHTML = svg(G.chev, 14);
       head.appendChild(ico); head.appendChild(label); head.appendChild(hint); head.appendChild(chev);
       root.appendChild(head);
-      /* r5-autopause lane: what Spotify auto-pause is doing, only while it acts ("Paused while LessonPlayer
+      /* r5-autopause lane: what Spotify auto-pause is doing, only while it acts ("Paused while Contoso Player
          plays"); lib/features/autopause.js pushes autopause.status. Otherwise its state sits under More. */
       var apLine = mk('div', 'spq-ap'); apLine.hidden = true; apLine.setAttribute('role', 'status');
       root.appendChild(apLine);
