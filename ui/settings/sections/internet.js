@@ -1,6 +1,6 @@
 /* internet.js — Settings > Network & internet, done natively (lane net2, 2026-09-28).
  *
- * Owen: Mantle Settings "should do everything windows can do and more and not ever rely on any old
+ * The user: Mantle Settings "should do everything windows can do and more and not ever rely on any old
  * windows feature". Every page reads and changes the setting itself through settings.internet.*
  * (lib/features/_settings-sections/internet.js -> the sidecar: NetWifi, Wlan, NetAdapters, NetProxy,
  * NetMisc) and the bar's own qs.* backend for the Wi-Fi radio and the networks in range. What Mantle

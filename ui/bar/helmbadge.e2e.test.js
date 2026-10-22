@@ -13,7 +13,7 @@
  *   the tooltip when the file is unreadable, and comes back after. With --test-dock-extra fillers the
  *   bar also has its "+N" button, so the count is proved beside the overflow. A shot of the badge per
  *   theme goes to %TEMP%\claude\mn-helmbadge (or --shots=<dir>).
- * The Helm item is Owen's real Helm (running or pinned) as the test bar reads it, read-only: the test
+ * The Helm item is the user's real Helm (running or pinned) as the test bar reads it, read-only: the test
  * never clicks it, never touches Helm, never writes Helm's file. Prints no app names.
  *
  *   node ui/bar/helmbadge.e2e.test.js [--shots=<dir>] [--theme=light|dark]

@@ -3,7 +3,7 @@
 //
 //   node sidecar/test-netwifi.js [--exe=<path>]      (or MANTLE_SIDECAR_EXE)
 //
-// NEVER changes Owen's network: no connect, disconnect, forget, profile write, adapter switch, DNS,
+// NEVER changes the user's network: no connect, disconnect, forget, profile write, adapter switch, DNS,
 // proxy, VPN or airplane change. Every write is proven by its dryRun against a REAL target (a real
 // saved network, a real adapter), which a passive sidecar answers because it changes nothing, and
 // by the passive refusal of the real write. Prints counts and shapes only: never an SSID, profile

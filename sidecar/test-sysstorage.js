@@ -2,7 +2,7 @@
 //
 //   node sidecar/test-sysstorage.js --exe=<your built Mantle.Sidecar.exe>   [--verbose] [--no-scan]
 //
-// NEVER deletes or changes anything of Owen's: every Storage Sense change and every cleanup is sent with
+// NEVER deletes or changes anything of the user's: every Storage Sense change and every cleanup is sent with
 // dryRun (and a re-read proves nothing moved), every real write goes to a PASSIVE sidecar and must answer
 // the passive refusal. The real guard + delete run ONLY inside the test sandbox
 // (MANTLE_STORAGE_SANDBOX, default %TEMP%\mantle-test\lanes\storage\sandbox), on files this test
@@ -97,7 +97,7 @@ const CATS = ['apps', 'documents', 'pictures', 'videos', 'music', 'temp', 'syste
       else t.check('temp: Delivery Optimization is measured from its folder, or says why not', d.measured ? Number.isFinite(d.files) : typeof d.reason === 'string', JSON.stringify(d));
       t.check('temp: Windows temporary files stay unmeasured without an administrator, saying why', TK.some((x) => x.kind === 'systemTemp' && (x.measured || /only lets an administrator look inside/.test(x.reason || ''))));
     }
-    t.check('temp: Downloads and the Recycle Bin are marked as Owen\'s own', TK.filter((x) => x.yours).map((x) => x.kind).sort().join() === 'downloads,recycleBin');
+    t.check('temp: Downloads and the Recycle Bin are marked as the user\'s own', TK.filter((x) => x.yours).map((x) => x.kind).sort().join() === 'downloads,recycleBin');
     t.check('temp: the administrator kinds are marked', TK.filter((x) => x.admin).map((x) => x.kind).sort().join() === 'deliveryOptimization,systemTemp,windowsUpdate');
     t.check('temp: Downloads goes to the Recycle Bin, the bin is emptied, the rest deleted', TK.every((x) => x.action === (x.kind === 'downloads' ? 'recycle' : x.kind === 'recycleBin' ? 'empty' : 'delete')));
     t.check('temp: what a cleanup would remove never exceeds what is there', TK.every((x) => !x.measured || x.bytes <= x.allBytes));

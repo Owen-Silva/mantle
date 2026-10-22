@@ -9,7 +9,7 @@
  * no gap and no overlap. A zone that is a half or a quarter comes back from the sidecar NAMED
  * (left, tr...), so Win+arrows carry on from a Win+Z pick exactly as from their own snap.
  *
- * Owen's brief: halves, thirds, 2/3 + 1/3, quarters, columns. Laid out 3 + 2, like the flyout
+ * The user's brief: halves, thirds, 2/3 + 1/3, quarters, columns. Laid out 3 + 2, like the flyout
  * Windows 11 shows on a landscape screen.
  */
 (function (root) {

@@ -290,7 +290,7 @@ function adapter(s) {
 
     // ---- 8b. the request is BOUND to its prompt, and the step never writes through a link ----
     const n12 = hex32();
-    const f12 = craft(n12, { args: { text: 'what Owen was asked' } });
+    const f12 = craft(n12, { args: { text: 'what the user was asked' } });
     const d12 = sha(f12);
     craft(n12, { args: { text: 'swapped in during the prompt' } });
     const swapped = await step(exe, f12, undefined, { sha: d12 });

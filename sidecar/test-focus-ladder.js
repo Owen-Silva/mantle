@@ -4,7 +4,7 @@
 //   MANTLE_SIDECAR_EXE=<your exe> node sidecar/test-focus-ladder.js [--onscreen]
 //
 // THE BUG: 24 bar clicks in two days answered "Windows refused the foreground change". The bar is
-// focusable:false, so the click left the app Owen was in as the foreground process and was
+// focusable:false, so the click left the app the user was in as the foreground process and was
 // delivered to Electron; the sidecar, which called SetForegroundWindow, had no right to.
 //
 // AFTER THAT SHIPPED (lane wk-mantle-focus, 2026-10-14): bar clicks all won on rung 1; the only

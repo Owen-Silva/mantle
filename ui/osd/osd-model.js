@@ -11,7 +11,7 @@
 }(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  /* 1.5 s after the last key (Owen's brief), measured from the LAST thing that happened: a key, a
+  /* 1.5 s after the last key (the user's brief), measured from the LAST thing that happened: a key, a
      level change, the pointer leaving. Windows' own flyout stays ~2.3 s; shorter reads snappier. */
   var HOLD_MS = 1500;
   /* An app that stops playing stays listed this long, so a track change or a paused video does
@@ -91,7 +91,7 @@
 
   /* A REASON IN PLAIN WORDS (capture-osd 2026-09-29). Reasons come up from Windows through the
      sidecar with codes in them ("no default playback device (HRESULT 0x80070490)"); the pop-up is
-     read by someone who is not Owen, so known ones become a sentence that says what to do, and any
+     read by someone who is not the user, so known ones become a sentence that says what to do, and any
      other loses its error codes and exception names but keeps its words (never a silent blank). */
   var NO_DEVICE = 'No speakers or headphones are connected. Plug some in, or turn a sound device on in Windows’ Sound settings';
   function plain(reason) {
@@ -193,7 +193,7 @@
   }
 
   /* WHERE THE POP-UP GOES NOW: as if the bar were not there, and it GLIDES with the bar (lane
-     corner-follow-osd, 2026-10-17; lib/bar-follow.js). Owen: no overlapping UI anywhere, "just have
+     corner-follow-osd, 2026-10-17; lib/bar-follow.js). The user: no overlapping UI anywhere, "just have
      them smoothly move up if the taskbar comes up". place() above put the window's bottom on the bar's
      RESTING top even while the bar was hidden (ctx.host.barRect() is the resting shape then too), so a
      hidden bar left the pop-up floating a bar-height up. Here the LOW window's bottom sits on the work

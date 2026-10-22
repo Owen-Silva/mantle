@@ -482,7 +482,7 @@ select:focus-visible, .ptile:focus-visible, .crumb:focus-visible { outline: 2px 
 }
 
 /* ---------------------------------------------------------------- dark: Helm's look (lanes see-apps + same-apps, 2026-10-09)
-   Owen: "they should all also have the same style ... if there is a conflict go by what helm looks like",
+   The user: "they should all also have the same style ... if there is a conflict go by what helm looks like",
    then "Match Helm's real look". Every value is a dark token from shared/glass-light.css (Helm's own,
    HELM-SPEC.md), so this block holds only WHICH token goes where:
    - ONE tint layer per region, painted on the window itself: the title strip is Helm's rail/strip

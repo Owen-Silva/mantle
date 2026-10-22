@@ -2,7 +2,7 @@
 // itself in a native window right behind the bar (lane mantle-topbar-zero, 2026-10-11). DARK ONLY (main
 // only asks in dark).
 //
-// Owen: "there is still a tiny delay. is there a way to make it so there is literally no delay?" The colour
+// The user: "there is still a tiny delay. is there a way to make it so there is literally no delay?" The colour
 // went screen -> sidecar (Desktop Duplication, UnderDup.cs) -> main -> the bar's page -> Chromium's compositor
 // -> the GPU process -> DWM: 2-3 refreshes after the window under the bar changed. Now the sidecar paints the
 // colour itself: a layered, click-through, never-focused tool window (WS_EX_LAYERED | TRANSPARENT | TOOLWINDOW
@@ -1273,7 +1273,7 @@ namespace Mantle {
     }
 
     /// THE FAST PATH (lane wk-underpaint, 2026-10-14). The full pass walks every top-level window (Live) before it
-    /// predicts: measured on Owen's PC (m3.js A/B, passive sidecar, plain switches) event -> paint 5.7-7.0 ms p50,
+    /// predicts: measured on the user's PC (m3.js A/B, passive sidecar, plain switches) event -> paint 5.7-7.0 ms p50,
     /// 7.3-10 ms p95, 30/35 on the switch frame. With this path 1.7-2.3 ms p50 (colours ready ~0.3 ms, the
     /// UpdateLayeredWindow itself ~0.9 ms) and 45/47 on the frame, none early, no wrong colour.
     /// On screen (wk-refresh-floor) a paint 0.5-1 ms after the event lands on the switch frame

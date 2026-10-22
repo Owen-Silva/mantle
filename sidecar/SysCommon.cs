@@ -10,7 +10,7 @@
 //   - reads never throw: a missing key or value is `null` with the reason beside it;
 //   - a write names ONE value in a FIXED key (the callers' tables, never a request argument), is
 //     read back, and a mismatch is an error in plain words, never ok:true;
-//   - HKLM writes need an elevated process. Mantle runs with Owen's filtered (UAC) token, so those
+//   - HKLM writes need an elevated process. Mantle runs with the user's filtered (UAC) token, so those
 //     answer {needsAdmin:true, elevate:"<action>"}: the page then runs that [Elevated] action
 //     through the elevation broker (sidecar/ELEVATE.md), one UAC prompt per change.
 //

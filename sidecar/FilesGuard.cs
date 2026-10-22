@@ -1,6 +1,6 @@
 // FilesGuard.cs - the one gate every Mantle Files write goes through (lane files, 2026-09-28).
 //
-// WHY it exists: every test sidecar runs --passive, and Owen's rule is that tests NEVER touch his
+// WHY it exists: every test sidecar runs --passive, and the user's rule is that tests NEVER touch his
 // real files. A live sidecar IS the Explorer replacement, so it writes wherever he points it; a
 // passive one writes only inside a sandbox the test names, and a bug anywhere in a test (a wrong
 // path, a `..`, a junction) must land on this refusal instead of on his Documents.

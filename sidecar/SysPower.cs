@@ -1,6 +1,6 @@
 // SysPower.cs - Mantle Settings > System > Power & battery, natively (lane sysset, 2026-09-28).
 //
-// WHY: Owen wants Mantle Settings to do everything Windows' Settings does without handing off. The
+// WHY: the user wants Mantle Settings to do everything Windows' Settings does without handing off. The
 // Power & battery page's rows are all POWER SETTINGS of the active plan (powrprof's documented
 // PowerRead/WriteACValueIndex, the same calls `powercfg /change` makes), so every one of them can be
 // read and changed here, and each dropdown's choices come from Windows itself
@@ -25,7 +25,7 @@
 //   saverPolicy SUB_ENERGYSAVER ESPOLICY     choice User / Aggressive
 // MEASURED here 2026-09-28 (powercfg /qh): screen off 300 s AC / 180 s DC, sleep the same, hibernate
 // AC 0 and DC 0x7fffffff (outside the 0..max range Windows reports, so it is shown as a custom value,
-// never "fixed" behind Owen's back), lid / power / sleep button all Sleep, energy saver at 30% on
+// never "fixed" behind the user's back), lid / power / sleep button all Sleep, energy saver at 30% on
 // battery, ESPOLICY AC User / DC Aggressive.
 //
 // ENERGY SAVER ON/OFF: Windows has no public switch (powrprof exports only the power-mode overlay
@@ -367,7 +367,7 @@ namespace Mantle {
   }
 
   /// The administrator half of Power & battery. Runs ONLY in the elevated copy of the sidecar that
-  /// the broker starts after Owen says yes (sidecar/ELEVATE.md): no shell, no command line, the
+  /// the broker starts after the user says yes (sidecar/ELEVATE.md): no shell, no command line, the
   /// documented APIs directly, and each validator is the whole trust boundary.
   static class SysPowerAdmin {
     public const string HibernateDoes = "turn hibernation on or off";

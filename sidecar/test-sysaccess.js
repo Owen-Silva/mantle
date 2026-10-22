@@ -4,7 +4,7 @@
 //
 //   node sidecar/test-sysaccess.js [--exe=<path>]      (or MANTLE_SIDECAR_EXE)
 //
-// NEVER changes Owen's accessibility settings (Sticky keys flipped by a test could wreck a game):
+// NEVER changes the user's accessibility settings (Sticky keys flipped by a test could wreck a game):
 // every write is proven by its dryRun WITH THE CURRENT VALUE (a no-op even if it were real, and
 // answered by a passive sidecar because it changes nothing) and by the passive refusal of the real
 // write; no tool is started (dryRun + passive refusal only). Prints counts and states, no names.

@@ -3,7 +3,7 @@
  * net.test.js - the network readout's words and glyph (ui/bar/net.js), in node, no Electron.
  *
  * Every state the readout can be in, from readings shaped exactly as NetState.cs sends them
- * (measured on Owen's laptop 2026-09-23: Wi-Fi, connected, internet, signal 86, 5 GHz). Until that
+ * (measured on the user's laptop 2026-09-23: Wi-Fi, connected, internet, signal 86, 5 GHz). Until that
  * day the readout was a fixed drawing that never changed, whatever the network did.
  *
  *   node ui/bar/net.test.js

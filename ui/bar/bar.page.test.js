@@ -1,7 +1,7 @@
 require('../../tools/dev-env.js').lowcpu();
 /* bar.page.test.js - the bar's own controls, CLICKED through the real ui/bar code (bar lane, 2026-09-29).
  *
- * WHAT: headless Chromium over file:// (never Electron, never a real window of Owen's), the real
+ * WHAT: headless Chromium over file:// (never Electron, never a real window of the user's), the real
  * index.html + bar.js on the mock bridge (mock-mantle.js), driven by ui/bar/page-harness.js. Every
  * case clicks, presses or pushes, then asserts on what the bar ASKED MAIN TO DO (the recorded calls)
  * and on what the user sees - the dock (left / middle / right click, hover previews, the card's go-to
@@ -280,7 +280,7 @@ async function run() {
       const B = await read();
       t.check('dark: back to light, every one of them is as it was', JSON.stringify(B) === JSON.stringify(L), { before: L, after: B });
 
-      /* THE ONE RECIPE (lane same-bars, 2026-10-09; Owen: "everything at 50% ... it will all match way
+      /* THE ONE RECIPE (lane same-bars, 2026-10-09; the user: "everything at 50% ... it will all match way
          better if its the same"). The strip: one --lg-fill over the blurred picture, the shared guard
          (ui/shared/glass-adapt.js) thickening the TINT only when ink-2 would fall under 4.5:1. A pop-up:
          held unpainted until its picture lands (pre-show), then ONE tint layer over that picture. */
@@ -467,7 +467,7 @@ async function run() {
     }
 
     /* ------------------------------------ a reveal from parked shows the apps (r5-overflow lane) */
-    /* LIVE 2026-09-30 16:44 (Owen's screenshot): the bar came up with no app icons, only "+11" and
+    /* LIVE 2026-09-30 16:44 (the user's screenshot): the bar came up with no app icons, only "+11" and
        Downloads, and a moment later showed every app. mantle.log: parked at 868x60 physical px
        (695 dip at 125 %), revealed as a 1400 px (1120 dip) pill that the page grows over 560 ms.
        The settle after each exit judged the fit on the PARKED bar (62 % of 695 dip: room for no
@@ -557,7 +557,7 @@ async function run() {
     }
 
     /* ------------------------------------------- reveal glass: the outline (lane mantle-barpolish) */
-    /* Owen, 2026-10-15: "on the right side of the taskbar when it comes up for a second or 2 there a
+    /* The user, 2026-10-15: "on the right side of the taskbar when it comes up for a second or 2 there a
        dark outline ... that goes straight through the taskbar". CAUSE (bar.js barRestBox): in dark
        main sends the wallpaper picture BEFORE 'bar.reveal', it was placed against the pill's 62 % down
        box, and the pill then grew to full width with the picture pinned to the old offset: the right
@@ -907,7 +907,7 @@ async function run() {
     }
 
     /* ---------------------------------------------------------------- the picture lies where it came from
-       (lane mantle-seethru-bar-desktop, 2026-10-10; Owen: "this needs to be see through the same as
+       (lane mantle-seethru-bar-desktop, 2026-10-10; the user: "this needs to be see through the same as
        everything else"). Dark's glass must equal Helm's formula: the wallpaper exactly under the glass,
        blurred --lg-blur, under the tint. A sharp synthetic wallpaper is painted on <html>; main's dark
        shot is emitted as main.js now sends it (cut 16 DIP past the pill at the still's 2-css-px pitch,

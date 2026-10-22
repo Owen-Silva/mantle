@@ -1,7 +1,7 @@
 // Battery.cs - `battery`: the bar's battery readout, read from the place Windows'
 // own battery icon reads it, and pushed the moment it changes.
 //
-// WHY THIS REPLACED THE WMI QUERY (2026-09-23). Owen: "there are problems with
+// WHY THIS REPLACED THE WMI QUERY (2026-09-23). The user: "there are problems with
 // it showing how charged my computer is". The bar spawned PowerShell for
 // Win32_Battery (lib/sys-stats.js), and that disagreed with Windows in four
 // ways, all measured on this laptop the same day:
@@ -93,7 +93,7 @@ namespace Mantle {
 
     // The active plan's "Low battery level" / "Critical battery level" (Control Panel > Power
     // Options > Battery; powercfg SUB_BATTERY BATLEVELLOW / BATLEVELCRIT): the levels at which
-    // Windows itself warns. Measured on Owen's plan 2026-09-29: low 6 %, critical 2 %.
+    // Windows itself warns. Measured on the user's plan 2026-09-29: low 6 %, critical 2 %.
     public static readonly Guid GUID_BATTERY_SUBGROUP = new Guid("e73a048d-bf27-4f12-9731-8b2076e8891f");
     public static readonly Guid GUID_BATTERY_LOW_LEVEL = new Guid("8183ba9a-e910-48da-8769-14ae6dc1170a");
     public static readonly Guid GUID_BATTERY_CRITICAL_LEVEL = new Guid("9a66d8d7-4ff7-4ef9-b5a2-5a326ca2a469");

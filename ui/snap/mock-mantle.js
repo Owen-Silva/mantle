@@ -1,6 +1,6 @@
 /* mock-mantle.js - a stand-in for main and the sidecar, so the snap window can be looked at,
  * measured and screenshotted in a plain headless browser: no Electron, no sidecar, no keyboard
- * hook, and no window on Owen's machine ever moved.
+ * hook, and no window on the user's machine ever moved.
  *
  * It defines window.mantle ONLY when it is absent, so with the real preload it does nothing.
  *

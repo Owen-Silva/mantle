@@ -402,7 +402,7 @@ namespace Mantle {
 
     // ------------------------------------------------------ a window's OWN icon
     //
-    // Icons lane, 2026-09-28. Owen: "they need to have there own icons that replace windows
+    // Icons lane, 2026-09-28. The user: "they need to have there own icons that replace windows
     // icons not just be electron". Mantle Settings and Mantle Task Manager are electron.exe
     // windows; BrowserWindow's `icon` gives each its own (Electron sends WM_SETICON), which is
     // what Windows' own taskbar and Alt+Tab draw. So for THESE windows (Switcher.IsMantleApp:
@@ -690,7 +690,7 @@ namespace Mantle {
     /// the test hung on purpose, standing in for a busy game) and, in place of SetForegroundWindow,
     /// make one synchronous no-op SetWindowPos on it - a call that waits on that thread exactly as
     /// the activation SetForegroundWindow sends while attached does. It never takes the foreground
-    /// and never taps Alt, so a test run cannot move anything on Owen's screen.
+    /// and never taps Alt, so a test run cannot move anything on the user's screen.
     static string AttachAndRaise(IntPtr hwnd, IntPtr fg, bool rehearse, IDictionary steps) {
       IntPtr to = rehearse ? hwnd : fg;
       int toPid = 0;
@@ -851,7 +851,7 @@ namespace Mantle {
   /// `focus.simulate` can drive every branch with a script, in passive, without touching a window.
   ///
   /// WHY CLICKS ON THE BAR LOST (live log, 10-10 to 10-12: 24 "did not open / did not switch"): the
-  /// bar is focusable:false, so a click on it leaves the app Owen was in as the foreground process,
+  /// bar is focusable:false, so a click on it leaves the app the user was in as the foreground process,
   /// and the click itself lands in Electron's process. The process that then called
   /// SetForegroundWindow was the sidecar, which is neither - and with ForegroundLockTimeout at its
   /// maximum on this machine, Windows never relents on time. main.js now hands the right on

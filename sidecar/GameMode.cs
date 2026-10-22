@@ -9,7 +9,7 @@
 //   - the power mode for ONE named power source (PowerSetUserConfigured{AC,DC}PowerMode, the call
 //     Settings uses, as sidecar/PowerMode.cs measured), read back through PowerMode.Read().
 //   - Energy saver's "turn on at" battery level on the active plan (ESBATTTHRESHOLD, DC), ONLY when
-//     Owen switched "Lift Energy saver while gaming" on; put back afterwards.
+//     the user switched "Lift Energy saver while gaming" on; put back afterwards.
 //
 // ANTI-CHEAT (the brief, non-negotiable). The game and its anti-cheat are NEVER opened with more
 // than PROCESS_QUERY_LIMITED_INFORMATION - and this file barely does that: the process list is a
@@ -133,7 +133,7 @@ namespace Mantle {
     static readonly string[] NoTrimPrefixes = { "Helm", "claude" };
 
     /// The test burner only: an mpburn-* exe under %TEMP% (sidecar/apppower-burner.js), the rule App
-    /// power's passive writes use (AppPower.IsTestTarget). Owen's apps never live there by that name.
+    /// power's passive writes use (AppPower.IsTestTarget). The user's apps never live there by that name.
     static bool IsBurner(string path) {
       if (string.IsNullOrEmpty(path)) return false;
       string temp;
@@ -286,7 +286,7 @@ namespace Mantle {
     /// GamePrefixes: the games, their clients (Riot Client, League's) and their anti-cheat, name for name
     /// _gamemode-plan.js NEVER[0..1]. Task Manager's guard (TaskMgr.cs) refuses exactly these as well:
     /// ONE list, read by both. lane gamequiet, 2026-09-28: Task Manager kept its own copy, it lacked
-    /// "Riot", Owen trimmed RiotClientServices 10 s before Valorant launched and Riot Client hung twice.
+    /// "Riot", the user trimmed RiotClientServices 10 s before Valorant launched and Riot Client hung twice.
     /// lib/features/taskmgr.test.js fails when this list and NEVER[0..1] differ.
     internal static readonly string[] GamePrefixes = {
       "VALORANT", "Riot", "vgc", "vgtray", "vgk", "vanguard", "League", "EasyAntiCheat", "EAAntiCheat", "BEService",
@@ -363,7 +363,7 @@ namespace Mantle {
 
     /// ONE RUN OF ONE PROCESS, kept for its whole life (lane mantle-lanes, 2026-10-15). Keyed by pid and
     /// checked against its start time, parent pid and exe name, so a reused pid is a new entry. It holds
-    /// what never changes while the process runs: its session (asked once) and, for Owen's own
+    /// what never changes while the process runs: its session (asked once) and, for the user's own
     /// non-game processes, the exe path and whether it runs elevated (one QUERY_LIMITED open, once).
     /// Everything that does change - CPU time, priority - comes from the process list read itself,
     /// which carries both, so a scan opens only processes it has never seen.
@@ -457,7 +457,7 @@ namespace Mantle {
       return list;
     }
 
-    /// Would a detail scan open this process? Only Owen's own session, never a game-ish name (those are
+    /// Would a detail scan open this process? Only the user's own session, never a game-ish name (those are
     /// listed by name and pid only, enough to see the game is still running, and never opened).
     static bool Detailable(Proc p, uint own) { return p.Session == own && p.Pid > 8 && !IsGameish(p.File); }
 
@@ -808,7 +808,7 @@ namespace Mantle {
       if (items == null) return "gamemode.apply needs items: [{pid, created, ...}]";
       uint fgPid = ForegroundPid(), own = OwnSession();
       // TESTS ONLY, and only in passive (which writes nothing): stand a process the test started in
-      // for "the app in front", so the in-front rule is proved without touching Owen's window.
+      // for "the app in front", so the in-front rule is proved without touching the user's window.
       if (Program.Passive && req.ContainsKey("testFgPid")) fgPid = (uint)Math.Max(0, Json.GetInt(req, "testFgPid", 0));
       // ONE process-list read for the whole batch (lane mantle-lanes, 2026-10-15): it was one read per
       // item, up to CHUNK full lists in a row on the slow lane, each one taking the list lock the game
@@ -863,7 +863,7 @@ namespace Mantle {
       if (!names.TryGetValue(pid, out file)) { r["why"] = "it has exited"; r["gone"] = true; return r; }
       r["file"] = file;
       // PUTTING BACK is allowed on the app in front (lane sysmon-game, 2026-09-29): the in-front rule is
-      // there so game mode never slows what Owen is using. It used to refuse the restore too, so the app
+      // there so game mode never slows what the user is using. It used to refuse the restore too, so the app
       // he was in when the game closed stayed in Efficiency mode at below-normal priority until Mantle
       // restarted. A write that only lifts the throttle can never slow anything.
       if (Easing(it)) fgPid = 0;
@@ -968,7 +968,7 @@ namespace Mantle {
     }
 
     /// {source:"ac"|"battery", mode, onlyIf?} -> {ok, same, skipped, before, after, state, reason}.
-    /// The choice for THAT source (not "whatever source is current"): a restore after Owen plugged in
+    /// The choice for THAT source (not "whatever source is current"): a restore after the user plugged in
     /// mid-game must put back the battery choice, not overwrite the plugged-in one.
     static string Power(Dictionary<string, object> req, ref object result) {
       string source = Json.GetString(req, "source"), mode = Json.GetString(req, "mode"), onlyIf = Json.GetString(req, "onlyIf");

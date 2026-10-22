@@ -1,6 +1,6 @@
 /* time.js — Settings > Time & language, done natively (lane timelang, 2026-09-28).
  *
- * Owen: Mantle Settings "should do everything windows can do and more and not ever rely on any old
+ * The user: Mantle Settings "should do everything windows can do and more and not ever rely on any old
  * windows feature". Every row reads and changes the setting itself through settings.time.*
  * (lib/features/_settings-sections/time.js -> sidecar/SysTime*.cs); nothing hands off to Windows'
  * Settings app. What only an administrator may change carries the shield and goes through ONE

@@ -1,8 +1,8 @@
 /* card.page.test.js - the screenshot card is as wide as what is on it (lane mantle-toasts3, 2026-10-15).
  *
- * Owen: "the screenshot pop up thing in the bottom right can be not as long now since there only one
+ * The user: "the screenshot pop up thing in the bottom right can be not as long now since there only one
  * button now". Headless Chromium over the REAL ui/screenshot/card.html with its own card-mock.js (never
- * Electron, never a window of Owen's), light and dark:
+ * Electron, never a window of the user's), light and dark:
  *   - a copied capture (Save only) is narrower than the old fixed 372 px, and everything on it fits
  *     (no word cut, Save inside the face);
  *   - the size main sizes the WINDOW from (cardShown { w, h }) is the card's own, so the window shrinks
@@ -48,7 +48,7 @@ async function open(browser, theme, q) {
   return { ctx, page, m: () => page.evaluate(MEASURE) };
 }
 
-/* ---- IN THE CORNER, GLIDING WITH THE BAR (lane corner-follow-card, 2026-10-17). Owen, of the banners: "this
+/* ---- IN THE CORNER, GLIDING WITH THE BAR (lane corner-follow-card, 2026-10-17). The user, of the banners: "this
    and anything else that comes up here needs to go in the corner not up like this ... just have them smoothly
    move up if the taskbar comes up". The window is the card plus the bar's reach (62 DIP on his screen) ABOVE it;
    main sends screenshot.lift { px, kind, ms } (lib/bar-follow.js) and ui/shared/bar-follow.js lifts #lift:

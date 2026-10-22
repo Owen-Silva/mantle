@@ -1,6 +1,6 @@
 /* mock-mantle.js - a stand-in for main and the sidecar, so Task View can be looked at, measured and
  * screenshotted in a plain headless browser: no Electron, no sidecar, and nothing ever switched,
- * moved or closed on Owen's machine. Defines window.mantle ONLY when it is absent (the real
+ * moved or closed on the user's machine. Defines window.mantle ONLY when it is absent (the real
  * preload always wins), the switcher's pattern.
  *
  * WHAT IT PLAYS: main's half of one Win+Tab. It paints a loud fake desktop behind the page (the

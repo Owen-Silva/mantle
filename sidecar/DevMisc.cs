@@ -1,6 +1,6 @@
 // DevMisc.cs - Cameras, AutoPlay and USB for Mantle Settings' Bluetooth & devices (lane devnet, 2026-09-28).
 //
-// WHY: the rest of Windows 11's Bluetooth & devices category, done natively (Owen: Mantle "should
+// WHY: the rest of Windows 11's Bluetooth & devices category, done natively (the user: Mantle "should
 // do everything windows can do and more and not ever rely on any old windows feature").
 //
 //   devcam.list                          every camera Windows knows: name, enabled, where it sits

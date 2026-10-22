@@ -1,4 +1,4 @@
-// test-taskview.js - Task View's sidecar half (Desktops.cs), against Owen's real desktop, READ-ONLY.
+// test-taskview.js - Task View's sidecar half (Desktops.cs), against the user's real desktop, READ-ONLY.
 //
 //   MANTLE_SIDECAR_EXE=<exe> node sidecar/test-taskview.js
 //

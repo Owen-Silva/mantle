@@ -3,7 +3,7 @@
 //
 // WHY: the readout beside the volume glyph was a fixed Wi-Fi drawing in index.html. It never
 // changed: full bars with the Wi-Fi off, on Ethernet, with no internet, or with no network at all.
-// Owen: "you need to make the Internet thing ... actually work".
+// The user: "you need to make the Internet thing ... actually work".
 //
 //   {op:"get"}                        one fresh reading (a pool thread answers)
 //   {op:"watch", on, fast?}           a watch that pushes {ev:"net", ...} whenever what the

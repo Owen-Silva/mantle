@@ -74,7 +74,7 @@ namespace Mantle {
     public static void Apply(int? setLevel, bool? setMute, out int level, out bool muted) {
       // PASSIVE REFUSES A WRITE (2026-09-29, lane bar-qs): every other switch refused in passive, but
       // `volume {level}` / `{muted}` went straight to CoreAudio, so a --test instance's slider (its
-      // sidecar is passive) moved Owen's real speaker. A read still works in passive.
+      // sidecar is passive) moved the user's real speaker. A read still works in passive.
       if (Program.Passive && (setLevel.HasValue || setMute.HasValue))
         throw new InvalidOperationException("refused: sidecar is passive (test mode): volume would change the live speaker");
       IMMDeviceEnumerator enumerator = null;

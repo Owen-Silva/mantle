@@ -225,7 +225,7 @@ async function pingTestChecks(browser, check, PAGE, OUT) {
 }
 
 
-/* ---- HISTORY (Owen: "i want history of the tests and make it so i can save tests and name them and
+/* ---- HISTORY (the user: "i want history of the tests and make it so i can save tests and name them and
  * each test should also say what wifi i was on"): a fake main in the page keeps the list, so the
  * clicks, the name box and its keys go the whole way round. */
 const WIFI = (name, why) => (name ? { kind: name === 'Ethernet' ? 'ethernet' : 'wifi', name, why: null, iface: name === 'Ethernet' ? 'Ethernet' : 'Wi-Fi' } : { kind: 'wifi', name: null, why, iface: 'Wi-Fi' });

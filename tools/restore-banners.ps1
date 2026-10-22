@@ -21,7 +21,7 @@
 # this script is the same put-back for the day Mantle cannot run at all.
 #
 # THE RULE, same as Mantle's: an original goes back ONLY where the value is still
-# Mantle's 0. Anything else (a value Owen set himself in Windows' Settings, an app
+# Mantle's 0. Anything else (a value the user set himself in Windows' Settings, an app
 # that is gone) is left exactly as it is.
 #
 # SAFE TO RUN TWICE and SAFE WITH NO RECORD: a second run finds every value
@@ -38,7 +38,7 @@
 # with its own earlier entries (the new one per app replaces the old; at most
 # 300, the oldest dropped), written atomically (a temp file, then replace).
 # Mantle reads it (_toasts-owner.js): an app it still lists as owned that reads
-# 0 with a matching stamp is Owen's own choice, so Mantle lets it go instead of
+# 0 with a matching stamp is the user's own choice, so Mantle lets it go instead of
 # drawing banners for it or turning Windows' back on over it. A marker that
 # cannot be written never fails the put-back; the output says so.
 #
@@ -102,11 +102,11 @@ function Write-BackMarker([string]$file, $done) {
     [System.IO.File]::WriteAllText($tmp, $json, (New-Object System.Text.UTF8Encoding($false)))
     if ([System.IO.File]::Exists($file)) { [System.IO.File]::Replace($tmp, $file, [NullString]::Value) }
     else { [System.IO.File]::Move($tmp, $file) }
-    return "  marker  $name lists the $(@($done).Count) app(s) put back, with the record's stamps (so Mantle leaves a pop-up Owen turns off after this as he set it)$note"
+    return "  marker  $name lists the $(@($done).Count) app(s) put back, with the record's stamps (so Mantle leaves a pop-up the user turns off after this as he set it)$note"
   } catch {
     $why = $_.Exception.Message
     try { if ([System.IO.File]::Exists($tmp)) { [System.IO.File]::Delete($tmp) } } catch { }
-    return "  marker NOT written ($why); the put-back itself is done, but a pop-up Owen turns off before Mantle runs again may be turned back on by Mantle's next quit"
+    return "  marker NOT written ($why); the put-back itself is done, but a pop-up the user turns off before Mantle runs again may be turned back on by Mantle's next quit"
   }
 }
 
@@ -175,7 +175,7 @@ try {
           $kind = $k.GetValueKind('ShowBanner')
           if ($kind -eq [Microsoft.Win32.RegistryValueKind]::DWord -and [int]$k.GetValue('ShowBanner') -eq 0) { $isZero = $true }
         }
-        if (-not $isZero) { $left++; Say "  left    $id (not Mantle's 0: already back, or Owen's own value)"; continue }
+        if (-not $isZero) { $left++; Say "  left    $id (not Mantle's 0: already back, or the user's own value)"; continue }
         if ($original -eq $null) {
           $k.DeleteValue('ShowBanner', $false)
           Say "  back    $id (ShowBanner removed: Windows' default, banners on)"

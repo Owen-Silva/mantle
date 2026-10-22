@@ -3,7 +3,7 @@
 //
 //   node sidecar/test-devinput.js [--exe=<path>]      (or MANTLE_SIDECAR_EXE)
 //
-// NEVER changes Owen's settings: every write is proven by its dryRun (which a passive sidecar
+// NEVER changes the user's settings: every write is proven by its dryRun (which a passive sidecar
 // answers, because it changes nothing) and by the passive refusal of the real write. Prints counts
 // and shapes only, never a camera's or handler's name.
 'use strict';

@@ -161,7 +161,7 @@ function shape(r) {
     }
     t.check('some app resolves a "new window" route', launches > 0, `${launches}`);
     const sc = await s.send('jumplist.shortcut', { exe: process.env.USERPROFILE + '\\browser\\node_modules\\electron\\dist\\electron.exe' }, 8000);
-    // privacy: whether a shortcut was found, never its file name (a shortcut is named by Owen)
+    // privacy: whether a shortcut was found, never its file name (a shortcut is named by the user)
     console.log(`  shortcut for the browser exe: ${sc.ok ? (sc.result.shortcut ? 'found (.lnk)' : 'none') : 'error'}`);
     const real = await s.send('jumplist.open', { app: 'MSEdge', item: 'app' }, 8000);
     t.check('a REAL "new window" is refused by the passive sidecar', real.ok === false && real.error.indexOf(T.PASSIVE_REFUSAL) === 0, real.error);
@@ -178,7 +178,7 @@ function shape(r) {
     await s.stop();
   }
 
-  // 7. Read-only: nothing this test read was written (a change here is Owen using an app, and is named).
+  // 7. Read-only: nothing this test read was written (a change here is the user using an app, and is named).
   const after = stamps();
   const changed = [...before.keys()].filter((k) => after.get(k) !== before.get(k));
   console.log(`  destination files changed during the run: ${changed.length}${changed.length ? ' (' + changed.join(', ') + '; the test only reads: that is an app writing its own list)' : ''}`);

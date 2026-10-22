@@ -6,7 +6,7 @@
   require() and no node here. window.mantle, put up by preload.js, is the only
   way to reach the main process.
 
-  THEME. This layer wears the taskbar's glass (Owen, 2026-09-21: "everything that
+  THEME. This layer wears the taskbar's glass (the user, 2026-09-21: "everything that
   we build for this wrapper, their UI needs to be this exact same theme as the
   taskbar"), so the only thing this file does about looks is hand desktop.css the
   wallpaper to put behind the panes -- see THE BACKDROP below. Colour is entirely
@@ -20,7 +20,7 @@
                      wait doubles (30 s, 1, 2, 4, 8 min) up to one check every
                      10 min, and the tile says when the next check is
   ...plus the wallpaper at the bottom of the page (THE WALLPAPER, below), which
-  is the one thing here that moves, and which main pauses by Owen's Lively rules.
+  is the one thing here that moves, and which main pauses by the user's Lively rules.
 
   THE BACKDROP. Main sends 'desktop.backdrop' {png, w, h, rect, ms} ONCE at start
   and again after a display change: one capture of the whole screen, wallpaper
@@ -64,7 +64,7 @@
 
   // ---------------------------------------------------------------------
   // Clock. 12-hour with seconds and a meridiem suffix, Windows style:
-  // "4:15:32 PM" (Owen, 2026-09-21: "i dont want it in military time and i want
+  // "4:15:32 PM" (the user, 2026-09-21: "i dont want it in military time and i want
   // the time to the second").
   //
   // It is on screen every waking hour, so the tick is as small as a tick gets:
@@ -76,7 +76,7 @@
   //
   // AM/PM is computed here rather than taken from toLocaleTimeString, because a
   // machine on a 24-hour locale would silently put this clock back into the
-  // military time Owen just asked to be rid of.
+  // military time the user just asked to be rid of.
   // ---------------------------------------------------------------------
   const shown = { hm: '', ss: '', mer: '', day: -1 };
   let clockTimer = 0;
@@ -341,7 +341,7 @@
   const PIECES = [
     ['sidecar', 'Sidecar', (p) => p.status === 'ok'],
     // 'taskbar' is healthy when Windows' own taskbar is on AUTO-HIDE -- Mantle
-    // never hides that window any more; hiding it is what cost Owen a reboot on
+    // never hides that window any more; hiding it is what cost the user a reboot on
     // 2026-09-21.
     ['taskbar', 'Windows taskbar', (p) => p.autohide === true],
     // 'workarea': only --dock owes a reservation. In hover mode (the default)
@@ -351,7 +351,7 @@
     ['desktop', 'Desktop layer', (p) => p.attached === true],
     ['hotkey', 'Win key', (p) => p.winTap === true],
     // 'unavailable' is a permanent platform limit on this Windows build (the XAML
-    // notification area has no ToolbarWindow32 to read), not something Owen can
+    // notification area has no ToolbarWindow32 to read), not something the user can
     // act on, and the bar already says so as a quiet note in its overflow menu.
     // Only a tray status that is neither ok nor that limit is a fault here.
     ['tray', 'Notification area', (p) => p.status === 'ok' || p.status === 'unavailable'],
@@ -416,7 +416,7 @@
       if (key === 'backdrop.desktop' && piece.ok !== true) document.body.classList.add('no-backdrop');
       // ...but while the wallpaper plays IN this page the panes frost it live,
       // and the still picture is not under the glass at all, so its failure is
-      // not one Owen can see.
+      // not one the user can see.
       if (key === 'backdrop.desktop' && document.body.classList.contains('has-wall')) continue;
       // The pause rules can fail on their own (no sidecar to ask what is in
       // front): the wallpaper still plays, but a game would no longer pause it.
@@ -499,7 +499,7 @@
   // panes covered it. lib/wallpaper.js decides WHAT plays and WHEN it pauses;
   // this page only draws it and says, every time, whether that worked:
   //   'wallpaper'         {ok, reason, item:{id, type, url, look, props, ...}, paused, unload}
-  //   'wallpaper.pause'   {paused, unload, reason}   Owen's Lively rules, applied
+  //   'wallpaper.pause'   {paused, unload, reason}   the user's Lively rules, applied
   //   'wallpaper.prop'    {id, name, value}          a web wallpaper's setting changed
   //   'wallpaper.sysinfo' JSON string                for livelySystemInformation
   //   'wallpaper.cursor'  {x, y}                     the mouse, for web wallpapers

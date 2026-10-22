@@ -1,5 +1,5 @@
 /* record-follow.page.test.js - the Win+G Record panel's page GLIDES WITH THE BAR (lane corner-follow,
- * 2026-10-17). Headless Chromium over ui/clips/record.html in a window as main makes it with Owen's numbers
+ * 2026-10-17). Headless Chromium over ui/clips/record.html in a window as main makes it with the user's numbers
  * (the card's 260 + the reach 56 = 316 tall, 376 wide), a fake window.mantle pushing clips.lift:
  *   the card at the window's BOTTOM (18 DIP margin) with no lift; up on the bar's spring (linear()) over
  *   the ms main sends, really travelling, landing 56 up; down on the bar's exit (cubic-bezier(.3,0,.8,.15));

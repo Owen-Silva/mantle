@@ -1,5 +1,5 @@
 // DeskClick.cs - the right-click on the empty desktop opens MANTLE's menu (lane mantle-deskmenu,
-// 2026-10-15, plan P6; Owen: "Yes, Mantle's menu", Shift+right-click keeps Explorer's).
+// 2026-10-15, plan P6; the user: "Yes, Mantle's menu", Shift+right-click keeps Explorer's).
 //
 // THE ROUTE (picked by a probe of the live 26H2 desktop, 2026-10-15): Progman > SHELLDLL_DefView
 // (layered, its icon list hidden) > Mantle's desktop layer > WorkerW. Explorer's DefView sits over
@@ -15,7 +15,7 @@
 //       would go to the app that had focus. Explorer also re-orders its children on its own
 //       (wallpaper or icon changes), and Shift+right-click would have to be faked back to it.
 //   (c) Only re-point "Display settings" / "Personalize" (HKCU DesktopBackground). Keeps Explorer's
-//       menu, which Owen decided against, and needs a Windows change to undo on every exit.
+//       menu, which the user decided against, and needs a Windows change to undo on every exit.
 //
 // WHAT THE HOOK COSTS. Every mouse event in Windows waits for this thread while it is armed, so:
 //   * the proc does one compare for anything but a right button and returns;
@@ -37,7 +37,7 @@
 // Every exit road unhooks on this thread (Hotkey.Uninstall -> Shutdown).
 //
 //   deskmenu.arm {on, testClass?, ackMs?}  on/off. Passive: only with testClass (the window class of a
-//                                          stand-in desktop), so a test never takes Owen's desktop.
+//                                          stand-in desktop), so a test never takes the user's desktop.
 //   deskmenu.ack {seq}                     main opened the menu for request seq
 //   deskmenu.nack {seq, why}               main cannot open it: the click goes to Explorer now, with why
 //   deskmenu.status                        counters, decision times, health

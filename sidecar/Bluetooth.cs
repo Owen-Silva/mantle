@@ -17,7 +17,7 @@
 //
 // THE POWERSHELL ROUTE IS A RESIDENT HELPER (2026-09-22), not a launch per
 // call. It used to be one powershell.exe per read, and two things were wrong
-// with that, both measured on Owen's loaded machine:
+// with that, both measured on the user's loaded machine:
 //
 //   * a launch plus the WinRT type loading cost ~3 s, ON THE COMMAND THREAD,
 //     and every other command queued behind it - that was the permanent
@@ -49,7 +49,7 @@ namespace Mantle {
 
     /// Whether Win32's classic radio enumeration finds a Bluetooth radio. A LAST
     /// RESORT since 2026-09-27, never the answer to "is there a radio": it finds
-    /// a radio that is ON, and on Owen's Realtek adapter a radio switched OFF is
+    /// a radio that is ON, and on the user's Realtek adapter a radio switched OFF is
     /// not enumerated at all, while Windows' radio list still has it (read on
     /// his machine: GetRadiosAsync "Bluetooth Off", this false). Read() used it
     /// as the truth, so an off radio read present:false, the tile said "No
@@ -364,7 +364,7 @@ namespace Mantle {
 
     // --------------------------------------------------- the resident helper
 
-    const int HostStartMs = 20000;   // a cold powershell.exe under Owen's load
+    const int HostStartMs = 20000;   // a cold powershell.exe under the user's load
     const int HostAskMs = 8000;      // one read or switch; normally < 10 ms
     const int HostIdleMs = 90000;    // then it goes, and gives its ~70 MB back
     const int HostRetryMs = 30000;   // after a failed start, do not relaunch in a loop
@@ -499,7 +499,7 @@ namespace Mantle {
           "-NoProfile -NonInteractive -EncodedCommand " +
           Convert.ToBase64String(Encoding.Unicode.GetBytes(HostScript)));
         psi.UseShellExecute = false;
-        psi.CreateNoWindow = true;          // never flash a console over Owen's screen
+        psi.CreateNoWindow = true;          // never flash a console over the user's screen
         psi.RedirectStandardInput = true;
         psi.RedirectStandardOutput = true;
         // Redirected AND drained: left alone it would inherit OUR stderr, which

@@ -6,10 +6,10 @@
 // there - it needs DDC/CI through the Monitor Configuration API (dxva2), which
 // Mantle does not drive yet - so a machine with no internal panel active is a
 // "present:false with the reason" answer and a muted slider, not an error.
-// Owen's machine is a laptop: one internal BOE panel, WMI answers with 101
+// The user's machine is a laptop: one internal BOE panel, WMI answers with 101
 // levels, and a same-value WmiSetBrightness took effect (measured 2026-09-23).
 //
-// A WMI query costs tens of milliseconds idle and a few hundred under Owen's
+// A WMI query costs tens of milliseconds idle and a few hundred under the user's
 // load, so Brightness() is a FRESH read that only ever runs on a background
 // thread or the slow lane: QuickSettings.cs caches it and answers the panel
 // from the cache (2026-09-22; it used to be a 2 s cache here, read on the
@@ -17,7 +17,7 @@
 //
 // NIGHT LIGHT has no API at all. Its state lives in an UNDOCUMENTED CloudStore
 // blob, which Windows watches: Settings' own toggle is a new blob written there.
-// Until 2026-09-23 this was read-only and the tile did nothing when clicked (Owen:
+// Until 2026-09-23 this was read-only and the tile did nothing when clicked (the user:
 // "some of them don't even actually do anything"). SetNightLight now writes the
 // blob the way Settings does - ONLY when the one in the registry has exactly the
 // layout measured here, changing only the two bytes that differ between off and
@@ -199,7 +199,7 @@ namespace Mantle {
     /// Both markers are checked and they must agree; when they do not, the
     /// answer is "unknown" WITH the bytes' length in the reason rather than a
     /// coin flip - a wrong state in the panel is worse than a blank one.
-    /// THE SWITCH (2026-09-23). The layout it accepts, byte for byte, as measured on Owen's
+    /// THE SWITCH (2026-09-23). The layout it accepts, byte for byte, as measured on the user's
     /// machine (41 bytes, off):
     ///   43 42 01 00 0a 02 01 00 2a 06 [5-byte timestamp] 2a 2b 0e [13] 43 42 01 00 d0 0a 02 ...
     /// On is the same with [15] as the length byte at offset 18 and "10 00" inserted at 23.

@@ -1,6 +1,6 @@
 /* devices.js — Settings > Bluetooth & devices, done natively (lane devnet, 2026-09-28).
  *
- * Owen: Mantle Settings "should do everything windows can do and more and not ever rely on any old
+ * The user: Mantle Settings "should do everything windows can do and more and not ever rely on any old
  * windows feature". So every page here reads and changes the setting itself, through
  * settings.devices.* (lib/features/_settings-sections/devices.js -> the sidecar): no page hands
  * off to Windows' Settings app. What Windows itself does not let another app change is shown

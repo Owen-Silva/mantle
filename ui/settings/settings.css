@@ -9,7 +9,7 @@
  * only for an ON switch, --lg-warn words for anything that cannot act. Motion is Northwind's curve
  * (--lg-ease); this window is opaque and small, so a short transition costs nothing here.
  *
- * THE CALM PASS (lane setlook, 2026-09-29; Owen on the live Home: "this does not look very good"). What
+ * THE CALM PASS (lane setlook, 2026-09-29; the user on the live Home: "this does not look very good"). What
  * he saw: acrylic over his dark terminal read as mid-grey (139,139,139 measured) with white cards on it,
  * the sidebar a separate lighter slab with its own corner, and a wall of tan warning pills. So:
  *  - ONE window: the sidebar has no fill, border or corner of its own; the whole window is one light
@@ -430,7 +430,7 @@ h1 .crumb-sep { color: var(--lg-ink-3); }
    html.glass.inactive: DWM draws the backdrop only behind the ACTIVE window, so a window in the
    background stands on the opaque ground, the way Windows' own apps turn solid when inactive. */
 /* THE TINT (lane setlook, 2026-09-29). A clear page let DWM's light acrylic through as it is, and over a
-   dark window that is mid-grey: Owen's live Home measured 139,139,139 behind the cards. So the window
+   dark window that is mid-grey: the user's live Home measured 139,139,139 behind the cards. So the window
    now carries its own light tint: the card fill twice (html and body, --lg-fill-strong .72 each = ~.92
    white) and the chip recess over it (--lg-sunk, ink .05). The white lifts a dark window behind; the
    ink wash keeps a WHITE window behind from turning the page paper-white, so the cards still stand off
@@ -444,7 +444,7 @@ html.glass.inactive, html.glass.inactive body { background: var(--lg-ground); }
 
 /* ---------------------------------------------------------------- dark: Helm's look (lanes dm-settings, see-apps, same-apps; 2026-10-08/09)
    <html data-theme="dark"> re-values every --lg-* token (shared/glass-light.css: Helm's own values,
-   HELM-SPEC.md). Owen: "they should all also have the same style ... if there is a conflict go by what
+   HELM-SPEC.md). The user: "they should all also have the same style ... if there is a conflict go by what
    helm looks like", then "Match Helm's real look". This block holds only WHICH token goes where:
    - ONE tint layer per region, painted on the window itself: the title strip is Helm's top strip
      (--lg-fill-bar), the sidebar and the page under it Helm's content panel (--lg-fill). Cards, home tiles

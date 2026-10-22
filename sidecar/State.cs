@@ -5,7 +5,7 @@
 // Taskbar.cs). The fix has two halves. The first is that Mantle no longer holds
 // any shell state a dead process has to undo. The second is this: BEFORE
 // touching anything, the sidecar writes down what the shell looked like, so a
-// standalone recovery script - or Owen at a command prompt, with Mantle gone
+// standalone recovery script - or the user at a command prompt, with Mantle gone
 // and unable to run - can put Windows back without guessing.
 //
 // The file is written:

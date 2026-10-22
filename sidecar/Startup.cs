@@ -14,7 +14,7 @@
 // by default. Enable writes 02 + eleven zeros; disable writes 03 00 00 00 + FILETIME.UtcNow, exactly
 // what Task Manager writes.
 //
-// HARD RULE - NOTHING IS EVER DELETED: a 2026-09-02 session deleted 8 of Owen's Run values while
+// HARD RULE - NOTHING IS EVER DELETED: a 2026-09-02 session deleted 8 of the user's Run values while
 // "cleaning up startup". So this file is built so that cannot happen: the Run keys are only ever
 // opened read-only (OpenSubKey(path, false)), the Startup folders are only ever listed
 // (Directory.GetFiles), and the ONE write site (WriteApproved) takes its key path from the fixed

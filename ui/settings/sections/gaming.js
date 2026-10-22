@@ -4,7 +4,7 @@
  * does, through settings.gaming.* (lib/features/_settings-sections/gaming.js -> sidecar/SysGaming.cs):
  *   Xbox Game Bar   the controller's Xbox button, and whether the Game Bar app is on this PC
  *   Captures        where captures go (read-only, with why), background recording (it COSTS FRAMES on
- *                   Owen's integrated graphics: the row says so), audio and video options
+ *                   the user's integrated graphics: the row says so), audio and video options
  *   Game Mode       Windows' own Game Mode, and next to it MANTLE's game mode (lib/features/gamemode.js),
  *                   each explained in one line, read with the Mantle section's own commands
  *                   (gamemode.state, settings.mantle) and changed with them (settings.enable,

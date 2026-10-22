@@ -1,5 +1,5 @@
 /* topbar.css — the macOS-style menu bar, in the taskbar island's theme (glass-light.css --lg-*
- * ONLY; one theme for every Mantle surface, Owen 2026-09-21). Thin: 28 DIP. Light frost, dark ink,
+ * ONLY; one theme for every Mantle surface, the user, 2026-09-21). Thin: 28 DIP. Light frost, dark ink,
  * plain hairlines, no glow. The bar has no backdrop picture of its own: live, it sits on its own
  * reserved strip, so what is behind it is only ever the wallpaper, and the thicker fallback fill
  * (--lg-fill-fb) carries it honestly instead of a thin tint over nothing.
@@ -34,7 +34,7 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
   background-color: var(--lg-fill-fb);
   box-shadow: inset 0 -1px 0 var(--lg-edge-out), var(--lg-lip-up);
 }
-/* THE GLASS, DARK ONLY (lane see-topbar, 2026-10-09). Owen, on dark Mantle: "mantle needs to be more
+/* THE GLASS, DARK ONLY (lane see-topbar, 2026-10-09). The user, on dark Mantle: "mantle needs to be more
  * see through everything"; the strip was one flat --lg-fill-fb over nothing blurred, a near-black
  * strip, and a thinner flat tint alone would show the wallpaper SHARP through it. In dark, main sends a
  * small picture of the desktop's own top strip (what IS under the bar: the wallpaper as Mantle draws
@@ -46,13 +46,13 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
  * No picture (a peek, a full-screen window under the bar, a failure, before the first one): no
  * #bdrop, and the dark fallback above. LIGHT never matches any of this: it is pixel for pixel as before. */
 #bdrop { display: none; }
-/* SAME BARS (lane same-bars, 2026-10-09; Owen: "everything the same ... go by what helm looks like"):
+/* SAME BARS (lane same-bars, 2026-10-09; the user: "everything the same ... go by what helm looks like"):
    the dark fallback (NOTHING blurred under it: a peek, a full-screen window under the bar, a failure,
    the moment before the first picture) is the token fallback, --lg-fill-pop, not a per-surface literal
    (it was rgba(30,31,34,.76)); and the strip runs FLUSH
    like Helm's: no line at its bottom edge. The light set's inset --lg-edge-out is black .42 in dark,
    and over a maximized window it read as a dark 1-2 px groove under the bar (rows 33-34 at 125%,
-   luma 35.6 between 62 above and 53 below, Owen saw it), and in the final tokens --lg-edge-out is a
+   luma 35.6 between 62 above and 53 below, the user saw it), and in the final tokens --lg-edge-out is a
    WHITE hairline, which would be a light line there instead. Helm's strip has no line at either edge,
    so in dark the strip has none: no box-shadow at all. Its tint is the bars' own token, --lg-fill-bar
    (Helm's rail / top strip, .75), floored there by the guard (topbar.js solveTint). */
@@ -66,12 +66,12 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
   -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur);
 }
 /* THE COLOUR UNDER, DARK ONLY (lane mantle-topbar-under, 2026-10-11; ui/topbar/under.js, main:
- * lib/topbar-under.js). Owen: "can we make it so that the top bar changes based on what color is on below
+ * lib/topbar-under.js). The user: "can we make it so that the top bar changes based on what color is on below
  * it?" Where a window is right under the bar, #under (topbar.js mounts it in dark only, as #bar's first
  * child) paints that window's colour: its bottom row is the window's top row, column by column. It sits
  * at z-index -1 inside #bar, which isolates while it is mounted: over #bar's tint and blurred picture,
  * under the words. Where no window is under the bar its pixels are clear and the glass shows as before.
- * NO FADE (Owen: "changes colors faster like imediatly? so theres no delay?"): a new frame is painted in
+ * NO FADE (the user: "changes colors faster like imediatly? so theres no delay?"): a new frame is painted in
  * place and an ink flips in the same frame. No new line: #bar keeps no box-shadow in dark, the strip runs
  * flush. An item over a bright window takes .ink-dk: the light theme's inks (--lg-*-on-light). */
 :root[data-theme="dark"] body.under #bar { isolation: isolate; }
@@ -113,7 +113,7 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
   --lg-hover: var(--lg-hover-on-light); --lg-press: var(--lg-press-on-light);
   --lg-warn: var(--lg-warn-on-light); --lg-acc: var(--lg-acc-on-light);
 }
-/* FIT (2026-09-25, Owen: the stats were cut at "CPU 82%" at the screen's right edge). The stats
+/* FIT (2026-09-25, the user: the stats were cut at "CPU 82%" at the screen's right edge). The stats
  * never shrink and always end one inset (8px, the same as the Mantle glyph's) from the right edge
  * of the SCREEN: topbar.js sets #bar's `right` when the window is wider than its display, which is
  * what put them off screen. The left side gives way instead: the app name ellipsizes first, then
@@ -165,7 +165,7 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
 }
 
 /* dropdowns: the popover glass the bar's quick settings use, square to the bar like a Mac menu.
- * HEIGHT (2026-09-25, Owen: pressing CPU / RAM / GPU / NET showed "a thin grey strip" and no
+ * HEIGHT (2026-09-25, the user: pressing CPU / RAM / GPU / NET showed "a thin grey strip" and no
  * menu, "its like that for all of them"). The cap used to be calc(100vh - 40px): 100vh is the
  * WINDOW, and the closed bar's window is Windows' 38 DIP floor, so every dropdown came out
  * max-height 0 = a 12 px box of padding and border with a scrollbar's arrow in it, and main was
@@ -222,7 +222,7 @@ body.mock.dark { background: linear-gradient(160deg, #10131c 0%, #252b3b 60%, #3
   background: currentColor; -webkit-mask: var(--warn-glyph) center / 12px 12px no-repeat;
 }
 
-/* THE DROPDOWNS IN DARK: HELM'S MENU ON A REAL PICTURE (lane same-bars, 2026-10-09). Owen: "everything
+/* THE DROPDOWNS IN DARK: HELM'S MENU ON A REAL PICTURE (lane same-bars, 2026-10-09). The user: "everything
  * the same ... go by what helm looks like", then "Match Helm's real look" (BRIEF-SEE-2 FINAL RULES).
  * THE ONE RECIPE, as the bottom bar's pop-ups wear it: a blurred picture of what is behind the menu +
  * ONE tint layer. The face was --hud-face, --lg-fill-strong three times over nothing blurred. Now

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* test-osd.js - the osd lane's sidecar commands (wave 3, 2026-09-24): powermode.* and osd.*.
  *
- * Runs the sidecar in --passive, like test-sidecar.js. WHAT IT MAY CHANGE ON OWEN'S MACHINE:
+ * Runs the sidecar in --passive, like test-sidecar.js. WHAT IT MAY CHANGE ON THE USER'S MACHINE:
  * nothing. The only power-mode write is a SAME-VALUE one (the mode already chosen for the power
  * source the PC is on; none at all while Energy saver locks the switch), and it is
  * confirmed by an independent read (`powercfg /getactivescheme` for the plan, the registry
@@ -159,7 +159,7 @@ async function powerMode(s) {
 }
 
 /** THE PURE READ/VERIFY LOGIC (powermode.decide, 2026-09-25): made-up Windows readings in, the
- *  state the panel draws out. No Windows call is made. Row 1 is Owen's machine on battery the
+ *  state the panel draws out. No Windows call is made. Row 1 is the user's machine on battery the
  *  moment the tile said "Efficiency" and a landed set was reported as refused. */
 async function powerDecide(s) {
   const EFF = '961cc777-2547-4f9d-8174-7d86181b8a7a', PERF = 'ded574b5-45a0-4f42-8737-46345c09c238';
@@ -374,7 +374,7 @@ module.exports = {
     console.log(`  osd.volume round trip: pretend level median ${med(ms)} ms (max ${Math.max(...ms)}); from the device median ${med(dev)} ms (max ${Math.max(...dev)})`);
 
     const after = (await s.send('volume', {}, 8000)).result || {};
-    check('Owen\'s volume did not move (level and mute read before and after)',
+    check('The user\'s volume did not move (level and mute read before and after)',
       after.level === before.level && after.muted === before.muted, JSON.stringify({ before, after }));
   },
 

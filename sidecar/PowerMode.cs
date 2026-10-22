@@ -30,7 +30,7 @@
 // A same-value PowerSetUserConfiguredDCPowerMode(performance) returned 0 in 0 ms and changed
 // nothing (all four reads and both registry values identical before and after, 2026-09-25).
 //
-// MEASURED ON OWEN'S MACHINE (2026-09-24, Windows 11 25H2 26200.9550):
+// MEASURED ON THE USER'S MACHINE (2026-09-24, Windows 11 25H2 26200.9550):
 //   - the overlays registered here: 961cc777-2547-4f9d-8174-7d86181b8a7a ("Better Battery-life
 //     Overlay" = Best power efficiency), ded574b5-45a0-4f42-8737-46345c09c238 ("Max Performance
 //     Overlay" = Best performance), 3af9b8d9-7c97-431d-ad78-34a8bfea439f ("High Performance
@@ -135,7 +135,7 @@ namespace Mantle {
       t.Add("powermode.get", Lanes.Qs, Get);       // the panel's lane: the first read loads powrprof (90 ms here)
       t.Add("powermode.set", Lanes.Qs, Set);
       t.Add("powermode.watch", Lanes.Qs, Watch);
-      t.Add("powermode.plan", Lanes.Qs, SetPlan);    // switch the power PLAN (Owen's click only)
+      t.Add("powermode.plan", Lanes.Qs, SetPlan);    // switch the power PLAN (the user's click only)
       t.Add("powermode.decide", Lanes.Qs, DecideCmd); // PURE: the read/verify logic over given readings (tests)
     }
 
@@ -171,7 +171,7 @@ namespace Mantle {
 
     // ------------------------------------------------------------------ the power PLANS
     //
-    // WHY (2026-09-24): Owen's active plan is "Hone Ultimate Power Plan V5", and Windows applies a
+    // WHY (2026-09-24): the user's active plan is "Hone Ultimate Power Plan V5", and Windows applies a
     // power MODE only on Balanced, so the mode switch alone is a dead control on his machine. The
     // panel offers the installed plans instead (PowerEnumerate + PowerReadFriendlyName, the list
     // Control Panel > Power Options shows) and the modes once Balanced is chosen.

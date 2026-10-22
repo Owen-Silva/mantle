@@ -8,7 +8,7 @@
  *
  * Passive sidecar. Every window it makes is invisible: the layer is fully transparent in passive (unless
  * MANTLE_UNDERPAINT_VISIBLE=1, which this test never sets) and the fake bar (test-underpaint-bar.ps1) is
- * layered with alpha 0. Nothing is focused, nothing of Owen's is moved.
+ * layered with alpha 0. Nothing is focused, nothing of the user's is moved.
  *
  *   1. the commands are listed; bad asks are refused in words
  *   2. lifecycle + placement: the layer window, its styles, its owner, hidden until the first row, the rect,
@@ -241,7 +241,7 @@ function cpuMs(pid) {
       t.check('showing it shows the layer again (' + sw.ms + ' ms)', !!sw.v && sw.ms < 300, sw.ms);
       const i2 = await bar.cmd('info');
       t.check('...directly under the bar again', i2.next === lw && (await pk()).zUnderBar === true, i2.next + ' vs ' + lw);
-      // a tight window (Owen may switch apps during the run; the fake bar's own show/hide is SW_SHOWNOACTIVATE)
+      // a tight window (the user may switch apps during the run; the fake bar's own show/hide is SW_SHOWNOACTIVATE)
       t.check('the foreground window did not change across the layer\'s hide / show', i2.fg === fgH && i2.fg !== lw && i2.fg !== bi.hwnd, fgH + ' -> ' + i2.fg);
       await bar.cmd('move ' + bl + ' ' + bt);
       await up({ on: false }); P = null;

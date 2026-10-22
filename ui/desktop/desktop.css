@@ -1,7 +1,7 @@
 /*
   desktop.css — the desktop layer, wearing the taskbar's glass.
 
-  THEME. Owen, 2026-09-21: "everything that we build for this wrapper, their UI needs to be this
+  THEME. The user, 2026-09-21: "everything that we build for this wrapper, their UI needs to be this
   exact same theme as the taskbar." So this layer resolves every colour through
   ../shared/glass-light.css (--lg-*) — the same token set ui/bar/bar.css uses — and there is not
   one colour literal below. tokens.css is still linked first for fonts and geometry, but nothing
@@ -17,12 +17,12 @@
   the bar.
 
   THE BODY NEVER PAINTS. In live mode this window is the size of the screen and is reparented
-  under the desktop icons, so anything painted on <html>/<body> would cover Owen's wallpaper with
+  under the desktop icons, so anything painted on <html>/<body> would cover the user's wallpaper with
   a rectangle. Only the panes have a surface.
   The bottom haze that used to be here (a 240px ion-glow gradient on body::after) is DELETED.
   Its one stated reason was that the bar's DWM blur-behind had nothing to frost over a dark
   wallpaper — the bar captures and blurs its own backdrop now, so the haze bought nothing and all
-  it did was tint the bottom of Owen's wallpaper blue.
+  it did was tint the bottom of the user's wallpaper blue.
 
   THE BACKDROP, and why it is one picture rather than one per pane. Main sends
   'desktop.backdrop' {png, w, h, rect, ms} ONCE at start and again after a display change: a
@@ -155,7 +155,7 @@ html, body {
    left a 1px ring of the UNTINTED blurred picture under the hairline: in dark that ring was the
    picture at full strength, about twice the pane's brightness and the wallpaper's colour, round every
    edge and widest on the rounded ends, where the anti-aliased curve spreads it over two pixels
-   (Owen's crop, 2026-10-10: ring 42-45,59-64,63-69 on a 16,26,30 pill). Light had the same ring,
+   (the user's crop, 2026-10-10: ring 42-45,59-64,63-69 on a 16,26,30 pill). Light had the same ring,
    the saturated photograph under a dark line. One fill under a translucent line does not double it:
    the line is the token's alpha over the tint, and the curve is one anti-aliased edge (lane mantle-rim). */
 .pane::after {
@@ -191,7 +191,7 @@ body.has-wall .pane::after { background-color: var(--lg-fill); }
 :root[data-theme="dark"] .pane::after { background-color: var(--pane-tint, var(--lg-fill)); }
 :root[data-theme="dark"] body.no-backdrop:not(.has-wall) .pane::after { background-color: var(--lg-fill-pop); }
 
-/* DARK, ONE SHEET (lane same-shell, 2026-10-09; Owen: "can you make sure everything is the same").
+/* DARK, ONE SHEET (lane same-shell, 2026-10-09; the user: "can you make sure everything is the same").
    Every dark surface is the same glass: one --lg-fill over the blurred picture, the token hairlines,
    the token radius. Here that means: the pane takes the pop-up radius token (same 16px value, now
    from the token), the Mission Control frame drops its --lg-sunk well (a second layer on the pane;
@@ -237,7 +237,7 @@ body.has-wall .pane::after { background-color: var(--lg-fill); }
 /* --- the time ------------------------------------------------------------ */
 
 /*
-  12-hour with seconds and a meridiem suffix (Owen, 2026-09-21: "i dont want it in military time
+  12-hour with seconds and a meridiem suffix (the user, 2026-09-21: "i dont want it in military time
   and i want the time to the second"). The parts are separate elements so a tick touches only the
   text that changed. Nothing moves while it runs: tabular-nums fixes the digit advance, .ss
   reserves its two digits, and the pane is a fixed-width block, so the seconds rolling can shift

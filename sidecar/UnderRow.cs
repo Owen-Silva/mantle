@@ -1,7 +1,7 @@
 // UnderRow.cs - `underrow`: ONE physical row of the screen, averaged into n columns, for the top bar's
 // colour under it (lib/topbar-under.js, lane mantle-topbar-under, 2026-10-11).
 //
-// Owen: "can we make it so that it changes colors faster like imediatly? so theres no delay?" The bar
+// The user: "can we make it so that it changes colors faster like imediatly? so theres no delay?" The bar
 // reads the row right under it many times a second while it changes, so each read must be cheap.
 // `backdrop` (Backdrop.cs) answers with a PNG: FromHbitmap + a GDI+ PNG encode + base64 here, and a
 // zlib inflate + a column average in main, for a 1-pixel-high strip. This does the same read with

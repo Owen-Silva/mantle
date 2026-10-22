@@ -1,6 +1,6 @@
 /* settings.js — Mantle Settings, the page (lane settings-ui, 2026-09-28; main: lib/features/settings.js).
  *
- * WHY THIS PAGE: Owen, 2026-09-28: "add a mantle section or something to the existing settings and
+ * WHY THIS PAGE: the user, 2026-09-28: "add a mantle section or something to the existing settings and
  * then make the existing settings better and the mantle style". So Win+I opens this: the Windows
  * settings Mantle can drive itself (brightness, night light, sound, Bluetooth, Wi-Fi, power, startup
  * apps) done natively through the SAME backends the bar's quick settings use, every Mantle feature
@@ -13,7 +13,7 @@
  * the part as Windows reads it after the set) is what the control shows, so a refused switch springs
  * back, and its reason is written under it.
  *
- * NO SILENT FAILURES (Owen's rule): every control that cannot read or act says why in words right
+ * NO SILENT FAILURES (the user's rule): every control that cannot read or act says why in words right
  * under it (--lg-warn); a section whose read failed says why and offers Try again; a set that did
  * not take leaves a note under its row. This page never logs anything.
  *
@@ -130,7 +130,7 @@
     s.at = Date.now();
     if (k === 'mantle' || k === 'catalog') rebuildIndex();
   }
-  /* THE OPEN CACHE (lane settingsfast, 2026-10-15): Mantle keeps no hidden Settings window (Owen: "i need to
+  /* THE OPEN CACHE (lane settingsfast, 2026-10-15): Mantle keeps no hidden Settings window (the user: "i need to
      save ram"), so every open is a new page. Its first paint draws Home from the last values this page saw
      (localStorage, Mantle's own profile on this PC), and the fresh reads replace them a moment later: read()
      keeps an 'ok' slot on screen while it refreshes. Only these slots, only good answers, saved at most every
@@ -1171,7 +1171,7 @@
         ctl: sw(!!swr.altTab, { 'data-act': 'switcher', 'data-key': 'altTab' }, { label: 'Alt+Tab switcher', pending: pend('mantle.switcher') }) }),
       row({ id: 'mantle.switcher.winKeys', label: 'Win+N and Win+A', tile: tile(icon('notifications')), help: 'Mantle\'s notification center and quick settings panels', why: swr.winKeysReason || null,
         ctl: sw(!!swr.winKeys, { 'data-act': 'switcher', 'data-key': 'winKeys' }, { label: 'Win+N and Win+A panels', pending: pend('mantle.switcher.winKeys') }) })));
-    // lib/keep-ready.js (lane settingsfast): off = nothing kept in memory while closed (Owen's default)
+    // lib/keep-ready.js (lane settingsfast): off = nothing kept in memory while closed (the user's default)
     const kr = m.v.keepReady;
     if (kr && Array.isArray(kr.rows) && kr.rows.length) {
       out.push(groupT('Keep ready in the background', 'mantle.keepready', 'Off: each opens fresh and uses no memory while closed'));

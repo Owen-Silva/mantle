@@ -6,7 +6,7 @@
 // Sleep has no such exe. The folk remedy, `rundll32 powrprof.dll,SetSuspendState 0,1,0`, is a
 // trap: rundll32 calls its target as (HWND, HINSTANCE, LPSTR, int), so SetSuspendState's first
 // argument - bHibernate - receives rundll32's window handle, which is non-zero, and the machine
-// HIBERNATES whenever hibernation is enabled. It is enabled on Owen's machine (powercfg /a,
+// HIBERNATES whenever hibernation is enabled. It is enabled on the user's machine (powercfg /a,
 // 2026-09-22). So Sleep is a real P/Invoke with bHibernate = FALSE, and that needs code.
 //
 // ACTIONS
@@ -24,7 +24,7 @@
 // call is made delayMs later. A failure of the call itself (rare once the checks passed) cannot
 // reach the launcher any more, so it is emitted as an `ev:"session"` event and a log line.
 //
-// MODERN STANDBY. Owen's machine has no S3: its only standby is S0 low power idle (powercfg /a,
+// MODERN STANDBY. The user's machine has no S3: its only standby is S0 low power idle (powercfg /a,
 // 2026-09-22). SetSuspendState(FALSE) is the documented sleep request and is what the power
 // button's "sleep" action maps to, but whether it enters Modern Standby or falls through to
 // hibernate on an S0 machine has NOT been observed here - by rule, no power action has ever been

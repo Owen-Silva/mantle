@@ -10,7 +10,7 @@
  * events): cover, move to another widget, minimise (what Win+D does), restore, (behind the desktop: the older Win+D
  * mechanism is proven on fake windows only), click-through, fully transparent, hidden, watch off. The window is a WinForms form
  * that never activates, is never in a taskbar, and lives at -9000,-9000, off every monitor: it
- * never appears on Owen's screen, takes no focus and no clicks. Prints one summary line.
+ * never appears on the user's screen, takes no focus and no clicks. Prints one summary line.
  */
 const fs = require('fs');
 const os = require('os');

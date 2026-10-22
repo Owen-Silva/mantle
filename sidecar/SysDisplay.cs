@@ -36,7 +36,7 @@
 //
 // RESOLUTIONS are given the way Windows lists them, in landscape terms (1920 x 1080 even while the
 // display is rotated to portrait); a mode change swaps width and height itself for portrait. The
-// rotated case is NOT measured here (Owen's panel is landscape): EnumDisplaySettings' modes are
+// rotated case is NOT measured here (the user's panel is landscape): EnumDisplaySettings' modes are
 // normalised by their own orientation field, and portrait = DMDO_90, portrait-flipped = DMDO_270 is
 // the conventional mapping, unverified on a rotated display.
 //
@@ -66,9 +66,9 @@
 // Every handler catches its own exceptions (Features.TryRun would put ex.Message into the reply).
 //
 // PASSIVE (every test sidecar): reads and every dryRun answer; each real write answers
-// FeatureTable.PassiveRefusal + ": it would have ...". Tests never change Owen's display.
+// FeatureTable.PassiveRefusal + ": it would have ...". Tests never change the user's display.
 //
-// MEASURED ON OWEN'S MACHINE (2026-09-28, Windows 11 26200): one internal panel, landscape; the
+// MEASURED ON THE USER'S MACHINE (2026-09-28, Windows 11 26200): one internal panel, landscape; the
 // night light settings blob is 43 bytes (schedule fields: hours 21:00 -> 07:00, no strength field,
 // empty sunset/sunrise); the state blob 41 bytes (off). See the night light section for the bytes.
 // Re-read on 26H2 (26300, 2026-09-30): the same 43- and 41-byte blobs; test-sysdisplay.js passes.
@@ -602,7 +602,7 @@ namespace Mantle {
     }
 
     /// Custom scaling (Settings > Display > Scale > Custom) overrides every display's scale until
-    /// it is turned off and Owen signs out. HKCU\Control Panel\Desktop: Win8DpiScaling=1 + LogPixels.
+    /// it is turned off and the user signs out. HKCU\Control Panel\Desktop: Win8DpiScaling=1 + LogPixels.
     static string CustomScaleOn() {
       try {
         using (RegistryKey k = Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop")) {
@@ -1492,7 +1492,7 @@ namespace Mantle {
     // ================================================================== night light: strength + schedule
     // THE BLOB IS BOND COMPACT-BINARY v1 (Microsoft Bond: every field is a header byte - id in the top
     // 3 bits (6 = the id follows in one byte), type in the low 5 - then its value; a struct ends at
-    // 0x00). Both night light blobs, as measured on Owen's machine 2026-09-28, decode that way exactly:
+    // 0x00). Both night light blobs, as measured on the user's machine 2026-09-28, decode that way exactly:
     //
     //   settings (43 bytes):  43 42 01 00  0a 02 01 00  2a 06 [d9 e5 eb cf 06]  2a 2b 0e 15 [21 bytes]  00 00 00
     //     "CB" v1 | field0 struct {bool true} | field1 struct { field0 uint64 = unix-seconds timestamp,
@@ -1641,7 +1641,7 @@ namespace Mantle {
       return Wrap(ts, inner.ToArray());
     }
 
-    /// null when `fs` is EXACTLY the layout measured on Owen's machine: 20{0 int8}, 30{0 int8},
+    /// null when `fs` is EXACTLY the layout measured on the user's machine: 20{0 int8}, 30{0 int8},
     /// 50{}, 60{} in that order, hours 1-23. Else how it differs (writes are then refused).
     static string MeasuredLayout(List<BField> fs) {
       int[] ids = { 20, 30, 50, 60 };
@@ -1923,7 +1923,7 @@ namespace Mantle {
       bool anyCaps = false, supported = false, enabled = false, byDefault = false;
       foreach (Gpu g in gs) if (g.CapsOk && !g.Software) { anyCaps = true; supported |= g.HwSupported; enabled |= g.HwEnabled; byDefault |= g.HwDefault; }
       object setting = reg == 2 ? (object)true : (reg == 1 ? (object)false : (anyCaps ? (object)byDefault : null));
-      // Only meaningful where a driver supports it: Owen's registry says 2 (on) while his only
+      // Only meaningful where a driver supports it: the user's registry says 2 (on) while his only
       // hardware adapter answers 2.7=0x0 / 2.9=0x0 (measured 2026-09-28), i.e. the value is inert.
       bool restart = anyCaps && supported && setting is bool && (bool)setting != enabled;
       return Json.Obj("on", setting, "registry", reg, "registryReason", why,

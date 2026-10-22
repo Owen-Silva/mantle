@@ -2,7 +2,7 @@
  *
  * WHY: the 1 s sample (sidecar/TopbarStats.cs) rebuilt #right's innerHTML (every stat button and the tool
  * buttons), forced a layout with getBoundingClientRect and re-planned the colour under, once a second,
- * at rest. The rate is Owen's ("i want it to update every 1 sec"); the cost per tick is not. So:
+ * at rest. The rate is the user's ("i want it to update every 1 sec"); the cost per tick is not. So:
  *   PAGE (ui/topbar/topbar.js tickStats): a sample whose cells keep their set, order, labels, classes and
  *         width SHAPE only rewrites the text nodes (and tooltips) that changed: no innerHTML, no layout read,
  *         no under re-plan. Anything else is the full render, exactly as before.

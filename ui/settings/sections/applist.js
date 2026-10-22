@@ -167,7 +167,7 @@
     const links = kit.list({ row: 'apps.defaults.links', items: [], empty: 'Reading…' });
     const why1 = kit.h('div', {}), why2 = kit.h('div', {});
     /* lane mantle-player: "Use Mantle Player for video and music". Mantle only ADDS itself to Windows' list
-       (HKCU, documented keys) and opens Windows' Default apps page at Mantle Player; the pick itself is Owen's
+       (HKCU, documented keys) and opens Windows' Default apps page at Mantle Player; the pick itself is the user's
        click there (Windows protects it). Undo takes out exactly what was added. --test = a dry run. */
     const P = (op) => kit.call('player.defaults', { op });
     const pState = kit.status({ row: 'apps.defaults.player', label: 'Mantle Player', help: 'Mantle\'s video and music player', value: 'Reading…' });

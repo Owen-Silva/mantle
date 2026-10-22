@@ -2,7 +2,7 @@
 //
 //   MANTLE_SIDECAR_EXE=<your exe> node sidecar/test-topbar.js
 //
-// PASSIVE, like every sidecar test. Owen's apps are only ever READ (and this prints counts, never
+// PASSIVE, like every sidecar test. The user's apps are only ever READ (and this prints counts, never
 // a title or a menu label of his). Every write - a menu command, a window action - goes to a
 // FIXTURE this test compiles into %TEMP%: a tiny WinForms exe whose windows sit at -6000,-6000,
 // are WS_EX_NOACTIVATE + WS_EX_TOOLWINDOW (no taskbar button, no Alt+Tab entry) and are shown
@@ -191,14 +191,14 @@ function flat(items, out) {
     if (cmds.length) t.check('ping lists the topbar commands', ['topbar.focus', 'topbar.watch', 'topbar.menus', 'topbar.invoke',
       'topbar.window', 'topbar.reserve', 'topbar.release', 'topbar.uia', 'topbar.uiaInvoke'].every((c) => cmds.includes(c)), cmds.join(','));
 
-    // ---- what is in front, read-only (Owen's window: counts only) --------------------------
+    // ---- what is in front, read-only (the user's window: counts only) --------------------------
     const cold = await s.call('topbar.focus', {}, 4000);   // JIT + the first FileVersionInfo read
     const fg0 = await s.call('topbar.focus', {}, 4000);
     t.check('topbar.focus answers with a hwnd string and flags', typeof fg0.hwnd === 'string' && typeof fg0.fullscreen === 'boolean' &&
       typeof fg0.self === 'boolean' && typeof fg0.uia === 'string', JSON.stringify(Object.keys(fg0)));
     t.check('topbar.focus has either a menu or the reason there is none', !!(fg0.menu || fg0.menuReason));
     t.check('topbar.focus is fast once warm (< 20 ms in the sidecar)', fg0.ms < 20, fg0.ms + ' ms');
-    console.log(`  foreground (Owen's): menu ${fg0.menu ? fg0.menu.source + ' ' + fg0.menu.count + ' items, ' + fg0.menu.readMs + ' ms' : 'none'}; uia=${fg0.uia === 'try' ? 'try' : 'skip'}; read ${cold.ms} ms cold, ${fg0.ms} ms warm`);
+    console.log(`  foreground (the user's): menu ${fg0.menu ? fg0.menu.source + ' ' + fg0.menu.count + ' items, ' + fg0.menu.readMs + ' ms' : 'none'}; uia=${fg0.uia === 'try' ? 'try' : 'skip'}; read ${cold.ms} ms cold, ${fg0.ms} ms warm`);
 
     // ---- passive refuses every write on a real window --------------------------------------
     for (const [cmd, extra] of [['topbar.reserve', { hwnd: fg0.hwnd, size: 35 }], ['topbar.release', { hwnd: fg0.hwnd }]]) {
@@ -286,7 +286,7 @@ function flat(items, out) {
     }
     // App power fields on every top entry (lane mantle-power-sidecar, 2026-10-14): exe, n, path, access,
     // and the generic hosts (electron, node, python, ...) split by path. Two throwaway burners both named
-    // python.exe, in two folders, spin one thread each: they must come back as two rows. Owen's own rows
+    // python.exe, in two folders, spin one thread each: they must come back as two rows. The user's own rows
     // are only READ (and nothing of them is printed).
     {
       const B = require('./apppower-burner');
@@ -329,7 +329,7 @@ function flat(items, out) {
     clearInterval(stamper);
 
     // ---- ping: the failure and fallback paths, on throwaway sidecars with a TEST target list --------
-    // MANTLE_PING_TARGETS is honoured by a --passive sidecar only. Nothing on Owen's network is
+    // MANTLE_PING_TARGETS is honoured by a --passive sidecar only. Nothing on the user's network is
     // changed: 192.0.2.1 is TEST-NET-1 (RFC 5737, never routed), "nope.invalid" never resolves (RFC
     // 6761), and the TCP case is an AWS API endpoint that answers TCP 443 but not ICMP.
     const pingWith = async (name, targets, ms) => {
@@ -452,7 +452,7 @@ function flat(items, out) {
 
     // ---- nothing goes past the bar: the drag-end guard ------------------------------------------
     // The bar rect is FAKE and sits where the fixture lives (-6000,-6000): the real strip is on
-    // Owen's screen. The fixture moves ITSELF and raises the drag-end event itself; no input is
+    // the user's screen. The fixture moves ITSELF and raises the drag-end event itself; no input is
     // injected and nothing is activated.
     const BAR = [-6400, -6000, -5000, -5972];
     const gOn = await s.send('topbar.guard', { on: true, bar: BAR }, 4000);
@@ -520,9 +520,9 @@ function flat(items, out) {
     t.check('game: Roblox full screen steps aside', v7.stepAside === true);
     t.check('game: the Game Bar list was read (or says why not)', typeof v1.gameStore === 'boolean' && (v1.storeNote === null || typeof v1.storeNote === 'string'), v1.storeNote);
     t.check('topbar.focus carries the game verdict', fg0.game && typeof fg0.game.stepAside === 'boolean' && typeof fg0.game.quns === 'number', JSON.stringify(fg0.game));
-    console.log(`  game verdict on Owen's foreground now: stepAside=${fg0.game && fg0.game.stepAside}, QUNS ${fg0.game && fg0.game.quns} (${fg0.game && fg0.game.qunsName})`);
+    console.log(`  game verdict on the user's foreground now: stepAside=${fg0.game && fg0.game.stepAside}, QUNS ${fg0.game && fg0.game.quns} (${fg0.game && fg0.game.qunsName})`);
 
-    // watch: read-only hooks; Owen's own focus changes (if any) are counted, never shown
+    // watch: read-only hooks; the user's own focus changes (if any) are counted, never shown
     const w = await s.call('topbar.watch', { on: true }, 4000);
     t.check('topbar.watch on answers with the current focus', w.watching === true && w.focus && typeof w.focus.hwnd === 'string');
     await T.sleep(1500);

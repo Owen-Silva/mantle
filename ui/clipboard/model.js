@@ -4,7 +4,7 @@
  * (lib/features/clipboard.js requires it for placement) and under node for model.test.js.
  *
  * Nothing here logs or returns item text anywhere but to its caller: the page draws it, and
- * that is the only place Owen's clipboard content is ever meant to be seen.
+ * that is the only place the user's clipboard content is ever meant to be seen.
  */
 (function (root, factory) {
   'use strict';
@@ -15,7 +15,7 @@
 
   // ---- geometry (DIP) -------------------------------------------------------------------------
   // Windows' own Win+V panel is ~360 x 460 at 100%; Mantle's is the same size so it covers the
-  // same amount of the window Owen is pasting into. The margin is transparent room for the shadow.
+  // same amount of the window the user is pasting into. The margin is transparent room for the shadow.
   var PANEL_W = 360;
   var PANEL_H = 460;
   var MARGIN = 18;
@@ -90,7 +90,7 @@
    *  filter box have the key.
    *
    *  "P pins" and "type to filter" want the same key. The rule: P pins while the filter is EMPTY
-   *  and not armed; once Owen is typing a filter, P is a letter and Ctrl+P pins. "/" arms an empty
+   *  and not armed; once the user is typing a filter, P is a letter and Ctrl+P pins. "/" arms an empty
    *  filter, so a filter can still start with p. */
   function keyAction(e, st) {
     var q = (st && st.query) || '';

@@ -1,7 +1,7 @@
 /* net.js — the network readout's words and glyph, from ONE sidecar reading (NetState.cs, pushed by
  * main as 'net').
  *
- * WHY (2026-09-23). Owen: "you need to make the Internet thing ... actually work". The readout
+ * WHY (2026-09-23). The user: "you need to make the Internet thing ... actually work". The readout
  * beside the speaker was a fixed Wi-Fi drawing in index.html, so it showed full bars with the Wi-Fi
  * off, on Ethernet, with no internet and with no network at all. It now draws what Windows' own
  * routing and connectivity say: which adapter carries traffic (Wi-Fi, Ethernet, anything else),

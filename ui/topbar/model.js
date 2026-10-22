@@ -92,10 +92,10 @@
     // item away (and topbar.settings opens it anyway when Mantle Settings is off or not loaded).
     { t: 'item', label: 'Mantle Settings…', act: 'settings', key: 'Win+I', enabled: true },
     { t: 'item', label: 'Windows Settings…', act: 'winSettings', enabled: true },
-    // Owen's override for the game rule. Here because the tray has no per-feature items yet
+    // The user's override for the game rule. Here because the tray has no per-feature items yet
     // (lib/features.js offers one checkbox per feature); `checked` is set from topbar.hello.
     { t: 'item', label: 'Keep the top bar over full-screen games', act: 'overGames', checked: false, enabled: true },
-    // Owen's "a way that i can manually hide it" (lane tbvideo, 2026-09-26). The same key shows it
+    // The user's "a way that i can manually hide it" (lane tbvideo, 2026-09-26). The same key shows it
     // again, and so does the Top bar row in the bottom bar's quick settings (lib/features/topbar.js).
     { t: 'item', label: 'Hide top bar', act: 'hide', key: 'Win+Alt+T', enabled: true },
     { t: 'sep' },
@@ -131,7 +131,7 @@
 
   /* ---- fit: which titles the left side shows (pure; the page measures, this decides) ----
      w[0] the Mantle glyph, w[1] the app's bold name, w[2..] its menus (natural widths, px); moreW the
-     » button; avail the left side's room. Owen's order (2026-09-25): the app name gives way first
+     » button; avail the left side's room. The user's order (2026-09-25): the app name gives way first
      (ellipsis, down to appMin), then the menus that still do not fit go into », from the right, and
      whatever room is left over goes back to the app name. Returns { n, shown, appW }: titles
      [0, shown) are on the bar, the rest are in »; appW is the app name's max width, or null for its

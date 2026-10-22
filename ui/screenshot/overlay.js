@@ -3,7 +3,7 @@
  * Main hands the page `screenshot.frame`: the frozen frame of THIS monitor (a BMP the sidecar wrote
  * to %TEMP%), the monitor's physical rect, and the top-level windows (physical, topmost first).
  * The page decodes the frame while its window is still parked off screen and says
- * `screenshot.ready`; main then moves the window on screen, so the first thing Owen sees is the
+ * `screenshot.ready`; main then moves the window on screen, so the first thing the user sees is the
  * frozen frame already drawn, never an empty window.
  *
  * Every rect that leaves this page is PHYSICAL (virtual-screen) px, computed by geometry.js from
@@ -420,7 +420,7 @@
 
   // THE CANARY (lib/features/screenshot.js canary()): a magenta dot a few device pixels wide, on
   // top of everything on this page for one check, so main can read the SCREEN's pixel there and
-  // know the overlay is really what Owen sees (2026-09-24: a capture that every window flag called
+  // know the overlay is really what the user sees (2026-09-24: a capture that every window flag called
   // "on screen" was invisible). Painted, then two frames, then main is told; main turns it off.
   var dot = null;
   function canary(c) {

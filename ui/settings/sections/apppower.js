@@ -1,6 +1,6 @@
 /* apppower.js — Mantle Settings > App power (lane mantle-power-ui, 2026-10-14).
  *
- * The limits Owen sets from the top bar's CPU / RAM / GPU meters (ui/topbar/apppower.js), listed in one
+ * The limits the user sets from the top bar's CPU / RAM / GPU meters (ui/topbar/apppower.js), listed in one
  * place: each app with what is set for it ("Efficiency mode, CPU limit 25%"), a Remove per app and Reset
  * all. Both are undone with Undo (apppower.restoreRules puts back exactly what was removed): undo over
  * confirm. Main: lib/features/apppower.js (apppower.rules / forget / resetAll / restoreRules); no main half

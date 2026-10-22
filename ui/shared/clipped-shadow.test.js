@@ -1,14 +1,14 @@
 require('../../tools/dev-env.js').lowcpu();
 /* clipped-shadow.test.js - no CUT-OFF drop shadows in dark (lane clipped-shadow, 2026-10-10).
  *
- * Owen: "i wanted you to fix this black sharp stuff around the outside of a lot of it." Mantle's dark
+ * The user: "i wanted you to fix this black sharp stuff around the outside of a lot of it." Mantle's dark
  * drop shadows (--lg-shadow .34 + .42 black, the bar's --lg-drop-up .30 + .32) need 40-90 DIP of room;
  * the windows below keep 0-18 DIP round their surface, so the shadow was cut at the window's edge or
  * shape into a near-black band with a hard edge and square corners. The fix: in DARK these surfaces end
  * on their hairline and lip, no outer shadow. LIGHT is held exactly as it was (its outer shadow stays),
  * and surfaces with room for the whole shadow inside their own window keep it in dark too.
  *
- * WHAT: headless Chromium over the REAL pages (file://, never Electron, never a window of Owen's), each
+ * WHAT: headless Chromium over the REAL pages (file://, never Electron, never a window of the user's), each
  * read in light and in dark (<html data-theme>, flipped live), transitions off (a test-only style, CSP
  * bypassed for it) so the value read is the settled one:
  *   - CUT surfaces: dark has no outer layer (every layer inset, or a 0-blur 0-offset hairline ring, or
@@ -44,7 +44,7 @@ const CUT = [
   ['recording pill', 'screenrec/index.html?state=recording', "document.getElementById('shape').hidden = false", '#shape', '--lg-shadow'],
   ['recording card', 'screenrec/index.html?state=done', "var s = document.getElementById('shape'); s.hidden = false; s.classList.add('is-card')", '#shape', '--lg-shadow'],
   // lane mantle-toasts3 (2026-10-15): the notification banners keep 16 px round the card (8 above), the
-  // "square dark part" Owen saw round them
+  // "square dark part" the user saw round them
   ['notification banner', 'toasts/index.html', "var s = document.getElementById('stack'); if (!s.querySelector('.toast')) { var e = document.createElement('article'); e.className = 'toast in'; e.textContent = 'x'; s.appendChild(e); }", '.toast', '--lg-shadow'],
   ['notification "+N more"', 'toasts/index.html', "var s = document.getElementById('stack'); if (!s.querySelector('.more')) { var e = document.createElement('button'); e.className = 'more'; e.textContent = '+2 more'; s.appendChild(e); }", '.more', '--lg-shadow'],
 ];

@@ -5,7 +5,7 @@
 // closes, minimises and cloaks ordinary top-level windows on command, so the tests can change the
 // desktop's window list while a switcher session is up. Each window is a real app window as far as
 // the switcher's filter goes (visible, titled, not a tool window, not owned, its own process), and
-// still puts NOTHING on Owen's screen:
+// still puts NOTHING on the user's screen:
 //   - layered at alpha 0 and click-through (WS_EX_LAYERED | WS_EX_TRANSPARENT), far off every monitor;
 //   - never activated (WS_EX_NOACTIVATE, shown with SW_SHOWNOACTIVATE / SW_SHOWMINNOACTIVE), so the
 //     foreground window never changes;

@@ -130,7 +130,7 @@ namespace Mantle {
             aumid = ReadAumid(com, full);
 
             // THE PINNED "File Explorer" CASE, and it is not rare: a shortcut
-            // does not have to point at a FILE. Owen's own taskbar pin stores
+            // does not have to point at a FILE. The user's own taskbar pin stores
             // only an IDList, so GetPath answers "" and a launcher built on
             // GetPath alone shows a blank, unlaunchable tile. The item list is
             // the real identity of such a link, so ask the shell what it names

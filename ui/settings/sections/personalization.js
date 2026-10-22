@@ -1,11 +1,11 @@
 /* personalization.js — Settings > Personalization, done natively (lane perso, 2026-09-29).
  *
- * Owen: Mantle Settings "should do everything windows can do and more and not ever rely on any old
+ * The user: Mantle Settings "should do everything windows can do and more and not ever rely on any old
  * windows feature". So Windows' Personalization pages are here, reading and changing the same values
  * Windows' own Settings does, through settings.personalization.* (lib/features/_settings-sections/
  * personalization.js -> sidecar/SysPerso*.cs). Nothing links out to ms-settings.
  *
- * THE TRUTH ABOUT WHAT OWEN SEES: Mantle draws its OWN wallpaper (lib/wallpaper.js, the Wallpapers
+ * THE TRUTH ABOUT WHAT THE USER SEES: Mantle draws its OWN wallpaper (lib/wallpaper.js, the Wallpapers
  * window; his Lively library was imported once) above Windows' background, and it REPLACES Start and
  * the taskbar. So Background leads with Mantle's wallpaper (his own library, or one of the 23 built-in
  * photos Helm and Quartz have, picked right here) and says when Windows' own shows through;
@@ -57,7 +57,7 @@
   const INTERVALS = [[60000, '1 minute'], [600000, '10 minutes'], [1800000, '30 minutes'], [3600000, '1 hour'], [21600000, '6 hours'], [86400000, '1 day']];
 
   /* ---- the built-in wallpapers (lane mantle-bg-settings, 2026-10-09)
-   * Owen asked for the same 23 built-in photos as Helm and Quartz. lib/wallpaper.js lists them beside his
+   * The user asked for the same 23 built-in photos as Helm and Quartz. lib/wallpaper.js lists them beside his
    * own library (wallpaper.list `presets`, the pick of either kind in `current`); a pick is
    * wallpaper.set { id: 'builtin:<name>' }, saved like one of his own. This is Helm's gallery in the kit's
    * voice: category chips (All first), Shuffle, the thumbnails with the accent check on the pick, and the

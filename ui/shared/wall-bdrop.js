@@ -1,6 +1,6 @@
 /* wall-bdrop.js - Helm's see-through for Mantle's APP windows, DARK ONLY (lane helm-wall-apps, 2026-10-09).
  *
- * Owen: "you need to get the see through to look just like helm". Helm does not ask Windows for acrylic: it
+ * The user: "you need to get the see through to look just like helm". Helm does not ask Windows for acrylic: it
  * paints its own photo, blurred with a plain CSS blur, and lays its tint over it (helm ui/shell/shell.css
  * .bg-photo / .bg-wash). So in dark Files, Task Manager, Settings and Task view stop using DWM's acrylic /
  * blur-behind (the window is opaque, lib/features/_wall-window.js) and paint the DESKTOP WALLPAPER instead:

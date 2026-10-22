@@ -1,6 +1,6 @@
 // test-gamemode.js - sidecar/GameMode.cs against a PASSIVE sidecar (lane gamemode, 2026-09-25).
 //   MANTLE_SIDECAR_EXE=<exe> node sidecar/test-gamemode.js
-// Nothing here changes Owen's machine: every write is either refused as passive (asserted) or a
+// Nothing here changes the user's machine: every write is either refused as passive (asserted) or a
 // same-value request that GameMode.cs answers without calling Windows (asserted: wrote false).
 'use strict';
 const T = require('./test-lib');
@@ -102,7 +102,7 @@ const T = require('./test-lib');
     t.check('apply: the System process is refused', r5.result.results[0].ok === false, JSON.stringify(r5.result.results[0]));
 
     // ---- the app in front (lane sysmon-game, 2026-09-29): never SLOWED, but always PUT BACK. A child
-    // this test started stands in for "the app in front" (testFgPid: passive only); Owen's window is
+    // this test started stands in for "the app in front" (testFgPid: passive only); the user's window is
     // never read for this. Before the fix the restore was refused too, and the app he was in when the
     // game closed stayed slowed until Mantle restarted.
     {

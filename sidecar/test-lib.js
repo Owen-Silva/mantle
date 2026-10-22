@@ -13,7 +13,7 @@
 //   })();
 //
 // ALWAYS passive (--passive): a test sidecar never hooks the keyboard, never moves a window and
-// refuses every write to Owen's machine; a feature's write must answer FeatureTable.PassiveRefusal
+// refuses every write to the user's machine; a feature's write must answer FeatureTable.PassiveRefusal
 // here, and a test should assert that it does. Plain node, no deps.
 'use strict';
 

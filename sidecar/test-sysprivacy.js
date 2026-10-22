@@ -4,7 +4,7 @@
 //
 //   node sidecar/test-sysprivacy.js [--exe=<path>]      (or MANTLE_SIDECAR_EXE)
 //
-// NEVER changes Owen's privacy permissions: every write is proven by its dryRun (answered by a
+// NEVER changes the user's privacy permissions: every write is proven by its dryRun (answered by a
 // passive sidecar because it changes nothing) and by the passive refusal of the real write, and the
 // administrator actions only by elevate.list (never run). Prints counts and shapes only, never an
 // app's name, path or product name.

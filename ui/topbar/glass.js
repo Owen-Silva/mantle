@@ -11,7 +11,7 @@
      with --lg-blur under its tint. The pure parts (read the CSS tokens, model the blur the compositor
      will draw, solve the THINNEST tint at which ink-2 still reads >= 4.5:1 against the brightest pixel
      of that blurred picture) live in ONE place now, ../shared/glass-adapt.js (lane same-bars,
-     2026-10-09, Owen: "everything the same"): the bottom bar and every pop-up of both bars use the
+     2026-10-09, the user: "everything the same"): the bottom bar and every pop-up of both bars use the
      same rule with the same thresholds. The names are kept so the page and the tests read the same. */
   var GA = (typeof module === 'object' && module.exports) ? require('../shared/glass-adapt.js')
     : (typeof self !== 'undefined' ? self.MantleGlassAdapt : null);

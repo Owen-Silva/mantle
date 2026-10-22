@@ -3,7 +3,7 @@
  * so under Electron this file does nothing.
  *
  * EVERYTHING HERE IS MADE UP: the device names, networks, startup entries, paths and versions are
- * invented ("Desk Speakers", "Home-5G", "Cloud Drive"). Nothing is read or copied from Owen's
+ * invented ("Desk Speakers", "Home-5G", "Cloud Drive"). Nothing is read or copied from the user's
  * machine. The shapes are the real ones: the settings.* contract (lib/features/settings.js) and the
  * bar's backends (main.js qs.*, net.get, battery.get, powermode.*, gamemode.state, corners.*).
  *

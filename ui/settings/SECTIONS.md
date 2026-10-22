@@ -139,7 +139,7 @@ re-values every `--lg-*` token), so a page never writes a colour literal: an inl
 `var(--lg-...)`, an SVG uses `currentColor`, and anything drawn in JS reads the token at draw time and
 repaints on the `mantle-theme` window event. Shots and page tests take `MANTLE_THEME=dark`.
 
-**Every control shows its reason inline** (Owen's No Silent Failures rule). A control that cannot act
+**Every control shows its reason inline** (the user's No Silent Failures rule). A control that cannot act
 gets `reason: 'why'` (a warning line under it) and usually `disabled: true`; `info: 'words'` is a
 quiet note. A change is shown at once and then the ANSWER has the last word:
 

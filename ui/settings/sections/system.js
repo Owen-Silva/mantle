@@ -1,6 +1,6 @@
 /* system.js - Mantle Settings > System, the page half (lane sysset, 2026-09-28; contract SECTIONS.md).
  *
- * Owen: "it should show all windows settings cause remember the point of this is to fully replace
+ * The user: "it should show all windows settings cause remember the point of this is to fully replace
  * windows basically so it should do everything windows can do and more". So this is Windows 11's
  * whole System category, drawn ONLY with the kit, every value read from Windows through the sidecar
  * (settings.system.read / .write / .admin, lib/features/_settings-sections/system.js), every control
@@ -1139,7 +1139,7 @@
 
   /* ---------------------------------------------------------------- Storage (lane storage, over SysStorage.cs)
    * Drives with a bar, the category scan (its own sidecar thread; progress arrives as
-   * settings.system.storage events, counts only), Temporary files with a cleanup PLAN Owen confirms
+   * settings.system.storage events, counts only), Temporary files with a cleanup PLAN the user confirms
    * (Downloads and the Recycle Bin are never ticked for him), Storage Sense, cleanup recommendations
    * (read only) and Advanced storage settings (read only, each with its reason). */
   const S_KINDS = ['temp', 'thumbnails', 'systemTemp', 'deliveryOptimization', 'windowsUpdate', 'recycleBin', 'downloads'];

@@ -1,7 +1,7 @@
 /* hud-backdrop.js - the blurred picture under a floating HUD, DARK ONLY (lanes see-huds + same-huds,
  * 2026-10-09).
  *
- * Owen, on dark Mantle: "mantle needs to be more see through everything", then "the reason i want
+ * The user, on dark Mantle: "mantle needs to be more see through everything", then "the reason i want
  * everything at 50% is cause it will all match way better if its the same". So a HUD (the volume
  * pop-up, clipboard, notes, the screenshot card, on-top, layouts, the timer, snap) is the same glass
  * as the bar and its pop-ups: a real blurred picture of what is behind it, then ONE --lg-fill layer
@@ -21,7 +21,7 @@
  *      bar's rule, same code, same 4.5:1 for --lg-ink-2): the TINT thickens, never the picture
  *      dimming, to the thinnest alpha that keeps the quietest word readable over the brightest
  *      blurred pixel under the pane, capped at --lg-fill-pop. Only then is --hud-tint set; over
- *      Owen's wallpaper it is not. One picture per show, so no hysteresis is needed.
+ *      the user's wallpaper it is not. One picture per show, so no hysteresis is needed.
  *
  * {hold: ms} keeps the pane invisible (opacity 0, class .hud-hold) until the picture is baked, for at
  * most that long, so a show is never a frame of the thick fallback face and then the glass. Until a

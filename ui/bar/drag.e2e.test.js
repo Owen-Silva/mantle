@@ -3,7 +3,7 @@
  * ui/bar/drag.e2e.test.js - drag to reorder, with REAL input, in a real --test bar (lane dragfix,
  * 2026-10-08).
  *
- * WHY. Drag to reorder shipped on 2026-09-29 and never worked with a mouse. Owen: "it lifts and
+ * WHY. Drag to reorder shipped on 2026-09-29 and never worked with a mouse. The user: "it lifts and
  * follows the mouse and then when you let go it stays where you stopped". Each icon is an <img>, and
  * Chromium drags images itself: at 4 px it started a Windows drag-and-drop, sent the bar a
  * pointercancel and kept the button-up, so the drop never landed and no order was ever saved. The
@@ -17,7 +17,7 @@
  * bar stays up through the drag, the DOM order after the drop, no transform left on any icon, the click
  * that ends the drop does nothing, main saved the order to the profile's feature store, the bar still
  * re-renders from main afterwards, and after a restart of the instance the order is still there.
- * Nothing of Owen's is touched: the test profile is %TEMP%\mantle-test-dragfix, no event goes to the
+ * Nothing of the user's is touched: the test profile is %TEMP%\mantle-test-dragfix, no event goes to the
  * OS, and every click on the dock is stopped before it could open an app.
  *
  *   node ui/bar/drag.e2e.test.js
@@ -144,7 +144,7 @@ async function run() {
     const n = await until(async () => { const ids = await pinnedIds(c); return ids && ids.length >= 3 ? ids.length : null; }, 120000, 500);
     if (!check('the test bar shows at least 3 pinned apps', !!n, 'this PC needs 3 pins for the drag test')) return;
 
-    // The bar up, as it is under Owen's pointer; a click on the dock never reaches the code that opens apps.
+    // The bar up, as it is under the user's pointer; a click on the dock never reaches the code that opens apps.
     await holdUp(c, true);
     check('the bar came up', !!(await until(() => isUp(c), 8000)));
     await sleep(700);   // the reveal's slide has landed
@@ -170,7 +170,7 @@ async function run() {
     for (let i = 1; i <= 12; i++) {
       await c.mouse('mouseMoved', Math.round(x0 + (x1 - x0) * i / 12), y, 1);
       // From the lift on, the drag alone keeps the bar up (main cannot see this pointer). The stand-in for
-      // Owen's pointer ON the bar is let go only once the icon has lifted: let go before the press (as until
+      // the user's pointer ON the bar is let go only once the icon has lifted: let go before the press (as until
       // 10-17), nothing held the bar through those CDP round trips, which a real press (made on the bar)
       // never has; on a loaded PC that gap passed main's 180 + 180 ms and the bar began to leave (10-17 21:39).
       if (!released && await c.ev("!!document.querySelector('#dock .cell.lifted')")) { await holdUp(c, false); released = true; }

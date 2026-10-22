@@ -6,7 +6,7 @@
  * it; every word it draws comes from here, and ui/bar/bt.test.js pins them down in node.
  *
  * THE TYPE ICON comes from what the device says it is (its Bluetooth Class of Device, or its LE
- * Appearance), else from Windows' own category for it; never from its name. Measured on Owen's
+ * Appearance), else from Windows' own category for it; never from its name. Measured on the user's
  * machine: WH-CH520 = class 4/1 (a headset), Xbox Wireless Controller = 5/2 (a gamepad), Living Room
  * TV = 4/15 (a video display: "other").
  *
@@ -166,7 +166,7 @@
     return '';
   }
 
-  /* THE QUICK-SETTINGS TILE (2026-09-27). Owen: "when i turn blutooth off it just does this and
+  /* THE QUICK-SETTINGS TILE (2026-09-27). The user: "when i turn blutooth off it just does this and
      then doesnt let me turn it back on" - the tile read "No radio" and went dead. The sidecar took
      Win32's radio enumeration as the truth, and his Realtek radio is not enumerated while it is
      OFF (sidecar/Bluetooth.cs Present). The sidecar now reads Windows' radio list (`radio`, and

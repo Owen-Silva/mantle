@@ -101,7 +101,7 @@
   };
   /* With the section model: a page a section module now claims says where Mantle's own page is
      (`to` = { section, page, row }), and the page draws it as a link INTO Mantle Settings instead of
-     out to Windows (lane wire, 2026-09-29: Owen, "nothing links out to ms-settings"). */
+     out to Windows (lane wire, 2026-09-29: the user, "nothing links out to ms-settings"). */
   function more(section, model) {
     return (MORE[section] || []).map(function (m) {
       var to = claimOf(model, m[1]);

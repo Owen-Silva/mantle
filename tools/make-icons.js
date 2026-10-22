@@ -8,7 +8,7 @@
  *   node tools/make-icons.js --sheet=<png>    also a contact sheet: each icon at every size, on
  *                                             white and on the bar's glass colour
  *
- * WHY THESE WINDOWS NEED THEIR OWN ICONS (icons lane, 2026-09-28). Owen: "they need to have there
+ * WHY THESE WINDOWS NEED THEIR OWN ICONS (icons lane, 2026-09-28). The user: "they need to have there
  * own icons that replace windows icons not just be electron". Mantle Settings and Mantle Task
  * Manager are electron.exe windows, and everything that draws a window's icon (Windows' own
  * taskbar and Alt+Tab, Mantle's bar, switcher and launcher) fell back to electron.exe's icon.

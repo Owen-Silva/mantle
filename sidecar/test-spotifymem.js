@@ -1,7 +1,7 @@
 // test-spotifymem.js - sidecar/SpotifyMem.cs (spotify.mem / spotify.trim) and its GUARD, against a
 // PASSIVE sidecar started with APPDATA pointed at a scratch folder (lane sptrim, 2026-09-26).
 //   MANTLE_SIDECAR_EXE=<exe> node sidecar/test-spotifymem.js
-// Owen's Spotify is never reached: the sidecar only ever acts on <its APPDATA>\Spotify\Spotify.exe,
+// the user's Spotify is never reached: the sidecar only ever acts on <its APPDATA>\Spotify\Spotify.exe,
 // and here that is a stand-in (a copy of cmd.exe / ping.exe named Spotify.exe) this test started.
 // The stand-ins are ended by PID at the end, never by image name.
 'use strict';

@@ -173,7 +173,7 @@ namespace Mantle {
     ///
     /// ONLY A PROCESS THAT TURNED THE CLIP ON RELEASES IT HERE (2026-09-23). Recognising the clip by
     /// its shape alone meant EVERY sidecar that exited released the LIVE Mantle's clip: each passive
-    /// test run (test-sidecar.js, a launcher test) freed Owen's cursor until the live sidecar's 1 s
+    /// test run (test-sidecar.js, a launcher test) freed the user's cursor until the live sidecar's 1 s
     /// backstop put it back (measured: the live clip is 0,0,1920,1078, Mantle-shaped). A stale clip
     /// from a Mantle that died is ClearStaleAtStartup's job, not this one's.
     public static bool ReleaseForExit() {

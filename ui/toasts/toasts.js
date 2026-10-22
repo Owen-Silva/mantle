@@ -241,7 +241,7 @@
   }
 
   /* ---- the glide with the bar (lane mantle-corner, 2026-10-16; ui/shared/bar-follow.js since lane
-     mantle-corner-follow). Owen: "this ... needs to go in the corner not up like this ... just have them
+     mantle-corner-follow). The user: "this ... needs to go in the corner not up like this ... just have them
      smoothly move up if the taskbar comes up". Main sends toasts.lift { px, kind, ms } on the tick the bar's
      own page is told; the shared follow runs the transition (and reduced motion's wait-then-jump). */
   var follow = window.MantleBarFollow.attach(stack, { shown: function () { return live().length > 0; } });

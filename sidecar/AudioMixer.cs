@@ -19,7 +19,7 @@
 // change, and an app's level is the one its session reports after the set -
 // never the click.
 //
-// WHAT A TEST MAY DO (2026-09-23 brief; Owen may be recording with audio):
+// WHAT A TEST MAY DO (2026-09-23 brief; the user may be recording with audio):
 // read everything. In --passive the ONLY default-device call allowed is making
 // the device that is ALREADY the default for all three roles the default
 // again - a no-op that proves the IPolicyConfig path - and the only session
@@ -580,7 +580,7 @@ namespace Mantle {
       }
       if (passive) {
         // The fence: a test run may only touch a session of a process its own
-        // harness started - never Owen's apps, never system sounds.
+        // harness started - never the user's apps, never system sounds.
         uint parent = pid == 0 ? 0 : ParentOf(pid);
         if (pid == 0 || Program.ParentPid <= 0 || parent != (uint)Program.ParentPid)
           return PassiveRefusal + ": audio session would change another app's volume on the live machine " +

@@ -7,8 +7,8 @@
 // four ordinary app windows (WS_EX_APPWINDOW, so the layout list takes them, + WS_EX_NOACTIVATE,
 // shown without activation) parked at x = -6000, off every screen. Charlie maximises OFF screen too
 // (its WM_GETMINMAXINFO puts the maximised window at -20000). The engine test runs on a FAKE monitor
-// laid over that off-screen area, so a saved and restored layout never lands on Owen's screen.
-// Owen's own windows are only READ, and only once without a pid filter: to prove a passive sidecar
+// laid over that off-screen area, so a saved and restored layout never lands on the user's screen.
+// The user's own windows are only READ, and only once without a pid filter: to prove a passive sidecar
 // hands out NO title of a window that is not the harness's (nothing of them is printed), and that a
 // move of one is refused (and a dryRun only describes it). The fixture kills itself after 150 s.
 //

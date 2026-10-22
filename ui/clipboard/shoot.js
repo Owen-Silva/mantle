@@ -2,7 +2,7 @@ require('../../tools/dev-env.js').lowcpu();
 /* shoot.js — headless screenshots of the Win+V clipboard panel, plus what they must prove.
  *
  * Line 1 is the machine-wide CPU cap and browser lock (required). Nothing here runs Electron or
- * the sidecar, and Owen's clipboard is never touched: the page loads over file:// with
+ * the sidecar, and the user's clipboard is never touched: the page loads over file:// with
  * mock-mantle.js playing main, and every item is a fixture.
  *
  * CHECKED, not just photographed:

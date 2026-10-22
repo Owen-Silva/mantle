@@ -2,7 +2,7 @@
 //
 //   node sidecar/test-sysdisplay.js --exe=<your built Mantle.Sidecar.exe>   [--verbose]
 //
-// NEVER changes Owen's display: every write is sent with dryRun (and a re-read proves nothing moved),
+// NEVER changes the user's display: every write is sent with dryRun (and a re-read proves nothing moved),
 // every real write is sent to a PASSIVE sidecar and must answer the passive refusal, and the pure
 // decisions (mode matching, layout rules, scale steps, what a revert restores, the night light
 // parse/encode, the ;-field editor) are proven with made-up inputs through sysdisplay.decide.
@@ -14,7 +14,7 @@ const T = require('./test-lib');
 const VERBOSE = process.argv.includes('--verbose');
 const REFUSAL = T.PASSIVE_REFUSAL || 'refused: sidecar is passive (test mode)';
 
-// The night light settings blob exactly as measured on Owen's machine (2026-09-28, 43 bytes).
+// The night light settings blob exactly as measured on the user's machine (2026-09-28, 43 bytes).
 const MEASURED = '43420100' + '0a020100' + '2a06' + 'd9e5ebcf06' + '2a2b0e15' +
                  '43420100' + 'ca140e1500' + 'ca1e0e0700' + 'ca3200' + 'ca3c00' + '00' + '000000';
 

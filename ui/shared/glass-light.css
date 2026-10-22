@@ -2,14 +2,14 @@
  *
  * WHY THIS FILE EXISTS, AND WHY IT IS NOT IN tokens.css: tokens.css is Mantle's dark instrument
  * glass, and the launcher, the desktop layer and the chamber are all still built from it. On
- * 2026-09-21 Owen pointed at the Northwind site's detached nav pill and said THAT is the glass he
+ * 2026-09-21 the user pointed at the Northwind site's detached nav pill and said THAT is the glass he
  * wants for the bar. So the bar resolves colour through --lg-* from here, and tokens.css is left
  * untouched for everyone else. The values are the Northwind originals or a direct consequence of
  * them: northwind-site/css/shell.css, .nav.is-detached (line ~509) and the :root ink ramp.
  *
  * THE BLUR TOOK THREE ATTEMPTS, and every --lg-* name survived all of them, so ui/bar/bar.css was
  * never edited for a repaint:
- *   1. light pane over DWM ACRYLIC → acrylic renders a near-opaque white slab. Owen: "it needs to
+ *   1. light pane over DWM ACRYLIC → acrylic renders a near-opaque white slab. The user: "it needs to
  *      be more glass ui like and less white … it needs to show the background behind it better".
  *   2. dark pane over DWM BLUR-BEHIND → over his dark desktop that is a black slab: "now its
  *      kinda just black, i just wanted it a little bit more translucent".
@@ -29,7 +29,7 @@
 :root {
   /* ---- the pane -------------------------------------------------------
      LIGHT, over a blur the bar makes itself. .45 is "a little bit more translucent" than the
-     Northwind pill's .68 (Owen's words), which is affordable precisely because .bdrop is genuinely
+     Northwind pill's .68 (the user's words), which is affordable precisely because .bdrop is genuinely
      blurring the screen underneath instead of a DWM mode guessing at it. */
   --lg-fill:        rgba(255,255,255,.45);
   /* the tint with NOTHING blurred under it: the moment before the first strip arrives, and every
@@ -94,7 +94,7 @@
   --lg-focus: inset 0 0 0 1.5px var(--lg-acc), inset 0 0 0 3px rgba(255,255,255,.9);
   /* ---- MOTION IN UNISON (lane mantle-motion, 2026-10-16; the spec is design notes: motion-unison) ----
      ONE motion for every pop-in in Mantle, Quartz and Helm, with the SAME names and values in all three
-     theme files. Owen, on the bar's load-in: "we should make the rest ... similar so they are all in
+     theme files. The user, on the bar's load-in: "we should make the rest ... similar so they are all in
      unison and its super professional".
      IN: --m-spring, the bar's own damped spring (damping ratio 0.8), the exact 41 points of
      ui/bar/bar.css body.up --bar-move. linear() is over normalised time, so the SAME points played
@@ -189,7 +189,7 @@
 
   /* ---- motion ----------------------------------------------------------
      Northwind's nav detach, verbatim: --dur-nav 560ms on --ease-nav cubic-bezier(.22,.68,.30,1)
-     (shell.css lines 118-121). Owen asked for the reveal to feel like exactly that, so the number
+     (shell.css lines 118-121). The user asked for the reveal to feel like exactly that, so the number
      lives here rather than being retyped per rule. --lg-dur is overwritten per event by bar.js,
      because main sends the duration it is actually animating the WINDOW with: the page's paint
      and the window's geometry must not disagree. --lg-dur-out is the hide, and it is SHORTER than
@@ -208,7 +208,7 @@
   --lg-blur:   blur(12px) saturate(150%);    /* what .bdrop applies to that photograph */
 }
 
-/* ---- DARK GLASS (Owen, 2026-10-08: "we need to make a dark mode for mantle. everything should
+/* ---- DARK GLASS (the user, 2026-10-08: "we need to make a dark mode for mantle. everything should
    still be glass ui like") ------------------------------------------------------------------
    The SAME material and the SAME token names, re-valued. Nothing about the stack changes: the
    blurred .bdrop capture, then the tint with its two hairlines, then content. Only the numbers do,
@@ -216,18 +216,18 @@
    <html data-theme="dark"> switches it (set before first paint by the theme plumbing; absent or
    "light" = the light set above).
 
-   History: the first dark set was Mantle's own (neutral grey .56, indigo accent). Owen: "mantle needs
+   History: the first dark set was Mantle's own (neutral grey .56, indigo accent). The user: "mantle needs
    to be more see through everything", then "50% since that is the same as i set helm to", then "same
    style ... go by what helm looks like". Helm's 50% dim turned out to sit under a .66 panel, so the set
-   below is Helm's REAL look, value for value (Owen chose "Match Helm's real look"). Still not the AI-slop
+   below is Helm's REAL look, value for value (the user chose "Match Helm's real look"). Still not the AI-slop
    dark: no glow, no neon, plain hairlines, accent for state only. */
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  /* HELM'S REAL LOOK (Owen, 2026-10-09: "they should all also have the same style ... if there is a
+  /* HELM'S REAL LOOK (the user, 2026-10-09: "they should all also have the same style ... if there is a
      conflict go by what helm looks like ... helm shouldnt be edited only the other stuff should", then,
      told that a Helm panel is not 50% but its .50 wash + a .66 panel = ~.83: "Match Helm's real look").
-     Every value below is Helm's (~/helm ui/styles/tokens.css + ui/shell/shell.css at Owen's settings:
+     Every value below is Helm's (~/helm ui/styles/tokens.css + ui/shell/shell.css at the user's settings:
      blur 5px, dim .50), resolved to ONE layer over the blurred picture. Source table:
      %TEMP%\claude\mantle-dark\HELM-SPEC.md. Light is untouched this round. */
 
@@ -235,14 +235,14 @@
   --lg-fill-bar:    rgba(9,10,11,.50);    /* Helm rail / top strip: NO fill of their own (helm ui/shell/shell.css .rail/.strip), so only the .50 wash. Both bars. */
   /* The BARS' readability floor: the contrast --lg-ink-2 must keep over the brightest blurred pixel
      before a bar's tint thickens past --lg-fill-bar (glass-adapt.js guardTokens; other surfaces keep
-     the guard's 4.7). Owen, 2026-10-10: "mantle is still slightly off". At 4.7 the top bar sat at .56
+     the guard's 4.7). The user, 2026-10-10: "mantle is still slightly off". At 4.7 the top bar sat at .56
      over his snow-peak, 6 levels darker than Helm's strip right under it (L 52 vs 58, the same photo
      rows), a visible step at the seam. Helm's own strip at .50 gives its secondary ink 4.3:1 there, so
      the bars accept what Helm shows (4.2, a small margin under it) and still thicken over a bright
      photo (top bar over cloud-peaks or sand-ripples: .76, was .80). */
   --lg-guard-bar:   4.2;
   --lg-fill-strong: var(--lg-fill);
-  /* The no-picture faces and the guard's CEILING = Helm's panel (lane mantle-seethru-popups, 2026-10-10; Owen chose
+  /* The no-picture faces and the guard's CEILING = Helm's panel (lane mantle-seethru-popups, 2026-10-10; the user chose
      "Match Helm's panels" for every dark glass part). They were .86 / .88, darker than any Helm panel. Every
      surface's picture is the WALLPAPER now (lib/wall-still.js), never a bright window, and at .83 over pure
      white --lg-ink-2 still reads 4.74:1 (--lg-ink 9.35:1; the guard's need is 4.7), so a ceiling over
@@ -344,7 +344,7 @@
   --lg-mono:         "Cascadia Code", "Cascadia Mono", Consolas, monospace;
 
   --lg-ground: #131415;
-  --lg-blur:   blur(5px);                  /* Owen's Helm blur; no saturate, no dim */
+  --lg-blur:   blur(5px);                  /* the user's Helm blur; no saturate, no dim */
 }
 
 /* Helm's global rules, dark only, at ZERO specificity (:where) so any page rule still wins. */

@@ -6,7 +6,7 @@ require('../../tools/dev-env.js').lowcpu();
  * 40 px raised tile (ui/shared/empty-state.css, .es-tile), 12 px above the title, then the body. This
  * test holds that recipe on the five surfaces that use it, and holds their words exactly as they were.
  *
- * WHAT: headless Chromium over the REAL pages (file://, never Electron, never a window of Owen's), each
+ * WHAT: headless Chromium over the REAL pages (file://, never Electron, never a window of the user's), each
  * page put into its empty state by its own mock (the query strings tools/overlap-surfaces.js uses), then
  * read in light and in dark (<html data-theme>, flipped live with the mantle-theme event, the way the app's
  * theme plumbing does it), transitions and animations off (a test-only style, CSP bypassed for it):

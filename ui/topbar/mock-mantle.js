@@ -1,6 +1,6 @@
 /* mock-mantle.js — plays main for the top bar page when it is opened over file:// without
  * Electron (headless shots: ui/topbar/shoot.js). The real preload.js defines window.mantle first,
- * so under Electron this file does nothing. Nothing here is from Owen's machine: every app, menu
+ * so under Electron this file does nothing. Nothing here is from the user's machine: every app, menu
  * and number is made up.
  *
  * Query: app=npp|chrome|uwp|dialog|desktop|word|explorer|term  open=<title index>  sub=<row index>

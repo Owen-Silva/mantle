@@ -1,6 +1,6 @@
 /* jumplist.js - the right-click menu of an app on the bar (lane jumplist, 2026-09-24).
  *
- * Owen: "i need to be able to right click the apps on the taskbar and have the same options regular
+ * The user: "i need to be able to right click the apps on the taskbar and have the same options regular
  * windows shows". Windows 11's menu, top to bottom: the app's JUMP LIST (Pinned, Recent or Frequent,
  * the app's own categories, Tasks), then the app itself (a new window), Pin/Unpin from taskbar, and
  * Close window / Close all windows. Hover keeps the window previews (bar.js); right-click is this.

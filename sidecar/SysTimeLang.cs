@@ -16,7 +16,7 @@
 // profile API, bcp47langs/winlangdb, which Mantle has not wired yet), the language bar (Windows'
 // text input framework), voices and recognizers (installed by Windows' speech features).
 //
-// MEASURED on Owen's desktop 2026-09-28 (reads only): TabletTip\1.7 and Input\Settings hold none of
+// MEASURED on the user's desktop 2026-09-28 (reads only): TabletTip\1.7 and Input\Settings hold none of
 // the typing switches (Windows' defaults apply); one preferred language with one keyboard; 3
 // OneCore voices, 2 SAPI voices, 1 desktop recognizer. PRIVACY: nothing here logs.
 using System;

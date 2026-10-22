@@ -1,4 +1,4 @@
-// The CPU cap and the one-browser lock on Owen's PC; a CI runner (cloudtest) has neither file nor need.
+// The CPU cap and the one-browser lock on the user's PC; a CI runner (cloudtest) has neither file nor need.
 require('../../tools/dev-env.js').lowcpu();
 /* welcome.page.test.js - the first-start cards (index.html + welcome.js + welcome.css on mock-mantle.js),
  * clicked and typed through in headless Chromium over file:// (lane mantle-firstrun, 2026-10-15).

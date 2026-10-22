@@ -4,7 +4,7 @@
  * on a PASSIVE sidecar (it never hooks, never writes; every real change must answer the passive refusal).
  *   - sysdisplay.project: the preset, what Windows would take (SDC_VALIDATE only), displays connected
  *   - sysdisplay.topology dryRun: validated, nothing applied (the layout reads the same after)
- *   - sysdisplay.topology for real: refused (passive) - a test NEVER changes Owen's display
+ *   - sysdisplay.topology for real: refused (passive) - a test NEVER changes the user's display
  *   - sysnotify.dndGet, netair.get: read only; keys win+k allowed by name, refused by passive
  *   - the Win+P chord in the hook's KeyMachine (simulate): taken only when listed; Win+Shift/Ctrl/Alt+P
  *     and a plain P stay Windows'; Win+P, P with Win held is two events (Windows' cycling)

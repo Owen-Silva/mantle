@@ -1,6 +1,6 @@
 // TaskMgr.cs - the native half of Mantle's task manager (lane taskmgr, 2026-09-28).
 //
-// WHY: Owen opens Windows' Task Manager for one job: free RAM before and while he plays Valorant
+// WHY: the user opens Windows' Task Manager for one job: free RAM before and while he plays Valorant
 // (he closes Spotify by hand for ~300 MB). lib/features/taskmgr.js is that job, RAM first; this
 // file reads the process table and does the three things a row can ask for. It is asked ONLY
 // while the task manager window is open (about every 1.5 s): nothing here runs on its own.
@@ -33,7 +33,7 @@
 //   - dryRun answers what WOULD be done and touches nothing. A passive (test) sidecar refuses
 //     every real close/trim with FeatureTable.PassiveRefusal, so a test cannot close anything.
 //
-// Nothing here logs a process name, path, title or command line (Owen's rule for mantle.log);
+// Nothing here logs a process name, path, title or command line (the user's rule for mantle.log);
 // errors carry pids and Win32 codes only. Names travel only in replies, to the window.
 //
 // C# 5 only (build.ps1): no interpolation, no nameof, no out var.
@@ -92,7 +92,7 @@ namespace Mantle {
     /// Games, their clients (Riot Client, League's) and their anti-cheat: game mode's OWN list,
     /// GameMode.GamePrefixes (= lib/features/_gamemode-plan.js NEVER[0..1]), not a copy. This used to
     /// be a copy, it lacked "Riot", and a trim of RiotClientServices hung Riot Client twice (lane
-    /// gamequiet, 2026-09-28). Then Lively, Owen's wallpaper app. Prefixes of the image name.
+    /// gamequiet, 2026-09-28). Then Lively, the user's wallpaper app. Prefixes of the image name.
     static readonly string[] NeverPrefixes = GameMode.Join(GameMode.GamePrefixes, new[] { "Lively" });
 
     public static void Register(FeatureTable t) {

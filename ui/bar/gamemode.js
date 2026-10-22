@@ -13,7 +13,7 @@
  *                                {state, text, freed, trimmed, apps, warn} while on: the line under the switch)
  *   'gamemode.state' push     -> whenever it changes (a game starts or exits)
  *
- * THE SURFACE (Owen: "minimalistic and super easy to use and obvious"):
+ * THE SURFACE (the user: "minimalistic and super easy to use and obvious"):
  *   header    "Game mode" + ONE short status on the right ("On for VALORANT", "Starts with your games")
  *   line      a switch that says what a click does ("Turn on" / "Turn off", the track shows the state)
  *             and "Details" (what it changed, what it left alone, the two options)

@@ -206,7 +206,7 @@ const FAKE = () => {
       await ctx.close();
     }
     // ---- 9. THE GLIDE WITH THE BAR (lane corner-follow-osd, 2026-10-17). The window is the pane plus the
-    //    reach (Owen's: 324 x 82 + 62 = 144); main sends osd.lift {px, kind, ms} (lib/bar-follow.js).
+    //    reach (the user's: 324 x 82 + 62 = 144); main sends osd.lift {px, kind, ms} (lib/bar-follow.js).
     const ty = (page) => page.evaluate(() => { const m = getComputedStyle(document.getElementById('lift')).transform; return m === 'none' ? 0 : Math.round(new DOMMatrix(m).m42 * 10) / 10; });
     {
       const { ctx, page, errs } = await fresh({ viewport: { width: 324, height: 144 } });

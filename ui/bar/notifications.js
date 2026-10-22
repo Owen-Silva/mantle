@@ -1,5 +1,5 @@
 /*
- * ui/bar/notifications.js — Mantle's notification centre: the bell's panel (Owen, 2026-09-22).
+ * ui/bar/notifications.js — Mantle's notification centre: the bell's panel (the user, 2026-09-22).
  *
  * Windows 11 keeps its bell right of the clock and opens a list of what apps have said, grouped
  * by app, newest first. This is that list on Mantle's glass. Main pushes 'notifications' (see
@@ -62,7 +62,7 @@
     renderBell();
     health();
     if (paint && B.popKey() === KEY) {
-      seeAll();          // it arrived while Owen is looking at the list: it is seen
+      seeAll();          // it arrived while the user is looking at the list: it is seen
       paint();
     }
   }

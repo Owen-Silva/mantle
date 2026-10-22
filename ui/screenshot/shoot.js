@@ -3,7 +3,7 @@ require('../../tools/dev-env.js').lowcpu();
  *
  * Line 1 is the machine-wide CPU cap and browser lock. Required, not optional.
  *
- * PRIVACY: nothing here ever shows Owen's screen. The overlay's "frozen frame" is mock-mantle.js's
+ * PRIVACY: nothing here ever shows the user's screen. The overlay's "frozen frame" is mock-mantle.js's
  * fake desktop, and the one real sidecar frame decoded below is a SYNTHETIC grab (a generated
  * pattern, Screenshot.cs FillSynthetic), deleted at the end.
  *
@@ -45,7 +45,7 @@ function check(name, ok, detail) {
 function gamesRunning() {
   const out = execFileSync('powershell', ['-NoProfile', '-Command',
     // The lanes' game list (BRIEF). NOT *Riot*: RiotClientServices / CrashHandler are the launcher,
-    // up all day in the background, and matching them meant this test never ran on Owen's machine.
+    // up all day in the background, and matching them meant this test never ran on the user's machine.
     '@(Get-Process VALORANT*,javaw,Minecraft*,RobloxPlayerBeta -ErrorAction SilentlyContinue).Count'], { encoding: 'utf8' });
   return Number(out.trim()) || 0;
 }

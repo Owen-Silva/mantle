@@ -177,7 +177,7 @@ async function cpuOnly(P, C, d, dir) {
  * real --test Mantle, driven through the Wallpapers window's own buttons (clicks in its page, so the
  * bridge, wallpaper.set and the desktop page all run for real). 1 = pick two built-in photos and
  * prove each through the listing, library.json and the desktop page's own <img>, then a third in Settings > Personalization > Background; 2 = after a
- * restart of the same profile, the Settings pick is still up, then back to one of Owen's own (both pages follow).
+ * restart of the same profile, the Settings pick is still up, then back to one of the user's own (both pages follow).
  * Writes presets-<phase>.json (every check with its value) and captures beside it.
  */
 const WALL_SRC = `(() => { const i = document.querySelector('#wall img'); const v = document.querySelector('#wall video'); const f = document.querySelector('#wall iframe');
@@ -362,7 +362,7 @@ exports.run = async function run(api, dirArg) {
     if (process.env.MANTLE_WALL_PROBE_WEB) { await webTiming(P, C, d, dir); log('done'); return; }
     if (process.env.MANTLE_WALL_PROBE_CPU) { await cpuOnly(P, C, d, dir); log('done'); return; }
 
-    // 2. the rules as they stand for whatever Owen has in front right now, then held playing
+    // 2. the rules as they stand for whatever the user has in front right now, then held playing
     await sleep(2500);
     log(`rules with the real foreground: paused=${P.S.pause.paused} reason="${P.S.pause.reason}" fgNote="${P.S.fgNote}"`);
     P.setOverride('play');
@@ -397,7 +397,7 @@ exports.run = async function run(api, dirArg) {
     const sf = screen.getPrimaryDisplay().scaleFactor;
     const W0 = Math.round(disp.width * sf);
     const H0 = Math.round(disp.height * sf);
-    // The once-a-second check would answer with Owen's REAL foreground in between: hold it.
+    // The once-a-second check would answer with the user's REAL foreground in between: hold it.
     clearInterval(P.S.timers.fg);
     P.S.override = null;
     const cases = [
@@ -478,7 +478,7 @@ exports.run = async function run(api, dirArg) {
       await sleep(1500);
       await capture(lw, dir, 'library-props');
 
-      // 9. adding: one real video (a copy of one of Owen's, so it needs a thumbnail made), one fake
+      // 9. adding: one real video (a copy of one of the user's, so it needs a thumbnail made), one fake
       // video Chromium cannot decode, and one file that is not a wallpaper at all
       const tmp = path.join(os.tmpdir(), 'mantle-wallprobe');
       fs.mkdirSync(tmp, { recursive: true });

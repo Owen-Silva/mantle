@@ -2,7 +2,7 @@
  *
  * WHY it exists: the launcher has to be looked at, measured and screenshotted
  * without running Electron, without the sidecar, and without ever opening a
- * real app on Owen's machine. Loading index.html straight from disk gets you a
+ * real app on the user's machine. Loading index.html straight from disk gets you a
  * fully working launcher against fake data.
  *
  * It defines window.mantle ONLY when it is absent, so the moment the real
@@ -110,7 +110,7 @@
     mk('app', 'Blender', 'blender.org', null, 'C:\\ProgramData\\...\\blender.lnk'),
     mk('app', 'Zoom Workplace', 'Zoom', null, 'C:\\Users\\user\\...\\zoom.lnk'),
 
-    // commands — Owen's own PowerShell functions
+    // commands — the user's own PowerShell functions
     mk('command', 'dash', 'PowerShell profile'),
     mk('command', 'bot', 'PowerShell profile'),
     mk('command', 'northwind', 'PowerShell profile'),
@@ -348,7 +348,7 @@
         }
         case 'search.files':
         case 'launcher.files':
-          // a real index answers in 50-300 ms on Owen's machine; 90 keeps the merge visible
+          // a real index answers in 50-300 ms on the user's machine; 90 keeps the merge visible
           return new Promise(function (resolve) {
             setTimeout(function () {
               if (FILES_DOWN) {

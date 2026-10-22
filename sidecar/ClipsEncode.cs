@@ -18,7 +18,7 @@
 //   clips.synth {dst, ms, w?, h?}
 //       a REAL H.264 MP4 of one plain colour (MediaClip.CreateFromColor), for the tests: a movie
 //       from Windows' own encoder, so the lossless cut and the re-encode are proved on real
-//       encoder output with nothing of Owen's. dst must be under %TEMP% and must not exist.
+//       encoder output with nothing of the user's. dst must be under %TEMP% and must not exist.
 //
 // PASSIVE (--test): both work, but ONLY on paths under %TEMP% (a test never writes in Captures).
 using System;

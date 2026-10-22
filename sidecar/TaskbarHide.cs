@@ -2,7 +2,7 @@
 // runs, without hiding it, moving it or touching its auto-hide state.
 //
 // WHY IT KEPT SHOWING UP (measured 2026-09-25, a read-only WinEvent probe on
-// explorer's pid, 10 minutes of Owen using the PC normally): 7 reveals, and
+// explorer's pid, 10 minutes of the user using the PC normally): 7 reveals, and
 // EVERY ONE began 35-50 ms after a FOREGROUND CHANGE - 6 of the 7 right after
 // Mantle's own bar opened an app ("bar.open Terminal: focus ... done" in
 // mantle.log at the same byte offset). The auto-hidden taskbar slid fully up

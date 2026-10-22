@@ -9,9 +9,9 @@
  *   await p.clear();                     // removes every toast this id posted from Windows' centre
  *   await p.close();                     // clear + delete the id's registry keys, pass or fail
  *
- * NEVER OWEN'S APPS: the only id is Mantle.ToastTest.fast<random>. Every post first reads its
+ * NEVER THE USER'S APPS: the only id is Mantle.ToastTest.fast<random>. Every post first reads its
  * ShowBanner and refuses unless it is 0 (written here, or by the --test Mantle that took the id:
- * open({ takenBy: 'mantle' })), so Windows never pops a banner on Owen's screen, and a
+ * open({ takenBy: 'mantle' })), so Windows never pops a banner on the user's screen, and a
  * live Mantle leaves Mantle.ToastTest* ids to Windows (_toasts-owner.js leftToWindows), so it draws none
  * either; a --test Mantle manages ONLY those ids. The toasts are silent (<audio silent="true"/>).
  * ONE PowerShell process posts them all (stdin lines), so a post costs no PowerShell start; the stamps
@@ -58,7 +58,7 @@ function bannerOff(aumid) {
 
 /**
  * opts.takenBy: 'mantle' = make the id's Settings key with NO ShowBanner value, for a --test Mantle to
- * take (a value of 0 already there reads as Owen's own banner-off, which Mantle never takes); every post
+ * take (a value of 0 already there reads as the user's own banner-off, which Mantle never takes); every post
  * then waits until Mantle has written 0. Default: write ShowBanner 0 here (no Mantle involved).
  */
 async function open(opts) {
@@ -101,7 +101,7 @@ async function open(opts) {
     aumid,
     bannerOff: () => bannerOff(aumid),
     async post(title) {
-      // NEVER a Windows banner on Owen's screen: no post unless Windows' banner for the id reads 0
+      // NEVER a Windows banner on the user's screen: no post unless Windows' banner for the id reads 0
       if (!bannerOff(aumid)) throw new Error(`refusing to post: Windows' banner for ${aumid} is not off (ShowBanner is not 0)`);
       proc.stdin.write(String(title).replace(/[\r\n]/g, ' ') + '\n');
       const l = await next(15000);

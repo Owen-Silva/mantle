@@ -10,7 +10,7 @@
 //   netwifi.props {iface?}                                   the connected network: SSID, protocol,
 //        security, band, channel, link speed, addresses, DNS (typed in or DHCP), MAC, driver
 //
-// MEASURED ON OWEN'S PC (read-only probe, 2026-09-28): 46 saved profiles, every one carrying
+// MEASURED ON THE USER'S PC (read-only probe, 2026-09-28): 46 saved profiles, every one carrying
 // MacRandomization{v3}/enableRandomization (all false) + randomizationSeed; none carries a cost
 // element, and granted access 0x70023 (WLAN_WRITE_ACCESS) on all 46, so a normal user may edit
 // and delete them. The key stays protected (encrypted by the Wi-Fi service): profiles are read
@@ -454,7 +454,7 @@ namespace Mantle {
       } finally { Native.WlanFreeMemory(list); }
     }
 
-    // ---- the link, for the ping test (PingTest.cs, lane ptfix 2026-10-09: Owen's before/after mesh test)
+    // ---- the link, for the ping test (PingTest.cs, lane ptfix 2026-10-09: the user's before/after mesh test)
     const uint OP_RSSI = 0x10000102;   // wlan_intf_opcode_rssi: a LONG, the driver's current RSSI in dBm
 
     /// One Wi-Fi adapter's link right now: signal %, RSSI dBm, band, channel, MHz, PHY, receive/transmit

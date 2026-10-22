@@ -3,7 +3,7 @@
 // WHY: Mantle Settings replaces Windows Settings, and some settings need an administrator,
 // exactly as they do in Windows' own Settings: rename the PC, switch an adapter, DNS servers,
 // Remote Desktop, developer mode, pausing Windows Update. Mantle runs NOT elevated and must stay
-// that way, so each of those goes through a UAC prompt Owen approves - one action per prompt,
+// that way, so each of those goes through a UAC prompt the user approves - one action per prompt,
 // like Windows' own shield buttons. How a category lane adds one, and the security rules this
 // file keeps: sidecar/ELEVATE.md.
 //
@@ -18,7 +18,7 @@
 //     reads <nonce>.res.json  <----------------------   <nonce>.res.json next to it, exits
 //     pushes {"ev":"elevate", ticket, ok, result | reason, kind}
 //
-// WHY A TICKET and not a reply that waits: a UAC prompt waits for Owen, which can be a minute,
+// WHY A TICKET and not a reply that waits: a UAC prompt waits for the user, which can be a minute,
 // and a lane blocked that long starves every other command on it (Lanes.cs). So elevate.run
 // answers at once, the outcome is the `elevate` event, and `elevate.status` answers for a
 // caller that missed it. lib/elevate.js hides all of this behind one awaited call.
@@ -73,7 +73,7 @@ namespace Mantle {
   public static class Elevate {
     /// The elevated step refuses a request older than this: a prompt answered later than this
     /// runs nothing. The broker's timeout is longer, so a late "yes" can never act after Mantle
-    /// has told Owen it gave up.
+    /// has told the user it gave up.
     public const int StaleMs = 60000;
     /// How long elevate.run waits for the prompt AND the action together.
     public const int TimeoutMs = 90000;
@@ -86,7 +86,7 @@ namespace Mantle {
     const int AfterTimeoutMs = 120000;     // how long the waiter stays for a late answer, to log it
     /// After a "No" on the prompt, elevate.run refuses for this long. A UAC prompt takes the whole
     /// screen (the secure desktop): a page stuck in a loop - or a compromised one - could otherwise
-    /// put it back the instant it is answered, and Owen could never reach Mantle to stop it.
+    /// put it back the instant it is answered, and the user could never reach Mantle to stop it.
     public const int NoCooldownMs = 3000;
 
     /// Exit codes of the --elevated step. BadPath writes no answer (there is nowhere trusted to).
@@ -361,7 +361,7 @@ namespace Mantle {
           sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
           sei.hwnd = owner;
           // "open" is the test seam: this exe's manifest is asInvoker, so "open" never asks for
-          // elevation and a test can never put a UAC prompt on Owen's screen.
+          // elevation and a test can never put a UAC prompt on the user's screen.
           sei.lpVerb = seam ? "open" : "runas";
           sei.lpFile = ExePath();
           // The digest BINDS the step to these exact bytes: whatever rewrites the request while the
@@ -566,7 +566,7 @@ namespace Mantle {
     /// but that file; never starts anything.
     ///
     /// LINK-SAFE (lane core-hk, 2026-09-29): the request folder is writable by everything running as
-    /// Owen, and this process is an administrator. So every file it touches there is opened by
+    /// the user, and this process is an administrator. So every file it touches there is opened by
     /// HANDLE, never through a link: the folder is pinned open (it cannot be renamed or swapped for
     /// a junction while the step runs) and must really be where it should be; each file is opened
     /// without following a link at its name, and refused if it is one, if it has a second name

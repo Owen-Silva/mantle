@@ -1,6 +1,6 @@
 /* record.page.test.js - Win+Shift+S's Record mode (lanes screenrec + screenrec2, 2026-10-15), on the REAL
  * overlay (index.html + overlay.js + overlay.css) with its own mock-mantle.js: headless Chromium, never
- * Electron, never a window of Owen's, nothing captured or recorded. Light and dark:
+ * Electron, never a window of the user's, nothing captured or recorded. Light and dark:
  *   - the Record button is there, off; V turns it on (aria-pressed, body.record, main told
  *     screenshot.record {on}), its dot springs to full size in the record red, the hint says "to record";
  *   - Record on: the selection's edge is the record red (not the accent), the size readout leads with a

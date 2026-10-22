@@ -2,7 +2,7 @@
 // 2026-09-28). The page is ui/settings/sections/privacy.js, its main half
 // lib/features/_settings-sections/privacy.js.
 //
-// WHY: Owen wants Mantle Settings to replace Windows Settings outright, so every App permissions page
+// WHY: the user wants Mantle Settings to replace Windows Settings outright, so every App permissions page
 // (Location, Camera, Microphone, Contacts, ... Generative AI) is drawn natively from the same store
 // Windows' own Settings reads: the CapabilityAccessManager ConsentStore.
 //

@@ -1,6 +1,6 @@
 // test-clips-encode.js - Clips' trims on REAL encoder output (lane mantle-clips2, 2026-10-15).
 // A passive sidecar (sidecar/ClipsEncode.cs) renders a stand-in movie with Windows' own H.264 encoder
-// (clips.synth: two plain colours, nothing of Owen's), then:
+// (clips.synth: two plain colours, nothing of the user's), then:
 //   - the LOSSLESS cut (lib/features/_clips-mp4.js) cuts it: keyframe start, same frames, a valid index;
 //   - the RE-ENCODE trim (clips.reencode) makes a frame-exact part of it, never overwriting, with
 //     clips.encoding progress and ONE clips.encoded at the end;

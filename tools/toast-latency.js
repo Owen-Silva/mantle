@@ -11,7 +11,7 @@
  * Mantle.ToastTest.fast* id, ShowBanner 0 BEFORE the first post, silent; removed at the end). Banner =
  * the moment the banner's title enters the banner page's DOM (a MutationObserver injected before the
  * page's own scripts through CDP auto-attach), stamped with Date.now(): the same system clock. The
- * window then shows on the next frame in a live Mantle; a --test instance never shows it (Owen's screen
+ * window then shows on the next frame in a live Mantle; a --test instance never shows it (the user's screen
  * stays untouched), so that last frame is not in these numbers.
  * COLD = no banner window open (the harness waits for the idle close first); WARM = the window is open.
  * Runs BELOW NORMAL (children inherit it) under lowcpu.js; MANTLE_TEST_MIN_FREE_GB=0. Stops at once and

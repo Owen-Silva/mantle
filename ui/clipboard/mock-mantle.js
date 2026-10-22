@@ -1,6 +1,6 @@
 /* mock-mantle.js — a stand-in for main and the sidecar, so the Win+V panel can be looked at,
  * measured and screenshotted in a plain headless browser: no Electron, no sidecar, no hook, and
- * Owen's clipboard never read or written. Every item below is an invented fixture.
+ * the user's clipboard never read or written. Every item below is an invented fixture.
  *
  * It defines window.mantle ONLY when it is absent, so with the real preload it does nothing.
  *
@@ -111,7 +111,7 @@
     pathForFile: function () { return ''; },
   };
 
-  // ---- the fake screen: a desktop and the app window Owen was typing in, with a caret -------
+  // ---- the fake screen: a desktop and the app window the user was typing in, with a caret -------
   function paintScreen() {
     if (flags.get('bg') === '0') return;
     var root = document.documentElement;

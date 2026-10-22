@@ -1,6 +1,6 @@
 // Recorder.cs - Mantle's screen recorder: ONE recording per child process (lane mantle-screenrec, 2026-10-15).
 //
-// Owen asked for Win+Shift+S to RECORD a window or an area as well (his Northwind demo videos were recorded
+// The user asked for Win+Shift+S to RECORD a window or an area as well (his Northwind demo videos were recorded
 // from a browser window with Game Bar, which can record one app window and never an area, the desktop or
 // Explorer). Game Bar stays the recorder IN games: lib/features/screenrec.js refuses while a game is in
 // front, and this process never opens, reads or injects into any other process. It only asks Windows
@@ -14,7 +14,7 @@
 //   Direct3D 11                the frame's own texture, cropped on the GPU (CopySubresourceRegion) into
 //                              a small ring of output textures (no CPU copy of the picture at all).
 //   Media Foundation           the Sink Writer with the DXGI device manager and hardware transforms on:
-//                              the GPU's own H.264 encoder (Intel Quick Sync on Owen's i3-1215U), RGB32 in,
+//                              the GPU's own H.264 encoder (Intel Quick Sync on the user's i3-1215U), RGB32 in,
 //                              converted on the GPU by the video processor the Sink Writer adds. If that
 //                              cannot be built or refuses the first frame, the SOFTWARE route: the crop
 //                              is read back through a staging texture into memory buffers for
@@ -26,7 +26,7 @@
 //   Constant frame rate        30 or 60. A screen that does not change sends no new frames, so the last
 //                              one is written again; frames the loop falls behind on are counted ("late").
 //
-// WHY A CHILD PROCESS (Owen's RAM rule: zero cost when not recording). Mantle's sidecar never loads any of
+// WHY A CHILD PROCESS (the user's RAM rule: zero cost when not recording). Mantle's sidecar never loads any of
 // this: Mantle starts `Mantle.Sidecar.exe --record` for ONE recording and it exits when the file is done,
 // so the encoder, the D3D device and the audio clients live only while recording.
 //
@@ -45,7 +45,7 @@
 // on: an existing file is NEVER overwritten, and a crash never leaves a broken file under the real name.
 //
 // TESTS (test:true): only mode "window", and only a window owned by allowPid (the test's own stand-in), so
-// a test can never record Owen's screen or windows, nor his mouse pointer. `--rec-standin` is that stand-in: a borderless,
+// a test can never record the user's screen or windows, nor his mouse pointer. `--rec-standin` is that stand-in: a borderless,
 // never-activated window painting four coloured quadrants and a moving bar. `--rec-probe=<file>` reads an
 // MP4 back through Media Foundation's Source Reader: its size, frame rate, frame count, duration, audio
 // track, and the colours at given points of a middle frame (which proves the crop and the orientation).
@@ -303,7 +303,7 @@ namespace Mantle {
     }
   }
 
-  /* ---- the stand-in window the tests record (never Owen's) -------------------------------------- */
+  /* ---- the stand-in window the tests record (never the user's) -------------------------------------- */
   sealed class RecStandInForm : System.Windows.Forms.Form {
     int _n;
     readonly bool _ghost;
@@ -384,14 +384,14 @@ namespace Mantle {
         _under = true;
       } else if (p.Length == 3 && p[0] == "ghost") {
         // "ghost,W,H": ON the primary monitor (Windows paints only windows on a screen) but 1/255 opaque and
-        // click-through, so Owen sees nothing and his clicks go past it.
+        // click-through, so the user sees nothing and his clicks go past it.
         int.TryParse(p[1], out w); int.TryParse(p[2], out h);
         var wa = System.Windows.Forms.Screen.PrimaryScreen.WorkingArea;
         x = wa.Right - w; y = wa.Bottom - h;
         _ghost = true;
       } else if (p.Length == 3 && p[0] == "off") {
         // "off,W,H": wholly OUTSIDE every monitor (right of the virtual screen), so a test window is never on
-        // Owen's screen; Windows still composes it, so it can be recorded.
+        // the user's screen; Windows still composes it, so it can be recorded.
         int.TryParse(p[1], out w); int.TryParse(p[2], out h);
         var vs = System.Windows.Forms.SystemInformation.VirtualScreen;
         x = vs.Right + 200; y = vs.Top;
@@ -400,7 +400,7 @@ namespace Mantle {
       int.TryParse(Recorder.Arg(args, "--secs") ?? "120", out secs);
       var form = new RecStandInForm(x, y, w, h, _ghost);
       if (_under) {
-        // Behind everything BEFORE it is shown: it never comes up over Owen's windows, not even for a frame.
+        // Behind everything BEFORE it is shown: it never comes up over the user's windows, not even for a frame.
         form.HandleCreated += delegate (object s, EventArgs e) { Bottom(form.Handle); };
         var keep = new System.Windows.Forms.Timer();
         keep.Interval = 100;
@@ -778,7 +778,7 @@ namespace Mantle {
       _allowPid = Json.GetInt(_spec, "allowPid", 0);
       _testSecs = Json.GetInt(_spec, "testSecs", 0);
       // Windows draws the mouse pointer into the picture wherever it is over the window or area - but never in
-      // a test: a test recording must not show Owen's pointer, and where he leaves it is not the test's to
+      // a test: a test recording must not show the user's pointer, and where he leaves it is not the test's to
       // choose. Over the stand-in's corner of the screen it sits in the very frames a test reads back (lane
       // recwhite 2026-10-16: the top-left quadrant read WHITE at 2.5 s while he was away from the laptop).
       _cursor = !_test && Json.GetBool(_spec, "cursor", true);

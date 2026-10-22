@@ -1,7 +1,7 @@
 /* kit.js — Mantle Settings' section modules, the page half (lane settingsfx, 2026-09-28). The contract
  * is ui/settings/SECTIONS.md; the pure rules (shape check, sidebar, deep links, search) are model.js.
  *
- * WHY MODULES: Owen wants Mantle Settings to replace Windows Settings completely, and the categories
+ * WHY MODULES: the user wants Mantle Settings to replace Windows Settings completely, and the categories
  * (System, Bluetooth & devices, Network & internet, ...) are built by parallel lanes that must never
  * edit this page. So each category is ONE file, ui/settings/sections/<id>.js, that calls
  * MantleSettings.section({...}) while it loads; main lists the files (settings.sections), this file
@@ -131,7 +131,7 @@
     }
     /* A change: shown at once, then the result has the last word. ok:false (or a throw) springs it
        back and writes the reason; { value } is the read-back; a dry run springs back with its note. */
-    /* a declined administrator prompt (env.elevate's kind 'cancelled') is Owen's answer, not a failure:
+    /* a declined administrator prompt (env.elevate's kind 'cancelled') is the user's answer, not a failure:
        a neutral note on toggles AND list actions alike (lib/features/settings.test.js pins both) */
     const CANCELLED = 'You said no to the administrator prompt; nothing changed.';
     function act(r, paint, want, fn) {

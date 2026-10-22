@@ -167,7 +167,7 @@
   function show(p) {
     p = p || {};
     var k = p.kind === 'brightness' ? 'brightness' : 'volume';
-    // A brightness change while the pointer is in the open panel does not pull it away from Owen.
+    // A brightness change while the pointer is in the open panel does not pull it away from the user.
     if (shown && open && k !== kind && fader.state().hovered) return;
     if (p.state && typeof p.state === 'object' && !(held() && k === kind)) st[k] = Object.assign({}, p.state);
     if (k !== kind) { why = null; kind = k; if (k !== 'volume') setOpen(false); }

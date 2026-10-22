@@ -3,7 +3,7 @@
 //
 //   node sidecar/test-systime.js [--exe=<path>]      (or MANTLE_SIDECAR_EXE)
 //
-// NEVER changes Owen's clock, time zone, formats, region, language or typing: every write is proven
+// NEVER changes the user's clock, time zone, formats, region, language or typing: every write is proven
 // by its dryRun (which a passive sidecar answers, because it changes nothing) and by the passive
 // refusal of the real write. The administrator actions are proven through elevate.run's validator,
 // which runs BEFORE the passive refusal: no prompt can appear (MANTLE_ELEVATE_TEST is removed).

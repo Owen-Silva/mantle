@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFileSync } = require('child_process');
-// A --test run keeps every window off Owen's screen (lib/test-quiet.js); live it returns before touching anything.
+// A --test run keeps every window off the user's screen (lib/test-quiet.js); live it returns before touching anything.
 require('./lib/test-quiet').install(process.argv, process.env);
 const { app, BrowserWindow, ipcMain, globalShortcut, Tray, Menu, screen, shell, powerMonitor, nativeTheme } = require('electron');
 
@@ -95,7 +95,7 @@ try {
  * everything back instantly. The dangerous half -- the taskbar's auto-hide flag,
  * the screen space the bar occupies, the wallpaper layer, the Win key -- is done
  * by one C# sidecar that restores whatever it changed the moment this process
- * dies, so the worst case for Owen is "Mantle disappeared", never "Windows has no
+ * dies, so the worst case for the user is "Mantle disappeared", never "Windows has no
  * taskbar and I cannot get it back".
  *
  * This file owns: the flags, the three windows, the IPC bridge behind
@@ -106,7 +106,7 @@ try {
  * THE INCIDENT, 2026-09-21, which is why the next 200 lines look paranoid.
  * ---------------------------------------------------------------------------
  * Mantle's first live run hid the Shell_TrayWnd window with ShowWindow(SW_HIDE).
- * Owen's Windows taskbar is set to AUTO-HIDE. Hiding the window of an auto-hiding
+ * The user's Windows taskbar is set to AUTO-HIDE. Hiding the window of an auto-hiding
  * taskbar wedges explorer's own show/hide state machine: when Mantle was killed
  * the sidecar's SW_SHOW ran, and the taskbar still did not come back. He had to
  * REBOOT, in the middle of his work. His words: "dont ever let that happen
@@ -156,7 +156,7 @@ const MODE = flags.test ? 'test' : 'live';
 
 /*
  * --dock: the OLD bar, the one that reserves a permanent strip of screen with a
- * real app bar. It is OFF by default as of 2026-09-21, because Owen asked for the
+ * real app bar. It is OFF by default as of 2026-09-21, because the user asked for the
  * opposite shape: "all my pinned to taskbar things just icons centered, and when
  * I put my mouse to the bottom of the screen it pulls up a glass UI taskbar".
  * A bar that is hidden until asked for must not be subtracting screen space from
@@ -363,7 +363,7 @@ const BAR_SHAPE = flags.flush && !flags.pill ? 'edge' : 'pill';
 /*
  * --no-edgeclip: do not confine the cursor 2 px short of the bottom edge.
  *
- * THE ISLAND ONLY WORKS BECAUSE OF THIS. Owen's Windows taskbar is on auto-hide
+ * THE ISLAND ONLY WORKS BECAUSE OF THIS. The user's Windows taskbar is on auto-hide
  * on the same bottom edge, so the moment the cursor reaches the last row Windows
  * slides its taskbar up -- straight through the 14 DIP of air under the island
  * and out both sides of it, which is exactly the gap the glass is there to show.
@@ -402,13 +402,13 @@ flags.testTbhide = !!flags.test && ARGV.some((a) => a === '--test-tbhide') && !!
 
 /*
  * --os-morph: animate the WINDOW with the sidecar's per-frame SetWindowPos, the
- * way this did until Owen said "when the taskbar expands out it isn't that
+ * way this did until the user said "when the taskbar expands out it isn't that
  * smooth". Kept so the two can be compared side by side rather than argued about.
  * The default now: the window is placed once and the PAGE animates the pill.
  */
 flags.osMorph = ARGV.some((a) => a === '--os-morph');
 /*
- * --test-live-bar, --test-trace=<dir> (TEST ONLY, 2026-09-24). Owen: "when i press any of these
+ * --test-live-bar, --test-trace=<dir> (TEST ONLY, 2026-09-24). The user: "when i press any of these
  * buttons the taskbar glitches down and then back up rq". A test bar is a framed window whose
  * popovers are one setContentBounds, so it could not show what the live bar does. --test-live-bar
  * makes the test bar the live way (frameless, transparent, placed and morphed by the sidecar)
@@ -427,7 +427,7 @@ const REVEAL_BY = flags.osMorph ? 'morph' : 'page';
  * none listed (the default) the rule is inert. --media-guard turns the rule on for this run;
  * --media-controls turns it off and wins. mediaGuardOn() (NOW PLAYING, below) reads both.
  */
-// 2026-09-24: THE DEFAULT FLIPPED. Owen, looking at the card's "controls off" note: "i want to be
+// 2026-09-24: THE DEFAULT FLIPPED. The user, looking at the card's "controls off" note: "i want to be
 // able to pause it". A protected app's config can say "guard": false to stay controllable, and
 // --media-guard puts the rule back on for a run.
 flags.mediaGuard = ARGV.includes(MediaGuard.FLAG_ON);
@@ -448,7 +448,7 @@ app.setAppUserModelId('com.owensilva.mantle');
 // and a blank capturePage() are both symptoms of the same optimisation, so it
 // goes off. These pages are idle between ticks; the cost is not measurable.
 // lane mantle-player: a --test copy never publishes a media session to Windows (HardwareMediaKeyHandling is
-// Chromium's SMTC link), so a muted test video never shows in Owen's media flyout or his live bar's chip.
+// Chromium's SMTC link), so a muted test video never shows in the user's media flyout or his live bar's chip.
 app.commandLine.appendSwitch('disable-features', flags.test ? 'CalculateNativeWinOcclusion,HardwareMediaKeyHandling' : 'CalculateNativeWinOcclusion');
 /*
  * The GPU service runs INSIDE the main process. Measured 2026-09-21 (private
@@ -530,7 +530,7 @@ if (flags.open !== null) {
   if (app.requestSingleInstanceLock()) {
     process.stderr.write(require('./lib/args').openNotRunningLine(openReq) + '\n');
     // lane mantle-player: a double-clicked video or song (Windows runs --open=player --play=...) must never
-    // vanish silently. dialog.showErrorBox is safe before 'ready'. Never in --test: a box would reach Owen.
+    // vanish silently. dialog.showErrorBox is safe before 'ready'. Never in --test: a box would reach the user.
     if (openReq && openReq.ok && openReq.target === 'player' && openReq.files.length && !flags.test) {
       try { require('electron').dialog.showErrorBox('Mantle Player', `Mantle is not running, so Mantle Player could not open ${openReq.files.length === 1 ? 'this file' : 'these files'}. Start Mantle, then open ${openReq.files.length === 1 ? 'it' : 'them'} again.`); } catch (_) { /* the stderr line above stays */ }
     }
@@ -555,7 +555,7 @@ if (flags.open !== null) {
  * Every OTHER electron.exe running THIS repo (and, in test mode, this profile).
  * Same matching rule as tools/kill-test.ps1 and tools/restore-windows.ps1: the
  * repo's folder path inside the command line, which every Mantle has and no other
- * Electron app does. Owen's browser is an Electron app; nothing here may ever
+ * Electron app does. The user's browser is an Electron app; nothing here may ever
  * count it, let alone touch it. This only ever READS the process list.
  */
 function findOtherMantle() {
@@ -582,7 +582,7 @@ function findOtherMantle() {
 
 // ---------------------------------------------------------------------------
 // The --live gate. `electron .` with neither flag used to mean LIVE, so a bare
-// "does it still boot?" reached into Owen's shell. It now costs nothing.
+// "does it still boot?" reached into the user's shell. It now costs nothing.
 // Exits BEFORE any window is created and BEFORE the sidecar is spawned.
 // ---------------------------------------------------------------------------
 if (!flags.test && !flags.live) {
@@ -607,7 +607,7 @@ if (flags.live) {
 /**
  * Block this thread for real, before the app is ready and before anything else
  * is running. A setTimeout would let the boot race past the pause it is supposed
- * to be, and the pause is the point: it is the window in which Owen can read the
+ * to be, and the pause is the point: it is the window in which the user can read the
  * recovery line and change his mind.
  */
 function sleepSync(ms) {
@@ -715,7 +715,7 @@ const sidecar = new Sidecar({
  * WHY before anything else: the sidecar is about to write a fresh "original" into
  * the state file. If the last run left the taskbar in a state it chose, that
  * state would be recorded as the original and become permanent -- one dirty exit
- * would turn into a setting Owen never picked. Recovering first means the
+ * would turn into a setting the user never picked. Recovering first means the
  * original we record is a real original.
  *
  * -NoKill because the process it would otherwise stop is this one.
@@ -837,7 +837,7 @@ let lastRestoreEvent = null;
 // 640, was 480 (2026-09-27): the live log had Quick Settings asking 483-488 px (its main view
 // had grown past the cap: 3-8 px of its top cut off, 15 times), 523-542 px, and 602-618 px with a
 // list expanded (about 130 px cut off), 22 capped asks in all; 640 holds the largest seen. On
-// Owen's 1536x864 DIP screen (1920x1080 at 125%) the tall window then reaches y=162 DIP, still
+// the user's 1536x864 DIP screen (1920x1080 at 125%) the tall window then reaches y=162 DIP, still
 // well under the top bar. The pages that size themselves to "main's 480 cap" (spotify.js
 // ROOM_MAX, qs-more.js, downloads/notifications) keep working: they ask for less.
 // Was 320 before that: Quick Settings asked for 429 live (2026-09-21) and had its top cut off.
@@ -862,7 +862,7 @@ const REVEAL_BAND_DIP = 4;
 const POLL_HIDDEN_MS = 80;     // cheap: one cursor read, no Win32 call
 /*
  * How fast the bar gets out of the way (build 23, measured: the pill was still
- * fully up 856 ms after the cursor left, and Owen's read of that was "when it
+ * fully up 856 ms after the cursor left, and the user's read of that was "when it
  * goes away it just waits a second and then disappears").
  *
  * The delay was the grace period plus up to a whole poll interval: 500 + 120.
@@ -882,7 +882,7 @@ const DRAG_HOLD_MS = 1500;
 const HIDE_SLIDE_MS = 350;     // between the 'bar.hide' event and barWin.hide(): the page's 320 ms exit, plus 30
 
 /*
- * THE MOVEMENT. Owen: it must feel like the Northwind site's nav detaching.
+ * THE MOVEMENT. The user: it must feel like the Northwind site's nav detaching.
  *
  * MAIN ANIMATES THE WINDOW; the page only fades paint properties. A renderer
  * cannot move its own window, so a CSS transform sliding the page inside a static
@@ -929,7 +929,7 @@ let barDragAt = 0;             // last 'bar.hover' {drag:true}: an icon is lifte
 /*
  * THE BAR IS NEVER hide()-DEN: it is PARKED below the screen edge (build 29).
  *
- * Owen: "you had it at one point a few minutes ago it had started working now it
+ * The user: "you had it at one point a few minutes ago it had started working now it
  * doesnt again". Measured with a WM_LBUTTONUP hook on the window and a mousedown
  * trace in the page (builds 26-28): the FIRST reveal after start took clicks;
  * after one hide()/showInactive() cycle the window still received every mouse
@@ -979,7 +979,7 @@ const KEYS_ALLOWED = new Set(['win+a', 'win+n', 'win+d']);
  */
 const deadPagesSaid = new WeakSet();
 let pushWords = (name, payload) => payload;   // set after this region: raw codes become words (lib/plain-error.js)
-/* WHAT MOVES WITH THE BAR (lane mantle-corner, 2026-10-16). Owen: the corner pop-ups should sit in the
+/* WHAT MOVES WITH THE BAR (lane mantle-corner, 2026-10-16). The user: the corner pop-ups should sit in the
    corner and "just ... smoothly move up if the taskbar comes up". Called on the SAME tick the bar's page
    is told ('bar.reveal' / 'bar.hide'), so the bar and its neighbours start together. barUpNow is where the
    bar is headed: --dock is always up; a bar on its way out already counts as gone. */
@@ -1024,7 +1024,7 @@ pushWords = (name, payload) => toPage(`push ${name}`, payload);
  * the solid window grounds and the DWM frames of the acrylic app windows.
  */
 let themeCore = null;
-let themeFakeWindows = null;   // --test only (theme.testWindows): a made-up Windows app mode, never Owen's
+let themeFakeWindows = null;   // --test only (theme.testWindows): a made-up Windows app mode, never the user's
 const themeFollowers = new Set();
 function getTheme() {
   if (themeCore) return themeCore;
@@ -1073,7 +1073,7 @@ function getLook() {
     LS: require('./lib/look-sync'),
     accent: require('./lib/accent'),
     file: path.join(app.getPath('userData'), 'look-sync.json'),
-    // A --test run NEVER shares Owen's real %APPDATA%\look-sync (2026-10-10: a test instance without
+    // A --test run NEVER shares the user's real %APPDATA%\look-sync (2026-10-10: a test instance without
     // LOOK_SYNC_DIR published its own wallpaper into the real file and live Quartz followed it): it uses
     // LOOK_SYNC_DIR when a test sets one, else a look-sync folder inside its own temp profile.
     dir: process.env.LOOK_SYNC_DIR || (flags.test ? path.join(app.getPath('userData'), 'look-sync') : undefined),
@@ -1098,7 +1098,7 @@ function getLook() {
  * the shared look cannot be used as it is (the file was damaged and reset, is from a newer version, or
  * cannot be read), the look changes or stops following with no word outside Settings. Its reason is shown ONCE in a toast,
  * the same pop-up page the keep-on-top shortcut uses (ui/ontop); the same failure is not said again
- * until the shared look has been fine in between. Never in front of Owen in a --test run (the page
+ * until the shared look has been fine in between. Never in front of the user in a --test run (the page
  * still draws, so a test can read it). The log names the state only: the reason can hold a path.
  */
 let lookToastSaid = null;    // the fallback state last shown (cleared by an ok)
@@ -1202,7 +1202,7 @@ function startLookDesktop() {
           return { ok: true };
         },
       },
-      // the lock screen shows the same picture (Owen, 2026-10-10): the sidecar's WinRT LockScreen route
+      // the lock screen shows the same picture (the user, 2026-10-10): the sidecar's WinRT LockScreen route
       // (sidecar/SysPersoLock.cs). A sidecar built without it answers "Read only: ..." and that reason
       // is the status Settings shows. The publisher never calls this in a test run.
       lock: {
@@ -1281,7 +1281,7 @@ state.on('change', (snapshot) => {
   broadcast('state', snapshot);
   requestTray();   // batched: at most one rebuild per 250 ms, none when the menu's inputs did not move
   // The terminal's copy of the desktop layer's "needs attention" strip. The
-  // strip is what Owen reads; this is what whoever started Mantle from a shell
+  // strip is what the user reads; this is what whoever started Mantle from a shell
   // reads, and it is the only way to see the state when the desktop window is
   // not up (--no-desktop, or a page that failed to load).
   const problems = state.problems();
@@ -1297,7 +1297,7 @@ state.on('change', (snapshot) => {
 // ---------------------------------------------------------------------------
 // THE HOVER BAR (2026-09-21).
 //
-// Owen: "all my pinned to taskbar things just icons centered, and when I put my
+// The user: "all my pinned to taskbar things just icons centered, and when I put my
 // mouse to the bottom of the screen it pulls up a glass UI taskbar with the
 // pinned app icons, and the regular stuff on the right too."
 //
@@ -1307,7 +1307,7 @@ state.on('change', (snapshot) => {
 // whole screen back.
 //
 // WHY A CURSOR POLL and not a mouse hook or a 1px always-on-top tripwire window:
-// a low-level mouse hook is a global hook on Owen's machine -- the class of thing
+// a low-level mouse hook is a global hook on the user's machine -- the class of thing
 // that made the 2026-09-21 incident possible -- and a tripwire window is one more
 // always-on-top window fighting the taskbar for the same edge. screen.getCursor-
 // ScreenPoint() is a read, it changes nothing, it cannot outlive this process,
@@ -1329,7 +1329,7 @@ function setBar(patch) {
 
 /**
  * Every bar reason carries pill mode's one standing caveat, because it is true
- * all the time and not discovering it is the whole point: Owen's Windows taskbar
+ * all the time and not discovering it is the whole point: the user's Windows taskbar
  * is on auto-hide on the BOTTOM edge, the same edge the pill floats above, and it
  * still comes up underneath and beside it (probed live, 2026-09-21). Pill mode is
  * for a taskbar that has been moved to another edge. It works either way.
@@ -1413,7 +1413,7 @@ function barGeometry() {
     /*
      * THE WINDOW REACHES THE SCREEN EDGE; the PILL does not (2026-09-21).
      *
-     * Owen: "when the taskbar expands out it isn't that smooth". The cause was
+     * The user: "when the taskbar expands out it isn't that smooth". The cause was
      * animating the WINDOW: every frame of the old morph was a SetWindowPos
      * resize of a transparent Electron window, and each resize makes Chromium
      * relayout, repaint and reallocate its surface -- so the window's edge ran a
@@ -1539,7 +1539,7 @@ function popoverDipRect(extra) {
 /*
  * THE BAR WINDOW NEVER CHANGES SIZE WHILE IT IS ON SCREEN (2026-09-24).
  *
- * Owen: "when i press any of these buttons the taskbar glitches down and then back up rq" (the
+ * The user: "when i press any of these buttons the taskbar glitches down and then back up rq" (the
  * speaker, Wi-Fi, battery, clock, bell and "..." buttons). Every popover used to make its room
  * by MORPHING THE WINDOW: ~20 SetWindowPos resizes in 200 ms, up on open, down on close. The
  * bar is a transparent DirectComposition window, and after a resize DWM goes on showing the
@@ -1656,7 +1656,7 @@ function pointIn(rect, pt) {
  * cannot see another process's window state.
  *
  * DEGRADES TOWARDS REVEALING, with the reason recorded: a sidecar that is down or
- * too old must not mean "Owen's taskbar never appears again". The verdict is
+ * too old must not mean "the user's taskbar never appears again". The verdict is
  * cached for 600 ms so that a cursor parked on the edge asks a few times a
  * second, not twelve.
  *
@@ -1922,7 +1922,7 @@ async function revealByPage(geo, why, visible) {
 /*
  * MAKE SURE THE BAR IS ACTUALLY ON TOP (build 23).
  *
- * Owen: "im pressing them and they arent doing anything". WindowFromPoint over
+ * The user: "im pressing them and they arent doing anything". WindowFromPoint over
  * every point of the revealed bar came back with an explorer.exe window of class
  * LockScreenBackstopFrame -- full-screen, visible, WS_EX_TOPMOST -- sitting above
  * ours inside the topmost band and swallowing every click. Clicks worked right
@@ -1940,7 +1940,7 @@ async function revealByPage(geo, why, visible) {
 let raiseComplaint = null;      // what was last found covering us, so it is logged once
 async function raiseBar(why) {
   if (!barWin || barWin.isDestroyed()) return;
-  // --test --flyout drives the bar with no one at it, possibly while Owen works (or records his
+  // --test --flyout drives the bar with no one at it, possibly while the user works (or records his
   // screen) in front: every "raise" becomes "send to the back", so the test bar never covers
   // him. Its pictures are captured with PrintWindow, which does not need it on top.
   if (flags.test && (flags.flyout !== null || flags.testLiveBar)) { thumbs.toBack(hwndOf(barWin)); return; }
@@ -2130,7 +2130,7 @@ const popwatch = require('./lib/popwatch');
 
 /** A pop-up key as the log may say it: its KIND, never the app or file it belongs to (the flyout's
     and the jump list's keys carry an app's pin name, e.g. "app:<name>.lnk"). */
-/* Does this pop-up hold the bar up wherever the cursor is? Every pop-up Owen OPENED does (Quick
+/* Does this pop-up hold the bar up wherever the cursor is? Every pop-up the user OPENED does (Quick
    Settings, the calendar, a flyout, a menu: they close like macOS menus, on a click away, Esc or an
    app switch, lib/popwatch.js). A TOOLTIP's room (ui/shared/tips.js, key 'tip') does not (lane
    mantle-barhover, 10-17): it is only shaped in, so the cursor in that room counts as on the bar
@@ -2192,7 +2192,7 @@ popwatch.configure({
   keys: () => raiseWin.keyStates(popwatch.VK),          // the fallback's buttons and Esc
   foreground: () => raiseWin.foreground(),              // a switch to another app closes a pop-up (Alt+Tab is no click)
   // The window whose own page handles Esc while it holds the keyboard: the sidecar leaves Esc to it.
-  // The bar's (its Wi-Fi box), or any other Mantle window Owen is typing in (the launcher, notes,
+  // The bar's (its Wi-Fi box), or any other Mantle window the user is typing in (the launcher, notes,
   // Settings) -- but not the desktop: a click on it already closed the pop-up, and an Esc there
   // is meant for the pop-up.
   hwnd: () => {
@@ -2265,10 +2265,10 @@ async function hoverTick() {
     return;
   }
 
-  // Shown. Anything that counts as "Owen is still using it" resets the clock. The zone that KEEPS
+  // Shown. Anything that counts as "the user is still using it" resets the clock. The zone that KEEPS
   // the bar is wider than the band that reveals it (lib/bar-intent.js, audit #6): a cursor within
   // KEEP_ABOVE_DIP above the pill is still using it, so the bar no longer slides away under it.
-  // Two bands since 10-17 (lane mantle-barhover, Owen: "i can hold my mouse a lot of pixels above it
+  // Two bands since 10-17 (lane mantle-barhover, the user: "i can hold my mouse a lot of pixels above it
   // without it going away"): the pill plus KEEP_ABOVE_DIP keeps it for as long as the cursor is there;
   // out to OVERSHOOT_ABOVE_DIP keeps it only for OVERSHOOT_MS, a pass on the way to an icon. Only 'in'
   // pulls a sliding-away bar back, so resting in the overshoot band can never bounce it.
@@ -2313,7 +2313,7 @@ function scheduleHoverTick() {
 /*
  * THE BACKDROP LOOP: the bar blurs its own background.
  *
- * DWM could not give Owen "a little bit more translucent" -- acrylic ignores its
+ * DWM could not give the user "a little bit more translucent" -- acrylic ignores its
  * tint's alpha and blur-behind lays down a black slab (both measured live). So
  * the bar has no DWM glass at all, and instead gets a PICTURE of what is behind
  * it, four times a second, which the page blurs in CSS where translucency is a
@@ -2325,7 +2325,7 @@ function scheduleHoverTick() {
  * protection sets WDA_EXCLUDEFROMCAPTURE, which makes the window invisible to
  * screen capture (not to the eye), so the shot is what is BEHIND it. It goes
  * straight back OFF in a finally, because a bar that is permanently excluded from
- * capture is a bar missing from every screenshot Owen takes.
+ * capture is a bar missing from every screenshot the user takes.
  *
  * The rectangle is always the bar's RESTING rect, never the window's current one:
  * a popover makes the window taller, and the popover paints its own strong fill.
@@ -2365,7 +2365,7 @@ function setBackdropPiece(key, patch) {
  * feed its own blur back into itself, so Electron's content protection
  * (WDA_EXCLUDEFROMCAPTURE) hides it from the capture -- and goes straight back
  * off in a finally, because a window permanently excluded from capture is a
- * window missing from every screenshot Owen takes. Hidden, none of that is
+ * window missing from every screenshot the user takes. Hidden, none of that is
  * needed, which is why every first frame is taken before the window is shown.
  */
 async function captureBackdrop(win, rect, scale, protect, onProtectError) {
@@ -2400,7 +2400,7 @@ async function captureBackdrop(win, rect, scale, protect, onProtectError) {
 }
 
 /*
- * THE PICTURE BEHIND A DARK GLASS SURFACE (lane helm-wall, 2026-10-09). Owen: "you need to get the see
+ * THE PICTURE BEHIND A DARK GLASS SURFACE (lane helm-wall, 2026-10-09). The user: "you need to get the see
  * through to look just like helm". Helm's panels show only its blurred PHOTO, never the windows behind
  * it, so in dark every surface's picture is the WALLPAPER under its rectangle (lib/wall-still.js), not a
  * screen capture: same {ok, png, w, h, ms} as captureBackdrop, plus `rect` (the physical rectangle the
@@ -2436,7 +2436,7 @@ function placeInWindow(win, got) {
  * A backdrop source for one window: a first frame before it is shown, then an
  * optional loop while it is.
  *
- * Owen: "everything that we build for this wrapper, their UI needs to be this
+ * The user: "everything that we build for this wrapper, their UI needs to be this
  * exact same theme as the taskbar". The theme IS this mechanism -- the light
  * frost is a live picture of the screen behind the window, blurred in CSS -- so
  * the launcher and the desktop layer get it from the same code the bar does
@@ -2643,7 +2643,7 @@ const barBackdrop = makeBackdrop({
 });
 
 /*
- * A dark pop-up's picture of what is behind it (lane see-glass, 2026-10-09). Owen, in dark: "mantle
+ * A dark pop-up's picture of what is behind it (lane see-glass, 2026-10-09). The user, in dark: "mantle
  * needs to be more see through everything ... even the taskbar". A pop-up had no blur under it (only
  * a near-opaque fill), so it could not be see-through and readable at once. The page asks for this
  * (bar.popover {backdrop: true}, dark theme only) and gets ONE protected shot of the bar window's
@@ -2677,7 +2677,7 @@ async function barPopBackdrop(key) {
 
 /*
  * The top bar's dropdowns: their picture of what is behind them, DARK ONLY (lane same-bars,
- * 2026-10-09; Owen: "everything at 50% ... it will all match way better if its the same"). A dropdown
+ * 2026-10-09; the user: "everything at 50% ... it will all match way better if its the same"). A dropdown
  * hangs over the app in front, with nothing blurred under it, so it was a stacked near-opaque face.
  * The page asks ONCE per menu session (glass.topbarMenu, before it shows the first dropdown), and
  * main takes ONE protected shot (the top bar excluded from it) of everything a dropdown can cover:
@@ -2722,7 +2722,7 @@ async function topbarPopBackdrop() {
 }
 
 /*
- * A floating HUD's picture of what is behind it, DARK ONLY (lane same-huds, 2026-10-09). Owen: "the
+ * A floating HUD's picture of what is behind it, DARK ONLY (lane same-huds, 2026-10-09). The user: "the
  * reason i want everything at 50% is cause it will all match way better if its the same". A HUD (the
  * volume pop-up, clipboard, notes, timer, the on-top and layouts toasts, the screenshot card, snap)
  * floats over any window with nothing blurred under it, so without a picture it can only be a .82
@@ -2859,7 +2859,7 @@ const desktopBackdrop = makeBackdrop({
 });
 let desktopStill = null;
 /*
- * THE DESKTOP PANES' PICTURE, DARK (lane mantle-seethru-bar-desktop, 2026-10-10). Owen: "this needs to
+ * THE DESKTOP PANES' PICTURE, DARK (lane mantle-seethru-bar-desktop, 2026-10-10). The user: "this needs to
  * be see through the same as everything else". While Mantle draws the wallpaper the panes frost it live
  * (desktop.css body.has-wall); when it is paused off or unloaded they fall back to 'desktop.backdrop',
  * which was the capture above at 1/8 scale (blurry, and only re-shot on a display change, so a new
@@ -3318,7 +3318,7 @@ function makeLauncher(again) {
     // In test mode the launcher is the thing being looked at, so it is up from
     // the start -- inactive, and with no hide-on-blur, or toback.ps1 sending it
     // to the back would make it vanish. Made AGAIN mid-test it stays hidden: no
-    // toback.ps1 runs then, and a test never puts a window in front of Owen.
+    // toback.ps1 runs then, and a test never puts a window in front of the user.
     if (!again) win.once('ready-to-show', () => { if (!win.isDestroyed()) win.showInactive(); });
   } else {
     win.on('blur', () => hideLauncher('blur'));
@@ -3329,7 +3329,7 @@ function makeLauncher(again) {
 }
 
 /*
- * MANTLE RESTS WHILE A GAME RUNS (lane memfix, 2026-09-26). Owen had to close Mantle to play
+ * MANTLE RESTS WHILE A GAME RUNS (lane memfix, 2026-09-26). The user had to close Mantle to play
  * Valorant: "it was taking up too much ram and it made my game stutter". Game mode's watch
  * (lib/features/gamemode.js) calls ctx.host.rest(true, 'VALORANT runs') while a known game runs or
  * game mode is on, and rest(false, ...) when the last one has exited. Resting:
@@ -3338,7 +3338,7 @@ function makeLauncher(again) {
  *   - the launcher window is destroyed and the Win key goes back to Windows' Start;
  *   - the switcher window is destroyed and Alt+Tab goes back to Windows (lib/switcher.js rest);
  *   - the wallpaper is unloaded, not paused (lib/wallpaper.js rest).
- * KEPT: the bar (Owen alt-tabs out between games, and it is the only way to reach Mantle), the
+ * KEPT: the bar (the user alt-tabs out between games, and it is the only way to reach Mantle), the
  * desktop layer's window (it is attached under the wallpaper; re-attaching is the fragile part of
  * start-up), the main process, the sidecar (the keyboard hook, game mode's own scan).
  * Waking makes everything again the way start-up makes it. One rest at a time (a chain).
@@ -3497,7 +3497,7 @@ function featureDisplay() {
 // taskbar shortcuts (in taskbar order), and the sidecar's `windows` command says
 // what is actually running. They are matched on the LOWERCASED FULL EXE PATH,
 // which is the only key both sides can agree on -- a title changes with every
-// tab, and a pin's .lnk name is whatever Owen renamed it to.
+// tab, and a pin's .lnk name is whatever the user renamed it to.
 //
 // Every failure in here is a reason on the item or on the reply, never a missing
 // icon with no explanation: a blank square in a taskbar is indistinguishable
@@ -3576,7 +3576,7 @@ function nameForExe(exe, fallback) {
  *     through on these windows today (the sidecar reads the per-window AUMID and Electron sets
  *     only the process's, so aumid was null), but it is the right mark the day it does;
  *   - an electron.exe window with one of the titles Mantle gives its windows (lib/windows.js,
- *     lib/wallpaper.js). electron.exe alone is NOT enough: Owen's browser is electron.exe too.
+ *     lib/wallpaper.js). electron.exe alone is NOT enough: the user's browser is electron.exe too.
  * Filtered where the list comes IN (the sidecar push, windows.list, buildPinned's fallback), so
  * the dock, the flyout and anything else reading lastWindows all agree.
  */
@@ -3584,7 +3584,7 @@ const MANTLE_AUMID = 'com.owensilva.mantle';
 const MANTLE_TITLES = new Set(['mantle bar', 'mantle desktop', 'mantle launcher', 'mantle wallpapers', 'mantle switcher',
   // wave 3 (2026-09-24): the feature pages (sidecar AltTab.cs MantleTitles has the same list)
   'mantle task view', 'mantle volume', 'mantle clipboard', 'mantle snap', 'mantle screenshot', 'mantle top bar']);
-// Mantle's APP windows (lane settings, 2026-09-28): windows Owen works in like any app's, listed on
+// Mantle's APP windows (lane settings, 2026-09-28): windows the user works in like any app's, listed on
 // the bar and in Alt+Tab (the sidecar's Switcher.IsMantleApp lets the same exact titles through).
 const MANTLE_APP_TITLES = new Set(['Mantle Settings', 'Mantle Task Manager', 'Mantle Files', 'Mantle Player']);
 function isMantleWindow(w) {
@@ -3596,7 +3596,7 @@ function isMantleWindow(w) {
   return exe === 'electron.exe' && MANTLE_TITLES.has(String(w.title || '').trim().toLowerCase());
 }
 /*
- * MANTLE'S APP WINDOWS AS APPS (icons lane, 2026-09-28). Owen: "they need to have there own icons
+ * MANTLE'S APP WINDOWS AS APPS (icons lane, 2026-09-28). The user: "they need to have there own icons
  * that replace windows icons not just be electron". Mantle Settings and Mantle Task Manager are
  * electron.exe windows, so they came in with electron.exe's icon and, with no AUMID, grouped under
  * one electron.exe key (with each other, and with any other Electron app that has none).
@@ -3635,7 +3635,7 @@ function groupRunning(list) {
   for (const w of Array.isArray(list) ? list : []) {
     if (!w || w.hwnd === undefined || w.hwnd === null) continue;
     /*
-     * AUMID FIRST, exe second (2026-09-21). Owen: "i want the apps when i have
+     * AUMID FIRST, exe second (2026-09-21). The user: "i want the apps when i have
      * them running to work the same as before". Grouping by exe path alone never
      * managed it for three whole classes of app:
      *   - Discord: the PIN points at Update.exe, the WINDOWS are Discord.exe.
@@ -3760,7 +3760,7 @@ async function buildPinned() {
   const featureList = (() => { try { return features ? features.list() : []; } catch (_) { return []; } })();
   for (const pin of pins) {
     if (!pin) continue;
-    /* A pin OF a Mantle app (lane barfiles, 2026-09-29; Owen: "mantle files it isnt letting me pin
+    /* A pin OF a Mantle app (lane barfiles, 2026-09-29; the user: "mantle files it isnt letting me pin
        it to taskbar"): "Pin to taskbar" on a Mantle Files window stores electron.exe + 'mantle.files'.
        Treated as a plain pin it drew electron.exe's icon, borrowed ANY electron.exe window by exe once
        its own were closed (Mantle Settings' preview on hover), and a click started bare electron.exe.
@@ -3812,7 +3812,7 @@ async function buildPinned() {
     pinById.set(id, pin);
     /*
      * A pin can carry its own reason even when nothing failed -- lane C sets one
-     * for a pin whose app has been uninstalled (Owen's Comet pin right now), which
+     * for a pin whose app has been uninstalled (the user's Comet pin right now), which
      * is why `exe` comes back null and no window ever matches it. It goes on
      * iconReason, the one per-item channel the bar renders, when there is no icon
      * to draw; when there IS an icon it would sit next to a perfectly good picture,
@@ -3857,7 +3857,7 @@ async function buildPinned() {
 
   /* TEST ONLY: --test-dock-extra=N adds N filler cells (2026-09-22). The dock's squeeze -- the
      media chip compacting to art + glyph BEFORE any app is hidden -- depends on how many apps
-     are running, which a test run cannot arrange without launching apps on Owen's machine. The
+     are running, which a test run cannot arrange without launching apps on the user's machine. The
      fillers borrow a real icon, own no windows and no exe, and are named as what they are. */
   const extraArg = flags.test && ARGV.find((x) => typeof x === 'string' && x.startsWith('--test-dock-extra='));
   const extra = extraArg ? Math.max(0, Math.min(20, parseInt(extraArg.split('=')[1], 10) || 0)) : 0;
@@ -3900,7 +3900,7 @@ function schedulePinnedPush(why) {
     pinnedOnce().then((res) => {
       broadcast('bar.pinned', res);
       // Once per CHANGE of reason, not once per second: the window set churns
-      // every time Owen alt-tabs, and a terminal full of the same sentence is
+      // every time the user alt-tabs, and a terminal full of the same sentence is
       // how a real one stops being read.
       if (!res.ok && res.reason !== lastPinnedProblem) {
         lastPinnedProblem = res.reason;
@@ -3917,7 +3917,7 @@ function schedulePinnedPush(why) {
 /**
  * Start an item: a .lnk pin through the shell, a Store-app pin through its AUMID.
  *
- * Five of Owen's fourteen taskbar pins are Store apps with NO shortcut file at
+ * Five of the user's fourteen taskbar pins are Store apps with NO shortcut file at
  * all -- there is no path to open, only an Application User Model ID, and the
  * only way to start one is ShellExecute on shell:AppsFolder\<aumid>, which is
  * what the sidecar's `launch` does. A running-only entry can be started the same
@@ -4042,7 +4042,7 @@ async function launchItem(item, fresh) {
   if (aumid) {
     try {
       // The sidecar starts it, so it needs the click's foreground right to pass on to the new app
-      // (else a Store app such as Terminal opens behind the window Owen was in). lib/fg-grant.js.
+      // (else a Store app such as Terminal opens behind the window the user was in). lib/fg-grant.js.
       fgGrant.grant(sidecar.info && sidecar.info.pid);
       const r = await sidecar.call('launch', { aumid }, 8000);
       if (r && r.ok === false) {
@@ -4081,7 +4081,7 @@ function startPinWatch() {
 /*
  * QUICK SETTINGS: the right-hand cluster, done as Mantle's own panel.
  *
- * Owen: "these buttons need to go to a wrapper version of where they used to go
+ * The user: "these buttons need to go to a wrapper version of where they used to go
  * ... some of them just go to settings now". Clicking volume or Wi-Fi should
  * change volume or Wi-Fi, not dump him in the Windows Settings app -- so every
  * control is read and written here, through the sidecar, and the Settings app is
@@ -4161,7 +4161,7 @@ async function qsRead() {
 }
 
 /*
- * WHAT MAIN KNOWS, PUSHED (qsx lane, 2026-09-23). Owen, live on 1c6afe3: "you need to make the
+ * WHAT MAIN KNOWS, PUSHED (qsx lane, 2026-09-23). The user, live on 1c6afe3: "you need to make the
  * Internet thing and volume and brightness and all that stuff over there actually work and be
  * way more responsive". main used to learn about the panel by re-reading all six parts every 2 s
  * while it was open - 2 to 5 s behind a brightness key, and blind while it was closed. Now:
@@ -4491,12 +4491,12 @@ sidecar.on('status', ({ status, reason }) => {
 
 /*
  * QUICK SETTINGS, ONE LEVEL DOWN (qsx lane, 2026-09-23): the Wi-Fi network list,
- * the output-device picker and the volume mixer, so Owen never needs Windows' own
+ * the output-device picker and the volume mixer, so the user never needs Windows' own
  * flyouts for them. The work is the sidecar's (sidecar/Wlan.cs, AudioMixer.cs);
  * these commands give every reply the same never-throwing {ok, reason} shape as
  * qs.get, and push a fresh qs snapshot after anything that moves a main-panel tile.
  *
- * Measured 2026-09-23 on Owen's machine: list 23-34 ms warm, a scan 3.6 s end to
+ * Measured 2026-09-23 on the user's machine: list 23-34 ms warm, a scan 3.6 s end to
  * end (Wlan.cs waits up to 6 s for Windows' scan-complete), a connect up to 25 s
  * for Windows' verdict, devices 4-5 ms, sessions 5-10 ms. Timeouts sit well past.
  */
@@ -4520,7 +4520,7 @@ async function qsMore(cmd, args, label, ms) {
 
 /*
  * THE PAIRED BLUETOOTH DEVICES behind the Bluetooth tile's '>' (qsx lane,
- * 2026-09-23; the work is sidecar/BtDevices.cs). Measured on Owen's machine: a
+ * 2026-09-23; the work is sidecar/BtDevices.cs). Measured on the user's machine: a
  * list is 26 ms warm (radio 19, paired devices 18, batteries 15, sound routes
  * 12, partly overlapping), the watch's first push 0.3 s after it starts. A
  * connect waits up to 12 s for Windows to say it is connected (a disconnect up
@@ -4554,7 +4554,7 @@ async function qsBtToggle(op, a) {
 /*
  * THE WI-FI PASSWORD FIELD NEEDS THE KEYBOARD, AND THE BAR NEVER HAS IT. The bar
  * is focusable:false (lib/windows.js) so a click on it never takes focus from the
- * app Owen is in -- which also means a text field in it receives NO keys: they go
+ * app the user is in -- which also means a text field in it receives NO keys: they go
  * to whatever app is in front. A password typed there would land, keystroke by
  * keystroke, in that app. So the panel shows its password field only after
  * qs.keyboard {on:true} has read back barWin.isFocused() === true, and says why
@@ -4562,15 +4562,15 @@ async function qsBtToggle(op, a) {
  * holds focus (nothing else was clicked meanwhile), hands focus back to the window
  * that had it, through the same sidecar `focus` a taskbar click uses.
  * NOT verified live (2026-09-23): a test instance must never take focus, so this
- * path waits for Owen's go; see the qsx report's live-test steps.
+ * path waits for the user's go; see the qsx report's live-test steps.
  */
 // <mainrel:qskbd> (lib/main-qskbd.test.js runs this region with a fake bar window and sidecar)
 let qsKbPrev = null;       // the hwnd that was in front before the password field took the keyboard
 let qsKbBlur = null;       // the bar's blur listener while it holds the keyboard
 
-/* The bar lost focus on its own (Owen clicked another app, or a game took the
+/* The bar lost focus on its own (the user clicked another app, or a game took the
    screen): it goes back to focusable:false at once, and focus is NOT dragged back
-   to the old window, because Owen went somewhere on purpose. */
+   to the old window, because the user went somewhere on purpose. */
 function qsKbDisarm() {
   if (qsKbBlur && barWin && !barWin.isDestroyed()) barWin.removeListener('blur', qsKbBlur);
   qsKbBlur = null;
@@ -4651,7 +4651,7 @@ async function qsKeyboard(on) {
  * If the sidecar says its events could not be hooked, main falls back to a slow poll and the
  * card says so and why.
  *
- * WHICH SESSION the chip shows, in order: the one Owen picked in the card's source switcher
+ * WHICH SESSION the chip shows, in order: the one the user picked in the card's source switcher
  * (until that session goes away), else Windows' current session, except that under the
  * protected media apps rule (lib/media-guard.js; flags.mediaGuard, top of this file) any other
  * session wins over a protected one, a playing one first, and protected apps alone show no chip.
@@ -4665,7 +4665,7 @@ async function qsKeyboard(on) {
 const MEDIA_POLL_MS = 10000;          // only when the sidecar could not hook the change events
 const MEDIA_ACTIONS = new Set(['play', 'pause', 'toggle', 'next', 'previous', 'seek']);
 let lastMedia = null;       // the last payload pushed to the bar, for replay and the guard
-let mediaPick = null;       // the pick Owen made in the card's switcher (lib/media-pick.js's shape), or null for automatic
+let mediaPick = null;       // the pick the user made in the card's switcher (lib/media-pick.js's shape), or null for automatic
 let mediaPickDropped = null; // the last pick that timed out: said in the card until the next pick
 let mediaPickTimer = null;  // a re-read when a held pick's grace runs out, so it drops on time
 let mediaReading = null;    // the in-flight read, so a burst of triggers makes one read
@@ -4736,7 +4736,7 @@ async function mediaRead() {
     label: (prot && mediaGuard().label) || null,   // the source switcher's word in place of the title (media-guard.json "label")
   }));
 
-  /* THE PICK IS STICKY (lane mediapick, 2026-09-25; lib/media-pick.js says how). Owen: "i press
+  /* THE PICK IS STICKY (lane mediapick, 2026-09-25; lib/media-pick.js says how). The user: "i press
      spotify but it keeps switching to [the other app] or automatic". The pick used to drop the instant
      its session was missing from ONE read, so a session blinking out put the card back on
      automatic for good. Now an absent pick is held for 60 s of continuous absence (by 'waiting',
@@ -4754,14 +4754,14 @@ async function mediaRead() {
   const pickNote = (p) => Object.assign(p, choice.waiting ? { waiting: choice.waiting, reason: choice.waiting.reason } : {},
     choice.auto ? { auto: choice.auto } : {}, !mediaPick && mediaPickDropped ? { dropped: mediaPickDropped } : {});
 
-  /* PROTECTED APPS ALONE = NO CHIP (Owen's call, 2026-09-22). With the rule on and nothing but
+  /* PROTECTED APPS ALONE = NO CHIP (the user's call, 2026-09-22). With the rule on and nothing but
      protected apps publishing a session, the bar shows no now-playing chip at all: a chip that
      can only ever name the protected app and offer nothing is noise. With a player alongside it,
-     the chip shows the player (below), and the card's source switcher still lets Owen pick the
+     the chip shows the player (below), and the card's source switcher still lets the user pick the
      protected app, which then shows with its controls off. A pick of it does not outlive the
      player: once protected apps are alone again, this wins (lib/media-pick.js drops it).
      A pick of a PLAYER survives this (2026-09-25): the player blinking out for a moment is not
-     Owen changing his mind. Not a failure: ok stays true, and the reason says what happened for
+     the user changing his mind. Not a failure: ok stays true, and the reason says what happened for
      anyone reading the payload. */
   if (choice.protectedOnly) {
     return {
@@ -4896,7 +4896,7 @@ sidecar.on('media', (ev) => {
 // ---------------------------------------------------------------------------
 // The battery (2026-09-23).
 //
-// Owen: "there are problems with it showing how charged my computer is". The
+// The user: "there are problems with it showing how charged my computer is". The
 // readout was lib/sys-stats.js's PowerShell + Win32_Battery, asked on the bar's
 // clock tick through a 60 s cache: 71 % where Windows said 72, a bolt for any
 // laptop on AC, up to a minute behind a plug or unplug, and gone for the whole
@@ -5281,7 +5281,7 @@ const COMMANDS = {
     if (!item) return { ok: false, reason: `the bar asked to open "${id}", which is not in the list Mantle last built` };
 
     /*
-     * EXACTLY WHAT THE WINDOWS TASKBAR DOES, because Owen asked for the apps to
+     * EXACTLY WHAT THE WINDOWS TASKBAR DOES, because the user asked for the apps to
      * "work the same as before just on mantle":
      *   middle-click (fresh:true) -- a NEW instance, however many are running.
      *   nothing running            -- launch it.
@@ -5393,7 +5393,7 @@ const COMMANDS = {
 
   // TEST ONLY (--test): hand lib/popwatch.js a made-up sidecar event ({op:'click', x, y}, in DIP
   // when dip:true; or {op:'esc'}), so a test proves the road from the watch to the page's close
-  // without a real click or key on Owen's desktop. No ev: just the watch's state.
+  // without a real click or key on the user's desktop. No ev: just the watch's state.
   'popwatch.test': async (a) => {
     if (!flags.test) throw new Error('popwatch.test exists only in a --test run');
     const ev = Object.assign({}, a && a.ev);
@@ -5808,11 +5808,11 @@ const COMMANDS = {
   },
 
   /*
-   * "Restart Mantle", from the bar's overflow menu (Owen, 2026-09-22). The SAME clean quit as
+   * "Restart Mantle", from the bar's overflow menu (the user, 2026-09-22). The SAME clean quit as
    * shell.quit and `electron . --quit` -- shutdown(), which puts Windows back exactly as a quit
    * does -- and then Mantle comes back. How it comes back is the whole design (restartPlan).
    * If the way back cannot be arranged this answers ok:false with the reason and does NOT quit:
-   * half a restart is a quit Owen did not ask for.
+   * half a restart is a quit the user did not ask for.
    */
   'shell.restart': async (a) => {
     if (shuttingDown) return { ok: false, reason: 'Mantle is already shutting down' };
@@ -5980,7 +5980,7 @@ function navigationVerdict(toUrl, uiDir) {
 }
 
 // ms-settings:<page>[?query], the Windows Wi-Fi list, and web links (lib/open-target.js opens those in
-// Owen's own browser). Everything the bar and its panels open is one of these (ui/bar/*.js, 2026-09-29).
+// the user's own browser). Everything the bar and its panels open is one of these (ui/bar/*.js, 2026-09-29).
 const OPEN_ALLOWED = [/^ms-settings:[a-z0-9-]*(\?[a-z0-9=&%._-]*)?$/i, /^ms-availablenetworks:$/i, /^https?:\/\/[^\s"'<>\\]+$/i];
 function openTargetVerdict(target) {
   const t = typeof target === 'string' ? target.trim() : '';
@@ -6226,7 +6226,7 @@ function testShellBaseline() {
     // NOT "passive would refuse it": the sidecar allows traywatch in passive
     // (it only ever raises the caller's OWN window). It is simply not asked for,
     // because a test run's bar is an ordinary framed window that has no business
-    // outranking Owen's real taskbar while he is working.
+    // outranking the user's real taskbar while he is working.
     watchReason: 'test mode: the sidecar was not asked to watch the Windows taskbar, so the real taskbar sits above the test bar as it should',
   });
   state.set('workarea', { reserved: false, reason: 'test mode: no app bar was registered, so no screen space was reserved' });
@@ -6314,7 +6314,7 @@ sidecar.on('tray', onTrayWatchEvent);
  * fullscreen app took the screen, or another process claimed the cursor. Windows
  * does that on its own; the sidecar is reporting, not failing. It goes straight
  * into State so the bar can show a chip the moment the island's gaps stop being
- * protected, instead of Owen finding out when a taskbar slides through them.
+ * protected, instead of the user finding out when a taskbar slides through them.
  */
 sidecar.on('edgeclip', (msg) => {
   const applied = !!(msg && msg.applied);
@@ -6348,7 +6348,7 @@ sidecar.on('hotkey', (msg) => {
 
 sidecar.on('taskbar', (msg) => {
   // The sidecar volunteers this whenever the auto-hide flag changes under it
-  // (explorer restarts, Owen changes it in Settings). Trust its word over ours.
+  // (explorer restarts, the user changes it in Settings). Trust its word over ours.
   if (!msg || typeof msg.autohide !== 'boolean') {
     // An exe that still sends the pre-2026-09-21 {hidden:bool} shape. Reading it
     // as "not auto-hide" would put a confident wrong sentence on screen, so the
@@ -6427,7 +6427,7 @@ sidecar.on('died', ({ code, signal }) => {
     return;
   }
   // It went away WITHOUT confirming. It very probably restored anyway -- its
-  // safety path runs on every exit road -- but "probably" is what cost Owen a
+  // safety path runs on every exit road -- but "probably" is what cost the user a
   // reboot, so this is a state with a fix attached, not a reassurance.
   markUnrestored(`the sidecar exited (${signal ? `killed by ${signal}` : `code ${code}`}) without confirming it put Windows back`);
   process.stderr.write(`mantle: the sidecar exited without confirming the restore. If the taskbar looks wrong:\n    ${RECOVERY_CMD}\n`);
@@ -6514,7 +6514,7 @@ async function applyMode() {
 // ...and then a 15 % WHITE frost over a bright browser page turned the bar light grey and
 // washed the labels out. Dark frost at 50 % keeps the bar dark whatever is behind it while
 // the blurred colour still comes through; the .42 page fill does the rest.
-// ...and 50 % dark was still "not transparent, like way more" (Owen, 14:31). 15 % dark:
+// ...and 50 % dark was still "not transparent, like way more" (the user, 14:31). 15 % dark:
 // the blur does the work, the page fill is .20, the labels carry a drop shadow.
 // ...and on 2026-09-21, with the hover bar, the whole look flipped: LIGHT frosted
 // glass, the Northwind site's nav pill -- white over a blur, dark ink text. So the DWM
@@ -6527,7 +6527,7 @@ async function applyMode() {
 // it still comes through.
 /*
  * GLASS_TINT is GONE (2026-09-21). Every Mantle window now blurs its OWN captured
- * backdrop, because no DWM mode could give Owen what he asked for: acrylic ignores
+ * backdrop, because no DWM mode could give the user what he asked for: acrylic ignores
  * the alpha in its tint (a fixed, near-opaque frost) and blur-behind paints a black
  * slab -- both measured live. A tint constant that no call passes any more would
  * only be a thing to wonder about, so it is deleted rather than left at 0.
@@ -6559,7 +6559,7 @@ async function applyGlass() {
   }
 
   /*
-   * THE BAR GETS NO DWM GLASS AT ALL (2026-09-21, after Owen saw it live: "now
+   * THE BAR GETS NO DWM GLASS AT ALL (2026-09-21, after the user saw it live: "now
    * its kinda just black, i just wanted it a little bit more translucent").
    *
    * Measured, not guessed: DWM's acrylic IGNORES the alpha in its tint -- the
@@ -6570,7 +6570,7 @@ async function applyGlass() {
    * main captures what is behind the bar and hands the page a picture of it, and
    * the page blurs that with CSS, where translucency is an actual number.
    *
-   * AND NOW THE LAUNCHER TOO (Owen: "everything that we build for this wrapper,
+   * AND NOW THE LAUNCHER TOO (the user: "everything that we build for this wrapper,
    * their UI needs to be this exact same theme as the taskbar"). The theme is not
    * a colour, it is this mechanism -- a live picture of the screen behind the
    * window, blurred in CSS -- so the launcher is on the same path rather than
@@ -6689,7 +6689,7 @@ function reapplyGlass(label, win, mode) {
   if (!win || win.isDestroyed()) return;
   // `mode` is the SAME value applyGlass() used for this window: the bar is 'off'
   // (it blurs its own backdrop) and a reload that put DWM blur-behind back on
-  // it would paint the black slab Owen already rejected.
+  // it would paint the black slab the user already rejected.
   sidecar.call('glass', { hwnd: hwndOf(win), mode }).then((r) => {
     if (mode !== 'off' && !(r && r.applied)) {
       state.set('glass', { material: 'none', reason: `${label} reloaded and the sidecar did not put its glass back` });
@@ -6723,7 +6723,7 @@ function oldExeBaseline(reason) {
  *
  * WHICH UNITS, and why it matters (measured on the first live run, 2026-09-21):
  * SHAppBarMessage deals in PHYSICAL pixels even when the caller is DPI-unaware,
- * but everything ELSE Windows hands an unaware process is virtualised. On Owen's
+ * but everything ELSE Windows hands an unaware process is virtualised. On the user's
  * 125% display that is a 25% error in both directions -- the bar came out 200px
  * tall at 80% of the screen width. So:
  *
@@ -7161,7 +7161,7 @@ async function applyLive() {
   }
   // 0. Is the exe even new enough to be trusted with the shell? The old one
   //    answers `taskbar` by looking for a `show` key, and what it does without
-  //    one is not something to discover on Owen's live desktop.
+  //    one is not something to discover on the user's live desktop.
   //    A ping that got NO answer is asked again (askProtocolAge), never read as an old exe.
   const age = await askProtocolAge();
   if (!age) return;   // a newer sidecar start, a quit or "Put Windows back" came while it asked again
@@ -7173,7 +7173,7 @@ async function applyLive() {
 
   // 0b. The desktop layer goes under the icons FIRST (lane mn-wake, 2026-10-12; audit #3). It is
   //     made HIDDEN and is shown only once it is there (makeDesktopWindow holdShow), so until this
-  //     lands Owen sees Windows' own wallpaper, never a full-screen layer over his apps. It used to
+  //     lands the user sees Windows' own wallpaper, never a full-screen layer over his apps. It used to
   //     be shown as soon as its first picture landed and go under the icons only after the taskbar,
   //     the bar, the edge clip and the taskbar hiding: ~3 s over every open app at every start.
   //     Explorer's desktop can still be getting ready at logon, so a held layer that could not go
@@ -7254,7 +7254,7 @@ async function applyLive() {
     try {
       const hwnd = hwndOf(barWin);
       // SIZE IS IN THE SIDECAR'S UNITS, not ours. A DPI-aware sidecar reads 44 as
-      // 44 PHYSICAL pixels, which on Owen's 125% display is 35 DIP -- measured on
+      // 44 PHYSICAL pixels, which on the user's 125% display is 35 DIP -- measured on
       // the live run: the bar window came back 0,1036..1080 physical, a 35pt-tall
       // bar under a 44pt-tall page. BAR_H is a DIP number (it is what lane C's CSS
       // uses), so it has to be scaled on the way out and the returned rect scaled
@@ -7423,7 +7423,7 @@ async function attachDesktop() {
 // window, and the desktop stayed on Windows' own picture until Mantle was restarted. Now a layer
 // that closes while Mantle runs (not quitting, not after "Put Windows back") is made again: a new
 // window, handed to the wallpaper (setDesktopWin) and put under the icons. It stays HIDDEN until it
-// is attached -- a full-screen layer shown before the new Progman exists would sit over Owen's
+// is attached -- a full-screen layer shown before the new Progman exists would sit over the user's
 // windows -- and attaching is retried with a back-off, because Explorer takes a few seconds to make
 // its new desktop. One that keeps dying is not remade forever (desktopRemakeVerdict).
 // (A layer that SURVIVES as an orphan is the recheck's job: sidecar Desktop.cs Recheck rejoins it.)
@@ -7468,7 +7468,7 @@ function desktopAttachNext(ok, n) {
 }
 /*
  * OUT OF TRIES: the layer is CLOSED, never shown (review of inc-3, 2026-09-30). It is full-screen,
- * transparent and cannot take focus; shown without a place under the icons it can sit ABOVE Owen's
+ * transparent and cannot take focus; shown without a place under the icons it can sit ABOVE the user's
  * windows and eat every click -- the stuck-screen failure this shell has had before. So the window
  * goes (d.clear() first, so its 'closed' is not read as one more Explorer restart), the wallpaper
  * lets go of it, and Windows' own wallpaper shows. The state line says why and what to do.
@@ -7703,7 +7703,7 @@ function armDesktopGoneTest() {
  * notification area like any other, so the sidecar lists it, and the bar drew a button for the
  * shell it is part of (or, in a test instance, for the LIVE shell). Measured 2026-09-22 through
  * the UIA tray: it lists as title "Electron", exe
- * <repo>\node_modules\electron\dist\electron.exe, hidden. Owen's own browser is a browser built on
+ * <repo>\node_modules\electron\dist\electron.exe, hidden. The user's own browser is a browser built on
  * Electron, ALSO electron.exe, so the exe NAME alone would hide his browser's
  * icon too. The match is an electron.exe that lives in a mantle checkout (mantle, mantle-live,
  * any mantle-*), this process's own exe, or a live tooltip in the "Mantle (live|test)" form
@@ -7848,7 +7848,7 @@ function restoreShell(why) {
       done.push('no app bar was registered');
     }
 
-    // 2. Put the taskbar's auto-hide flag back to whatever Owen had it on.
+    // 2. Put the taskbar's auto-hide flag back to whatever the user had it on.
     let taskbarLine = null;
     try {
       const r = await sidecar.call('taskbar', { restore: true }, 4000);
@@ -7857,7 +7857,7 @@ function restoreShell(why) {
         : (state.get().taskbar.wasAutohide ? 'auto-hide' : 'always visible');
 
       // `restored:false` on its own is NOT a failure, and reading it as one cried
-      // wolf on the first live run (2026-09-21): Owen's taskbar is already
+      // wolf on the first live run (2026-09-21): the user's taskbar is already
       // auto-hide, so Mantle never changed it, and the sidecar correctly answered
       // {restored:false, changedByUs:false, verified:true} -- "there was nothing
       // to put back". The log shouted RESTORE INCOMPLETE at a perfectly healthy
@@ -7934,7 +7934,7 @@ function shutdown(why, opts) {
   // the Alt+Tab overlay's previews and timers; from here the hook going away is said as quitting, not a fault
   switcher.stop(`Mantle is quitting (${why})`);
   // ...and with it the capture loop, which is the one thing that can leave a
-  // window excluded from Owen's screenshots if it is stopped carelessly.
+  // window excluded from the user's screenshots if it is stopped carelessly.
   stopBackdrop('Mantle is shutting down');
   qsWatchStop('Mantle is shutting down');
   if (mediaPollTimer) { clearTimeout(mediaPollTimer); mediaPollTimer = null; }
@@ -8030,7 +8030,7 @@ app.on('second-instance', (_event, argv) => {
   }
   // TEST ONLY: `electron . --test --profile-name=<x> --test-chord=Win+V` (or --test-key=VolumeUp)
   // makes THIS test instance act as if the hook had seen that chord: the feature lanes' end-to-end
-  // proof, with no keyboard hook and no synthetic keystroke anywhere near Owen's desktop.
+  // proof, with no keyboard hook and no synthetic keystroke anywhere near the user's desktop.
   const fire = flags.test && features && Array.isArray(argv)
     ? argv.find((a) => typeof a === 'string' && (a.startsWith('--test-chord=') || a.startsWith('--test-key='))) : null;
   if (fire) {
@@ -8096,7 +8096,7 @@ app.on('window-all-closed', () => shutdown('every window was closed'));
  *
  * An uncaught exception has always meant "put Windows back and go" (a shell in an unknown state is
  * worse than no shell). But it went with exit code 0, so the logon task's RestartOnFailure
- * (tools/mantle-logon-task.xml) never saw a failure, and one bad moment left Owen with no bar and
+ * (tools/mantle-logon-task.xml) never saw a failure, and one bad moment left the user with no bar and
  * no launcher until he noticed and started Mantle by hand. Now the crash is written down
  * (<userData>/crash.json), Mantle arranges its own way back exactly as "Restart Mantle" does
  * (arrangeRestart), and exits with code 1 so the task records the failure too. At most 3 of those
@@ -8198,7 +8198,7 @@ let recoveryNote = null;
 // ---------------------------------------------------------------------------
 // <mainrel:tray> (lib/main-rel.test.js runs this region with fake problems and items: no outside names in it)
 /*
- * THE TRAY MENU, AS WORDS AND ORDER ONLY (lane core-main, 2026-09-29). Owen: "minimalistic and
+ * THE TRAY MENU, AS WORDS AND ORDER ONLY (lane core-main, 2026-09-29). The user: "minimalistic and
  * super easy to use and obvious what to do". Before: 30+ rows -- a "Mantle — live" title, the
  * health as internal piece names ("2 things to look at: sidecar, edge clip"), two switches and
  * a reason line for Alt+Tab, a switch and often a reason for each of 20 features -- then the
@@ -8558,7 +8558,7 @@ async function diagnosticReport() {
 async function copyDiagnosticReport(via) {
   const text = await diagnosticReport();
   if (flags.test) {
-    // Never Owen's clipboard from a test run: the report goes into the test profile instead.
+    // Never the user's clipboard from a test run: the report goes into the test profile instead.
     const file = path.join(app.getPath('userData'), 'diagnostic-report.txt');
     fs.writeFileSync(file, text);
     process.stdout.write(`mantle: diagnostic report (${text.split('\n').length} lines, asked from ${via}) written to the test profile, not the clipboard (test run)\n`);
@@ -8591,7 +8591,7 @@ function createTray() {
 // ---------------------------------------------------------------------------
 function registerShortcuts() {
   if (flags.test) {
-    // globalShortcut is system-wide: a test run would swallow Owen's Alt+Space
+    // globalShortcut is system-wide: a test run would swallow the user's Alt+Space
     // for as long as it is up. Nothing was changed in test mode, so there is
     // nothing for a kill switch to undo either.
     state.set('shortcuts', {
@@ -8774,12 +8774,12 @@ async function runScreenshots(dir) {
 let traceMarks = null;
 const traceNow = () => performance.timeOrigin + performance.now();
 /* TEST ONLY (lane mantle-corner): a --test run moves the bar itself, for the corner-glide trace. The hover
-   watch stops on the first call (the real cursor is Owen's: it must not reveal or hide a test bar), and only
+   watch stops on the first call (the real cursor is the user's: it must not reveal or hide a test bar), and only
    then, so a reveal asked for mid-hide is still a reveal. Never registered live. */
 let testMoveArmed = false;
 if (flags.test) {
   /* TEST ONLY (lane mantle-barhover): with MANTLE_BAR_TEST_CURSOR=1 the hover poll reads THIS point,
-     never the real cursor (Owen's), from its first tick; bar.testCursor {x, y} (DIP) moves it and says
+     never the real cursor (the user's), from its first tick; bar.testCursor {x, y} (DIP) moves it and says
      what the bar is doing, so a test can sweep the keep band through the real hoverTick. */
   COMMANDS['bar.testCursor'] = async (a) => {
     if (!testCursor) return { ok: false, reason: 'start the test with MANTLE_BAR_TEST_CURSOR=1, or the poll reads the real cursor' };
@@ -8815,8 +8815,8 @@ async function runTrace(dir) {
     await wait(500);
   }
   revealBar('a trace run asked for the bar');
-  stopHoverWatch();                     // the real cursor is Owen's: it must not hide or reveal this bar
-  await wait(REVEAL_MS + 1800);         // landed, and the backdrop loop running, as it is when Owen clicks
+  stopHoverWatch();                     // the real cursor is the user's: it must not hide or reveal this bar
+  await wait(REVEAL_MS + 1800);         // landed, and the backdrop loop running, as it is when the user clicks
 
   let koffi, getRect, beginPeriod, endPeriod;
   try {
@@ -8964,7 +8964,7 @@ function traceAnalyse(name, samples, frames, events, marks, sf) {
  * The page's frames say what it DREW and GetWindowRect says where the window WAS; neither is the
  * picture. So this asks Windows for the window's own composed image through Chromium's desktop
  * capturer (Windows.Graphics.Capture for a window: it sees the window while others cover it, and
- * it sees ONLY this window -- nothing of Owen's screen is captured). Nothing is kept but numbers:
+ * it sees ONLY this window -- nothing of the user's screen is captured). Nothing is kept but numbers:
  * per frame its size and the rows where glass as wide as the pill is lit.
  */
 async function traceCaptureStart(out, target) {
@@ -9251,7 +9251,7 @@ const pageReviver = makePageReviver({
   say: (line) => process.stdout.write(line),
   blocked: () => (shuttingDown ? 'Mantle is quitting' : sessionEndingReason()),
   // The same piece shape a feature publishes (lib/features.js), which the desktop strip and the
-  // tray already list when ok is false: a dead page is said where Owen looks, not only here.
+  // tray already list when ok is false: a dead page is said where the user looks, not only here.
   report: (key, ok, reason) => {
     const label = key === 'page.bar' ? 'The bar page' : key === 'page.launcher' ? 'The launcher page' : 'The desktop page';
     state.set('features', { [key]: { label, on: true, ok, reason, keys: false, keysReason: '', broken: null, stopped: false } });
@@ -9410,7 +9410,7 @@ function watchPage(win, label) {
 /*
  * One line of memory numbers per process, 30 s after start and then every 30
  * minutes: private bytes per page (what each renderer alone holds), main's
- * heap, and the GPU/utility working sets. Owen asked for the footprint to come
+ * heap, and the GPU/utility working sets. The user asked for the footprint to come
  * down "as much as possible without making it worse", and the only way to
  * know either is to have the numbers in the log where the pages are named.
  */
@@ -9471,7 +9471,7 @@ app.whenReady().then(() => {
     try { getTheme().windowsChanged(); } catch (err) { process.stderr.write(`mantle: Windows' light/dark change could not be followed: ${err && err.message ? err.message : err}\n`); }
   });
   if (flags.test) {
-    // TEST ONLY (lib/theme.e2e.test.js): "Windows changed to <mode>" without touching Owen's Windows.
+    // TEST ONLY (lib/theme.e2e.test.js): "Windows changed to <mode>" without touching the user's Windows.
     // It sets a made-up app mode and fires nativeTheme's own 'updated', so the path a real change
     // takes (listener -> windowsChanged -> broadcast -> preload) is the one exercised. null = real again.
     COMMANDS['theme.testWindows'] = async (a) => {
@@ -9489,7 +9489,7 @@ app.whenReady().then(() => {
   // NO show here any more. The bar is a hover bar: it is created hidden and the
   // cursor poll is the only thing that puts it on screen (plus --dock, which
   // shows it once and leaves it). Showing it at ready-to-show would flash a bar
-  // on Owen's screen at every start and then take it away again.
+  // on the user's screen at every start and then take it away again.
   barWin.webContents.on('did-finish-load', () => {
     // A reloaded bar has no popover open, so any room it borrowed is now room
     // nothing is using. Give it back rather than leaving a 300px-tall "bar".
@@ -9583,12 +9583,12 @@ app.whenReady().then(() => {
   recoveryNote = loadRecoveryNote();
   if (recoveryNote) process.stdout.write(`mantle: ${recoveryNote} (the tray menu says so for the next hour)\n`);
   // The supervisor brought this process back after a crash (or had given up on a crash loop): say it ONCE,
-  // in words: the log gets the codes, the tray menu a line for the next hour, Owen a pop-up once the
+  // in words: the log gets the codes, the tray menu a line for the next hour, the user a pop-up once the
   // desktop is up (start/wake holds the layer ~3 s). A --test run draws the pop-up but never shows it.
   const crashNotice = supervisor.takeNotice();
   if (crashNotice) {
     process.stdout.write(`mantle: ${crashNotice.log}\n`);
-    process.stdout.write(`mantle: tells Owen once: ${crashNotice.title}: ${crashNotice.words}\n`);
+    process.stdout.write(`mantle: tells the user once: ${crashNotice.title}: ${crashNotice.words}\n`);
     recoveryNote = crashNotice.tray;
     setTimeout(() => {
       if (shuttingDown) return;

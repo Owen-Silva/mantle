@@ -1,6 +1,6 @@
 // Layouts.cs - Window layouts: the Windows half (lane layouts, 2026-09-27).
 //
-// WHY: Owen arranges the same windows again and again ("Work": Quartz with a video, his notes;
+// WHY: the user arranges the same windows again and again ("Work": Quartz with a video, his notes;
 // "Code": terminals and editors). Windows' Snap Groups vanish on a reboot. lib/features/layouts.js
 // saves an arrangement by name and puts it back with one click; this file only reads windows and
 // moves ONE window at a time. The matching, the rect maths and the launching are the JS side's
@@ -22,7 +22,7 @@
 //
 // TITLES ARE PRIVATE: read with InternalGetWindowText (no message sent), returned only for matching
 // and never logged. A passive (test) sidecar returns a title ONLY for a window of a process the
-// test harness started (its fixtures): Owen's titles never leave the sidecar in a test.
+// test harness started (its fixtures): the user's titles never leave the sidecar in a test.
 //
 // NEVER BLOCKS: layouts.place runs on the slow lane, refuses a window Windows calls hung or that
 // does not answer WM_NULL in 250 ms, and moves with SWP_ASYNCWINDOWPOS / WPF_ASYNCWINDOWPLACEMENT

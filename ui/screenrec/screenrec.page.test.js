@@ -1,7 +1,7 @@
 /* screenrec.page.test.js - the recording pill and the card it becomes (lane screenrec2, 2026-10-15).
  *
  * Headless Chromium over the REAL ui/screenrec/index.html with its own mock-screenrec.js (never Electron,
- * never a window of Owen's, nothing recorded), at the window's own size (lib/features/screenrec.js WIN,
+ * never a window of the user's, nothing recorded), at the window's own size (lib/features/screenrec.js WIN,
  * 480 x 248), in light and in dark:
  *   - starting: the hollow dot and "Starting…"; recording: the breathing dot and a LIVING timer that
  *     turns on its own (from startedAt), Stop; the window is see-through outside the shape;

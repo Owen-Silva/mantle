@@ -16,7 +16,7 @@
 // record and signal; one watch thread (MTA) does every registration, re-registers on a new
 // default device, and emits. Listening changes nothing, so it runs in --passive too.
 //
-// MEASURED 2026-09-23 on Owen's machine: a same-value SetMasterVolumeLevelScalar takes 0.02-0.35 ms
+// MEASURED 2026-09-23 on the user's machine: a same-value SetMasterVolumeLevelScalar takes 0.02-0.35 ms
 // once the endpoint is open (opening it: 27 ms cold); the sidecar's volume set answers in 2-4 ms.
 using System;
 using System.Collections;

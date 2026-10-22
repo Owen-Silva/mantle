@@ -1,5 +1,5 @@
 // TopbarStats.cs - `topbar.stats`: the live system numbers on the right of the top bar
-// (wave 3, 2026-09-24). Owen: "i also want the top bar to show stats about my computer like ram
+// (wave 3, 2026-09-24). The user: "i also want the top bar to show stats about my computer like ram
 // cpu gpu etc." and "i want it to update every 1 sec".
 //
 // WHY HERE and not lib/sys-stats.js: that file reads CPU from os.cpus() deltas held in ONE

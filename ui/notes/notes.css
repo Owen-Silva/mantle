@@ -1,5 +1,5 @@
 /* notes.css — the quick notes pad (lib/features/notes.js), in the taskbar island's theme
- * (glass-light.css --lg-* ONLY; one theme for every Mantle surface, Owen 2026-09-21). It is one of
+ * (glass-light.css --lg-* ONLY; one theme for every Mantle surface, the user, 2026-09-21). It is one of
  * the top bar's dropdowns (ui/topbar/topbar.css .dd): popover glass, 1px lip, 10px radius, the
  * downward shadow, square to the bar. Light frost, dark ink, plain hairlines, NO glow.
  * The window is the pad plus room for its shadow (notes.js WIN_W/WIN_H: 16 px each side, 24 below).
@@ -185,7 +185,7 @@ body.mock::before {
 body.mock .pad { top: 30px; }
 
 /* ---- DARK, SEE-THROUGH (lane see-huds, 2026-10-09) --------------------------------------------
-   Owen, on dark Mantle: "mantle needs to be more see through everything". The pad above is
+   The user, on dark Mantle: "mantle needs to be more see through everything". The pad above is
    --lg-fill-strong three times under --lg-sunk (~89% at the dark .50) and the sheet, the find row and
    the chosen tab are the fill once more: a slab. In dark the pad is ONE layer of --lg-fill (FINAL RULES: = --lg-fill-pop, both .83), the bar
    popovers' fill for a surface with nothing blurred behind it, so the screen behind shows through
@@ -206,7 +206,7 @@ body.mock .pad { top: 30px; }
 :root[data-theme="dark"] body.mock::before { background-color: var(--lg-fill); }
 
 /* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
-   Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
+   The user: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
    literal Helm). The pad is ONE layer of --lg-fill at the pop-up radius, ONE outer hairline (it had a
    border AND a ring) and the --lg-lip-up lip, NO outer shadow (the window keeps 0-24 DIP round the pad,
    lib/features/notes.js SIDE/BOTTOM, so --lg-shadow was cut into a hard dark edge; lane clipped-shadow,

@@ -4,7 +4,7 @@
 //
 //   node sidecar/test-sysperso.js [--exe=<path>]      (or MANTLE_SIDECAR_EXE)
 //
-// NEVER changes Owen's theme, colours, background, lock screen or fonts: every write is proven by its
+// NEVER changes the user's theme, colours, background, lock screen or fonts: every write is proven by its
 // dryRun (sent with the CURRENT value, so even a real one would be a no-op) and by the passive refusal
 // of the real write, then a read shows nothing moved. Prints counts and shapes only, never a path,
 // a picture's or a font's file name.

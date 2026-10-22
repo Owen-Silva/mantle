@@ -7,7 +7,7 @@
 // and every WRITE they can make, proved refused by the passive sidecar (or answered as a dry run).
 // WHY: test-sidecar.js covers wlan/audio/btdevices in depth; nothing covered the panel's own switches
 // as a set, and `volume {level}` was NOT refused in passive (fixed in Volume.cs the same day): a
-// --test instance's volume slider moved Owen's real speaker.
+// --test instance's volume slider moved the user's real speaker.
 // SAFE BY CONSTRUCTION: every write asks for the value the part ALREADY has (read just before), so
 // even a sidecar that wrongly obeyed would change nothing. Output is counts and shapes, never names.
 'use strict';

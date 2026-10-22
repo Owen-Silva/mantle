@@ -176,7 +176,7 @@ const SHOTS = [
   }],
 ];
 
-/* made-up acrylic (the setlook lane's mock, calibrated to Owen's 2026-09-29 shot where a clear page read
+/* made-up acrylic (the setlook lane's mock, calibrated to the user's, 2026-09-29 shot where a clear page read
    139,139,139 over a dark terminal): the backdrop blurred, then the light tint, as fixed layers BEHIND the
    page. The root's and body's own backgrounds paint under negative z-index layers, but in the real window
    they are ON the acrylic: so they are lifted onto layers above it, kept in step with html's class

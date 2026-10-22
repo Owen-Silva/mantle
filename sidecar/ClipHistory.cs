@@ -6,17 +6,17 @@
 //     from a windowless desktop process, but ONLY from an STA thread: from MTA the first call
 //     throws COMException 0x8000001D. From STA, IsHistoryEnabled answered in 15 ms and
 //     GetHistoryItemsAsync in 11 ms - with status ClipboardHistoryDisabled and 0 items, because
-//     on Owen's machine the Settings switch has never been turned on
+//     on the user's machine the Settings switch has never been turned on
 //     (HKCU\Software\Microsoft\Clipboard\EnableClipboardHistory is absent = off; cloud sync is
 //     off too). The WinRT API also has NO pin/unpin at all.
-//   - So the WinRT route would open an empty panel that tells Owen to go flip a switch, and still
+//   - So the WinRT route would open an empty panel that tells the user to go flip a switch, and still
 //     need Mantle's own pins. This file keeps Mantle's OWN history instead, from
 //     WM_CLIPBOARDUPDATE (AddClipboardFormatListener on a message-only window). It works whatever
 //     the Settings switch says, and `clip.list` still reports that switch so the panel can say
 //     which history it is showing.
 //
 // PRIVACY, which is the design and not an afterthought:
-//   - Content lives in MEMORY ONLY. Nothing Owen copied is written to disk, a log or an event;
+//   - Content lives in MEMORY ONLY. Nothing the user copied is written to disk, a log or an event;
 //     every event and log line carries counts, format names, sizes and timings.
 //   - A copy a password manager has flagged never enters the history at all (Microsoft's
 //     documented "Cloud Clipboard and Clipboard History Formats"; PrivacyVerdict is the rule):
@@ -35,7 +35,7 @@
 //   - A PASSIVE (test) sidecar never stores anything it did not seed or simulate itself: its
 //     listener, if asked for, only counts copies and their formats. clip.capture runs the SAME
 //     decision path as a real copy over a test's own fixture formats, so every rule here is
-//     proved without reading or writing Owen's clipboard.
+//     proved without reading or writing the user's clipboard.
 //
 // THREADING: the listener window, the reads and the writes all live on ONE dedicated STA thread
 // with its own message loop - NOT the ui lane. GetClipboardData on a delay-rendered format sends
@@ -323,7 +323,7 @@ namespace Mantle {
     }
 
     /// TEST ONLY (passive): one copy, from a fixture instead of the clipboard, through the SAME
-    /// Capture a real copy takes (privacy flags, kinds, sizes, dedupe, trim). Nothing of Owen's
+    /// Capture a real copy takes (privacy flags, kinds, sizes, dedupe, trim). Nothing of the user's
     /// clipboard is opened, read or written.
     ///   {formats:[{name, text?, repeat?, html?, rtf?, image?:{w,h,color,noise?}, as?:'png'|'dib',
     ///              files?:[...], dword?, b64?, size?, nodata?}], busy?, observe?}
@@ -419,7 +419,7 @@ namespace Mantle {
     }
 
     /// TEST ONLY: fake items, so the panel, the codecs and paste's dry run can be proved without
-    /// reading or writing Owen's clipboard. A live sidecar refuses it.
+    /// reading or writing the user's clipboard. A live sidecar refuses it.
     ///   {items:[{kind:'text', text, html?, agoMs?, pinned?} | {kind:'image', w, h, color:'#RRGGBB'}
     ///           | {kind:'files', paths:[...]}], reset?:true}
     static string Seed(Dictionary<string, object> req, ref object result) {
@@ -478,7 +478,7 @@ namespace Mantle {
     }
 
     /// {item, hwnd, dryRun?} -> puts the item on the clipboard, brings `hwnd` back to the front and
-    /// presses Ctrl+V into it. This is the product acting on Owen's own Win+V + Enter.
+    /// presses Ctrl+V into it. This is the product acting on the user's own Win+V + Enter.
     ///
     /// dryRun does NONE of that: it builds every clipboard format exactly as a real paste would,
     /// decodes them back with the same readers the listener uses, and says what it would have
@@ -734,7 +734,7 @@ namespace Mantle {
     }
 
     /// Ctrl+V while Shift, Alt or Win is still down is a DIFFERENT chord (Ctrl+Alt+V, Ctrl+Shift+V
-    /// are real commands in real apps), so the keys Owen used to choose the item must be up first.
+    /// are real commands in real apps), so the keys the user used to choose the item must be up first.
     static string WaitModifiersUp(int ms) {
       int[] vks = { 0x10, 0x11, 0x12, 0x5B, 0x5C };   // Shift, Ctrl, Alt, LWin, RWin
       var sw = Stopwatch.StartNew();
@@ -796,7 +796,7 @@ namespace Mantle {
     /// Where Capture reads a copy from: the real clipboard (LiveSource, on the listener thread)
     /// or a test's fixture (SimSource, clip.capture in a passive sidecar). ONE decision path for
     /// both, so the privacy rule, the kinds, the sizes and the dedupe are all proved by tests that
-    /// never open Owen's clipboard.
+    /// never open the user's clipboard.
     interface IClipSource {
       bool Has(uint fmt);
       byte[] Read(uint fmt, long cap, ref bool tooLarge);

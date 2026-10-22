@@ -1,7 +1,7 @@
 require('../../tools/dev-env.js').lowcpu();
 /* widgethide.page.test.js - the desktop widgets stepping aside under a window, in the REAL page
  * (ui/desktop/index.html + desktop.js + desktop.css) in headless Chromium over file://. Never
- * Electron, never the sidecar, nothing on Owen's screen.
+ * Electron, never the sidecar, nothing on the user's screen.
  *
  * An init script puts a FAKE window.mantle in place before the page's scripts (so mock-mantle.js
  * stands aside, as it does for the real preload), records every call, and lets this file play

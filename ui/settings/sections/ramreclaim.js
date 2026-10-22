@@ -2,7 +2,7 @@
  *
  * The Windows parts Mantle has replaced, each with what it uses right now and a switch: On = Mantle keeps
  * that Windows piece off (your own settings only, recorded first, put back on every road out). Pieces
- * that need administrator rights, a policy or removing an app are shown OFF and locked, with why: Owen
+ * that need administrator rights, a policy or removing an app are shown OFF and locked, with why: the user
  * decides those. Pieces with no safe switch say so. Main: lib/features/ramreclaim.js (ramreclaim.list /
  * ramreclaim.set); no main half of its own. Never silent: every row says its state and why.
  */

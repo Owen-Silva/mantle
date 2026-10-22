@@ -1,5 +1,5 @@
 // apppower-burner.js - the throwaway process sidecar/test-apppower.js (and the top-entry checks in
-// sidecar/test-topbar.js) point App power at, so no test ever touches one of Owen's real apps
+// sidecar/test-topbar.js) point App power at, so no test ever touches one of the user's real apps
 // (lane mantle-power-sidecar, 2026-10-14). Not a test itself: it only builds and drives the burner.
 //
 // The burner is a tiny C# console exe compiled with the csc that sidecar/build.ps1 uses, under a

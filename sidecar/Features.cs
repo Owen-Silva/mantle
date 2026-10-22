@@ -1,6 +1,6 @@
 // Features.cs - the seam feature files plug their sidecar commands into (wave 3, 2026-09-24).
 //
-// WHY: Owen asked for a round of Windows replacements at once (pop-up, power mode, search,
+// WHY: the user asked for a round of Windows replacements at once (pop-up, power mode, search,
 // clipboard, snapping, Task View, screenshots, a top menu bar). Each used to mean a new `case`
 // in Program.Run plus an entry in Lanes._laneOf, so every lane edited the same two files. Now a
 // feature is ONE new file:

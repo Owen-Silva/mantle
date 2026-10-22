@@ -1225,7 +1225,7 @@ namespace Mantle {
         }
 
         // ------------------------------------------- the quick settings panel
-        // Owen, at the bar's right cluster: "these buttons need to go to a
+        // The user, at the bar's right cluster: "these buttons need to go to a
         // wrapper version of where they used to go ... some of them just go to
         // settings now". Reading state changes nothing and runs in passive;
         // every switch is refused in passive, because a test run may not turn

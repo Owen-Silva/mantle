@@ -5,7 +5,7 @@
  * of this page, and mock-mantle.js supplies a stand-in when this file is
  * opened straight from disk for a visual check.
  *
- * THE THEME IS THE TASKBAR'S (Owen, 2026-09-21): "everything that we build for this wrapper,
+ * THE THEME IS THE TASKBAR'S (the user, 2026-09-21): "everything that we build for this wrapper,
  * their UI needs to be this exact same theme as the taskbar". Two of the things that makes true
  * live in this file, because the bar's equivalents live in bar.js:
  *
@@ -204,7 +204,7 @@
   if (els.backdrop) els.backdrop.addEventListener('load', adaptBackdrop);
   window.addEventListener('mantle-theme', adaptBackdrop);
 
-  /* DARK ONLY: THE PICTURE LINED UP AND BAKED (lane mantle-seethru-popups, 2026-10-10; Owen: "this needs
+  /* DARK ONLY: THE PICTURE LINED UP AND BAKED (lane mantle-seethru-popups, 2026-10-10; the user: "this needs
      to be see through the same as everything else"). Main cuts the wallpaper to the WINDOW's rectangle
      (main.js launcherBackdrop, wall: true), but the <img> stretched it over the panel plus 14px a side
      while the panel sits 10px inside the window: 1.2% too big, up to 3.8 DIP off at the edges (max 10.6

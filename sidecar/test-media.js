@@ -2,7 +2,7 @@
 // (lane media-sc, 2026-09-29).
 //   node sidecar/test-media.js --exe=<exe>        (or MANTLE_SIDECAR_EXE=<exe>)
 // What it proves: every argument is type-checked; control is REFUSED in passive and dryRun sends
-// nothing; real reads of Owen's current media sessions have the right shape (only counts and types
+// nothing; real reads of the user's current media sessions have the right shape (only counts and types
 // are printed, never titles or app names); the art encoder (JPEG for opaque, PNG for alpha, 192 px
 // default, size clamps, damaged/huge images refused in plain words); the watch debounce, emit and
 // silence after off; a request behind a busy media thread answers in time and work its caller gave
@@ -58,7 +58,7 @@ function cpuMs(pid) {
     const rs = await s.send('media', { op: 'control', action: 'seek', positionMs: 1000 }, 6000);
     t.check('passive refuses a real seek', rs.ok === false && (rs.error || '').startsWith(T.PASSIVE_REFUSAL), JSON.stringify(rs).slice(0, 160));
 
-    // ---- 3. REAL reads of Owen's sessions (shapes and counts only)
+    // ---- 3. REAL reads of the user's sessions (shapes and counts only)
     let t0 = Date.now();
     const g = await s.call('media', { op: 'get' }, 8000);
     const getMs = Date.now() - t0;
@@ -163,7 +163,7 @@ function cpuMs(pid) {
     t.check('watch off: no events after it', s.collect('media').length === n1, String(s.collect('media').length - n1));
 
     // ---- 6b. lane r6-art (2026-09-30): a missed picture is looked for again, and a reply's rev is
-    // as of the START of its read. Owen's card kept a note glyph over a paused Spotify song: Spotify
+    // as of the START of its read. The user's card kept a note glyph over a paused Spotify song: Spotify
     // publishes no thumbnail for some songs (or late), and a paused player sends no more events.
     const offMiss = await s.call('media', { op: 'changetest', reason: 'artmiss', track: 'off-' + Date.now() }, 4000);
     t.check('art retry: nothing is scheduled while no one watches', offMiss.ok && offMiss.dueMs === -1, JSON.stringify(offMiss));
@@ -195,7 +195,7 @@ function cpuMs(pid) {
     t.check('rev: a change during a read gets an event whose rev the reply does NOT have', armed.ok && gm.ok && !!evB && evB.rev > gm.rev && gm.rev >= armed.rev, JSON.stringify({ armed: armed.rev, get: gm.rev, ev: evB && evB.rev }));
     await s.call('media', { op: 'watch', on: false }, 8000);
 
-    // ---- 7. idle CPU with the watch on (Owen's real sessions keep running)
+    // ---- 7. idle CPU with the watch on (the user's real sessions keep running)
     await s.call('media', { op: 'watch', on: true }, 8000);
     await T.sleep(1000);
     const c0 = cpuMs(s.proc.pid);

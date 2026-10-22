@@ -32,7 +32,7 @@ const path = require('path');
 module.exports = {
   name: 'clipboard',                  // lower-case letters/digits, MUST equal the file name
   label: 'Clipboard history (Win+V)', // tray checkbox text (and the strip's row title)
-  defaultOn: true,                    // the tray switch until Owen flips it (then it is remembered)
+  defaultOn: true,                    // the tray switch until the user flips it (then it is remembered)
   chords: ['Win+V'],                  // taken from Windows ONLY while on AND healthy AND live
   observe: [],                        // keys reported to you, never swallowed
   rest: true,                         // OPTIONAL: stopped while a game runs, installed again after (see Resting)
@@ -185,7 +185,7 @@ unless it takes typing, `backgroundThrottling:false` if it must be ready instant
 `webPreferences` block (preload = `ctx.preload`, contextIsolation, sandbox, no nodeIntegration),
 `will-navigate` prevented, `setWindowOpenHandler` deny, `render-process-gone` / `unresponsive` /
 `did-fail-load` -> `ctx.health(false, ...)`. Parked off screen and revealed, never created per
-use. In `--test` (ctx.flags.test): never put a window in front of Owen. Either keep it hidden
+use. In `--test` (ctx.flags.test): never put a window in front of the user. Either keep it hidden
 (its page still runs; `lib/features.test.js` does exactly that) or `showInactive()` it and run
 `tools/toback.ps1 -Match <profile>` like the test bar. Never `focus()` in a test.
 

@@ -3,13 +3,13 @@
 //
 //   MANTLE_SIDECAR_EXE=<your exe> node sidecar/test-startup.js
 //
-// PASSIVE, like every sidecar test, and it NEVER changes Owen's startup entries: it READS the real
+// PASSIVE, like every sidecar test, and it NEVER changes the user's startup entries: it READS the real
 // registry and Startup folders (startup.list), asks for dry runs (startup.set {dryRun:true}, which
 // touches nothing), and proves a real startup.set is refused and the list is identical afterwards.
 // It also reads Startup.cs itself to prove the HARD RULE holds in the source: one write site, no
 // delete, no file call, and no argument named `id` (it would collide with the protocol's request id).
 //
-// Privacy: nothing Owen has in his startup list is printed. Failures name an index and a source,
+// Privacy: nothing the user has in his startup list is printed. Failures name an index and a source,
 // never an entry's name or command.
 //
 // Prints one summary line, "STARTUP TEST: n passed, m failed".

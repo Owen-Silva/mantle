@@ -6,7 +6,7 @@
 // THE INCIDENT (2026-09-21, the first live run). This file used to do
 // ShowWindow(Shell_TrayWnd, SW_HIDE), with a 1 s watcher that re-hid the bar
 // whenever explorer showed it again, and ShowWindow(SW_SHOW) on the way out.
-// Owen's taskbar is set to AUTO-HIDE. Mantle was killed - so the SW_SHOW never
+// The user's taskbar is set to AUTO-HIDE. Mantle was killed - so the SW_SHOW never
 // ran - and even when it did, SW_SHOW is meaningless to an auto-hide taskbar:
 // explorer's auto-hide state machine had been left mid-flight and stayed stuck
 // hidden. Hovering the screen edge did nothing. He had to REBOOT, in the middle
@@ -28,7 +28,7 @@
 //             auto-hide taskbar: a completely normal Windows that reveals its
 //             bar on a hover at the screen edge. Nothing is stuck, nothing
 //             needs us. The original state is read FIRST and written to the
-//             state file (State.cs) so a recovery script - or Owen by hand -
+//             state file (State.cs) so a recovery script - or the user by hand -
 //             can put it back without Mantle running at all.
 //
 //   AppBars   SHAppBarMessage(ABM_NEW/ABM_QUERYPOS/ABM_SETPOS) registers OUR
@@ -50,7 +50,7 @@ namespace Mantle {
   /// handle: every call goes through Explorer's own app bar protocol.
   static class Taskbar {
     /// True once WE have set ABS_AUTOHIDE on a taskbar that did not have it.
-    /// The restore path only undoes what we actually did - if Owen's taskbar
+    /// The restore path only undoes what we actually did - if the user's taskbar
     /// was already auto-hide (it is), Mantle must not "restore" it to visible.
     public static bool ChangedByUs { get; private set; }
 
@@ -106,7 +106,7 @@ namespace Mantle {
       reason = null;
 
       if (wasAutohide) {
-        // Nothing to do, and nothing to undo later. This is Owen's machine:
+        // Nothing to do, and nothing to undo later. This is the user's machine:
         // his taskbar is already auto-hide, so the live path below never runs
         // for him and Mantle holds no taskbar state at all.
         verified = true;

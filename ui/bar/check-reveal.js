@@ -20,7 +20,7 @@
  * strip, and "apps hidden" is raised there at all.
  *
  * LINE 1 below is not optional, for the same reason as in shoot.js: one pinned, low-priority
- * headless browser at a time on Owen's machine.
+ * headless browser at a time on the user's machine.
  */
 require('../../tools/dev-env.js').lowcpu();
 

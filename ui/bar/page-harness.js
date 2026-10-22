@@ -8,7 +8,7 @@
  * test that clicked a pin and checked that the bar asked main to open that app.
  *
  * Line 1 of every test that uses this is lowcpu.js (the machine-wide CPU cap and browser lock), and
- * every run goes through the lane's uislot.sh (at most 2 test browsers on Owen's machine at once).
+ * every run goes through the lane's uislot.sh (at most 2 test browsers on the user's machine at once).
  *
  *   const H = require('./page-harness.js');
  *   const t = H.suite('BAR PAGE TEST');

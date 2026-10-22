@@ -4,7 +4,7 @@
 // Drives the REAL sidecar (passive) against tools/fake-progman.cs "desk": a stand-in desktop
 // (MantleFakeProgman > SHELLDLL_DefView > SysListView32) off every monitor. A real low-level mouse hook
 // is installed, but a passive sidecar only ever takes clicks on the stand-in's class, so nothing on
-// Owen's screen is touched, and no input is ever made: deskmenu.testclick runs one right-click
+// the user's screen is touched, and no input is ever made: deskmenu.testclick runs one right-click
 // through the hook's own decision on the hook thread.
 //   1. passive without a stand-in class is refused; armed with one = hooked;
 //   2. the empty stand-in desktop: the down and the up are kept, 'down' + 'open' events with a seq;
@@ -96,7 +96,7 @@ const evs = (s, from, op) => s.events.slice(from).filter((e) => e.ev === 'deskme
     // 3. passes
     r = await s.call('deskmenu.testclick', Object.assign({ shift: true }, desk.at));
     check('Shift+right-click passes to Explorer', r.taken === false && r.why === 'shift', J(r));
-    r = await s.call('deskmenu.testclick', { x: 5, y: 500 });   // the REAL WindowFromPoint, on Owen's real screen: never the stand-in
+    r = await s.call('deskmenu.testclick', { x: 5, y: 500 });   // the REAL WindowFromPoint, on the user's real screen: never the stand-in
     check('a right-click on a real window (not the stand-in desktop) passes', r.taken === false && /not the desktop|nothing under/.test(r.why || ''), J(r));
 
     // 4. no ack: fallback, then stand down

@@ -15,7 +15,7 @@
 // PASSIVE, like every sidecar test. focus.rehearse never takes the foreground and never taps Alt;
 // the fixture is a WinForms window at -6000,-6000 with WS_EX_NOACTIVATE + WS_EX_TOOLWINDOW, shown
 // without activation, compiled into %TEMP%, killed by pid at the end (and by itself after 120 s).
-// `place` moves only the sidecar's own never-visible loop window. Nothing of Owen's is touched.
+// `place` moves only the sidecar's own never-visible loop window. Nothing of the user's is touched.
 //
 // Prints one summary line, "LANES TEST: n passed, m failed".
 'use strict';
@@ -120,7 +120,7 @@ async function waitLine(fx, re, ms) {
 
 // A ui-lane answer slower than this while focus work runs is a delay caused by it. Not 250 like
 // test-sidecar's lane check: with nothing else running, `place` itself peaked at 79-111 ms and once
-// 252 ms under Owen's normal load (2026-09-27). The pre-fix exe delayed it 3,279-6,751 ms.
+// 252 ms under the user's normal load (2026-09-27). The pre-fix exe delayed it 3,279-6,751 ms.
 const UI_MAX_MS = 500;
 
 const pct = (a, p) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : NaN; };

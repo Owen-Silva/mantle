@@ -1,5 +1,5 @@
 /* shoot.js - pictures of the Clips pages over file:// with mock-mantle.js (stand-in clips ONLY, drawn
- * here; never one of Owen's captures). Headless Chromium, nothing on screen.
+ * here; never one of the user's captures). Headless Chromium, nothing on screen.
  *   node ui/clips/shoot.js [outDir] [theme]   -> clips-1.png (Record panel), clips-2.png (gallery)
  */
 require('../../tools/dev-env.js').lowcpu();

@@ -1,7 +1,7 @@
 /*
  * ui/bar/qs-more.js — the quick-settings panel, one level down (qsx lane, 2026-09-23).
  *
- * The goal: finish Mantle's quick settings "the way Windows 11's works, so Owen never needs
+ * The goal: finish Mantle's quick settings "the way Windows 11's works, so the user never needs
  * Windows' own flyouts for Wi-Fi or sound". Windows 11 has two '>' buttons in that panel, and so
  * does this one:
  *   - on the Wi-Fi tile: the network list, INSIDE the same panel (a sub-view with a back arrow)
@@ -620,7 +620,7 @@
     });
   }
 
-  /* The bar lost the keyboard ON ITS OWN (main.js qsKbBlur: Owen clicked another window, or one
+  /* The bar lost the keyboard ON ITS OWN (main.js qsKbBlur: the user clicked another window, or one
      took focus by itself). Main has already made the bar unfocusable again, so there is nothing
      to release; but a password box left on screen would look typeable while every key went to
      the app in front. So it closes, and its row says why and how to get it back (Connect asks

@@ -2,11 +2,11 @@
 /* restore-banners.test.js - tools/restore-banners.ps1 on REAL registry keys, test app ids only
  * (lane mantle-toasts2, 2026-10-15). Every key it makes is
  *   HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Mantle.ToastTest.rb<random>-<x>
- * with a record file in a temp folder (-RecordFile), so neither Owen's apps nor his real
+ * with a record file in a temp folder (-RecordFile), so neither the user's apps nor his real
  * %APPDATA%\mantle\notif-banners.json are ever read or written. Every key is deleted in the finally.
  *   a: Mantle's 0, original 1        -> back to 1
  *   b: Mantle's 0, original null     -> the value is deleted (Windows' default)
- *   c: 1 (Owen turned it back on)    -> left at 1
+ *   c: 1 (the user turned it back on)    -> left at 1
  *   d: in the record, no key at all  -> left (and no key is made)
  *   e: 0 but NOT in the record       -> left at 0 (not Mantle's)
  * Then: a second run changes nothing and exits 0; no record = exit 0 and "nothing to put back";
@@ -66,7 +66,7 @@ try {
   check('run 1: exit 0 and "verified"', r1.code === 0 && /verified/.test(r1.out), r1.out);
   check('run 1: a (Mantle\'s 0, original 1) is back to 1', read(id('a')) === 1, read(id('a')));
   check('run 1: b (Mantle\'s 0, original none) has no value again', read(id('b')) === null, read(id('b')));
-  check('run 1: c (Owen\'s own 1) is left at 1', read(id('c')) === 1, read(id('c')));
+  check('run 1: c (the user\'s own 1) is left at 1', read(id('c')) === 1, read(id('c')));
   check('run 1: d (gone from Windows) is left, and no key is made', read(id('d')) === 'nokey', read(id('d')));
   check('run 1: e (0 but not Mantle\'s) is left at 0', read(id('e')) === 0, read(id('e')));
   check('run 1: says 2 put back, 2 left', /2 put back to Windows' own pop-up, 2 left/.test(r1.out), r1.out);

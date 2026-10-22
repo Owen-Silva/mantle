@@ -1,7 +1,7 @@
 require('../../tools/dev-env.js').lowcpu();
 /* wallpapers.test.js -- the Wallpapers window, clicked and typed through (lane launch-desk, 2026-09-29).
  *
- * Headless chromium over file:// (never Electron, never Owen's library): the REAL ui/wallpapers page with
+ * Headless chromium over file:// (never Electron, never the user's library): the REAL ui/wallpapers page with
  * a fake window.mantle (FAKE below) that plays lib/wallpaper.js's side over MADE-UP wallpapers, records
  * every call, and pushes a new listing after each change the way main does. Checks the common tasks:
  * pick, set (click, double-click, Enter), arrow-key grid navigation, remove + Undo, Pause/Play, Esc,

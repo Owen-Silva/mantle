@@ -149,7 +149,7 @@ check('sun glyph: filled from 50', /fill="currentColor"/.test(M.sunSvg(60)) && !
   const parked = M.place({ x: 400, y: 900, width: 736, height: 44 }, work, { w: 260, h: 52 }, 10);
   check('bar parked below the screen: placed as if there were no bar (a gap, never flush with the edge)',
     parked.y === n.y, { parked, n });
-  const topWork = { x: 0, y: 28, width: 1536, height: 836 };   // Owen's: the top bar reserves 28 px
+  const topWork = { x: 0, y: 28, width: 1536, height: 836 };   // the user's: the top bar reserves 28 px
   const q = M.place({ x: 400, y: 812, width: 736, height: 44 }, topWork, { w: 324, h: 82 }, 0);
   const dock = M.place({ x: 0, y: 820, width: 1536, height: 44 }, { x: 0, y: 0, width: 1536, height: 820 }, { w: 260, h: 52 }, 10, { x: 0, y: 0, width: 1536, height: 864 });
   check('--dock bar reserving its strip outside the work area: still just above it', dock.y === 820 - 10 - 52, dock);
@@ -160,7 +160,7 @@ check('sun glyph: filled from 50', /fill="currentColor"/.test(M.sunSvg(60)) && !
 {
   const BF = require('../../lib/bar-follow.js');
   const work = { x: 0, y: 0, width: 1536, height: 864 };
-  const pill = { x: 208, y: 802, width: 1120, height: 62 };   // Owen's resting pill, 1920x1080 at 125 %
+  const pill = { x: 208, y: 802, width: 1120, height: 62 };   // the user's resting pill, 1920x1080 at 125 %
   const s = { w: 324, h: 82 };
   const p = M.placeLow(pill, work, s, work, BF.reachOver);
   check('low: the window\'s bottom on the work area\'s bottom, centred', p.x === 606 && p.y === 864 - 82 && p.height === 82 && !p.below, p);

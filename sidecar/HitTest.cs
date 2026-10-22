@@ -1,7 +1,7 @@
 // HitTest.cs - `hittest` and `raise`: what would a click here actually hit, and
 // get Mantle's bar back on top of it.
 //
-// THE BUG THIS EXISTS FOR (measured live, 2026-09-21). Owen, pressing the bar's
+// THE BUG THIS EXISTS FOR (measured live, 2026-09-21). The user, pressing the bar's
 // buttons: "im pressing them and they arent doing anything". WindowFromPoint
 // over EVERY point of the revealed bar returned an explorer.exe window of class
 // LockScreenBackstopFrame - "Backstop Window", 0,0,1920,1080, visible,

@@ -11,7 +11,7 @@
 //      windows (sidecar/alttab-probe.js: invisible, never activated, on no bar) open, minimise,
 //      cloak and close: every change arrives as one `windows` event, the selection stays put;
 //   3. nothing at all once the session is down: the hooks are out and a window opening sends nothing.
-// PRIVACY: the live list holds Owen's window titles. Nothing here prints a title; failures print
+// PRIVACY: the live list holds the user's window titles. Nothing here prints a title; failures print
 // counts and the probe's own handles only.
 //
 // Prints one summary line, "ALTTAB LIVE TEST: n passed, m failed".
@@ -157,7 +157,7 @@ const sleep = T.sleep;
     const st = await s.call('switcher.rehearse', { op: 'status' }, 4000);
     t.check('status: open, the hooks in, updates counted', st.open === true && st.hooks === 4 && st.updates >= 7, JSON.stringify(st));
 
-    // quiet: an update only ever carries a change. (Owen's own windows can change while this runs, a
+    // quiet: an update only ever carries a change. (the user's own windows can change while this runs, a
     // title that ticks, so "no update at all" cannot be asserted on a live desktop; "no EMPTY update" can.)
     await sleep(600);
     const face = (x) => JSON.stringify((x.list || []).map((it) => [String(it.hwnd), it.title, !!it.minimized, !!it.hung]));

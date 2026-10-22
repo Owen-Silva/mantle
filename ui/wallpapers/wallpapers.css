@@ -2,7 +2,7 @@
   wallpapers.css — the Wallpapers window, in the taskbar island's glass.
 
   THEME. Every colour resolves through ../shared/glass-light.css (--lg-*), the token set the bar
-  uses, and there is not one colour literal below (Owen, 2026-09-21: "everything that we build for
+  uses, and there is not one colour literal below (the user, 2026-09-21: "everything that we build for
   this wrapper, their UI needs to be this exact same theme as the taskbar"). Light frost, dark ink,
   plain hairlines. The accent marks exactly two things: the wallpaper on the desktop now, and the
   one primary action. Anything wrong is --lg-warn. No glow, no text-shadow, no gradients.

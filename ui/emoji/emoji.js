@@ -1,6 +1,6 @@
 /* emoji.js - the emoji picker page (lane mantle-emoji, 2026-10-15). Main: lib/features/emoji.js.
  *
- * The keyboard stays with the app Owen is typing in: keys arrive as `emoji.key` {key, text, shift}
+ * The keyboard stays with the app the user is typing in: keys arrive as `emoji.key` {key, text, shift}
  * from the sidecar's watch (or from this page's own keydown when it has the keyboard itself: the
  * fallback, and the page test). A pick goes to main as emoji.insert {ch, close}; main types it.
  * The whole grid is built once per window (the window lives for a while after a close), so an open

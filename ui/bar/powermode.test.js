@@ -21,7 +21,7 @@ check('the current one says so in its tooltip', /\(current/.test(v.segs[1].title
 v = P.view(Object.assign({}, bal, { source: 'battery', saver: true, mode: 'efficiency' }), null, null);
 check('on battery with energy saver (not locking): both said', v.sub === 'When on battery · Energy saver on' && on(v) === 'efficiency', v.sub);
 
-// 2026-09-25, Owen's machine on battery: Best performance chosen for battery, Energy saver on (it
+// 2026-09-25, the user's machine on battery: Best performance chosen for battery, Energy saver on (it
 // turns on at 100%), so Windows runs efficiency and the mode cannot be set.
 const saverOn = Object.assign({}, bal, { source: 'battery', mode: 'performance', inForce: 'efficiency', saver: true, settable: false,
   configured: { ac: 'balanced', battery: 'performance' },

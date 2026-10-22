@@ -29,7 +29,7 @@
 //     pass over each 1 MB chunk while it is written (`pixels` in the reply says the layout).
 // Measured timings are in the `ms` of every reply, and in lib/features/screenshot.js's header.
 //
-// PRIVACY. The frames ARE Owen's screen, so: they only ever go to a folder under %TEMP% (a grab
+// PRIVACY. The frames ARE the user's screen, so: they only ever go to a folder under %TEMP% (a grab
 // refuses any other `dir`), each grab deletes the frames the previous one left (a crash included),
 // and `shot.release` deletes this grab's. Nothing here logs a pixel. `synthetic:true` fills the
 // frame with a generated pattern INSTEAD of the screen, so tests can check pixels end to end
@@ -118,7 +118,7 @@ namespace Mantle {
         int vw = ShotNative.GetSystemMetrics(78), vh = ShotNative.GetSystemMetrics(79);
         // Tests only (synthetic): `size` {w,h} makes the frame that big (a 4K frame on a 1080p
         // desktop, for timings), `fill` tiles a picture from under %TEMP% over the pattern
-        // (screen-like content, for encode timings). Never the screen, so nothing of Owen's.
+        // (screen-like content, for encode timings). Never the screen, so nothing of the user's.
         object sizeObj;
         if (synthetic && Json.TryGet(req, "size", out sizeObj) && sizeObj is Dictionary<string, object>) {
           int sw0 = Json.GetInt((Dictionary<string, object>)sizeObj, "w", 0), sh0 = Json.GetInt((Dictionary<string, object>)sizeObj, "h", 0);
@@ -463,7 +463,7 @@ namespace Mantle {
     /// would paste as transparent while 255 is opaque everywhere.
     ///
     /// `dryRun` builds the very same memory block and frees it instead of handing it to Windows
-    /// (a test's copy, never Owen's clipboard); `dump` (a folder under %TEMP%, dryRun only) also
+    /// (a test's copy, never the user's clipboard); `dump` (a folder under %TEMP%, dryRun only) also
     /// writes it as "<dump>\clip-<grab>.bmp" so a test can check it pixel for pixel. A passive
     /// sidecar refuses a real copy.
     static string Copy(Dictionary<string, object> req, ref object result) {

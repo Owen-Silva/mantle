@@ -2,7 +2,7 @@ require('./dev-env.js').lowcpu();
 'use strict';
 /*
  * overlap-audit.js - finds the "my hover box covers the next button" class of bug on every Mantle surface
- * (lane overlap, 2026-10-15; Owen: "some stuff like this ... is like overlapping with things make sure you fix
+ * (lane overlap, 2026-10-15; the user: "some stuff like this ... is like overlapping with things make sure you fix
  * this and make sure there isnt any more of this type of thing anywere else").
  *
  *   node tools/overlap-audit.js [--only=bar,launcher] [--theme=light|dark] [--out=<dir>] [--sheets=<dir>]

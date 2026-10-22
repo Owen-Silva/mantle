@@ -1,5 +1,5 @@
 'use strict';
-// The CPU cap and the one-browser lock on Owen's PC; a CI runner (cloudtest) has neither file nor need.
+// The CPU cap and the one-browser lock on the user's PC; a CI runner (cloudtest) has neither file nor need.
 require('../../../tools/dev-env.js').lowcpu();
 /*
  * ui/settings/sections/sysrows.e2e.test.js - the Settings rows that were taken out on 09-29 for missing sidecar
@@ -11,7 +11,7 @@ require('../../../tools/dev-env.js').lowcpu();
  *   Windows Update
  *     - "Windows Update is busy" with Try again: the status line says it in words (no code anywhere on the
  *       page), the button reads Try again, and clicking it is a test-run dry run that says so.
- *     - Pause: a running pause (Owen's real one, read from the registry) offers "Extend to <date>" counted
+ *     - Pause: a running pause (the user's real one, read from the registry) offers "Extend to <date>" counted
  *       from the day it BEGAN; picking one is a dry run that says so and springs back to "Paused until".
  *       No running pause = the extend checks say they were not run (the row then offers Pause for N weeks).
  *   Advanced options
@@ -31,7 +31,7 @@ require('../../../tools/dev-env.js').lowcpu();
  * the waiting name. Everything else is real.
  *
  * NEVER a write to Windows: every write in a --test instance is a dryRun. The test proves it by reading
- * the registry (READ ONLY) before and after: WindowsUpdate\UX\Settings (Owen's real pause, active hours)
+ * the registry (READ ONLY) before and after: WindowsUpdate\UX\Settings (the user's real pause, active hours)
  * and the computer name keys must be byte-identical.
  *
  *   node ui/settings/sections/sysrows.e2e.test.js      -> "SYSROWS E2E: n passed, m failed"
@@ -90,7 +90,7 @@ const ACN = 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\ComputerName\\ActiveCompu
 const TCP = 'HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters';
 const snapshot = () => ({ ux: regDump(UX), cn: regDump(CN), acn: regDump(ACN),
   tcp: [regValue(regDump(TCP), 'Hostname'), regValue(regDump(TCP), 'NV Hostname')].join('|') });
-/** Is this test (and so the sidecar it starts) running ELEVATED? Owen's PC: no. The GitHub runner:
+/** Is this test (and so the sidecar it starts) running ELEVATED? The user's PC: no. The GitHub runner:
     yes, so the sidecar can walk C:\Windows\Temp and the Delivery Optimization cache itself and sizes
     them in files, where a standard user gets words (Windows Temp) or the service's own number (DO).
     "net session" answers only an administrator (zero-fail lane, 2026-10-14). */
@@ -173,8 +173,8 @@ async function main() {
   const activeName = regValue(before.acn, 'ComputerName');
   console.log(`info: registry before: paused=${paused}${paused ? ` (since ${new Date(pauseStart).toISOString()}, until ${new Date(pauseEnd).toISOString()})` : ''}, SmartActiveHoursState=${smart}, ActiveComputerName set=${!!activeName}`);
 
-  // Owen's laptop (11.7 GB): an Electron instance only with at least 2.5 GB free; wait up to 10 minutes.
-  // MANTLE_TEST_MIN_FREE_GB sets that floor for one run when Owen allows it (0 = no floor); unset, it stays 2.5.
+  // The user's laptop (11.7 GB): an Electron instance only with at least 2.5 GB free; wait up to 10 minutes.
+  // MANTLE_TEST_MIN_FREE_GB sets that floor for one run when the user allows it (0 = no floor); unset, it stays 2.5.
   const minFreeGb = process.env.MANTLE_TEST_MIN_FREE_GB !== undefined && process.env.MANTLE_TEST_MIN_FREE_GB !== '' && Number(process.env.MANTLE_TEST_MIN_FREE_GB) >= 0 ? Number(process.env.MANTLE_TEST_MIN_FREE_GB) : 2.5;
   const freeGb =() => { const r = spawnSync('powershell', ['-NoProfile', '-Command', '(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory'], { encoding: 'utf8', timeout: 20000 }); return (Number((r.stdout || '').trim()) || 0) / 1048576; };
   if (process.env.CI !== 'true' && !await until(() => freeGb() >= minFreeGb, 600000, 15000)) {
@@ -279,7 +279,7 @@ async function main() {
     check('storage: every cleanup kind finished measuring', !!filled);
     const sized = /\d[\d.,]*\s?(B|KB|MB|GB|TB|bytes)\b/;
     const admin = elevated();
-    console.log(`sysrows: this test runs ${admin ? 'ELEVATED (an administrator, like the cloud runner): Windows Temp and the Delivery Optimization cache are walked and sized in files' : 'as a standard user (like Owen\'s PC): Windows Temp says why it has no size, Delivery Optimization is sized by its service'}`);
+    console.log(`sysrows: this test runs ${admin ? 'ELEVATED (an administrator, like the cloud runner): Windows Temp and the Delivery Optimization cache are walked and sized in files' : 'as a standard user (like the user\'s PC): Windows Temp says why it has no size, Delivery Optimization is sized by its service'}`);
     (filled || []).forEach((t, i) => {
       const k = KINDS[i];
       if (k === 'systemTemp' && !admin) check('storage: Windows temporary files says in words why it has no size yet (a standard user cannot list it)', /size not known yet/.test(t) && t.length > 60, t);

@@ -10,7 +10,7 @@ require('../../tools/dev-env.js').lowcpu();
  *
  *   node ui/settings/shoot.js            (ONLY=01,07 shoots just those)
  *   MANTLE_THEME=dark node ui/settings/shoot.js     (dark glass; test-browser.js sets <html data-theme>)
- * Owen gaming (a game process running) = no shots at all.
+ * the user gaming (a game process running) = no shots at all.
  */
 'use strict';
 const path = require('path');

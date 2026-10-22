@@ -7,7 +7,7 @@
 //   `search {status:true}`  the report below, flat, with the engine's counters
 //   Status()                that report (also read by SysPrivacySecurity.cs and search.status)
 //
-// WHY THE INDEX, not a directory walk. Owen's profile is hundreds of thousands of files, and a walk
+// WHY THE INDEX, not a directory walk. The user's profile is hundreds of thousands of files, and a walk
 // that has to stat all of them to answer "rep" would take seconds every keystroke. Windows has
 // already done that work: SearchIndexer keeps a property store of every file name under the
 // indexed roots, and its OLE DB provider (Search.CollatorDSO) answers a name query from that store.

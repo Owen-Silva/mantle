@@ -1,7 +1,7 @@
 /* mock-mantle.js — a stand-in for the preload bridge, and ONLY when there isn't one.
  *
  * WHY this file exists: the bar has to be designed and eyeballed without Electron running (lane A
- * owns the main process; running Electron here would put a window over Owen's screen). So when the
+ * owns the main process; running Electron here would put a window over the user's screen). So when the
  * page is opened straight off disk in a browser there is no `window.mantle`, and every
  * subscription would silently do nothing — the exact failure mode we refuse. This file fills that
  * hole with a fake bridge that behaves like the real one: same channel names, same payload shapes,
@@ -92,7 +92,7 @@
      picture is laid over the viewport the way a wallpaper fills a screen (cover, anchored to the
      bottom, where the bar is), painted on <html> from that one canvas, and the SAME canvas is what
      the strip (bar.backdrop) and a dark pop-up's picture (bar.popbackdrop) are cut from, so what the
-     glass blurs is exactly what is behind it in the shot. Used to judge the dark glass over Owen's
+     glass blurs is exactly what is behind it in the shot. Used to judge the dark glass over the user's
      wallpaper, a bright photo and a terminal. */
   var scene = null;
   if (q.get('scene')) {
@@ -127,7 +127,7 @@
   var ICON_A = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAiklEQVR42mNgGIxA28r1Py3wgFpOlCNobTleR9DLcqyOoLflGI4YdQA+RUVrT4HxgDgAZjmtHEGyA6jtCJKigBaOIDoR0soRJOUCWjiC5GxIbUeQVQ5Q0xFDzwEDGgUDmggHNBsOaEFErOUbtu7HiYd2ZTTg1fFoi2hYt4wHX8dkUHTNBkXnlN4AAH64+BZg5hbDAAAAAElFTkSuQmCC';
   var ICON_B = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAlUlEQVR42u2X3Q2AMAiEO4zvvruJ2zmam+gAbcodBrg0NuGpgfuaUH5aUzzHvj0RVioOQUSLTyGyxIcQ2eIdBON0X+fUwgAsYQ8IDMCKoxAQABOYhTABPK9ifGgAb6K6AKwgX+8pADQpmRhuACbzf4A1AUqSsOQblhciiVJc3owk2rHEQCIxki03GestJhKrmcRymn1e2n9aWzMoGqMAAAAASUVORK5CYII=';
 
-  /* The eight pinned apps Owen would actually have, in taskbar order, then two apps that are
+  /* The eight pinned apps the user would actually have, in taskbar order, then two apps that are
      running but not pinned (after the hairline). One window is the active one. */
   /* The three window counts a taskbar has to get right are 0, 1 and "several", so the fixtures
      cover all three: Edge has 3 (one of them minimized) and is therefore the action:'list' case,
@@ -553,7 +553,7 @@
   /* ---- quick settings, one level down: Bluetooth (2026-09-23) --------------------------------
      Main's qs.bt.* replies in the sidecar's shape (sidecar/BtDevices.cs), and its 'btdevices' push
      after a connect or disconnect, the way the sidecar's DeviceWatcher sends one. The kinds and
-     every reason are the real ones measured on Owen's machine; the product names are generic.
+     every reason are the real ones measured on the user's machine; the product names are generic.
        ?bt=6 (default) | 0 | 1 | connecting | failed | off | none | long | error
          connecting   the sidecar has a connect in flight when the view opens (a panel that closed
                       mid-connect), and a new Connect never answers, so "Connecting…" can be held
@@ -655,7 +655,7 @@
      shown (full, with `can`, timeline and artwork), the pick and why, and the media guard. The
      art is painted on a canvas here, not shipped: it only has to be a real PNG data URL. */
   var MEDIA = q.get('media') || '';
-  /* ?pick=protected starts as if Owen had picked the protected app in the card's source switcher
+  /* ?pick=protected starts as if the user had picked the protected app in the card's source switcher
      (the only way to reach the controls-off card now that it alone shows no chip at all). */
   var mediaPick = q.get('pick') === 'protected' ? 'Contoso.Player_abc123xyz!App' : null;
   /* ?pick=spotify: Spotify picked. With ?media=wait (Contoso + Media Player, no Spotify) that is
@@ -725,7 +725,7 @@
       return { ok: false, present: false, reason: 'this sidecar exe has no "media" command yet (run npm run build:sidecar)',
         guard: guard, sessions: [], shown: null, pick: null, events: false };
     var all = mediaSessions();
-    /* Owen's call (2026-09-22), as main.js makes it: when the only sessions are protected apps there
+    /* The user's call (2026-09-22), as main.js makes it: when the only sessions are protected apps there
        is no chip at all, and a pick of one does not outlive the other player. */
     if (all.length && all.every(function (s) { return s.protectedApp; })) {
       if (mediaPick === PROTECTED.aumid) mediaPick = null;   // a player pick is held (main.js, 2026-09-25)
@@ -879,9 +879,9 @@
      a typo in a channel name must surface in the UI, never resolve to undefined. */
   /* ---- power mode (osd lane, 2026-09-24): main's powermode.* over sidecar/PowerMode.cs, in its shape.
        ?pm=balanced (default) | efficiency | performance | battery | saver | hone | error | refuse | slow
-         saver    Owen's machine on battery (2026-09-25): Best performance chosen for battery, Energy saver on
+         saver    the user's machine on battery (2026-09-25): Best performance chosen for battery, Energy saver on
                   (it turns on at 100%), so Windows runs efficiency and PowerMode.cs locks the switch
-         hone     the plan Owen's machine is on (2026-09-24): muted, with PowerMode.cs's own reason
+         hone     the plan the user's machine is on (2026-09-24): muted, with PowerMode.cs's own reason
          error    the plan cannot be read
          refuse   every change is refused with the passive sidecar's reason (springs back)
          slow     a set takes 1.5 s, so pending can be seen
@@ -912,7 +912,7 @@
     setTimeout(function () { emit('powermode', Object.assign({ via: 'set' }, pmState)); }, 5);
     return { ok: true, mode: want, same: false, state: Object.assign({}, pmState), reason: null };
   }
-  // The installed PLANS (2026-09-24, Owen's machine: Balanced + Hone). powermode.plan switches between
+  // The installed PLANS (2026-09-24, the user's machine: Balanced + Hone). powermode.plan switches between
   // them as PowerMode.cs SetPlan does: the state READ BACK, and a 'powermode' push; ?pm=refuse refuses.
   var PM_BAL = '381b4222-f694-41f0-9685-ff5bb260df2e', PM_HONE = '44444444-4444-4444-4444-444444444452';
   function pmPlans(active) {

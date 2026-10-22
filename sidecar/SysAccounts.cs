@@ -1,6 +1,6 @@
 // SysAccounts.cs - Settings > Accounts for Mantle Settings (lane appsacct, 2026-09-29).
 //
-// MANTLE NEVER CHANGES OWEN'S ACCOUNT, PASSWORD, PIN OR USERS. Everything here is a read, except two
+// MANTLE NEVER CHANGES THE USER'S ACCOUNT, PASSWORD, PIN OR USERS. Everything here is a read, except two
 // HKCU switches on the Sign-in options page (dynamic lock, restart apps), which are ordinary per-user
 // values. Commands (all Lanes.Slow):
 //   accounts.info       your name, user name, picture (a data: URL of Windows' own account picture),

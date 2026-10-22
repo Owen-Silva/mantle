@@ -4,7 +4,7 @@
  * so there is no require(), no import, no Node. `window.mantle` (installed by lane B's preload,
  * or by mock-mantle.js when this page is opened outside Electron) is the ONLY way out of here.
  *
- * THE SHAPE (Owen, 2026-09-21): the bar is HIDDEN at rest. He pushes the mouse to the bottom of
+ * THE SHAPE (the user, 2026-09-21): the bar is HIDDEN at rest. He pushes the mouse to the bottom of
  * the screen, main shows the window and sends 'bar.reveal', and the glass detaches into view:
  * pinned app icons centred on the screen, the readouts on the right.
  *
@@ -19,7 +19,7 @@
  *
  * 1. NOTHING FAILS SILENTLY. Every call that can reject or reply {ok:false}, and every State
  *    piece that is not ok, ends up as a chip in the state strip with a short label and the reason
- *    in its tooltip. A console line does not count — Owen will never have devtools open on his
+ *    in its tooltip. A console line does not count — the user will never have devtools open on his
  *    taskbar.
  *
  * 2. IDLE COST ~0. This page is alive every waking hour. There is exactly ONE timer at rest: the
@@ -180,7 +180,7 @@
     out.sort(function (a, b) { return (a.key === 'bridge' ? 0 : 1) - (b.key === 'bridge' ? 0 : 1); });
     if (state) {
       // Contract: state.sidecar.status is 'ok' | 'starting' | 'down' (main session, 2026-09-21).
-      /* Labels are written for someone who is not Owen (2026-09-29): what stopped working, not
+      /* Labels are written for someone who is not the user (2026-09-29): what stopped working, not
          which part of Mantle it lives in. Main's own reason is used only when it reads plainly (said()). */
       if (state.sidecar && state.sidecar.status && state.sidecar.status !== 'ok')
         out.push({ label: state.sidecar.status === 'starting' ? 'Starting up' : 'Windows link lost',
@@ -340,7 +340,7 @@
      wrong; showing it again on the next reveal would flash a stale photograph of the desktop). */
   var haveBackdrop = false;
 
-  /* WHERE THE PICTURE LIES (lane mantle-seethru-bar-desktop, 2026-10-10; Owen: "this needs to be see
+  /* WHERE THE PICTURE LIES (lane mantle-seethru-bar-desktop, 2026-10-10; the user: "this needs to be see
      through the same as everything else"). Dark's wallpaper cut arrives with `at`: where it sits in the
      window, as fractions of the window it was taken from (`win`, DIP), the same shape as a pop-up's. It
      is cut 16 DIP past the pill on every side, so laid exactly over the screen it came from it overscans
@@ -368,7 +368,7 @@
     // the picture's counter-transform (bar.css .bdrop img) turns about .bar's own origin, in its box
     s.transformOrigin = (box.ox - bdPlace.x) + 'px ' + (box.oy - bdPlace.y) + 'px';
   }
-  /* THE OUTLINE ON THE RIGHT (lane mantle-barpolish, 2026-10-15; Owen: "on the right side of the
+  /* THE OUTLINE ON THE RIGHT (lane mantle-barpolish, 2026-10-15; the user: "on the right side of the
      taskbar when it comes up for a second or 2 there a dark outline ... that goes straight through
      the taskbar"). CAUSE: dark's picture arrives BEFORE 'bar.reveal' (main's pre-reveal frame), so
      it was placed against the pill's DOWN box: 62 % wide and centred. The pill then grew to 100 %
@@ -417,7 +417,7 @@
     }
   }
 
-  /* DARK GLASS: THE ONE RECIPE (lanes see-glass then same-bars, 2026-10-09). Owen, in dark: "mantle
+  /* DARK GLASS: THE ONE RECIPE (lanes see-glass then same-bars, 2026-10-09). The user, in dark: "mantle
      needs to be more see through everything ... even the taskbar", then "the reason i want everything
      at 50% is cause it will all match way better if its the same". So the strip is blurred with
      --lg-blur and nothing else, under ONE layer of --lg-fill (.50), exactly like the top bar. Half a
@@ -425,7 +425,7 @@
      readability guard every surface shares (../shared/glass-adapt.js guard: the top bar's rule, the
      same code and thresholds): the TINT thickens (never the picture dimming) to the thinnest alpha at
      which --lg-ink-2 reads >= 4.5:1 over the brightest blurred pixel under the pane, and only then is
-     --bar-tint set; over Owen's wallpaper it never is. A moving picture settles through the shared
+     --bar-tint set; over the user's wallpaper it never is. A moving picture settles through the shared
      hysteresis (thicker at once, thinner only by a real step). Once per strip, on its load; never in
      light (light must not move). window.__barGlass is a read-only view of it for the checks. */
   function isDark() { return document.documentElement.getAttribute('data-theme') === 'dark'; }
@@ -874,7 +874,7 @@
 
      So: centred on the bar's centre while that sits inside the free span; otherwise shifted by the
      MINIMUM that brings it inside; clipped only when the icons cannot fit in the whole span, and
-     only then does a chip appear — saying how many are hidden. Owen: "i want to be able to see all
+     only then does a chip appear — saying how many are hidden. The user: "i want to be able to see all
      my pinned stuff not just some of them". */
   /* the island's current scale (1 at rest; the reveal's pose otherwise), from its computed transform */
   function barScale() {
@@ -1115,7 +1115,7 @@
     if (key !== lastKey) {
       lastKey = key;
       /* "+N" IS JUDGED ONLY ON THE LANDED, REVEALED BAR (r5-overflow, 2026-09-30). Live on c9b245a,
-         Owen: "it says this when i first open the taskbar and then it goes to the full thing": the
+         the user: "it says this when i first open the taskbar and then it goes to the full thing": the
          bar came up with no app icons, only "+11" and Downloads. mantle.log: parked at 868x60 px,
          695 dip at 125 %, and a down pill is 62 % of its window, so the settle after every exit
          measured a 431 dip bar with room for no icon at all and put all 11 behind "+N"; the
@@ -1171,7 +1171,7 @@
 
   /* THE MEDIA CHIP GIVES WAY TO THE APPS (2026-09-22). Measured in the first --test run with a
      real session: a 1106 px island with 13 pins had a 494 px span for 540 px of icons once the
-     chip's title took its ~160 px, so two pinned apps went. An app Owen launches from matters more
+     chip's title took its ~160 px, so two pinned apps went. An app the user launches from matters more
      than a song title he can see in the card, so when the icons do not fit the chip drops to art +
      glyph (the title stays in its tooltip), and it takes the title back only when the icons would
      still fit WITH it. Both sides of that test are the same geometry, so it cannot flap. The ~7 px
@@ -1202,7 +1202,7 @@
 
   /* ================================================================= THE WINDOW FLYOUT
 
-     Windows 11's taskbar previews (2026-09-22). Owen: "if you hover your mouse over an app that is
+     Windows 11's taskbar previews (2026-09-22). The user: "if you hover your mouse over an app that is
      open you can see the tabs that are open and choose between them ... and you can see what's
      happening in that app on a small screen". Hover a RUNNING app's icon for 400 ms and a flyout
      rises above it with one card per window of that app: the app's icon, the window's title, a
@@ -1632,7 +1632,7 @@
     fellBackTimer = setTimeout(function () { clearFail('fellback'); }, 8000);
   }
 
-  /* RIGHT CLICK = Windows 11's taskbar menu (lane jumplist, 2026-09-24; Owen: "right click the apps
+  /* RIGHT CLICK = Windows 11's taskbar menu (lane jumplist, 2026-09-24; the user: "right click the apps
      on the taskbar and have the same options regular windows shows"): the app's jump list, the app
      itself, Pin/Unpin, Close (ui/bar/jumplist.js). Hover keeps the window previews. Without that
      module it is the window flyout as before; switched off in the tray, the menu keeps its own
@@ -1676,7 +1676,7 @@
 
   /* ================================================================= the apps behind "+N"
 
-     Windows 11's taskbar overflow (2026-09-29). Owen: "i want to be able to see all my pinned
+     Windows 11's taskbar overflow (2026-09-29). The user: "i want to be able to see all my pinned
      stuff not just some of them". The panel lists exactly the icons the strip could not fit, in
      their order, each with its name (a grid of bare icons is a guessing game). A tile does what its
      icon would: click opens or switches (two or more windows: the previews, over "+N"), middle-click
@@ -1729,7 +1729,7 @@
 
   /* ================================================================= drag to reorder
 
-     Owen, 2026-09-29: "i also need to be able to drag apps on the taskbar to move then into a
+     The user, 2026-09-29: "i also need to be able to drag apps on the taskbar to move then into a
      differetn order". Windows 11's way: press an icon and move it; past DRAG_PX it lifts and
      follows the pointer along the strip while the others slide aside (transforms only, so a frame
      is a composite, never a layout: every rectangle is read ONCE, at the lift), and letting go puts
@@ -1744,7 +1744,7 @@
      for this session. A save that fails springs back and says why on the strip.
      While lifted, and until the pointer leaves the icon it let go on, no tooltip or flyout opens
      and a right-click opens no jump list.
-     Chromium's own drag (fixed 2026-10-08, Owen: "it lifts and follows the mouse and then when you
+     Chromium's own drag (fixed 2026-10-08, the user: "it lifts and follows the mouse and then when you
      let go it stays where you stopped"): an icon is an <img>, and Chromium drags images itself. At
      its 4 px threshold it started a Windows drag-and-drop, sent this code a pointercancel (the lift
      sprang back, or never came) and kept the button-up for itself: a see-through copy of the icon
@@ -2139,7 +2139,7 @@
   /* WHITE TRAY ICONS (2026-09-22). Windows Update's and Tailscale's icons are drawn white, for
      Windows' DARK taskbar, and on this light glass they all but vanish. Each icon is measured once
      (cached by its data URL, so the 5 s tray poll costs nothing): the mean luminance of its pixels
-     WEIGHTED BY ALPHA. Not "opaque pixels only": measured on Owen's tray the same day, Tailscale's
+     WEIGHTED BY ALPHA. Not "opaque pixels only": measured on the user's tray the same day, Tailscale's
      disconnected icon is nine white dots with NO pixel above alpha 128, so an opaque-only mean saw
      nothing at all (alpha-weighted it is 1.00; Windows Update's restart icon 0.54, Lively 0.34,
      Windhawk 0.41, Windows Security 0.53). A light one sits on a small dark plate (bar.css .ti.light). A plate rather than
@@ -2515,7 +2515,7 @@
 
   /* ================================================================= quick settings
 
-     Owen, 2026-09-21, pointing at volume / Wi-Fi / battery / clock: "these buttons need to go to a
+     The user, 2026-09-21, pointing at volume / Wi-Fi / battery / clock: "these buttons need to go to a
      wrapper version of where they used to go … some of them just go to settings now". So the three
      readouts on the right open ONE panel — Windows 11's shape, Mantle's glass — instead of three
      different fates (a slider, a settings URI, a key press).
@@ -2605,7 +2605,7 @@
     if (key === 'volume') qsTakeVolume(qs.volume);       // the readout's glyph too
   }
 
-  /* A SET, OPTIMISTICALLY (2026-09-23). Owen: "be way more responsive". A tile waited for the
+  /* A SET, OPTIMISTICALLY (2026-09-23). The user: "be way more responsive". A tile waited for the
      reply before it changed at all: 260-510 ms for a Wi-Fi or Bluetooth radio under load
      (measured), long enough to click again. Now `guess` changes the part on screen in the same
      frame and the tile shows pending; the reply - the part READ BACK from Windows - has the last
@@ -2983,7 +2983,7 @@
   el.volume.addEventListener('click', function () { openQs(el.volume); });
   el.network.addEventListener('click', function () { openQs(el.network); });
   el.battery.addEventListener('click', function () { openQs(el.battery); });
-  /* THE SPEAKER, ANDROID-STYLE (osd lane, 2026-09-24). Owen: "can you make it so that i can adjust
+  /* THE SPEAKER, ANDROID-STYLE (osd lane, 2026-09-24). The user: "can you make it so that i can adjust
      volumes of different apps like the android feature". Right- or middle-click opens the pop-up's
      per-app panel (every app playing sound, each with its slider and mute: ui/osd/); the wheel
      over the speaker changes the master volume 2 a notch, with the pop-up showing it. If the pop-up
@@ -2991,7 +2991,7 @@
   function openMixer() {
     closePop();
     callR('osd.mixer').then(function () { clearFail('osdmixer'); }, function (e) {
-      /* NO SILENT FAILURE (r5-overflow, 2026-09-30; Owen: "its not letting me right click the sound
+      /* NO SILENT FAILURE (r5-overflow, 2026-09-30; the user: "its not letting me right click the sound
          thing to see what apps are playing sound"). The reason is said in plain words in the panel
          that opens instead, where the user is looking (a pip on the More button is read by nobody),
          and the raw reason goes to the log with the warning fail() writes. */
@@ -3026,7 +3026,7 @@
   /* ================================================================= network
 
      THE READOUT BESIDE THE SPEAKER (2026-09-23) was a fixed Wi-Fi drawing in index.html: full
-     bars with the radio off, on Ethernet, with no internet, with no network at all. Owen: "make
+     bars with the radio off, on Ethernet, with no internet, with no network at all. The user: "make
      the Internet thing ... actually work". main pushes the sidecar's reading ('net', replayed on
      subscribe) and net.js words and draws it; a reading that fails is a dimmed globe with the
      reason in the tooltip. */
@@ -3043,7 +3043,7 @@
 
   /* ================================================================= battery */
 
-  /* ONE READING, PUSHED (2026-09-23). Owen: "there are problems with it showing how charged my
+  /* ONE READING, PUSHED (2026-09-23). The user: "there are problems with it showing how charged my
      computer is". This drew sys.stats' Win32_Battery answer, re-asked every fifth clock tick
      through main's 60 s cache: 71 % where Windows said 72, a bolt whenever the charger was in
      (even held at a charge limit, not charging) and all but invisible on the fill, up to a minute
@@ -3089,7 +3089,7 @@
   /* 12-hour with seconds, Windows' own shape: "4:15:32 PM" — no leading zero on the hour, two
      digits on the minutes and seconds, one space before the meridiem. Hand-formatted rather than
      Intl, because Intl's hour12 output is locale-dependent (it gives "4:15:32 p.m." on some
-     locales and a narrow no-break space before the meridiem on modern ICU), and Owen asked for
+     locales and a narrow no-break space before the meridiem on modern ICU), and the user asked for
      the Windows en-US string, not for whatever his locale happens to render. The DATE line below
      still goes through toLocaleDateString: that one SHOULD follow the machine. */
   function clockText(now) {
@@ -3539,7 +3539,7 @@
       }, 1000);
     }
 
-    /* THE SOURCE LIST HOLDS STILL (lane mediapick, 2026-09-25). Owen: "i press spotify but it
+    /* THE SOURCE LIST HOLDS STILL (lane mediapick, 2026-09-25). The user: "i press spotify but it
        keeps switching to accelus or automatic". The rows followed main's session order (which
        moves when Windows' current session does) and an "Automatic" row was APPENDED the moment a
        pick was made; the card grows upward from the bar, so every row jumped up by one and the
@@ -3749,7 +3749,7 @@
     h.textContent = 'Mantle';
     pop.appendChild(h);
     /* MINIMAL (2026-09-29): a healthy live Mantle shows no status line at all ("live mode · bar
-       pill · bridge ok" was status nobody acts on, in words nobody but Owen reads). A copy that is
+       pill · bridge ok" was status nobody acts on, in words nobody but the user reads). A copy that is
        NOT the real shell still says so, because it changes what Restore and Quit do. */
     var copy = !mantle ? '' : mantle.mode === 'mock' ? 'Preview: not connected to Windows'
       : (state && state.mode === 'test') ? 'Test copy: it changes nothing on this PC' : '';
@@ -3823,9 +3823,9 @@
     });
     pop.appendChild(restore);
 
-    /* Restart (Owen, 2026-09-22): the same clean quit as Quit, then Mantle comes back by itself --
+    /* Restart (the user, 2026-09-22): the same clean quit as Quit, then Mantle comes back by itself --
        through the "Mantle" logon task when that is what started it, app.relaunch() otherwise
-       (main decides; see shell.restart). No second click: unlike Quit it does not leave Owen
+       (main decides; see shell.restart). No second click: unlike Quit it does not leave the user
        without a bar. If main cannot arrange the way back it refuses, says why here, and Mantle
        keeps running. */
     var restart = document.createElement('button');
@@ -3919,7 +3919,7 @@
          the card. main.js aims it at the shown session's AUMID, i.e. the test's own session. */
       if (p.what === 'media-play') {
         /* ...and ONLY on a test's own silent session: the passive sidecar would refuse anything
-           else too, but a test hook that could press Owen's music is one bug away from doing it. */
+           else too, but a test hook that could press the user's music is one bug away from doing it. */
         var ms = mediaShown();
         if (!ms || !/^Mantle probe/.test(ms.title || '')) {
           fail('testclick', 'not a probe', 'the test hook presses play only on a "Mantle probe" test session, and the card is showing ' + (ms ? mediaLine(ms) : 'nothing'), 'warn');

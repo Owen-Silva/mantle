@@ -37,7 +37,7 @@ html, body {
    Without the blur (no-glass) a much thicker fill carries the page on its own, honestly. */
 body { background: linear-gradient(var(--lg-sunk), var(--lg-sunk)), linear-gradient(var(--lg-fill-strong), var(--lg-fill-strong)) var(--lg-fill-strong); }
 body.no-glass { background: var(--lg-ground); }
-/* DARK, SEE-THROUGH (lane see-glass-b, 2026-10-09; Owen: "mantle needs to be more see through
+/* DARK, SEE-THROUGH (lane see-glass-b, 2026-10-09; the user: "mantle needs to be more see through
    everything"). In dark the three layers above made ~83% over a blur-behind that Windows ALREADY darkens
    by 60% (the sidecar's acrylic tint, Glass.cs DefaultTint): the desktop all but vanished. One layer
    of --lg-fill, as every blurred surface. NOTE (lane same-shell): that acrylic still lays its own 60% black
@@ -48,7 +48,7 @@ body.no-glass { background: var(--lg-ground); }
 /* lane helm-wall-apps (2026-10-09): in dark the window is opaque and the page paints the desktop wallpaper
    (ui/shared/wall-bdrop.js/.css); --wall-tint is its ONE tint layer = the same tint body carries above. */
 :root[data-theme="dark"] { --wall-tint: var(--lg-fill); }
-/* DARK, ONE SHEET (lane same-shell, 2026-10-09; Owen: "can you make sure everything is the same").
+/* DARK, ONE SHEET (lane same-shell, 2026-10-09; the user: "can you make sure everything is the same").
    Then HELM IS THE REFERENCE (HELM-SPEC.md rows 3, 10-12, 14, 16-19, 24). The page's one --lg-fill
    is the glass. The desktop cards are Helm cards (--lg-card, hover --lg-press); the window tiles are a
    list laid out as a grid: bare at rest, hover --lg-hover, the picked one Helm's selected row

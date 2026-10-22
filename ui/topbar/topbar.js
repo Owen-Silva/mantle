@@ -37,7 +37,7 @@
   const menuSource = () => S.menu || (S.focus && S.uia[S.focus.hwnd]) || null;
 
   /* ---- the strip --------------------------------------------------------------------------- */
-  /* The part of this window that is on its screen, in CSS px: normally innerWidth. Owen's "CPU 82%"
+  /* The part of this window that is on its screen, in CSS px: normally innerWidth. The user's "CPU 82%"
      cut at the right edge (2026-09-25) is what a window WIDER than its display shows: headless at
      1920 CSS px on a 1536 px screen puts CPU at 1454-1528 and RAM / GPU / NET past the edge, exactly
      his screenshot, and an Electron probe window resized to 1920 DIP while hidden laid its page out
@@ -927,14 +927,14 @@
   });
 
   /* ---- THE COLOUR UNDER, dark only (lane mantle-topbar-under, 2026-10-11) ----------------------
-     Owen: "can we make it so that the top bar changes based on what color is on below it?" Main
+     The user: "can we make it so that the top bar changes based on what color is on below it?" Main
      (lib/topbar-under.js) sends 'topbar.under' {cols, cover, n, blocked, why}: the row of the screen right
      under the bar as n columns, and how much of each a window covers; or {off, why, failure, blocked}.
      ui/topbar/under.js plans the paint (the exact colour on the bottom row, the text band pulled only
      where an ink could not read 4.5:1) and each item's ink (light, or the light theme's dark ink over a
      bright window, with hysteresis). The paint is a canvas of n columns under the strip's words (#under,
      inside #bar at z-index -1, so over the glass's tint and under the words); where no window is under
-     the bar it is clear and today's glass shows. NO FADE (Owen, 2026-10-11: "can we make it so that it
+     the bar it is clear and today's glass shows. NO FADE (the user, 2026-10-11: "can we make it so that it
      changes colors faster like imediatly? so theres no delay?"): each new frame is put into the one
      canvas in place (a putImageData: whole, never torn) and the inks flip in the same frame; the desktop
      coming back unmounts it at once. Light: never mounted, nothing runs.

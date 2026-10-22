@@ -25,7 +25,7 @@ const PAGE = require('url').pathToFileURL(path.join(__dirname, 'index.html')).hr
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   path.join(require('os').tmpdir(), 'mantle-shots', 'snap');
 
-// Window sizes in DIP, as main makes them on Owen's 1920x1080 @ 125 % screen (1536 x 864 DIP).
+// Window sizes in DIP, as main makes them on the user's 1920x1080 @ 125 % screen (1536 x 864 DIP).
 const PICKER = { w: 400, h: 268 };
 const NOTICE = { w: 440, h: 132 };
 const HALF = { w: 768, h: 864 };

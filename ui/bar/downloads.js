@@ -18,7 +18,7 @@
  * panel; a plainer read (the sidecar could not answer) and a watch that stopped are named in the foot.
  *
  * Rows are addressed by main's opaque `item` token, never by path (a failed command is logged with its
- * arguments, and names are Owen's). The pure helpers (ago, size, meta) are exported for node:
+ * arguments, and names are the user's). The pure helpers (ago, size, meta) are exported for node:
  * lib/features/downloads.test.js loads this file.
  */
 (function (root, factory) {
@@ -184,7 +184,7 @@
   function renderBtn() {
     if (!btn) return;
     var s = state;
-    btn.hidden = !!(s && s.on === false);            // Owen turned the shelf off in the tray
+    btn.hidden = !!(s && s.on === false);            // the user turned the shelf off in the tray
     var bad = isBad(s);
     var resting = s && (s.state === 'resting' || s.state === 'stopped');
     var fresh = !bad && !resting && s && s.newCount > 0;

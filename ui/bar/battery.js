@@ -1,6 +1,6 @@
 /* battery.js — the battery readout's words and glyph, from ONE sidecar reading (Battery.cs).
  *
- * WHY A MODULE OF ITS OWN (2026-09-23). Owen: "there are problems with it showing how charged my
+ * WHY A MODULE OF ITS OWN (2026-09-23). The user: "there are problems with it showing how charged my
  * computer is". The readout, its tooltip and the quick-settings footer each worded the battery
  * for themselves, from two different sources, and none of them could say "not charging": the
  * readout drew a bolt whenever the charger was in (Win32_Battery's BatteryStatus 2, which only
@@ -83,7 +83,7 @@
   }
 
   /* The warning level: the plan's own "Low battery level" / "Critical battery level" (Battery.cs
-     lowAt / criticalAt; 6 % and 2 % on Owen's plan), falling back to Windows' defaults (10 / 5) for
+     lowAt / criticalAt; 6 % and 2 % on the user's plan), falling back to Windows' defaults (10 / 5) for
      an older sidecar. BatteryFlag's "low" bit is NOT used: it means under 33 %. Only on battery. */
   function warnLevel(r, pct, ac) {
     if (ac !== false || pct === null) return null;

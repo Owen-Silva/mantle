@@ -1,6 +1,6 @@
 // MenuBar.cs - `topbar.*`: the sidecar half of the macOS-style menu bar (wave 3, 2026-09-24).
 //
-// Owen: "it might be cool to make the thing that macbooks have at the very top of your screen".
+// The user: "it might be cool to make the thing that macbooks have at the very top of your screen".
 // The top bar shows the FOCUSED app's name and ITS menus. Windows has no one place that answers
 // "what are this app's menus", so this file asks the two places that exist:
 //
@@ -20,7 +20,7 @@
 // Everything that READS runs in passive (a --test sidecar). Everything that WRITES - a menu
 // command, a window action, the app bar - refuses in passive, with ONE exception: the test
 // fixture window sidecar/test-topbar.js compiles into %TEMP% (IsFixture). That is how a test
-// proves invoke end to end without ever sending anything to one of Owen's apps.
+// proves invoke end to end without ever sending anything to one of the user's apps.
 //
 // THE APP BAR. Like macOS, the bar reserves its strip (ABM_NEW on the top edge) so maximised
 // windows sit below it - live only. It goes through Taskbar.cs's AppBars, so the sidecar's own
@@ -826,7 +826,7 @@ namespace Mantle {
 
     // ------------------------------------------------------------------ nothing goes past the bar
     //
-    // Owen: "nothing should be able to go past the topbar". A MAXIMISED window is kept below it
+    // The user: "nothing should be able to go past the topbar". A MAXIMISED window is kept below it
     // by the app bar reservation (the work area starts at the bar's bottom). A window DRAGGED or
     // RESIZED up into the strip is put back below it when the drag ENDS - EVENT_SYSTEM_MOVESIZEEND,
     // raised once when the user lets go. Never during the drag: fighting the move loop the user
@@ -946,7 +946,7 @@ namespace Mantle {
 
     // ------------------------------------------------------------------ games step aside
     //
-    // Owen: "unless its like valorant or whatever right then that will go fully fullscreen. or
+    // The user: "unless its like valorant or whatever right then that will go fully fullscreen. or
     // anything else like that right?" The bar stays over a browser's F11 or a full-screen video,
     // but a GAME gets the whole screen in any full-screen mode - and Valorant runs BORDERLESS by
     // default, so "exclusive full screen" alone would miss the most important case. Two questions:

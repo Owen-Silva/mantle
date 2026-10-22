@@ -4,7 +4,7 @@
 //
 //   node sidecar/test-sysset.js [--exe=<Mantle.Sidecar.exe>]
 //
-// PASSIVE ONLY, and it NEVER changes Owen's machine: reads are checked for shape on this PC, every
+// PASSIVE ONLY, and it NEVER changes the user's machine: reads are checked for shape on this PC, every
 // write is sent with dryRun (it must say exactly what it would write, and a fresh read afterwards
 // must be identical), and every real write must answer the passive refusal.
 'use strict';

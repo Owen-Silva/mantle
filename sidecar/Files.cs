@@ -356,7 +356,7 @@ namespace Mantle {
 
     // ------------------------------------------------------------------ recent
 
-    /// MEASURED 2026-09-28 on Owen's Recent folder (129 links): 20 items took 0.3-2.1 s and 40
+    /// MEASURED 2026-09-28 on the user's Recent folder (129 links): 20 items took 0.3-2.1 s and 40
     /// took 4.8 s, because reading some links costs seconds. Past this budget the answer is what
     /// was found so far, with partial:true, rather than a timeout on the page.
     const int RecentBudgetMs = 2500;

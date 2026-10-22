@@ -2,7 +2,7 @@ require('../../tools/dev-env.js').lowcpu();
 /* wall-player.test.js -- the desktop page's wallpaper player, driven through its real events (lane
  * launch-desk, 2026-09-29).
  *
- * Headless chromium over file:// (never Electron, never Owen's desktop): ui/desktop/index.html with a
+ * Headless chromium over file:// (never Electron, never the user's desktop): ui/desktop/index.html with a
  * fake window.mantle installed first (so mock-mantle.js stands aside) that records every call and lets
  * the test send main's events. The video is a 2-second VP8 clip the test records itself from a canvas
  * into a temp file; the pictures are data: URLs. Checks: a picture and a video mount and report

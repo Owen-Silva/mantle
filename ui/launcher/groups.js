@@ -1,6 +1,6 @@
 /* groups.js — how the launcher lays its rows out: in labelled GROUPS, keyboard-first.
  *
- * Win+S (Owen, 2026-09-24) turned the launcher into the search for everything, so one flat list
+ * Win+S (the user, 2026-09-24) turned the launcher into the search for everything, so one flat list
  * of twelve stopped being readable: "blue" is an app, a Settings page and three files, and those
  * are three different kinds of Enter. Each kind gets a header; the arrow keys still walk ONE list
  * (the groups in order, their rows in order), so nothing about moving changed.
@@ -124,7 +124,7 @@
       if (sa !== sb) return sb - sa;
       return FIXED[a.key] - FIXED[b.key];
     });
-    // the empty launcher is Owen's commands then the apps, in that order, exactly as before
+    // the empty launcher is the user's commands then the apps, in that order, exactly as before
     if (!q) ranked.sort(function (a, b) { return (a.key === 'commands' ? 0 : 1) - (b.key === 'commands' ? 0 : 1); });
 
     var calc = calcRow(args && args.calc);

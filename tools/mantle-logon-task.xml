@@ -17,7 +17,7 @@
 -->
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Mantle, Owen's shell layer over Windows: starts 15 s after logon. Stop it cleanly with "npm run quit" in {{ROOT}}; put Windows back without Mantle with "npm run restore" there. Registered by tools/install-autostart.ps1.</Description>
+    <Description>Mantle, the user's shell layer over Windows: starts 15 s after logon. Stop it cleanly with "npm run quit" in {{ROOT}}; put Windows back without Mantle with "npm run restore" there. Registered by tools/install-autostart.ps1.</Description>
     <URI>\Mantle</URI>
   </RegistrationInfo>
   <Triggers>

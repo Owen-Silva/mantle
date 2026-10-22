@@ -1,7 +1,7 @@
 /* mock-mantle.js — a stand-in for the preload bridge, and ONLY when there isn't one.
  *
  * The desktop layer has to be eyeballed without Electron running (running it would put a window
- * over Owen's screen, and lane A owns main). Opened straight off disk there is no window.mantle,
+ * over the user's screen, and lane A owns main). Opened straight off disk there is no window.mantle,
  * every subscription would silently do nothing, and the panes would be three em-dashes over
  * white — so this fills the hole with the same channel names and payload shapes main sends.
  *

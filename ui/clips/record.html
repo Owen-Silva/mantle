@@ -15,7 +15,7 @@
 </head>
 <body>
 <!-- Win+G: Mantle's Record panel (lib/features/clips.js). Bottom right, over the app in front; it never
-     takes the foreground (focusable:false), so the app Owen is in is the one Windows records, and it is
+     takes the foreground (focusable:false), so the app the user is in is the one Windows records, and it is
      excluded from every capture. Windows records (Game Bar's own engine, Win+Alt+R); Mantle watches the
      file. Everything on it comes from main's clips.state; the page keeps only the running clock. -->
 <div id="lift">
@@ -37,7 +37,7 @@
       <div id="status" class="status" aria-live="polite"><i id="dot" class="dot" aria-hidden="true"></i><span id="statusText">Ready</span></div>
     </div>
   </div>
-  <!-- a game is in front: Mantle never sends keys to it, so Owen presses Windows' own chord -->
+  <!-- a game is in front: Mantle never sends keys to it, so the user presses Windows' own chord -->
   <div id="hint" class="hint" hidden>
     <span class="keys" aria-hidden="true"><kbd>Win</kbd><kbd>Alt</kbd><kbd>R</kbd></span>
     <span id="hintText" class="hint-text"></span>

@@ -6,7 +6,7 @@
  *
  * THE CALM PASS (lane lookhud, 2026-09-29, Settings' 377e901 applied to Alt+Tab): the bar's thin .45
  * tint over the blurred screen left the pane mid-grey over a dark desktop (~130) with white caption
- * strips on it: the old Settings look Owen called not very good. The pane is now Settings' window
+ * strips on it: the old Settings look the user called not very good. The pane is now Settings' window
  * ground: --lg-fill-strong twice plus the --lg-sunk wash over the blur (three times when there is no
  * blur under it), so it reads light whatever is behind; the caption strips are its cards. The chosen
  * tile is a grey wash with the accent ring, never a tint; a hung window's 'not responding' is the warn
@@ -89,7 +89,7 @@ html, body {
 }
 /* nothing blurred under the pane (the desktop shows through as it is): the face a third time over */
 body.no-backdrop .panel { --pane-fill: var(--hud-ground-bare); }
-/* DARK, SEE-THROUGH (lane see-glass-b, 2026-10-09; Owen: "mantle needs to be more see through
+/* DARK, SEE-THROUGH (lane see-glass-b, 2026-10-09; the user: "mantle needs to be more see through
    everything"). The calm pane stacked sunk + strong twice (~83% opaque in dark): the screen behind
    barely showed. Now ONE layer of tint (--lg-fill) over the capture blurred with --lg-blur alone; the
    only deviation is THE shared readability guard (switcher.js -> --pane-tint: a thicker tint, never a
@@ -97,7 +97,7 @@ body.no-backdrop .panel { --pane-fill: var(--hud-ground-bare); }
    No capture: the desktop shows SHARP, so one layer thick enough to read on its own (--lg-fill-pop). */
 :root[data-theme="dark"] .panel { --pane-fill: var(--pane-tint, var(--lg-fill)); }
 :root[data-theme="dark"] body.no-backdrop .panel { --pane-fill: var(--lg-fill-pop); }
-/* DARK, ONE SHEET (lane same-shell, 2026-10-09; Owen: "can you make sure everything is the same").
+/* DARK, ONE SHEET (lane same-shell, 2026-10-09; the user: "can you make sure everything is the same").
    The pane is a pop-up: the pop-up radius token. Nothing inside it lays a second fill on the glass:
    the caption strip, the preview well and the "no picture" plate were --lg-fill-strong / --lg-sunk
    layers (each one more layer of tint, or a wash, on top of the pane's one). The tiles wash with the
@@ -113,7 +113,7 @@ body.no-backdrop .panel { --pane-fill: var(--hud-ground-bare); }
 :root[data-theme="dark"] .panel { box-shadow: none; }
 :root[data-theme="dark"] .tile:hover { background: var(--lg-hover); }
 :root[data-theme="dark"] .tile.is-sel { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
-/* FINAL (Owen chose Helm's real look; HELM-SPEC.md rows 11, 12, 14, 17, 24): no accent on a picked
+/* FINAL (the user chose Helm's real look; HELM-SPEC.md rows 11, 12, 14, 17, 24): no accent on a picked
    tile either, Helm's selected row is the wash and a hairline; colour changes ease over Helm's 120ms;
    Helm's face, features and type scale (no half pixels); the warn mark at Helm's stroke (1.6 in its
    16-unit box, 1.2 on screen at 12px). */

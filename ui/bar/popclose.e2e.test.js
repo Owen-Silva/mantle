@@ -130,7 +130,7 @@ async function main() {
     check('and closes it', !!(await until(async () => !(await popOpen()), 3000, 50)));
 
     // ---- switching away (lane mantle-m6): Alt+Tab is no click. The real foreground is never read in
-    // a --test run (Owen's own switching would close it mid-test); made-up readings take the same road.
+    // a --test run (the user's own switching would close it mid-test); made-up readings take the same road.
     second(['--test-click=more']);
     await until(popOpen, 5000, 50);
     await until(async () => { const x = await pw(); return x && x.state.open.includes('bar') ? x : null; }, 5000, 100);
@@ -146,7 +146,7 @@ async function main() {
     check('a switch to another app closes the bar\'s pop-up', s && s.result === 1 && s.state.away >= 1, s);
     check('and it is gone, the watch off again', !!(await until(async () => { if (await popOpen()) return null; const x = await pw(); return x && x.state.open.length === 0 ? x : null; }, 3000, 50)));
 
-    // ---- quick settings, the panel Owen opens most
+    // ---- quick settings, the panel the user opens most
     second(['--test-click=qs']);
     check('quick settings opens (the same test hook)', !!(await until(popOpen, 5000, 50)));
     const qs = await until(async () => { const x = await pw(); return x && x.state.open.includes('bar') ? x : null; }, 5000, 100);

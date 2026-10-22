@@ -10,7 +10,7 @@ function check(name, ok, detail) {
   else { fail++; fails.push(`  FAIL ${name}${detail ? ' (' + detail + ')' : ''}`); }
 }
 
-// Screens in DIP: Owen's 1920x1080 at 125% is 1536x864; plus the common ones and a small one.
+// Screens in DIP: the user's 1920x1080 at 125% is 1536x864; plus the common ones and a small one.
 const SCREENS = [[1536, 864], [1920, 1080], [1280, 720], [2560, 1440], [1024, 768], [1366, 768]];
 
 // ---- empty and single ---------------------------------------------------------------------------

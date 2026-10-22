@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* test-power.js - power mode + battery, against Windows' own answers (lane sysmon-power, 2026-09-29).
  *
- * WHAT IT CHANGES ON OWEN'S MACHINE: NOTHING. The sidecar runs --passive; every write is a dryRun
+ * WHAT IT CHANGES ON THE USER'S MACHINE: NOTHING. The sidecar runs --passive; every write is a dryRun
  * or a passive refusal - there is no same-value write here at all (test-osd.js has those) - and the
  * plan, both power-mode choices and the battery are read independently before and after and must
  * be identical.

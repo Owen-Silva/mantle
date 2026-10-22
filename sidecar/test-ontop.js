@@ -6,9 +6,9 @@
 // PASSIVE, like every sidecar test. The chord is proved through `hotkey {op:'simulate'}` (the PURE
 // key machine fed scripted keys: no hook, not one real keystroke). Every write goes to a FIXTURE
 // this test compiles into %TEMP%: WinForms windows at -6000,-6000, WS_EX_NOACTIVATE +
-// WS_EX_TOOLWINDOW, shown without activation, so nothing on Owen's screen moves, is covered or
+// WS_EX_TOOLWINDOW, shown without activation, so nothing on the user's screen moves, is covered or
 // takes the focus. A DECOY (the same exe under another name) must be REFUSED, proving the passive
-// guard is the exe check and not the title. Owen's own windows are only READ (ontop.front, the
+// guard is the exe check and not the title. The user's own windows are only READ (ontop.front, the
 // taskbar's facts), and nothing of them is printed. The fixture kills itself after 120 s if this
 // test dies first.
 //
@@ -196,7 +196,7 @@ async function chordChecks(s, t) {
 
     await chordChecks(s, t);
 
-    // ---- what is in front, read-only (Owen's window: shape only, nothing printed) --------------
+    // ---- what is in front, read-only (the user's window: shape only, nothing printed) --------------
     const fr = await s.call('ontop.front', {}, 4000);
     t.check('ontop.front answers a hwnd and either facts or the reason there are none',
       typeof fr.hwnd === 'string' && (fr.hwnd === '0' ? typeof fr.refuse === 'string' : typeof fr.topmost === 'boolean' && typeof fr.name === 'string' && 'refuse' in fr),

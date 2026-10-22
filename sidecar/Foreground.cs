@@ -75,7 +75,7 @@ namespace Mantle {
 
     static bool IsFullScreen(IntPtr hwnd, Win32.RECT r, int pid) {
       // A maximised window overhangs its monitor by the invisible resize border, so its rect
-      // "covers" rcMonitor too; it is not fullscreen (Owen's maximised browser must not hide the bar).
+      // "covers" rcMonitor too; it is not fullscreen (the user's maximised browser must not hide the bar).
       if (IsZoomed(hwnd)) return false;
       // Shell furniture is never "full-screen" however big it is.
       string cls = Win32.GetClassName(hwnd);

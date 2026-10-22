@@ -14,7 +14,7 @@
  * Exit code is 1 only if something that EXISTS does not parse.
  *
  * SPEED (core-lib, 2026-09-29): it used to start one `node --check` per file, and with ~310 files
- * that took 133 s on Owen's machine, not "a second". Now each file is parsed IN this process the
+ * that took 133 s on the user's machine, not "a second". Now each file is parsed IN this process the
  * way Node's CommonJS loader wraps it (Module.wrap + vm.Script, compiled but never run), and only a
  * file that fails that is handed to `node --check` for the verdict and the words, so the answer is
  * still node's own.

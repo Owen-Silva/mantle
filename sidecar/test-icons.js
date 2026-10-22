@@ -149,7 +149,7 @@ function save(name, url) {
       !!exeAlpha && exeAlpha.clear > 0 && exeAlpha.solid > 0, exeAlpha ? `${exeAlpha.clear} clear, ${exeAlpha.solid} solid px` : 'no picture');
 
     // ---- a REBUILT app shows its new picture without a restart -----------------------------------------
-    // Owen's bar kept Helm's old icon after helm.exe was rebuilt at the same path. Windows' own icon
+    // The user's bar kept Helm's old icon after helm.exe was rebuilt at the same path. Windows' own icon
     // cache still answers the OLD picture for a rewritten file (measured), and the sidecar kept it for
     // good. Here: a copy of one exe, a shortcut to it, then the copy is rewritten with a different exe.
     const A = exes.find((p) => /notepad\.exe$/i.test(p)), B = exes.find((p) => /cmd\.exe$/i.test(p));

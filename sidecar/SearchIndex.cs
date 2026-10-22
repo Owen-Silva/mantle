@@ -71,7 +71,7 @@ namespace Mantle {
     const string Columns = "System.ItemPathDisplay, System.FileName, System.ItemFolderPathDisplay, " +
                            "System.ItemType, System.DateModified, System.Size, System.FileAttributes";
     // Folders that swamp everything else: MEASURED 2026-09-22, 7 of the 8 newest "rep" matches in
-    // Owen's profile were inside node_modules. Filtered in the query (~50 ms) rather than after it.
+    // the user's profile were inside node_modules. Filtered in the query (~50 ms) rather than after it.
     static readonly string[] NoiseDirs = { "node_modules", ".git", "site-packages" };
     // Fixed names nobody types meaning them: LevelDB's (every Chromium/Electron profile is full of
     // them; "lock" once returned eight LOCK files and nothing else) and Explorer's own.

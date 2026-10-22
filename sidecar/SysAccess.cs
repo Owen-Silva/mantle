@@ -1,7 +1,7 @@
 // SysAccess.cs - Settings > Accessibility for Mantle Settings (lane access, 2026-09-29): the values
 // Windows' own Accessibility pages read and write, so Mantle's page can do the same natively.
 //
-// WHY: Owen wants Mantle Settings to replace Windows Settings outright. Almost everything on
+// WHY: the user wants Mantle Settings to replace Windows Settings outright. Almost everything on
 // Windows' Accessibility pages is either a per-user registry value (HKCU, no administrator) or a
 // SystemParametersInfo (SPI) value; this file reads them the way Windows does and changes them the
 // same way: the SPI_SET* call with SPIF_UPDATEINIFILE | SPIF_SENDCHANGE (saved to the profile AND

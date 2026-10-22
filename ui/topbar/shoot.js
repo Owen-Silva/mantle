@@ -1,12 +1,12 @@
 require('../../tools/dev-env.js').lowcpu();
 /* shoot.js — headless shots of the top bar page over file:// with mock-mantle.js playing main
- * (no Electron, no sidecar, nothing from Owen's machine). Also CHECKS, not just photographs:
+ * (no Electron, no sidecar, nothing from the user's machine). Also CHECKS, not just photographs:
  *   1. the tiny-numbers rule: every stat cell keeps its width when its number changes
  *      (5% -> 100%, 0.1 -> 15.7 GB, 0 KB/s -> 999 MB/s);
  *   2. keyboard: ArrowDown/Right/Left/Escape walk the menus the way a Mac menu does, and Enter on
  *      a native item sends topbar.invoke with that item's command id;
  *   3. a failed command shows its reason on the bar.
- *   4. FIT (2026-09-25, Owen's stats cut at "CPU 82%"): at 1280 / 1366 / 1536 / 1920 CSS px x DPR
+ *   4. FIT (2026-09-25, the user's stats cut at "CPU 82%"): at 1280 / 1366 / 1536 / 1920 CSS px x DPR
  *      1 / 1.25 / 1.5, short and very long menus, a warning note, stats paused / GPU missing, AND a
  *      window wider than its screen (the live symptom): the stats end exactly one left-inset from
  *      the screen's right edge, the page never scrolls (scrollWidth == clientWidth), nothing wraps,
@@ -190,7 +190,7 @@ async function fitChecks(browser, check) {
 }
 
 /* ---- 5. dropdowns open whole ----------------------------------------------------------------- */
-/* Owen, 2026-09-25 00:02 and 08:54: pressing CPU / RAM / GPU / NET showed only "a thin grey strip"
+/* The user, 2026-09-25 00:02 and 08:54: pressing CPU / RAM / GPU / NET showed only "a thin grey strip"
  * under the bar, "its like that for all of them". The shots above ran in a 420 px viewport, which
  * hid it: the REAL window starts at Windows' 38 DIP floor and grows only to what the page asks for
  * (lib/features/topbar.js menuState -> place). So these rows start at 38 px and play main: each
@@ -444,14 +444,14 @@ async function otherPages(browser, check) {
 }
 
 /* ---- 8. THE DARK GLASS, SAME AS EVERY SURFACE (lane same-bars, 2026-10-09) ---------------------
-   Owen: "everything at 50% ... it will all match way better if its the same". Over three scenes, as the
-   desktop draws them (cover-fit to a 1920x1080 screen at 125%): (a) Owen's real wallpaper, (b) a bright
+   The user: "everything at 50% ... it will all match way better if its the same". Over three scenes, as the
+   desktop draws them (cover-fit to a 1920x1080 screen at 125%): (a) the user's real wallpaper, (b) a bright
    busy photo, (c) a dark terminal. Per surface (the strip, a menu, a stat menu, a submenu): picture
    yes/no, tint layers (1), the MEASURED composite alpha of the tint (over a known flat #6a6a6a backdrop:
    alpha = (B - P) / (B - T) from the pixel), the guard over (a), and ink-2's contrast against the
    brightest ground pixel under each surface (a second shot with every word made transparent). Then the
    pre-show (no frame shows a dropdown before its glass; a slow or failed picture shows the fallback and
-   says why), and the strip's bottom edge (Owen's dark line), row by row. */
+   says why), and the strip's bottom edge (the user's dark line), row by row. */
 const SCENES_DIR = (process.env.MANTLE_GLASS_SCENES || path.join(require('os').tmpdir(), 'mantle-shots', 'glass-scenes')).replace(/\\/g, '/') + '/';
 const SCENES = [['a', 'a-snow-peak.jpg'], ['b', 'b-bright-sand-ripples.jpg'], ['c', 'c-dark-terminal.png']];
 const GLASS_OUT = process.env.MANTLE_GLASS_OUT || path.join(require('os').tmpdir(), 'mantle-shots', 'glass-topbar');
@@ -586,9 +586,9 @@ async function glassChecks(browser, check) {
     check(`glass ${n}: wears a picture (dark, a scene behind it)`, row.picture === true, JSON.stringify(row.box));
     check(`glass ${n}: exactly ONE tint layer`, row.layers === 1, JSON.stringify(row.box));
     check(`glass ${n}: the measured composite alpha of the tint over a flat backdrop is ${row.token}'s ${row.tokenAlpha} (+-.02)`, row.alpha != null && Math.abs(row.alpha - row.tokenAlpha) <= 0.02, `alpha ${row.alpha} pixel ${row.flatPixel}`);
-    // Over Owen's wallpaper the tint stays the token's or at most .04 thicker (a bar's need is now
+    // Over the user's wallpaper the tint stays the token's or at most .04 thicker (a bar's need is now
     // --lg-guard-bar, 4.2 in dark, so over his snow-peak the strip is Helm's .50 exactly).
-    check(`glass ${n}: over Owen's wallpaper (a) the tint is the token's, or at most .04 thicker for readability`, row.a && row.a.guard && (row.a.guard.engaged === false || row.a.guard.alpha <= row.tokenAlpha + 0.04), JSON.stringify(row.a && row.a.guard));
+    check(`glass ${n}: over the user's wallpaper (a) the tint is the token's, or at most .04 thicker for readability`, row.a && row.a.guard && (row.a.guard.engaged === false || row.a.guard.alpha <= row.tokenAlpha + 0.04), JSON.stringify(row.a && row.a.guard));
     for (const sk of ['a', 'b', 'c']) check(`glass ${n}: ink-2 reads >= ${row.need}:1 over the brightest ground pixel, scene ${sk}`, row[sk] && row[sk].worst >= row.need, JSON.stringify(row[sk]));
     for (const sk of ['a', 'b', 'c']) check(`glass ${n}: no page error, scene ${sk}`, !(row[sk] && row[sk].errs), JSON.stringify(row[sk] && row[sk].errs));
   }
@@ -675,7 +675,7 @@ async function glassChecks(browser, check) {
     check('light: no menu picture is asked for, nothing waits, no glass', l.calls === 0 && !l.pre && l.glass === 0 && l.menu == null, JSON.stringify(l));
     await p.close();
   }
-  // 6. THE STRIP'S BOTTOM EDGE (Owen's dark line): physical rows 27-42 at 125%, scene a + a dark
+  // 6. THE STRIP'S BOTTOM EDGE (the user's dark line): physical rows 27-42 at 125%, scene a + a dark
   // maximized window from the bar down; the strip with its picture and on its fallback
   const rows = async (page, tag, q) => {
     const p = await glassPage(browser, page, 'app=npp&maxwin=1&scene=' + encodeURIComponent('file:///' + SCENES_DIR + SCENES[0][1]) + q, { h: 200 });

@@ -1,13 +1,13 @@
 # PERF.md: how fast Mantle's surfaces must be, and how that is checked
 
-Every new or changed surface meets these rules. A surface is anything Owen opens with a key or a click:
+Every new or changed surface meets these rules. A surface is anything the user opens with a key or a click:
 Settings, Task Manager, Files, the launcher, clipboard, notes, and every pop-up after them.
 `tools/perf-budget.js` (the gate) measures them; a broken budget fails it.
 
 Source: `design notes: mantle-replace-windows`, section 3 (R1-R10) and P0. That plan was written when it
 assumed some windows would be pre-made, so some rules below are changed. The changes are listed at the end.
 
-## Owen's rule on RAM (2026-10-15)
+## The user's rule on RAM (2026-10-15)
 
 > "no i dont want these open in the backround i need to save ram ... there can be an option to have them
 > open backround though"
@@ -42,13 +42,13 @@ main.
 - **Mantle's total at rest is 650 MB private or less** (Electron, all processes; the sidecar is counted
   separately). This assumes every `keepReady` flag is off.
   - The plan's pre-load option would have added about 110 MB: all three surfaces, reaching about 720 MB.
-    Under Owen's default, Settings, Task Manager and Files add **0 MB at rest**.
+    Under the user's default, Settings, Task Manager and Files add **0 MB at rest**.
   - The live total is checked by the live shell's 30-min memory line.
   - The gate can't check it. A `--test` copy's main process runs 373-479 MB, against 202-212 MB live, so
     the gate judges every process except main against 650 - 210 = **440 MB**.
 - **Each `keepReady` flag that is on may cost up to 45 MB private** (and 20 MB working set after the
   trim) for its hidden window.
-  - The total budget grows by that much per flag Owen turns on, and by nothing else.
+  - The total budget grows by that much per flag the user turns on, and by nothing else.
   - Each keepReady window states its measured cost in its commit message and in the 30-min memory log
     line.
 - A visible surface costs at most 80 MB private.
@@ -160,7 +160,7 @@ The full numbers go to a JSON file and the test copy's log goes beside it (paths
 - Single spikes are not slack's job. A busy machine adds one-off opens of 1.2-6.7 s (launcher 1323 ms,
   task manager 6665 ms). With n 10, p95 is the slowest open, so one spike fails it. The one re-run
   absorbs these: every spike in the first run was gone on its re-run.
-- The 1 s cold ceiling is **never** scaled: it is Owen's "never".
+- The 1 s cold ceiling is **never** scaled: it is the user's "never".
 - RAM budgets are not scaled: a busy machine does not change bytes.
 - On a quiet machine, use `--slack=1` for the strict numbers.
 
@@ -233,13 +233,13 @@ What the baseline says to the surface lanes:
 ## What changed from the plan, and why
 
 - **R1 "warm by default" is now "fast cold by default".**
-  - Owen said no to pre-made hidden windows for Settings, Task Manager and Files.
+  - The user said no to pre-made hidden windows for Settings, Task Manager and Files.
   - Pre-loading is the opt-in `keepReady.<surface>` flag, default off.
   - So the cold budget (p95 400 ms, never more than 1 s) is now the main budget for those three. Before,
     it was the exception.
 - **R5 RAM.** The 650 MB total is kept, but it now assumes no pre-load. The plan's ~720 MB "all three
   pre-made" option is gone. Each keepReady flag costs at most 45 MB, and the budget grows only by the
-  flags Owen turns on. In the gate, the total becomes "every process but main <= 440 MB", because a
+  flags the user turns on. In the gate, the total becomes "every process but main <= 440 MB", because a
   `--test` main process is not the live one's size.
 - **Cold ceiling.** The plan's "1 s at 80 % CPU" is now plainly "never more than 1 s", for both visible
   and usable.

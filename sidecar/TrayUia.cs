@@ -511,7 +511,7 @@ namespace Mantle {
     /// null on success, else the reason in plain words. Left = UIA Invoke on
     /// the icon's taskbar button (explorer then delivers the click to the app
     /// exactly as it does for a screen reader). IMPLEMENTED, NOT EXERCISED in
-    /// any test: invoking a real tray icon opens Owen's real apps.
+    /// any test: invoking a real tray icon opens the user's real apps.
     public static string Click(string id, string button) {
       if (button == "right")
         return "right-click menus of tray icons are not reachable on this Windows build: Windows 11 draws the notification area in XAML, " +

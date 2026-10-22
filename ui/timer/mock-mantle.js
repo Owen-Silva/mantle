@@ -1,6 +1,6 @@
 /* mock-mantle.js - plays main for the "Timer done" page when it is opened over file:// without
  * Electron (headless shots and ui/timer/timer.test.js). The real preload.js defines window.mantle
- * first, so under Electron this file does nothing. Nothing here is from Owen's machine.
+ * first, so under Electron this file does nothing. Nothing here is from the user's machine.
  *
  * Query: mock=done (default) | off (finished while Mantle was off) | game (shown after a game)
  *        | asleep (fired late after a sleep) | snooze (a 5 min snooze of a 25 min timer ended)

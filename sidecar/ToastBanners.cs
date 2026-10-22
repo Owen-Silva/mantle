@@ -1,6 +1,6 @@
 // ToastBanners.cs - the Windows half of Mantle's own notification banners (lane mantle-toasts, 2026-10-15).
 //
-// WHY: Owen, with a screenshot of Helm's stock Windows toast: "these notifications need to be in mantles
+// WHY: the user, with a screenshot of Helm's stock Windows toast: "these notifications need to be in mantles
 // theme not the old windows". Mantle draws its own banner (lib/features/toasts.js, ui/toasts/) from the
 // toasts Notifications.cs already reads, so Windows' own banner has to stop for the apps Mantle covers,
 // or every toast pops up twice. The one per-app switch Windows has for that is the one its Settings page
@@ -18,7 +18,7 @@
 // BEFORE it changes a value: {"v":1,"owned":{"<aumid>": <original ShowBanner or null>}, ...}. This file
 // only remembers its path, and on EVERY exit (Program.SafetyRestore: clean quit, stdin EOF = main died,
 // Ctrl+C, an unhandled exception) puts each owned app's original back - but ONLY where the value is
-// still the 0 Mantle wrote. A value Owen changed himself in Windows' Settings is never overwritten.
+// still the 0 Mantle wrote. A value the user changed himself in Windows' Settings is never overwritten.
 // Main re-applies on the next sidecar start (ctx.sidecar.onReady), so a sidecar restart costs at most a
 // moment of Windows' own banner, never a lost one. The crash supervisor (Supervisor.cs BannersBack, run
 // OUTSIDE main's process tree so a tree kill of main cannot take it) does the same through RestoreFrom
@@ -205,8 +205,8 @@ namespace Mantle {
     /// (SettingsKey; a test points it at a scratch key); testOnly = only app ids starting with
     /// TestPrefix are written (a passive sidecar, a --supervise-test supervisor). The one rule: an
     /// original goes back ONLY where the value is still the DWORD 0 Mantle wrote; anything else is
-    /// Owen's own value and is left. backFile (null = none): this writer's own put-back mark, which
-    /// tells main's next start that a 0 on those apps afterwards is Owen's choice (MarkBack). Never
+    /// the user's own value and is left. backFile (null = none): this writer's own put-back mark, which
+    /// tells main's next start that a 0 on those apps afterwards is the user's choice (MarkBack). Never
     /// throws; one line, no paths.
     public static string RestoreFrom(string record, string settingsKey, bool testOnly, string backFile) {
       if (string.IsNullOrEmpty(record)) return "notification banners: Mantle never took any in this run";
@@ -238,7 +238,7 @@ namespace Mantle {
               using (RegistryKey k = root.OpenSubKey(found, true)) {
                 bool odd;
                 int? now = k == null ? null : ReadDword(k, "ShowBanner", out odd);
-                if (k == null || now != 0) { left++; continue; }   // not Mantle's 0 any more: Owen's own value
+                if (k == null || now != 0) { left++; continue; }   // not Mantle's 0 any more: the user's own value
                 if (original.HasValue) k.SetValue("ShowBanner", original.Value, RegistryValueKind.DWord);
                 else k.DeleteValue("ShowBanner", false);
                 back++;
@@ -255,11 +255,11 @@ namespace Mantle {
       string markWhy = put.Count > 0 && backFile != null ? MarkBack(backFile, put, taken) : null;
       return "notification banners: " + back + " put back to Windows" + (left > 0 ? ", " + left + " left as they were" : "") +
              (failed > 0 ? ", " + failed + " FAILED (tools\\restore-banners.ps1 finishes it)" : "") +
-             (markWhy != null ? "; the put-back mark could not be written (" + markWhy + "), so a banner Owen turns off before Mantle starts again may be read as Mantle's" : "");
+             (markWhy != null ? "; the put-back mark could not be written (" + markWhy + "), so a banner the user turns off before Mantle starts again may be read as Mantle's" : "");
     }
 
     /// Which apps this writer put back, for main's next start (lib/features/_toasts-owner.js): an owned app
-    /// that reads 0 later while the record still has the SAME taken stamp is Owen's own choice (a retake
+    /// that reads 0 later while the record still has the SAME taken stamp is the user's own choice (a retake
     /// stamps a new one, so an older mark never matches it). Format:
     /// {"v":1,"back":{"<aumid as the record keys it>":{"at":<ms>,"took":<the record's stamp, or null>}}},
     /// merged with this file's earlier entries (the newest 300 kept), written whole through a temp file.

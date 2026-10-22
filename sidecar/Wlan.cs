@@ -1,7 +1,7 @@
 // Wlan.cs - `wlan`: the Wi-Fi LIST behind the '>' on the Quick Settings Wi-Fi
 // tile. The networks in range, a scan when asked, connect and disconnect.
 //
-// Owen wants Mantle's panel to be the whole of Windows 11's Wi-Fi flyout, so he
+// The user wants Mantle's panel to be the whole of Windows 11's Wi-Fi flyout, so he
 // never has to open Windows' own. Network.cs answers "am I connected, how well";
 // this file answers "what else is out there, and get me onto it".
 //
@@ -22,7 +22,7 @@
 // WlanSetProfile receives, and nowhere else: never a log line, an error, a
 // reply, or the "last result" kept for a reopened panel.
 //
-// WHAT A TEST MAY DO (Owen's machine, 2026-09-23 brief): list and scan freely -
+// WHAT A TEST MAY DO (the user's machine, 2026-09-23 brief): list and scan freely -
 // they change nothing. connect, disconnect and every profile write are refused
 // in --passive. What proves them without touching his Wi-Fi is `probe`, which
 // calls each write entry point against an interface GUID that cannot exist (and
@@ -720,7 +720,7 @@ namespace Mantle {
             return Outcome(false, shown, why, 0, sw);
           }
           string name = ProfileName(n.Name);
-          // Never overwrite a saved profile: it may hold a key Owen still wants.
+          // Never overwrite a saved profile: it may hold a key the user still wants.
           if (ProfileExists(h, g, name)) {
             password = null;
             return Outcome(false, shown, "Windows already has a saved network called \"" + name + "\" that does not match the one in range now; " +
@@ -863,7 +863,7 @@ namespace Mantle {
     }
 
     /// Forget() for the exception path, where the interface must be found again.
-    /// A failure here still says so: a profile left behind is Owen's to clean up.
+    /// A failure here still says so: a profile left behind is the user's to clean up.
     static string ForgetQuietly(IntPtr h, string profile) {
       const string left = " (and the profile Mantle had just saved may still be there; forget it in Windows Wi-Fi settings)";
       try {

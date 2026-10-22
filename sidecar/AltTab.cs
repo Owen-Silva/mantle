@@ -13,7 +13,7 @@
 //                selected, and ACTIVATING the chosen one. It runs on the hook's
 //                thread and needs nothing from Electron, which is the whole
 //                point: if the overlay page is slow, hung or crashed, releasing
-//                Alt still switches (Owen's hard requirement: "Alt+Tab must
+//                Alt still switches (the user's hard requirement: "Alt+Tab must
 //                never go dead"). Electron only DRAWS the session.
 //
 // THE THREE RULES THE HOOK NEVER BREAKS:
@@ -554,7 +554,7 @@ namespace Mantle {
       // wave 3 (2026-09-24): every feature page is Mantle's own too, never a window to switch to
       "Mantle task view", "Mantle volume", "Mantle clipboard", "Mantle snap", "Mantle screenshot", "Mantle top bar"
     };
-    // Mantle's APP windows (lane settings, 2026-09-28): a window Owen works in like any app's (Mantle
+    // Mantle's APP windows (lane settings, 2026-09-28): a window the user works in like any app's (Mantle
     // Settings), so Alt+Tab and the bar's window list (WindowList.Build) show it although it is
     // Mantle's own process, which every other Mantle window is skipped for. Exact title (the page's
     // <title>), Chromium's window class, and still never a tool window or an owned one.

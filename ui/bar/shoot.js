@@ -2,7 +2,7 @@
  *
  * LINE 1 below is not optional: lowcpu.js pins this process (and every browser it spawns) to a
  * few cores at below-normal priority and takes a machine-wide lock so only one headless browser
- * runs at a time. Owen's machine has been pegged by unguarded Chromium before; a run that skips
+ * runs at a time. The user's machine has been pegged by unguarded Chromium before; a run that skips
  * this file is a rule break, not a shortcut.
  *
  *   node ui/bar/shoot.js              every shot below
@@ -112,7 +112,7 @@ const SHOTS = [
   { name: 'media-compact', w: 1000, h: 60, q: '?mode=pill&media=playing' },   // too narrow: the title gives way
   { name: 'media-card', w: 1280, h: 330, q: '?mode=pill&media=playing', click: '#mchip' },
   { name: 'media-noctl', w: 1280, h: 330, q: '?mode=pill&media=noctl', click: '#mchip' },
-  /* A protected media app alone: NO chip (Owen's call, 2026-09-22), so nothing is clicked: the shot proves absence */
+  /* A protected media app alone: NO chip (the user's call, 2026-09-22), so nothing is clicked: the shot proves absence */
   { name: 'media-protected', w: 1280, h: 60, q: '?mode=pill&media=protected' },
   { name: 'media-both', w: 1280, h: 480, q: '?mode=pill&media=both', click: '#mchip' },   // 480: + the collapsed Up next row (spotq), 400 cut the card's top off in the SHOT
   /* The protected app picked in the switcher while a player also plays: the controls-off card */
@@ -140,7 +140,7 @@ const SHOTS = [
   { name: 'spq-collapsed', w: 1280, h: 420, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', { probe: SPQ_FIT }] },
   { name: 'spq-search', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'macklemore' }, { wait: 700 }, { probe: SPQ_FIT }] },
   { name: 'spq-played', w: 1280, h: 560, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-list > :nth-child(5) .spq-row', { wait: 300 }, { probe: SPQ_FIT }] },   // a Next-up row: the queued ones before it are used up
-  /* spothide lane: Spotify hidden, played from the card, on Owen's 1536x864 screen */
+  /* spothide lane: Spotify hidden, played from the card, on the user's 1536x864 screen */
   { name: 'spq-hidden', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 400 }, { probe: SPQ_FIT }] },
   { name: 'spq-library', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, '.spq-seg .spq-tab:nth-child(2)', { wait: 400 }, { probe: SPQ_FIT }] },
   { name: 'spq-searchall', w: 1536, h: 864, q: '?mode=pill&media=playing&spq=queue', steps: ['#mchip', '.spq-head', { wait: 300 }, { fill: '.spq-search', text: 'macklemore' }, { wait: 700 }, { probe: SPQ_FIT }] },
@@ -244,7 +244,7 @@ const SHOTS = [
   { name: 'battery-push-qs', w: 1280, h: 400, q: '?mode=pill&battery=battery',
     steps: [{ wait: 900 }, '#battery', { js: "__mockMain.battery('charging')" }, { wait: 300 }] },
   /* POWER MODE (osd lane, 2026-09-24, ui/bar/powermode.js): the switch in every state it has - live,
-     on battery, muted off the Balanced plan (Owen's machine today), unreadable, a click pending, a
+     on battery, muted off the Balanced plan (the user's machine today), unreadable, a click pending, a
      click taken, a click refused (springs back, says why), and a change made in Windows Settings
      while the panel is open (the 'powermode' push). */
   { name: 'pm-balanced', w: 1280, h: 480, q: '?mode=pill', steps: [{ wait: 900 }, '#network', { wait: 300 }] },

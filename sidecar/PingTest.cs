@@ -1,5 +1,5 @@
 // PingTest.cs - "Run ping test" in the top bar's PING dropdown (lane pingtest, 2026-10-09).
-// Owen: "can you make a ping test? do this seperatly asap and push it asap"; where: "In the PING
+// The user: "can you make a ping test? do this seperatly asap and push it asap"; where: "In the PING
 // dropdown"; extras: "Router ping" AND "Download/upload speed".
 //
 // ON DEMAND ONLY: nothing here runs until the page sends topbar.pingtest {action:"start"}, so the idle
@@ -17,7 +17,7 @@
 //            (1 MB, 4 MB, 10 MB, then 25 MB each), until DownMs (7 s) or DownBytes (150 MB), first wins
 //            (150 MB: at ~170 Mbps the old 35 MB cap ended the reading after ~2 s; now it is time-bound).
 //            So a refusal (HTTP 429, its per-address limit) costs about 3 MB, not a 60 MB run.
-//            FALLBACK (ptfix, 2026-10-09: Owen's live run got "HTTP 429 Too Many Requests" from
+//            FALLBACK (ptfix, 2026-10-09: the user's live run got "HTTP 429 Too Many Requests" from
 //            Cloudflare): when Cloudflare fails for any reason, the same caps and ramp against an
 //            Akamai/Linode speed-test file (speedtest.<dc>.linode.com/100MB-<dc>.bin, Range requests, so
 //            only the bytes the caps allow are fetched), in the region closest to the best ping of the

@@ -3,7 +3,7 @@ require('../../tools/dev-env.js').lowcpu();
  *
  * Headless chromium over file:// (never Electron, never a real process): the REAL page files
  * (index.html + taskmgr.js + taskmgr.css) on ui/taskmgr/mock-mantle.js, whose apps and numbers are MADE
- * UP. Every check drives the page the way Owen would (click, right-click, double-click, keys) and
+ * UP. Every check drives the page the way the user would (click, right-click, double-click, keys) and
  * reads what the page asked Mantle to do (window.__mockCalls) and what it shows.
  *
  *   node ui/taskmgr/taskmgr.page.test.js         (run it through the lane's uislot.sh)

@@ -1,5 +1,5 @@
 // AppPower.cs - `apppower.*`: per-app CPU / memory / GPU controls for the top bar's CPU, RAM and GPU
-// dropdowns (lane mantle-power-sidecar, 2026-10-14). Owen: Efficiency mode, priority, CPU limit,
+// dropdowns (lane mantle-power-sidecar, 2026-10-14). The user: Efficiency mode, priority, CPU limit,
 // lower memory priority, free up memory, memory limit, lower graphics priority, graphics preference,
 // remembered per app. The contract is sections 2-3 of the App power design notes (not in this repo); Node
 // (lib/apppower-core.js, lib/features/apppower.js) decides WHAT, this file only does it to Windows.
@@ -585,7 +585,7 @@ namespace Mantle {
       List<string> found = MantleJobNames();
       {
         // a passive (--test) sidecar shares this session with the real one: it clears only the jobs of
-        // the test burner, never a limit Owen's Mantle set on a real app
+        // the test burner, never a limit the user's Mantle set on a real app
         Dictionary<uint, PInfo> live = null;
         if (Program.Passive) {
           string err;

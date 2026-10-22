@@ -1,7 +1,7 @@
 require('../../tools/dev-env.js').lowcpu();
 /* deskmenu.page.test.js - the desktop right-click menu in the REAL desktop page (ui/desktop/index.html +
  * deskmenu.js + deskmenu.css) in headless Chromium over file://. Never Electron, never the sidecar,
- * nothing on Owen's screen. A fake window.mantle plays lib/features/deskmenu.js (emits deskmenu.prepare /
+ * nothing on the user's screen. A fake window.mantle plays lib/features/deskmenu.js (emits deskmenu.prepare /
  * deskmenu.show, answers deskmenu.place) and records every call.
  *
  * Checks, light and dark: prepare opens ONE window named mantle-deskmenu (about:blank) and a second

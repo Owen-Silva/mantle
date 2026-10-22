@@ -42,7 +42,7 @@
 //     its raw vtable (slots 25-27 after the 21H2 layout) on an MTA thread. If a future Windows moves
 //     either, the reply says so in words; nothing guesses.
 //   property-store WRITES (name, enhancements, exclusive mode) go to HKLM\...\MMDevices: if Windows
-//     refuses Owen's filtered token they answer needsAdmin + elevate:'syssound.deviceProp'.
+//     refuses the user's filtered token they answer needsAdmin + elevate:'syssound.deviceProp'.
 //   the exclusive-mode keys ({b3f8fa53-0004-438e-9003-51a46e139bfc},3 and ,4) are the ones the Sound
 //     control panel writes; they are read as they are and written back in the same variant type.
 //
@@ -567,7 +567,7 @@ namespace Mantle {
     static int _storeProbe = -1;          // -1 not probed, 1 writable, 0 refused
     static string _storeWhy;
     /// Opens ONE endpoint's store for writing and closes it at once (nothing is written): says whether
-    /// Owen's token may write device properties, or needs the administrator prompt.
+    /// the user's token may write device properties, or needs the administrator prompt.
     static void ProbeStore(IMMDevice d) {
       if (_storeProbe >= 0) return;
       IPropertyStore ps;

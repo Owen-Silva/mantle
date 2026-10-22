@@ -21,9 +21,9 @@
 //        Restart Mantle, Windows ending the session): it exits without starting anything;
 //     2. Windows is signing out / shutting down (SM_SHUTTINGDOWN): exits;
 //     2b. the record names ANOTHER live main (lane mantle-notif-safety2): the dead one lost Electron's
-//        single-instance lock to it (a relaunch racing Owen's own start) or was replaced: not a crash, exits;
+//        single-instance lock to it (a relaunch racing the user's own start) or was replaced: not a crash, exits;
 //     2c. main AND its sidecar ended with exit code 1 within 2 s = a process-tree kill (Task Manager's "End
-//        process tree", taskkill /T): Owen stopping Mantle. The taskbar is put back (restore-windows.ps1
+//        process tree", taskkill /T): the user stopping Mantle. The taskbar is put back (restore-windows.ps1
 //        -NoKill, as a give-up does), no dialog, no restart, exits. It keeps a handle on main's sidecar(s)
 //        while main lives (TrackSidecars), because a process that is gone cannot be asked its exit code;
 //     3. otherwise a CRASH: the 3rd crash inside 2 minutes = a crash loop -> stop retrying, put the
@@ -44,7 +44,7 @@
 //   supervisor.lock        held open by the mutex holder for its whole life (empty; main only opens it to look)
 //
 // WINDOWS' OWN NOTIFICATION BANNERS (BannersBack, lane mantle-notif-safety 2026-10-17): Mantle turns
-// Windows' banner off per app while it draws its own, and Owen's rule is that a Windows surface Mantle
+// Windows' banner off per app while it draws its own, and the user's rule is that a Windows surface Mantle
 // replaces comes back when Mantle crashes or closes. On EVERY death of the watched main (crash, stand-
 // down, Windows shutting down) this puts the originals back FIRST, before it waits, restarts or gives
 // up (a restarted main applies them again itself). It never fights a running Mantle: when the record's
@@ -251,7 +251,7 @@ namespace Mantle {
         }
 
         // Another LIVE Mantle main for this folder (the record names it): the one that died lost Electron's
-        // single-instance lock to it (a relaunch while Owen started Mantle himself), or was replaced. Not a
+        // single-instance lock to it (a relaunch while the user started Mantle himself), or was replaced. Not a
         // crash, and starting main again could only lose that lock again. That Mantle has its own supervisor
         // (waiting for this one's mutex), so this one exits.
         int other = !recIsHis ? OtherLiveMain(mainPid, launched == mainPid && haveCode && raw == 0 ? 5000 : 0) : 0;
@@ -264,7 +264,7 @@ namespace Mantle {
           return 0;
         }
 
-        // "End process tree" / taskkill /T: main AND its sidecar ended with exit code 1 together. That is Owen
+        // "End process tree" / taskkill /T: main AND its sidecar ended with exit code 1 together. That is the user
         // stopping Mantle, not a crash: Windows' taskbar back (the same restore a crash-loop give-up runs), no
         // dialog, no restart. A crash or kill of main ALONE ends its sidecar with code 0
         // (node's kill-on-close job ends it ~3 ms later; measured 10-17), so that still restarts.
@@ -311,7 +311,7 @@ namespace Mantle {
           return 0;
         }
         // A test instance whose folder its test has already cleaned up is never started again (a test runner's
-        // kill must never leave a test Mantle running on Owen's desktop).
+        // kill must never leave a test Mantle running on the user's desktop).
         if (_test && !Directory.Exists(_dir)) return 0;
 
         string why2;
@@ -338,7 +338,7 @@ namespace Mantle {
       }
     }
 
-    /// The crash loop: no more retries, the Windows taskbar back, and why. True = Owen asked to try again.
+    /// The crash loop: no more retries, the Windows taskbar back, and why. True = the user asked to try again.
     static bool GiveUp(int count, int pid, string codeHex, string words, string what, long at) {
       string restore = RestoreCommand();
       string restoreResult;
@@ -354,10 +354,10 @@ namespace Mantle {
                     "The Windows taskbar is back.\n\nThe last time: " + words + ".\n\nStart Mantle again now?";
       int answer = MessageBoxW(IntPtr.Zero, text, "Mantle stopped", MB_YESNO | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
       if (answer == IDYES) {
-        Say("supervisor: Owen chose to start Mantle again after the crash loop; the crash count starts over");
+        Say("supervisor: the user chose to start Mantle again after the crash loop; the crash count starts over");
         return true;
       }
-      Say("supervisor: Mantle stays stopped (Owen said no)");
+      Say("supervisor: Mantle stays stopped (the user said no)");
       return false;
     }
 

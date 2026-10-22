@@ -6,7 +6,7 @@
  *   phys  physical pixels in VIRTUAL-SCREEN coordinates: what the sidecar grabs and crops in
  *         (Screenshot.cs is per-monitor DPI aware), so a second monitor can start at x = -1920.
  *   css   one overlay page's own CSS pixels, 0,0 at its monitor's top-left. Each monitor has its
- *         own overlay window, so each page has ONE scale: its monitor's (1.25 on Owen's panel,
+ *         own overlay window, so each page has ONE scale: its monitor's (1.25 on the user's panel,
  *         measured 2026-09-24). A mixed-DPI desktop is therefore just several single-DPI pages.
  * A page never uses devicePixelRatio for the conversion: it uses monitor-physical-width over
  * viewport-CSS-width, which is the scale Windows actually applied to THIS window even when

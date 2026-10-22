@@ -67,7 +67,7 @@
     return { color: idx.colors[cal] || null, many: false, n: l.length };
   }
 
-  /* 12-hour, the way the bar's clock reads (Owen asked for the Windows en-US style). */
+  /* 12-hour, the way the bar's clock reads (the user asked for the Windows en-US style). */
   function hm(ms) {
     var d = new Date(ms), h = d.getHours(), mer = h < 12 ? 'AM' : 'PM';
     h = h % 12; if (h === 0) h = 12;

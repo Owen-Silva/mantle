@@ -1,6 +1,6 @@
 // DevInput.cs - Mouse, Keyboard, Touchpad and Pen for Mantle Settings (lane devnet, 2026-09-28).
 //
-// WHY: Owen wants Mantle Settings to replace Windows' Settings outright ("it should do everything
+// WHY: the user wants Mantle Settings to replace Windows' Settings outright ("it should do everything
 // windows can do and more and not ever rely on any old windows feature"). Bluetooth & devices >
 // Mouse / Keyboard / Touchpad / Pen are all per-user values that Windows keeps behind
 // SystemParametersInfo, so this file reads and writes them the way Settings and main.cpl do: the
@@ -11,7 +11,7 @@
 //   devinput.get                       every value below, the touchpad and pen (present or why not)
 //   devinput.set {key, value, dryRun?} ONE value. dryRun validates, reads the current value and says
 //                                      what it would do; nothing is written. Passive refuses the real
-//                                      write (a test must never change Owen's mouse or keyboard).
+//                                      write (a test must never change the user's mouse or keyboard).
 //
 // KEYS (value type, range):
 //   mouse.primary 'left'|'right'   mouse.speed 1-20          mouse.enhancePrecision bool
@@ -29,7 +29,7 @@
 // touchpad.* write says so.
 // THE PEN: GetSystemMetrics(SM_DIGITIZER). Present or not, with the digitizer flags in words.
 //
-// MEASURED on Owen's desktop, 2026-09-28 (reads only): see the test sidecar/test-devinput.js.
+// MEASURED on the user's desktop, 2026-09-28 (reads only): see the test sidecar/test-devinput.js.
 using System;
 using System.Collections;
 using System.Collections.Generic;

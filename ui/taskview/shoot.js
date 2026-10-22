@@ -19,7 +19,7 @@ const OUT = process.env.MANTLE_SHOOT_OUT ||
   path.join(require('os').tmpdir(), 'mantle-shots', 'taskview');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 
-// 1536x864 is Owen's 1920x1080 screen at 125%, in DIP: the size Task View really is.
+// 1536x864 is the user's 1920x1080 screen at 125%, in DIP: the size Task View really is.
 const SHOTS = [
   ['1536x864-n7', 1536, 864, 'n=7'],
   ['1536x864-n3-d1', 1536, 864, 'n=3&d=1'],

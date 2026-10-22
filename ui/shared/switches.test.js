@@ -9,7 +9,7 @@ require('../../tools/dev-env.js').lowcpu();
  * at translateX(14px); the knob travels on the shared spring (--m-spring over --m-dur-xs, 240 ms) and
  * wears --shadow-knob; reduced motion = the knob does not travel-animate. Each theme keeps its colours.
  *
- * WHAT: headless Chromium over the REAL pages (file://, never Electron, never a window of Owen's). Where
+ * WHAT: headless Chromium over the REAL pages (file://, never Electron, never a window of the user's). Where
  * a page does not render the switch at load, the minimal markup with the real class names is injected
  * (every switch selector is unscoped, so the real CSS applies). Each site is read in light and in dark
  * (<html data-theme>, flipped live): first the motion (transitions live, and again under

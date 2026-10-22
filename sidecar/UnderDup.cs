@@ -1,7 +1,7 @@
 // UnderDup.cs - `underwatch`: the row under the top bar, read on the SAME frame the screen changes there
 // (lane mantle-topbar-instant, 2026-10-11). DXGI Desktop Duplication, no polling.
 //
-// Owen: "can you still make it faster? ... cause there is still a delay that i can see". The poll
+// The user: "can you still make it faster? ... cause there is still a delay that i can see". The poll
 // (UnderRow.cs, 8-15 reads a second) read the row at fixed times: a read taken just BEFORE a window
 // repainted saw the old colour, and the new one waited for the next read (66-125 ms). Desktop
 // Duplication hands this thread each new desktop frame as DWM presents it, with the rectangles that
@@ -25,7 +25,7 @@
 // {kind:"state", mode:"poll", reason} and main reads the row by polling `underrow` as before; it retries
 // every RetryMs and emits mode:"frames" when it is back.
 //
-// COST (measured 2026-10-11, Owen's desktop with ~17-37 frames/s changing somewhere on it): with the default
+// COST (measured 2026-10-11, the user's desktop with ~17-37 frames/s changing somewhere on it): with the default
 // D3D11 device the driver's worker thread spun on every AcquireNextFrame / ReleaseFrame, 2-3% of a core
 // for a row that never changed; the device is now SINGLETHREADED + PREVENT_INTERNAL_THREADING_OPTIMIZATIONS
 // and the same desktop costs 0.15-0.3% (about 0.05 ms a frame). A still desktop wakes nothing.

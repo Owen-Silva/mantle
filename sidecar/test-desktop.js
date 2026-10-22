@@ -4,7 +4,7 @@
  * wallpaper's pause rules live on (lane launch-desk, 2026-09-29).
  *
  * A PASSIVE sidecar only (test-lib.js): `desktop` (attach / recheck / detach) must be refused, so a
- * test can never re-parent a window into Owen's desktop; `foreground` is a read and must answer in the
+ * test can never re-parent a window into the user's desktop; `foreground` is a read and must answer in the
  * shape lib/wallpaper.js needs ({hwnd, fullscreen: boolean, rect: [l,t,r,b]}), or a full-screen game
  * would no longer pause the wallpaper. The explorer-restart rejoin cannot be driven without a real
  * explorer restart, so its code path is checked in the source (and is LIVE-ONLY in the matrix).

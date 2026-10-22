@@ -3,7 +3,7 @@
 //
 //   MANTLE_SIDECAR_EXE=<exe> MANTLE_FILES_SANDBOX=<...\lanes\files\sandbox> node sidecar/test-files.js
 //
-// Owen's rules, enforced here and not just hoped for:
+// The user's rules, enforced here and not just hoped for:
 //   - Every write runs inside <sandbox>\sc\run-<pid>, which this test creates and removes.
 //   - The "outside" target for refusal probes is <sandbox>\..\outside (harmless scratch). It is
 //     snapshotted first and must be byte-for-byte unchanged at the end.

@@ -46,7 +46,7 @@ namespace Mantle {
     static readonly Cached _brightness = new Cached("brightness", BrightnessFreshMs, Display.Brightness);
 
     /// A few seconds after start, read all three once in the background, so
-    /// the first time Owen opens the panel it already has real answers rather
+    /// the first time the user opens the panel it already has real answers rather
     /// than placeholders. After that, only reads keep them fresh.
     public static void WarmUp() {
       try {
@@ -178,7 +178,7 @@ namespace Mantle {
 
     // ============================================================= the watch
     //
-    // WHY (2026-09-23): Owen, live on 1c6afe3, wants the panel "way more
+    // WHY (2026-09-23): the user, live on 1c6afe3, wants the panel "way more
     // responsive". A change made elsewhere - a brightness key, Windows' own
     // flyout, the Wi-Fi dropping - reached the open panel only through main's
     // full six-part re-read every 2 s, answered from caches up to 3 s old: 2 to
@@ -191,7 +191,7 @@ namespace Mantle {
     // ends it when the panel closes; a main that died or forgot costs at most
     // MaxLeaseMs of reads, never a poll that runs forever.
     //
-    // Periods, from what one fresh read costs (Owen's machine, 2026-09-23;
+    // Periods, from what one fresh read costs (the user's machine, 2026-09-23;
     // ping's caches.watch.readMs has the live numbers):
     //   nightlight  one registry value, 0-1 ms                    every 250 ms
     //   power       GetSystemPowerStatus, 0-4 ms                  every 250 ms
@@ -203,7 +203,7 @@ namespace Mantle {
     //   volume      CoreAudio, 2-4 ms                             every 1000 ms
     // Volume is pushed by CoreAudio itself (VolumeWatch.cs); it is read here too because a
     // same-value write, the only kind a test may make, never fires that callback, so the
-    // callback could not be proven on Owen's machine (2026-09-23) - this is the backstop.
+    // callback could not be proven on the user's machine (2026-09-23) - this is the backstop.
     const int MaxLeaseMs = 120000;
     static readonly string[] WatchParts = { "nightlight", "power", "volume", "brightness", "bluetooth", "wifi" };
     const int BrightnessQuietMs = 1500;

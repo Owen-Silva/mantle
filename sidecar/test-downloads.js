@@ -4,7 +4,7 @@
 //
 // PASSIVE, like every sidecar test; downloads.list is a read, so a passive sidecar answers it. The
 // listing is proved on a TEMP folder made here (with real Windows hidden and system attributes, set
-// by attrib.exe on those temp files only). The known-folder case asks for max:0, so NOT ONE of Owen's
+// by attrib.exe on those temp files only). The known-folder case asks for max:0, so NOT ONE of the user's
 // file names crosses the pipe: only the folder's path, which is compared with the registry's and
 // never printed. Prints one summary line, "DOWNLOADS SIDECAR TEST: n passed, m failed".
 'use strict';
@@ -113,7 +113,7 @@ const H = 3600000;
       console.log(`  (a 20,001-entry folder: ${hms} ms)`);
     } finally { try { fs.rmSync(HUGE, { recursive: true, force: true }); } catch (_) { /* best effort */ } }
 
-    /* The known folder: max 0, so no name of Owen's is sent. Compared with the registry's value. */
+    /* The known folder: max 0, so no name of the user's is sent. Compared with the registry's value. */
     const k = await s.send('downloads.list', { max: 0 }, 6000);
     const kv = k.ok ? k.result : { ok: false, reason: k.error };
     let reg = null;

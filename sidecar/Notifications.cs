@@ -18,15 +18,15 @@
 // because the alternative, a non-passive test sidecar, clears the LIVE
 // Mantle's cursor clip at startup (Program.cs, EdgeClip.ClearStaleAtStartup),
 // and because nothing else can prove remove/open without touching a toast of
-// Owen's.
+// the user's.
 //
 // ------------------------------------------------------------------ MEASURED
-// All on this machine, 2026-09-22, under Owen's usual load (~70% CPU):
+// All on this machine, 2026-09-22, under the user's usual load (~70% CPU):
 //
 // THE LIST: Windows.UI.Notifications.Management.UserNotificationListener.
 //   GetAccessStatus() = Allowed for this unpackaged exe. RequestAccessAsync is
 //   NEVER called: access is already allowed, and asking can put a consent
-//   prompt in front of Owen. Denied/Unspecified is reported with the Settings
+//   prompt in front of the user. Denied/Unspecified is reported with the Settings
 //   page that fixes it.
 //   GetNotificationsAsync(Toast): 1 toast 33-193 ms (median 67); 21 toasts
 //   233-765 ms wall and ~120-150 ms of THIS process's CPU per read. Reading
@@ -56,7 +56,7 @@
 //   A FileSystemWatcher on that folder saw ZERO events for a post and a remove
 //   (the WAL is written through a mapped view), so it is no signal at all.
 //
-// TOAST INCOMING (lane mantle-toastfast, 2026-10-16: Owen's banners should be up
+// TOAST INCOMING (lane mantle-toastfast, 2026-10-16: the user's banners should be up
 //   within 300 ms of a toast). The chain was: the poll wait (0-400 ms) + the
 //   listener read (median 67 ms) + main making the banner window when none is
 //   open (median 206 ms), all in series. Now:
@@ -83,7 +83,7 @@
 //   own centre too. It does NOT throw for an id that does not exist, so every
 //   removal is verified with GetNotification(id) == null.
 //   ClearNotifications() is deliberately NOT used: it was never exercised
-//   (with Owen's own toasts present it would have wiped them), and it would
+//   (with the user's own toasts present it would have wiped them), and it would
 //   also clear a toast that arrived after the panel was drawn. "Clear all"
 //   dismisses exactly the ids it was given, one RemoveNotification each.
 //
@@ -94,7 +94,7 @@
 //     launcher, with its own refusal of file: and executables): 394 ms from an
 //     unpackaged MTA exe, handler received the URI (System.Uri adds a "/" to an
 //     empty path: scheme://host?q becomes scheme://host/?q, the same URI).
-//     Owen's one real toast today (Windows Security) is this kind.
+//     The user's one real toast today (Windows Security) is this kind.
 //   - anything else: Windows hands the app the launch arguments, through the
 //     app's COM activator (INotificationActivationCallback, CLSID in the
 //     AppUserModelId registry key or the Start-menu shortcut) or a UWP toast

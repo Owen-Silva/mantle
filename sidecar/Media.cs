@@ -56,7 +56,7 @@
 // asked just waits for the answer, and the events (which arrive on thread-pool
 // threads) only bump a counter and wake that thread.
 //
-// Measured on this machine, 2026-09-22, under Owen's usual load: RequestAsync
+// Measured on this machine, 2026-09-22, under the user's usual load: RequestAsync
 // 14-48 ms, GetSessions under 5 ms, TryGetMediaPropertiesAsync 3-20 ms,
 // hooking a session's three events 9 ms, unhooking 2 ms. The one live session
 // was a Store app (Publisher.App_hash!App): title the app's own name,
@@ -716,7 +716,7 @@ namespace Mantle {
 
     static readonly Dictionary<string, string> _art = new Dictionary<string, string>();   // under _art
 
-    // ART RETRY (lane r6-art, 2026-09-30). Owen's card showed the note glyph
+    // ART RETRY (lane r6-art, 2026-09-30). The user's card showed the note glyph
     // over a paused Spotify song and never got the picture. A read that finds
     // no art is not cached (the app may publish it a moment later), but the
     // card only reads again on a change event, and a PAUSED player sends

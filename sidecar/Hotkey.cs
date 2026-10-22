@@ -87,7 +87,7 @@ namespace Mantle {
     static bool _testFailRehook;               // TEST ONLY: the next dead-hook re-install "fails" (error 5)
 
     // LATE KEYS (lane shotfix, 2026-09-28). Windows waits at most LowLevelHooksTimeout for this hook
-    // (HKCU\Control Panel\Desktop; 1000 ms on Owen's machine, which is also the most Windows 10 1709+
+    // (HKCU\Control Panel\Desktop; 1000 ms on the user's machine, which is also the most Windows 10 1709+
     // waits), then passes the key on as if nothing had swallowed it. So a key we SWALLOW that reaches
     // the hook later than that reached Windows too: Win+Shift+S opens Windows' snip as well as
     // Mantle's, a Win+S also opens Search. Nothing else can see that happen, so the hook proc
@@ -839,7 +839,7 @@ namespace Mantle {
   // app's window).
   //
   // WHY ESC IS SWALLOWED: the Esc that closes a Mantle pop-up must not ALSO reach the app in front.
-  // In Helm (Owen's Claude app) an Esc interrupts every running agent, and in most apps it cancels
+  // In Helm (the user's Claude app) an Esc interrupts every running agent, and in most apps it cancels
   // whatever is in progress. A macOS menu consumes its Esc the same way. Outside a pop-up nothing is
   // ever swallowed, because the hooks do not exist. Never swallowed even while armed: an Esc with
   // Ctrl, Alt, Shift or Win held (Ctrl+Shift+Esc, Alt+Esc, Ctrl+Esc, the Alt+Tab switcher's Esc are

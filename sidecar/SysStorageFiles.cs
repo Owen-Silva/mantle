@@ -7,7 +7,7 @@
 // FIND_FIRST_EX_LARGE_FETCH, never enters a reparse point (a junction or link counts 0), and counts a
 // cloud-only placeholder (a OneDrive file that is not on this PC) as 0 bytes, like Windows does.
 //
-// THE DELETE RULES (binding; test-sysstorage.js proves them in a sandbox, never on Owen's files):
+// THE DELETE RULES (binding; test-sysstorage.js proves them in a sandbox, never on the user's files):
 //   - Delete() takes the files AND the allowed roots. Every file passes Inside(): a plain full local
 //     path (no "..", no ".", no stream, no odd characters), under one allowed root that is at least
 //     three levels deep (never a drive or C:\Windows itself), and NO link or junction anywhere from the

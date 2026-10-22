@@ -1,7 +1,7 @@
 // Lanes.cs - who runs which request, and when a request is not worth running.
 //
 // THE BUG THIS EXISTS FOR (live, 2026-09-22). Every command used to run on ONE
-// thread, the message-loop thread, in arrival order. Under Owen's normal load
+// thread, the message-loop thread, in arrival order. Under the user's normal load
 // (four simulation workers on ~70% of the CPU) the Bluetooth read - a
 // powershell.exe launch - took 3+ s, and brightness (WMI) queued behind it.
 // Electron gives up on a call after 4 s, but a request it had given up on was
@@ -198,7 +198,7 @@ namespace Mantle {
     //            Bluetooth radios, brightness, night light. Their own lane
     //            since 2026-09-23: on slow, a dragged brightness slider queued
     //            behind icon loads, tray reads and notification lists, which is
-    //            part of why Owen found the panel "doesn't work well at all".
+    //            part of why the user found the panel "doesn't work well at all".
     //   audio    volume, read and set: a CoreAudio RPC is ~5 ms but spikes to
     //            200+ under load (measured 2026-09-22), too slow for ui, and a
     //            dragged slider must not queue behind an icon load
@@ -511,7 +511,7 @@ namespace Mantle {
 
     // Its own long-lived refresh thread, signalled with an event. NOT a new
     // Thread per refresh: Thread.Start blocks until the new thread is running,
-    // and under Owen's load that cost 15-20 ms - paid on the ui lane by the
+    // and under the user's load that cost 15-20 ms - paid on the ui lane by the
     // read that kicked the refresh (measured 2026-09-22). Set() never blocks.
     readonly AutoResetEvent _kick = new AutoResetEvent(false);
 

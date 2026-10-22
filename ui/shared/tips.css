@@ -1,6 +1,6 @@
 /* ui/shared/tips.css - Mantle's own tooltips (ui/shared/tips.js), 2026-09-24.
  *
- * Owen: "can you make these popout things the same theme as the rest of it and make sure they dont
+ * The user: "can you make these popout things the same theme as the rest of it and make sure they dont
  * go behind the taskbar please". The popout things were Chromium's native `title` tooltips: dark,
  * Windows-styled, and a separate OS window that the always-on-top bar drew over. This is the same
  * text drawn INSIDE the page, in the one theme (glass-light.css --lg-* only): the popover's light
@@ -12,7 +12,7 @@
  * (dark 10 %) so a tip over an open popover's own white still has an edge.
  *
  * OPAQUE SINCE 2026-09-25. The frost alone is 72 % white, so 28 % of what is behind came through:
- * Owen's screenshot had a tip over the power tile's red "Power mode did not change" line with both
+ * The user's screenshot had a tip over the power tile's red "Power mode did not change" line with both
  * texts mixed and neither readable. Nothing may show through a tip, so the same frost is now laid
  * over --lg-ground (the one opaque colour the theme has: the ground a preview paints behind the
  * glass). It looks like the frost on a light ground, and no text behind it survives. Tips over the
@@ -64,7 +64,7 @@
   font-size: 11.5px;
 }
 
-/* DARK, SEE-THROUGH (lane see-huds, 2026-10-09). Owen, on dark Mantle: "mantle needs to be more see
+/* DARK, SEE-THROUGH (lane see-huds, 2026-10-09). The user, on dark Mantle: "mantle needs to be more see
    through everything", tooltips included. The tip above is opaque on purpose (2026-09-25: a .72 light
    frost let the text behind mix with the tip's). In dark it is ONE layer of --lg-fill (FINAL RULES: = --lg-fill-pop, both .83), the bar
    popovers' fill for a surface with nothing blurred behind it: ~18% of the screen shows through, about
@@ -76,7 +76,7 @@
 }
 
 /* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
-   Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
+   The user: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
    literal Helm). ONE layer of --lg-fill, its --lg-edge-out hairline, the --lg-lip-up lip, the row
    radius. No outer shadow: a tip lives in the bar window, whose shape ends just past it, so --lg-shadow
    was cut into a hard dark edge (lane clipped-shadow, 2026-10-10; ui/bar/bar.css body.up .bar). HELM-SPEC row 12 type (12.5 -> 13, 11.5 -> 12). Its 100 ms stepped

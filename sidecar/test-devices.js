@@ -4,9 +4,9 @@
 //   node sidecar/test-devices.js --exe=<built exe>          reads, dryRuns, passive refusals, bad args
 //   node sidecar/test-devices.js --exe=<built exe> --scan   + ONE short Bluetooth scan (6 s lease)
 //
-// NEVER changes Owen's machine: the sidecar is passive, every write is proven by its dryRun (for a
+// NEVER changes the user's machine: the sidecar is passive, every write is proven by its dryRun (for a
 // REAL target read from the machine, and a bogus one) and by its passive refusal. The scan is a read,
-// gated behind --scan so it runs at most when asked (Owen's rule: at most two short scans).
+// gated behind --scan so it runs at most when asked (the user's rule: at most two short scans).
 // Prints counts and shapes only: no device, printer, document or owner names, no addresses.
 'use strict';
 

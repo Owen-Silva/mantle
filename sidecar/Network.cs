@@ -1,7 +1,7 @@
 // Network.cs - `wifi`: what the Wi-Fi icon in Mantle's bar needs to know, and
 // the switch behind it.
 //
-// WHY THE NATIVE API AND NOT netsh. Owen's complaint about the stock bar is
+// WHY THE NATIVE API AND NOT netsh. The user's complaint about the stock bar is
 // that its buttons "just go to settings now"; Mantle's answer is a panel of its
 // own, which means the bar polls this state about twice a second. A netsh or
 // PowerShell call per poll is a process launch per poll - tens of milliseconds

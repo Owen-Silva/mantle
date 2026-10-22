@@ -4,7 +4,7 @@
  * hairlines, one accent. No backdrop-filter (in a transparent Electron window it blurs this page
  * and nothing else), no text-shadow, no glow.
  *
- * THE SURFACE: this panel carries a LIST of Owen's text over whatever window he was typing in,
+ * THE SURFACE: this panel carries a LIST of the user's text over whatever window he was typing in,
  * with no screen capture behind it (a picture of the screen under a clipboard panel is exactly
  * the kind of pixels the privacy rule keeps out). The switcher measured the glass tint alone at
  * 3.1:1 over a dark screen (2026-09-23), so the pane was --lg-fill-strong over --lg-fill-fb (~89%
@@ -295,7 +295,7 @@ body.noting .note { display: block; }
 }
 
 /* ---- DARK, SEE-THROUGH (lane see-huds, 2026-10-09) --------------------------------------------
-   Owen, on dark Mantle: "mantle needs to be more see through everything". The panel above is
+   The user, on dark Mantle: "mantle needs to be more see through everything". The panel above is
    --lg-fill-strong three times under --lg-sunk (~89% at the dark .50) and every card on it is the
    fill once more: a slab. In dark the panel is ONE layer of --lg-fill (FINAL RULES: = --lg-fill-pop, both .83), the bar popovers' fill for
    a surface with nothing blurred behind it (this window has no screen capture), so the screen behind
@@ -310,7 +310,7 @@ body.noting .note { display: block; }
 :root[data-theme="dark"] .filter input::placeholder { color: var(--lg-ink-2); }
 
 /* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
-   Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
+   The user: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
    literal Helm). The pane is ONE layer of --lg-fill with its --lg-edge-out hairline and the --lg-lip-up
    lip, at Helm's big-pane radius (--lg-r-xl). NO outer shadow: the window keeps 18 DIP round the pane
    (model.js MARGIN), so --lg-shadow was cut into a hard dark edge (lane clipped-shadow, 2026-10-10). HELM-SPEC rows applied: 3 (the filter

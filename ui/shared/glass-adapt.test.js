@@ -118,7 +118,7 @@ t('guard: over white the BAR tint thickens (same colour) to the thinnest alpha t
   assert.ok(/^rgba\(12,13,14,0\.\d+\)$/.test(r.tint), r.tint);
 });
 /* --lg-guard-bar (dark, 2026-10-10): the BARS accept Helm's own strip contrast (4.2) before thickening,
-   so over Owen's snow-peak sky the top bar is Helm's .50 exactly; panels and light keep 4.7. */
+   so over the user's snow-peak sky the top bar is Helm's .50 exactly; panels and light keep 4.7. */
 const DARK_HELM = fakeCS({ '--lg-fill': 'rgba(19,20,21,.83)', '--lg-fill-bar': 'rgba(9,10,11,.50)', '--lg-fill-pop': 'rgba(19,20,21,.88)',
   '--lg-ink-2': '#a9aaa7', '--lg-blur': 'blur(5px)', '--lg-guard-bar': '4.2' });
 t('--lg-guard-bar: a bar takes its need from the token; a panel, and a theme without it, keep GUARD.need', () => {

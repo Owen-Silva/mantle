@@ -1,6 +1,6 @@
 /* mock-mantle.js - a stand-in for main and the sidecar, so the volume pop-up can be looked at,
  * measured and screenshotted in a plain headless browser: no Electron, no sidecar, and nothing
- * ever changed on Owen's machine. It defines window.mantle ONLY when it is absent, so with the
+ * ever changed on the user's machine. It defines window.mantle ONLY when it is absent, so with the
  * real preload it does nothing at all (the switcher's and the launcher's pattern).
  *
  * WHAT IT PLAYS (query string):

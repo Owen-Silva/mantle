@@ -9,7 +9,7 @@
  *   Windows backup        OneDrive and which folders it backs up (read-only, why)
  *   Other users           the local accounts (read-only: administrator, and Mantle never changes accounts)
  *   Access work or school Entra / workplace / domain / MDM (read-only, why)
- * Mantle NEVER changes Owen's account, password, PIN or users. Kit only; nothing opens Windows Settings.
+ * Mantle NEVER changes the user's account, password, PIN or users. Kit only; nothing opens Windows Settings.
  */
 (function () {
   'use strict';

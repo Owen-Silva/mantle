@@ -1,6 +1,6 @@
 /* mock-mantle.js — plays main for the quick notes pad when it is opened over file:// without
  * Electron (headless shots). The real preload.js defines window.mantle first, so under Electron this
- * file does nothing. Every note, time and path here is MADE UP: nothing is read from Owen's notes.
+ * file does nothing. Every note, time and path here is MADE UP: nothing is read from the user's notes.
  *
  * Query: mock=3notes (default) | empty | failed | undo (armed, armed2: the same) | find | slow | many |
  *        outside | long | nobridge

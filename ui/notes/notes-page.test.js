@@ -4,7 +4,7 @@ require('../../tools/dev-env.js').lowcpu();
  * main: it TYPES and CLICKS through tabs, a new note, delete + Undo, keyboard (Ctrl+N, Ctrl+Tab,
  * arrows on the tabs, Esc), the autosave debounce and its 3 s cap, a slow save, a failed save, find
  * across notes (Ctrl+F, Enter, Shift+Enter, F3, Esc, the mark on the current match), huge text, unicode, and PRIVACY (no typed text
- * in any mantle.call argument). Never Electron, never Owen's notes: every note is made up.
+ * in any mantle.call argument). Never Electron, never the user's notes: every note is made up.
  *
  *   node ui/notes/notes-page.test.js          (MANTLE_SHOOT_OUT=<dir> for the shots)
  * Prints "NOTES PAGE: n passed, m failed". A game running = skipped (and said).

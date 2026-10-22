@@ -1,5 +1,5 @@
 /* pingtest.js — "Run ping test" in the top bar's PING dropdown (lane pingtest, 2026-10-09).
- * Owen: "can you make a ping test?"; where: "In the PING dropdown"; extras: "Router ping" AND
+ * The user: "can you make a ping test?"; where: "In the PING dropdown"; extras: "Router ping" AND
  * "Download/upload speed".
  *
  * The sidecar runs it (sidecar/PingTest.cs) and keeps the last run; this file only draws it, inside
@@ -22,7 +22,7 @@
   let err = null;     // a refused start / cancel / read, in words
   let asking = false; // a state read in flight
   let readFailedAt = 0; // the last failed state read (retried at most every 5 s while the dropdown draws)
-  /* HISTORY (Owen: "i want history of the tests and make it so i can save tests and name them and each
+  /* HISTORY (the user: "i want history of the tests and make it so i can save tests and name them and each
    * test should also say what wifi i was on"). Main keeps it (lib/features/_pingtest-history.js,
    * <userData>/ping-tests.json) and pushes `topbar.pingtests` on every change. */
   const H = { tab: 'test', list: null, open: null, edit: null, armed: null, filter: null, msg: null };
@@ -245,7 +245,7 @@
     if (short) return w.kind === 'wifi' ? 'Wi-Fi (name hidden)' : 'no network';
     return w.why || (w.kind === 'wifi' ? 'On Wi-Fi: Windows did not give its name' : 'No network was found');
   }
-  /* The link a test ran on (ptfix2: Owen's before/after mesh test). short = for a history row.
+  /* The link a test ran on (ptfix2: the user's before/after mesh test). short = for a history row.
    * Wi-Fi: "5 GHz · ch 157 · 70% · 1201/576 Mbps" (+ RSSI, PHY, the access point when not short);
    * Ethernet: "cable · 1000 Mbps". A link Windows would not give: its reason. '' = no link recorded. */
   const LINK_NAMES = { bssid: 'access point', signal: 'signal', rssi: 'RSSI', band: 'band', channel: 'channel', phy: 'Wi-Fi standard', rxMbps: 'receive rate', txMbps: 'send rate' };

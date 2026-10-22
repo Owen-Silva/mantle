@@ -6,12 +6,12 @@
  * side of Lively's web-wallpaper contract (github.com/rocksdanister/lively/wiki, "Web Guide"):
  *
  *   livelyPropertyListener(name, value)  called once per saved property after the page loads, and
- *                                        again whenever Owen changes one in the Wallpapers window
+ *                                        again whenever the user changes one in the Wallpapers window
  *   livelySystemInformation(json)        a JSON STRING of machine stats, about once a second, to a
  *                                        wallpaper whose LivelyInfo.json asks for
  *                                        "--system-information"
  *   the mouse                            the cursor position, as synthetic mousemove/pointermove
- *                                        events: Lively forwards input (Owen's InputForward is 1,
+ *                                        events: Lively forwards input (the user's InputForward is 1,
  *                                        "mouse"), and the desktop layer itself never receives a
  *                                        real one -- it sits under the icons
  *

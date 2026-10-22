@@ -1,7 +1,7 @@
 /* glass-adapt.js : how bright the blurred picture under a DARK glass surface may be (lane see-glass,
  * 2026-10-09).
  *
- * Owen, over his mountain wallpaper in dark: "mantle needs to be more see through everything", then
+ * The user, over his mountain wallpaper in dark: "mantle needs to be more see through everything", then
  * "can you change it to 50% since that is the same as i set helm to". So the dark tint is ONE layer of
  * --lg-fill (.50 of #1E1F22) over the blurred picture, and --lg-blur no longer dims it. Half a tint of
  * near-black cannot keep light ink readable over a white page or a bright photo on its own: over pure
@@ -160,17 +160,17 @@
   }
 
   /* ==== THE ONE READABILITY GUARD (lane same-bars, 2026-10-09) ====================================
-     Owen: "the reason i want everything at 50% is cause it will all match way better if its the
+     The user: "the reason i want everything at 50% is cause it will all match way better if its the
      same". So in dark every surface is ONE layer of --lg-fill (.50) over a picture blurred with
      --lg-blur and nothing else, and the ONLY allowed deviation is this rule, shared by every surface
      that has one (the top bar first, ui/topbar/glass.js; the bottom bar and its pop-ups, ui/bar/bar.js;
      the top bar's dropdowns): the tint THICKENS (never the picture dimming) to the thinnest alpha, never
      under --lg-fill's own, at which --lg-ink-2 (the quietest word) reads >= 4.5:1 against the brightest
-     pixel of the picture AS THE COMPOSITOR DRAWS IT (blurred, saturated). Over Owen's wallpaper that
+     pixel of the picture AS THE COMPOSITOR DRAWS IT (blurred, saturated). Over the user's wallpaper that
      is --lg-fill exactly; over a white page it is what the words need, capped at --lg-fill-pop.
      These functions are the top bar's (lane see-topbar), moved here unchanged so there is one copy. */
   /* need 4.7, not 4.5: the model blurs the 4x-downscaled picture, and what Chromium draws (that picture
-     upscaled, then blurred) peaks a little brighter. Measured on the top bar over Owen's snow-peak
+     upscaled, then blurred) peaks a little brighter. Measured on the top bar over the user's snow-peak
      wallpaper: model 4.58, drawn pixels 4.41 (lane same-bars-top, 2026-10-09). The .2 margin keeps the
      DRAWN text >= 4.5:1. */
   var GUARD = { need: 4.7, step: 0.02, hold: 4 };   // ink --lg-ink-2; floor --lg-fill's alpha; ceil --lg-fill-pop's
@@ -266,7 +266,7 @@
     return lower >= (hold || GUARD.hold) ? { cur: next, lower: 0 } : { cur: cur, lower: lower };
   }
   /* The guard's inputs, read from a computed style (getComputedStyle(document.documentElement)).
-     FINAL RULES (Owen: "Match Helm's real look"): a BAR (o.bar: the bottom island, the top bar) is
+     FINAL RULES (the user: "Match Helm's real look"): a BAR (o.bar: the bottom island, the top bar) is
      --lg-fill-bar (Helm's rail, .75) and its guard floors there; every other surface is --lg-fill
      (Helm's panel, .83). The ceiling is --lg-fill-pop either way (= --lg-fill in dark, so a pop-up's
      guard can only say whether .83 already holds the ink, never thicken it). */

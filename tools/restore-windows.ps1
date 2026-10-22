@@ -12,7 +12,7 @@
 # WHY THIS FILE EXISTS
 # -----------------------------------------------------------------------------
 # 2026-09-21. Mantle's first live run hid the Shell_TrayWnd window with
-# ShowWindow(SW_HIDE). Owen's Windows taskbar is set to AUTO-HIDE, and hiding the
+# ShowWindow(SW_HIDE). The user's Windows taskbar is set to AUTO-HIDE, and hiding the
 # window of an auto-hiding taskbar wedges explorer's own show/hide state machine:
 # when Mantle was killed, the sidecar's SW_SHOW ran and the taskbar still did not
 # come back. He had to REBOOT, in the middle of his work.
@@ -21,7 +21,7 @@
 # MANTLE. Not Electron, not Node, not the C# sidecar, not a tray icon, not a
 # keystroke that something else might have swallowed. Windows PowerShell 5.1 and
 # Add-Type are on every Windows box that has ever existed in this decade, so that
-# is all this uses. If Owen can open a terminal, he can get his taskbar back.
+# is all this uses. If the user can open a terminal, he can get his taskbar back.
 #
 # It is also SAFE TO RUN WHEN NOTHING IS WRONG. Every step reads the current state
 # first and only writes when it differs, so a run with no state file and a healthy
@@ -258,7 +258,7 @@ if ($dpiAware) {
 # -----------------------------------------------------------------------------
 # (a) Stop Mantle, and ONLY Mantle.
 #
-# Owen's own browser is an Electron app. `taskkill /im electron.exe` would take
+# The user's own browser is an Electron app. `taskkill /im electron.exe` would take
 # his browser, his tabs and anything else Electron-shaped with it, so the match is
 # on this repo's folder path inside the process's command line -- which every
 # Mantle electron.exe has (it is in its own exe path) and no other Electron app

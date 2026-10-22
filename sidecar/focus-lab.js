@@ -1,7 +1,7 @@
 // focus-lab.js - a real foreground lock, built from Mantle's OWN test windows, for the focus ladder
 // (WindowList.Focus, sidecar/Windows.cs). Lane mn-focus, 2026-10-12. Used by test-focus-ladder.js.
 //
-// WHAT IT REBUILDS: Owen clicks a pin on the bar. The bar is focusable:false (WS_EX_NOACTIVATE), so
+// WHAT IT REBUILDS: the user clicks a pin on the bar. The bar is focusable:false (WS_EX_NOACTIVATE), so
 // the click lands in Electron's process WITHOUT making it the foreground process; the app he was in
 // keeps the foreground; and the process that then calls SetForegroundWindow is the sidecar, which
 // neither is the foreground process nor received that click. Here:
@@ -116,7 +116,7 @@ static class P {
       f.Size = new Size(int.Parse(a[5]), int.Parse(a[6]));
       f.BackColor = ColorTranslator.FromHtml(a[7]);
       f.ShowInTaskbar = role != "bar";
-      f.TopMost = true;   // all of them: an app of Owen's maximised behind must not cover the clicks
+      f.TopMost = true;   // all of them: an app of the user's maximised behind must not cover the clicks
       f.Shown += delegate { Lab.Say("HWND " + f.Handle.ToInt64() + " PID " + pid); };
       f.Activated += delegate { Lab.Say("ACT 1"); };
       f.Deactivate += delegate { Lab.Say("ACT 0"); };

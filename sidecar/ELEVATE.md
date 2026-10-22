@@ -3,7 +3,7 @@
 Some settings need an administrator, exactly as they do in Windows' own Settings: rename the PC,
 switch an adapter on or off, DNS servers, Remote Desktop, developer mode, pausing Windows Update.
 Mantle runs **not** elevated and stays that way. Each of those actions goes through **one UAC
-prompt that Owen approves, one action per prompt**, like the shield buttons in Windows.
+prompt that the user approves, one action per prompt**, like the shield buttons in Windows.
 
 `sidecar/Elevate.cs` is the only way to get there. **Never** call `runas`, `Start-Process -Verb
 RunAs`, a scheduled task, a service or anything else that gets administrator rights. If an
@@ -61,7 +61,7 @@ Rules for the two methods:
 - Return plain words on failure (`"Windows did not rename this PC (Access is denied, error 5)"`).
   If the change only takes effect later, say so in `result` (`restartNeeded`, `note`).
 - One action is one change. Do not bundle "and also" work into it: every elevated action should
-  be something Owen would recognise from the prompt's context.
+  be something the user would recognise from the prompt's context.
 
 `elevate.list` answers `{actions:[{action, does}], problems, test}`. `problems` names every
 `[Elevated]` method that was left out, with the reason. Check that your action appears there.
@@ -81,7 +81,7 @@ const r = await elevate(ctx.sidecar, 'system.renamePc', { name: 'MY-PC' },
   belongs to.
 - `kind`: one of these values.
   - `ok`
-  - `cancelled`: Owen said no. This is not an error, so show it quietly.
+  - `cancelled`: the user said no. This is not an error, so show it quietly.
   - `timeout`
   - `refused`: a validator or a safety check said no.
   - `failed`: the action ran and Windows said no.
@@ -103,7 +103,7 @@ Mantle Settings hands its section modules `env.elevate(action, args, opts)`. Tha
    for administrator permission to rename this PC." Use the action's `does` words, from
    `elevate.list` or the same string.
 3. **Show that it is waiting.** While the call is waiting, the control is busy and the page
-   says "Waiting for the administrator prompt...". The prompt can take as long as Owen needs.
+   says "Waiting for the administrator prompt...". The prompt can take as long as the user needs.
 4. **Show the outcome in the page, never only in the log.**
    - `ok`: show the result, and its `note` if it has one (e.g. "The new name takes effect after
      a restart").
@@ -143,14 +143,14 @@ page -> main: elevate(sidecar, action, args)
                (elevate.status {ticket} answers for a caller that missed the event)
 ```
 
-**Why a ticket and not a reply that waits.** The prompt waits for Owen. A sidecar lane blocked
+**Why a ticket and not a reply that waits.** The prompt waits for the user. A sidecar lane blocked
 for a minute would starve every other command on it (Lanes.cs). So `elevate.run` returns at once,
 and `lib/elevate.js` waits for the event.
 
 **Timing.** The request goes stale after **60 s**, and the broker's timeout is **90 s**.
 
-- If Owen says yes within 60 s, the action runs. It then has at least 30 s to finish.
-- If Owen says yes later than 60 s, the step refuses the request as stale.
+- If the user says yes within 60 s, the action runs. It then has at least 30 s to finish.
+- If the user says yes later than 60 s, the step refuses the request as stale.
 - If the broker times out while the request is still on disk, it deletes the request. The
   reason then says nothing changed, and a later "yes" finds nothing to run.
 - If the step had already taken the request, the reason says it may still have happened.
@@ -180,14 +180,14 @@ and `lib/elevate.js` waits for the event.
     request stays fresh.
 - **The request is BOUND to its prompt.** The step's command line carries the SHA-256 of the
   exact bytes the broker wrote (`--sha256`). Windows fixes that line when it shows the prompt, so
-  a request rewritten while the prompt is up (anything running as Owen can write the folder) is
+  a request rewritten while the prompt is up (anything running as the user can write the folder) is
   refused: "the request changed after Windows asked about it". A step started without a
-  digest is refused too. Before 2026-09-29 a same-user program could swap the DNS servers Owen
+  digest is refused too. Before 2026-09-29 a same-user program could swap the DNS servers the user
   was approving for its own during the prompt.
 - **The administrator step never writes through a link.** The folder is writable by everything
-  running as Owen, and the step is an administrator: a hard link, symlink or junction planted in
+  running as the user, and the step is an administrator: a hard link, symlink or junction planted in
   that folder would otherwise make it overwrite, truncate or delete a file anywhere (a classic
-  way to turn "runs as Owen" into "runs as an administrator"). So it pins the folder open
+  way to turn "runs as the user" into "runs as an administrator"). So it pins the folder open
   (no share-delete, checked final path), opens every file by handle with
   `FILE_FLAG_OPEN_REPARSE_POINT`, refuses a link or a second name (`NumberOfLinks != 1`) or a
   file whose final path is not in the folder, writes its answer only to a file it just created
@@ -196,14 +196,14 @@ and `lib/elevate.js` waits for the event.
 - **No prompt loops.** After a "No", `elevate.run` refuses for 3 s ("you said no a moment ago,
   so Mantle waits 3 s before asking again", kind `busy` in lib/elevate.js). A UAC prompt takes
   the whole screen; a page stuck in a loop, or a compromised one, could otherwise put it back
-  the instant it was answered, and Owen could never reach Mantle to stop it. One prompt at a
+  the instant it was answered, and the user could never reach Mantle to stop it. One prompt at a
   time was already the rule.
 - **Who can ask.** There is no pipe or socket: the only way in is `elevate.run` on the sidecar's
   stdin, which only Mantle's main process holds. Pages never name an action directly: a
   Settings section's main-side module does (`env.elevate`), from its own table (System's
   `ADMIN`, the devices/internet bridges), and the sidecar's validator checks every arg. So a
   compromised page can at most ask for a whitelisted action with args that pass its validator,
-  one prompt at a time, never again for 3 s after a No, and nothing runs unless Owen says yes.
+  one prompt at a time, never again for 3 s after a No, and nothing runs unless the user says yes.
 - **Logs carry action names, kinds and tickets. Never args or reasons**, since a reason can
   quote an arg (a PC name, a DNS server).
 - **The test seam can never raise UAC.** `MANTLE_ELEVATE_TEST=1` is honoured only in a process
@@ -219,7 +219,7 @@ and `lib/elevate.js` waits for the event.
 
 **What this does NOT protect against, said plainly:**
 
-- **Malware running as Owen, not elevated.** It can already raise any UAC prompt it likes,
+- **Malware running as the user, not elevated.** It can already raise any UAC prompt it likes,
   including one for `Mantle.Sidecar.exe --elevated` with a request of its own, or replace
   `Mantle.Sidecar.exe` itself. The exe lives in a user-writable folder, and the prompt shows it
   as an unsigned "Mantle.Sidecar.exe". (It can no longer rewrite Mantle's OWN request during
@@ -269,5 +269,5 @@ node lib/elevate.test.js
 `test-elevate.js` never shows a UAC prompt. It runs the broker through the `open` seam, and
 spawns `--elevated` directly (a plain CreateProcess never elevates).
 
-Not provable without Owen: a real UAC round trip. That covers the prompt appearing in front,
+Not provable without the user: a real UAC round trip. That covers the prompt appearing in front,
 "yes" running the action elevated, and "no" giving ERROR_CANCELLED from the real API.

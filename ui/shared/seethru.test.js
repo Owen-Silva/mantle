@@ -2,13 +2,13 @@ require('../../tools/dev-env.js').lowcpu();
 /* seethru.test.js - every dark pop-up shows the WALLPAPER lined up under Helm's panel tint (lane
  * mantle-seethru-popups, 2026-10-10).
  *
- * Owen: "this needs to be see through the same as everything else", then "Match Helm's panels". Helm's
+ * The user: "this needs to be see through the same as everything else", then "Match Helm's panels". Helm's
  * panel on screen is its photo blurred 5px under ~.83 of dark; Mantle's dark glass is the same when each
  * surface shows the wallpaper still (lib/wall-still.js) cut at ITS OWN screen rectangle, blurred with
  * --lg-blur (5px), under ONE --lg-fill layer (rgba(19,20,21,.83)).
  *
  * WHAT: headless Chromium over the REAL pages at 1.25x (file://, never Electron, never a window of
- * Owen's). A known still (bright and dark blocks over gradients: a picture off by a pixel shows) is cut
+ * the user's). A known still (bright and dark blocks over gradients: a picture off by a pixel shows) is cut
  * with the REAL lib/wall-still.js resample + encoder exactly as main cuts it for that surface (the HUDs'
  * window rectangle as `<key>.backdrop` {png, at, win}, the launcher's window rectangle, the switcher's
  * panel + 14 overscan, task view's whole still + its origin, the top bar's menu picture), handed to the

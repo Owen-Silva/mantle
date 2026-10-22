@@ -8,7 +8,7 @@
 # The core's rules, again here:
 #   - only HKCU number (DWORD) values on the allowlist below (the core's piece table); anything else in
 #     the journal is left alone and said, so a tampered file cannot make this write an arbitrary value;
-#   - a value is written back ONLY while it still holds Mantle's value; one changed since (by Owen or
+#   - a value is written back ONLY while it still holds Mantle's value; one changed since (by the user or
 #     by Windows) is left as it is;
 #   - an entry that could not be put back stays in the journal for the next try (exit 1).
 # PowerShell 5.1 only: no ternary, no '&&', no '?.'. Never New-Item -Force on a key that exists (it

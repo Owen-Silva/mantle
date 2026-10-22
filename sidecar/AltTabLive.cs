@@ -1,5 +1,5 @@
 // AltTabLive.cs - the Alt+Tab list follows the desktop while the switcher is up (lane mn-alttab,
-// 2026-10-12). Owen took the live list out on 09-29; this puts it back, done the macOS way.
+// 2026-10-12). The user took the live list out on 09-29; this puts it back, done the macOS way.
 //
 // WHAT: on macOS (and in Windows' own Alt+Tab) a window that opens or closes while the switcher is
 // up appears or disappears in place, and the selection stays on the same window, or moves to its

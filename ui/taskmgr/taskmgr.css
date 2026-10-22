@@ -1,5 +1,5 @@
 /* taskmgr.css — Mantle's task manager (lib/features/taskmgr.js), in the taskbar island's theme
- * (glass-light.css --lg-* ONLY; one theme for every Mantle surface, Owen 2026-09-21). GLASS (lane
+ * (glass-light.css --lg-* ONLY; one theme for every Mantle surface, the user, 2026-09-21). GLASS (lane
  * taskmgrfx): the window asks Windows for its acrylic system backdrop (lib/features/taskmgr.js), so
  * the page paints NO ground: the whole window is the island's --lg-fill wash over the acrylic, and the
  * panes are the popover glass (--lg-fill-strong, the white lip, one .10 hairline) for readable rows.
@@ -258,7 +258,7 @@ html { background: var(--lg-fill-strong); }
 }
 
 /* ---------------------------------------------------------------- dark: Helm's look (lanes see-apps + same-apps, 2026-10-09)
-   Owen: "they should all also have the same style ... if there is a conflict go by what helm looks like",
+   The user: "they should all also have the same style ... if there is a conflict go by what helm looks like",
    then "Match Helm's real look". Every value is a dark token from shared/glass-light.css (Helm's own,
    HELM-SPEC.md); this block holds only WHICH token goes where:
    - ONE tint layer per region, painted on the window itself: the header strip is Helm's rail/strip

@@ -1,11 +1,11 @@
 'use strict';
 /*
  * barhover.e2e.test.js -- THE BAR'S HOVER BAND through the real main.js hoverTick (lane mantle-barhover,
- * 2026-10-17). Owen: "i can hold my mouse a lot of pixels above it without it going away like a lot".
+ * 2026-10-17). The user: "i can hold my mouse a lot of pixels above it without it going away like a lot".
  *
  * One invisible --test --test-live-bar instance (the hover-mode bar: the tall window and its shaped
  * region, lib/test-quiet.js keeps it off the screen) started with MANTLE_BAR_TEST_CURSOR=1, so its hover
- * poll reads a STAND-IN cursor that this test moves with bar.testCursor {x, y} (DIP); Owen's real
+ * poll reads a STAND-IN cursor that this test moves with bar.testCursor {x, y} (DIP); the user's real
  * cursor is never read, moved or clicked. For each state the cursor reveals the bar at the screen
  * edge, settles in the pill, then rests at a point and the test times when the hide starts:
  *   hidden          a cursor above or on the hidden pill's place never reveals it (only the edge does)
@@ -118,7 +118,7 @@ async function main() {
     async function reveal() {
       await cur(cx, edgeY);
       let s = await until(async () => { const v = await cur(); return v.up ? v : null; }, 3000, 60);
-      if (!s) {   // the sidecar's full-screen check can hold the edge back (Owen's foreground); the page's own report reveals too
+      if (!s) {   // the sidecar's full-screen check can hold the edge back (the user's foreground); the page's own report reveals too
         notes.push('one reveal came from bar.hover, not the edge (the edge was held back)');
         await bar.ev(call('bar.hover', { inside: true }));
         s = await until(async () => { const v = await cur(); return v.up ? v : null; }, 3000, 60);

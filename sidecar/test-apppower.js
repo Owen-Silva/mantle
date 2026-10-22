@@ -2,7 +2,7 @@
 //
 //   MANTLE_SIDECAR_EXE=<your exe> node sidecar/test-apppower.js
 //
-// NEVER ON OWEN'S APPS. Every write goes to a throwaway burner (sidecar/apppower-burner.js) compiled
+// NEVER ON THE USER'S APPS. Every write goes to a throwaway burner (sidecar/apppower-burner.js) compiled
 // under a unique name in %TEMP%\mantle-apppower-test, and every match carries pids. The passive test
 // sidecar itself refuses a real write to anything that is not that burner (checked below with a decoy).
 // Windows' own processes are only ever named in dry runs. The graphics preference writes go to

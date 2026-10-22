@@ -10,7 +10,7 @@
  * the finish it answers (endAt), so a double click or a stale window cannot run it twice. Main closes
  * the window on success; a refusal is said on the card and the buttons come back.
  *
- * KEYBOARD: the window is made focusable:false (it must never take the keyboard from what Owen is
+ * KEYBOARD: the window is made focusable:false (it must never take the keyboard from what the user is
  * typing), so live it is a mouse surface. Should it ever hold focus (a test, a later change), Esc
  * dismisses and Tab walks the buttons. window.__timer is for a test reading the hidden --test window.
  */

@@ -7,7 +7,7 @@
  * button under the pointer is never swapped out between mousedown and click.
  * Every action's outcome comes back on the row from main (state + why): nothing here guesses.
  *
- * SYSMON PASS (2026-09-29, Owen: "minimalistic and super easy to use and obvious what to do"):
+ * SYSMON PASS (2026-09-29, the user: "minimalistic and super easy to use and obvious what to do"):
  *   - Search (Ctrl+F, or just start typing) over name, file and window title; Esc clears it.
  *   - Sort by Name / Memory / CPU from the column headers (remembered in this window).
  *   - A chosen row (click, or Up/Down) with Windows' keys: Delete closes, Shift+Delete force closes

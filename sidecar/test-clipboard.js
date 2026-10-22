@@ -3,16 +3,16 @@
 //
 //   MANTLE_SIDECAR_EXE=<exe> node sidecar/test-clipboard.js
 //
-// OWEN'S CLIPBOARD IS NEVER WRITTEN AND NEVER READ FOR CONTENT: every item here is seeded
+// THE USER'S CLIPBOARD IS NEVER WRITTEN AND NEVER READ FOR CONTENT: every item here is seeded
 // (clip.seed, a passive-only command), every paste is a DRY RUN (the formats are built and decoded
 // back, nothing is set, focused or typed), and the one live-listener check runs in the passive
-// "observe" mode, which keeps counts and format names only. Nothing Owen copied can reach this
+// "observe" mode, which keeps counts and format names only. Nothing the user copied can reach this
 // output: the only strings printed are this file's own fixtures.
 //
 // THE COPY PATH ITSELF (privacy flags, kinds, sizes, dedupe) is proved with clip.capture: a
 // passive-only command that runs the SAME Capture a real copy takes, over this file's own fixture
 // formats instead of the clipboard. So "a password manager's copy is never kept" is tested for
-// each of the four flags without Owen's clipboard being opened, read or written.
+// each of the four flags without the user's clipboard being opened, read or written.
 //
 // Temp files (the pins stores) go under MANTLE_CLIP_TEST_DIR when it is set, else %TEMP%.
 //

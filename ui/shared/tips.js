@@ -1,6 +1,6 @@
 /* ui/shared/tips.js - Mantle's own tooltips, drawn inside the page (2026-09-24).
  *
- * Owen, with a screenshot of the speaker's "Volume 40%" tooltip whose bottom was hidden behind the
+ * The user, with a screenshot of the speaker's "Volume 40%" tooltip whose bottom was hidden behind the
  * bar: "can you make these popout things the same theme as the rest of it and make sure they dont
  * go behind the taskbar please". Those were Chromium's NATIVE tooltips, one per `title` attribute:
  * Windows' dark style, and a separate OS window below the topmost bar window in z-order, so the
@@ -40,7 +40,7 @@
  * the moment the call arrives, so the tip does not wait for the answer; the fade-in's first step
  * (50 ms) lands after the shape has changed.
  * A window with no room above the pill (a framed --test bar, --dock) cannot grow without a resize
- * (the dip Owen asked to be rid of), so there the tip is clamped INTO the window instead: over
+ * (the dip the user asked to be rid of), so there the tip is clamped INTO the window instead: over
  * the pill rather than off the window.
  *
  * The placement arithmetic (place) is pure and tested in node: node ui/shared/tips.test.js.
@@ -114,7 +114,7 @@
     return { x: x, y: flip ? vh - (y + h) : y, side: side, need: need };
   }
 
-  /* INSIDE AN OPEN PANEL (2026-09-25). Owen's screenshot: the quick-settings footer link's tip went
+  /* INSIDE AN OPEN PANEL (2026-09-25). The user's screenshot: the quick-settings footer link's tip went
    * straight up over the power tile's warning ("Power mode did not change: ..."), the two texts
    * mixed through the frost, and its right end ran off the panel. A panel is dense with words that
    * matter (a failure reason most of all), so here a tip looks for a spot next to the element that
@@ -378,7 +378,7 @@
   function popoverOpen() { return !!(room && room.popover && room.popover()); }
 
   /* --- glass (DARK ONLY; lane same-huds, 2026-10-09) ---
-     Owen: every surface the same glass, Helm's look. A tip above the pill floats over the desktop,
+     The user: every surface the same glass, Helm's look. A tip above the pill floats over the desktop,
      so it gets what the bar's pop-ups get: ONE picture of the bar window's whole rectangle, taken by
      main when the tip asks for room (bar.popover {backdrop: true} -> 'bar.popbackdrop' {key:'tip'}),
      blurred once with --lg-blur and nothing else onto a canvas the tip's size, under ONE --lg-fill
@@ -515,7 +515,7 @@
 
   /* The words in an open panel, one rect per line box, so a tip can keep off them. `warn` marks a
      line drawn in --lg-warn: by the house rule (NO SILENT FAILURES) that is a failure's reason,
-     the one thing a tip must never hide (Owen's screenshot, 2026-09-25). The anchor's own words
+     the one thing a tip must never hide (the user's screenshot, 2026-09-25). The anchor's own words
      are left out: a tip is never placed over its element anyway. */
   var WALK_MAX = 600;   // text nodes: a panel has ~150 (quick settings, 2026-09-25); a cap, not a budget
   function textRects(root, skip) {

@@ -2,7 +2,7 @@
 #
 #   powershell -NoProfile -File tools/kill-test.ps1 -Match mainlane [-WhatIf]
 #
-# WHY this script exists instead of `taskkill /im electron.exe`: Owen's own
+# WHY this script exists instead of `taskkill /im electron.exe`: the user's own
 # browser is an Electron app and is usually running. Killing electron.exe
 # wholesale would take his browser, his tabs and anything else Electron-shaped
 # down with it. This matches the '--profile-name=<x>' flag on the command line --

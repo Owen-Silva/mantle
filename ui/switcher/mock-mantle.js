@@ -1,6 +1,6 @@
 /* mock-mantle.js — a stand-in for main and the sidecar, so the Alt+Tab overlay can be looked at,
  * measured and screenshotted in a plain headless browser: no Electron, no sidecar, no keyboard
- * hook, and nothing ever switched on Owen's machine.
+ * hook, and nothing ever switched on the user's machine.
  *
  * It defines window.mantle ONLY when it is absent, so with the real preload it does nothing at all
  * and stays in the page (the launcher's pattern).

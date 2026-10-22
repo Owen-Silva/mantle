@@ -205,7 +205,7 @@ async function pure(s) {
 }
 
 // ---------------------------------------------------------------- odd work areas, apps Windows scales
-// The top bar made Owen's work area 0,35 1920x1045 at 125 % (2026-09-24), and a DPI-unaware
+// The top bar made the user's work area 0,35 1920x1045 at 125 % (2026-09-24), and a DPI-unaware
 // window's top-left quarter landed 1 px OVER the bottom-left one: Windows rounds such an app's
 // position and size through its own 96-DPI pixels separately (measured, see SnapGeom.Virt), so at
 // 125 % a height of 532 does not exist for it. These cases are pure: none depends on the live layout.
@@ -224,7 +224,7 @@ function canReach(s0, e0, ms, me, org, mon, app, which) {
 }
 
 async function virtualized(s) {
-  // Owen's live layout, by hand
+  // The user's live layout, by hand
   const oneMon = [{ id: 'T', bounds: [0, 0, 1920, 1080], work: [0, 35, 1920, 1080], dpi: 120, primary: true }];
   const f9 = [100, 100, 900, 700], w9 = [91, 100, 909, 709];    // 9/0/9/9: the measured 125 % borders
   const op = (z, appDpi) => s.send('snap.plan', { monitors: oneMon, frame: f9, window: w9, zone: z, appDpi }).then((x) => x.result || {});
@@ -365,7 +365,7 @@ async function live(s) {
     mons.result.monitors.every((m) => m.work.w > 0 && m.dpi >= 96), JSON.stringify(mons).slice(0, 300));
   if (!mons.ok) return;
   notes.push('monitors: ' + mons.result.monitors.map((m) => `${m.primary ? '*' : ''}${m.bounds.w}x${m.bounds.h}@${m.scale} work ${fmt(m.work)}`).join(' | '));
-  const fg0 = await s.send('snap.info', {});     // Owen's active window: its HANDLE only, never its title
+  const fg0 = await s.send('snap.info', {});     // the user's active window: its HANDLE only, never its title
   const fgHwnd = fg0.ok ? fg0.result.hwnd : null;
   let fgMoved = null, ourHwnds = [];
 
@@ -490,7 +490,7 @@ async function live(s) {
     check('a closed window is refused in words', !gone.ok || (gone.result && gone.result.ok === false), JSON.stringify(gone).slice(0, 200));
 
     const fg1 = await s.send('snap.info', {});
-    check('Owen\'s active window is the same one before and after every move',
+    check('The user\'s active window is the same one before and after every move',
       (fg1.ok ? fg1.result.hwnd : 'none') === (fgHwnd || 'none'), 'before ' + fgHwnd + ', first change ' + fgMoved);
     check('no test window of ours ever became the active window', !fgMoved || !/ONE OF OUR/.test(fgMoved), fgMoved);
   } finally {

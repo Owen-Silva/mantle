@@ -13,7 +13,7 @@
 //   privacy.security   { antivirus:[...], defender:{...}, firewall:{profiles, products}, findMyDevice,
 //                        encryption, indexer }, each part with its own reason when it cannot be read.
 //
-// SOURCES (all readable by a standard user; MEASURED on Owen's desktop 2026-09-28):
+// SOURCES (all readable by a standard user; MEASURED on the user's desktop 2026-09-28):
 //   root\SecurityCenter2 AntiVirusProduct / FirewallProduct (displayName, productState)
 //   root\Microsoft\Windows\Defender MSFT_MpComputerStatus (RealTimeProtectionEnabled, IsTamperProtected..)
 //   HKLM ...\SharedAccess\Parameters\FirewallPolicy\<Profile> EnableFirewall (+ the WindowsFirewall policy)

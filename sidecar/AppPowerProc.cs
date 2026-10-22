@@ -6,10 +6,10 @@
 // ACCESS (the contract's words, section 3):
 //   ok        OpenProcess(SET_INFORMATION | SET_QUOTA | QUERY_LIMITED) works
 //   admin     denied, and the process runs elevated (or its token can't be opened from here)
-//   system    another session than Owen's (session 0 = Windows services)
+//   system    another session than the user's (session 0 = Windows services)
 //   protected a protected process, the NEVER list, this sidecar, Mantle's own electron
 //   game      a game or anti-cheat (GameMode.GamePrefixes): never opened for more than reading its
-//             path, exactly like game mode, so a click can never get Owen flagged
+//             path, exactly like game mode, so a click can never get the user flagged
 //   unknown   denied for another reason
 // The access probe opens the process and closes it at once; nothing is changed.
 //

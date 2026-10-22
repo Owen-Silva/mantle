@@ -1,6 +1,6 @@
 // WidgetCover.cs - is an app window sitting over a desktop widget? (lane widgethide, 2026-10-10)
 //
-// WHY: Owen, 2026-10-10: the desktop widgets (the clock, SYSTEM, MISSION CONTROL, NEEDS
+// WHY: the user, 2026-10-10: the desktop widgets (the clock, SYSTEM, MISSION CONTROL, NEEDS
 // ATTENTION) should be hidden "when you arent actually on the wallpaper": each one fades out while
 // a window sits over it and comes back when that window is minimised, moved away, or on Win+D.
 // Apps may become see-through to the desktop later, so a widget must not show through a window.

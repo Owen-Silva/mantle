@@ -1,6 +1,6 @@
 /* accessibility.js — Settings > Accessibility, done natively (lane access, 2026-09-29).
  *
- * Owen: Mantle Settings "should do everything windows can do and more and not ever rely on any old
+ * The user: Mantle Settings "should do everything windows can do and more and not ever rely on any old
  * windows feature". So every page of Windows' Accessibility is here, reading and changing the same
  * values Windows' own Settings does, through settings.accessibility.* (lib/features/_settings-sections/
  * accessibility.js -> sidecar/SysAccess*.cs). Nothing links out to ms-settings.

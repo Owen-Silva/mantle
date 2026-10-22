@@ -22,7 +22,7 @@
 // visible entry. Partial downloads (.crdownload ...) are NOT dropped here: that policy lives in one
 // place, lib/features/_downloads-list.js.
 //
-// PRIVACY: file names are Owen's. Nothing here logs a name or a path, and no reason carries one (an
+// PRIVACY: file names are the user's. Nothing here logs a name or a path, and no reason carries one (an
 // IOException's message usually repeats the path). A reason is SHOWN, so it is plain words; the
 // exception type / HRESULT goes in `code`, which main writes to its log only.
 using System;

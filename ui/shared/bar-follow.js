@@ -2,7 +2,7 @@
  * lane mantle-corner's glide for the banners, moved here whole so every surface shares it: the banners, the
  * screenshot card, the volume pop-up, the Clips record panel). Main's half: lib/bar-follow.js.
  *
- * Owen: "this ... needs to go in the corner not up like this ... just have them smoothly move up if the
+ * The user: "this ... needs to go in the corner not up like this ... just have them smoothly move up if the
  * taskbar comes up". The window is placed as if the bar were not there; main sends <event> { px, kind, ms }
  * on the tick the bar's own page is told: px = how far above its low spot the surface rests now, kind 'up' =
  * the bar's spring (bar-follow.css .bar-follow.glide-up), 'down' = its exit. A CSS transition, as the bar's: a

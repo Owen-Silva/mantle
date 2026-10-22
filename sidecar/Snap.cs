@@ -3,7 +3,7 @@
 //
 // WHAT IT REPLACES. Windows' keyboard snap. While the `snap` feature is on and healthy, the hook
 // hands Win+arrows and Win+Z to lib/features/snap.js, which calls snap.move / snap.zone here.
-// Windows' mouse drag-to-edge snapping is left alone (Owen's brief).
+// Windows' mouse drag-to-edge snapping is left alone (the user's brief).
 //
 // TWO CLASSES, ON PURPOSE:
 //   SnapGeom  pure geometry and the Win+arrow state machine. No Win32 call anywhere in it, so
@@ -26,7 +26,7 @@
 //
 // THE SPEED BUDGET. One SetWindowPos for a normal window. A maximized or minimized window goes
 // through ONE SetWindowPlacement instead (restore + move in a single animation; a restore then a
-// move would be the "visible double move" Owen does not want). A second, corrective SetWindowPos
+// move would be the "visible double move" the user does not want). A second, corrective SetWindowPos
 // happens only when the measurement after the first disagrees with the target: a move onto a
 // monitor with another DPI (the app rescales itself, WM_DPICHANGED) or a first move out of a
 // maximized state (its restored borders were estimated). `moves` in every answer says how many.
@@ -43,7 +43,7 @@
 // 250 ms. snap.info / snap.monitors / snap.plan never send a message, so they stay on ui.
 //
 // PASSIVE (a --test run). A move is allowed only on a window of the harness itself or of a
-// process the harness started (the audio mixer's fence): never on Owen's windows.
+// process the harness started (the audio mixer's fence): never on the user's windows.
 using System;
 using System.Collections;
 using System.Collections.Generic;

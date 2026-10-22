@@ -177,7 +177,7 @@ for (const [label, extra] of [
   check('on battery the footer says "55% · 2 hr 15 min left"', d.footer === '55% · 2 hr 15 min left', d.footer);
 }
 {
-  // LOW / CRITICAL at the plan's own levels (6 / 2 on Owen's plan), never BatteryFlag's "low" (< 33 %).
+  // LOW / CRITICAL at the plan's own levels (6 / 2 on the user's plan), never BatteryFlag's "low" (< 33 %).
   const at = (pct, o) => B.describe(reading(Object.assign({ ac: false, charging: false, percent: pct, secondsLeft: 1500, lowAt: 6, criticalAt: 2, low: pct < 33 }, o || {})));
   check('20 % with the flag\'s "low" bit set but above the plan\'s 6 %: no warning', at(20).warn === null && !/low/i.test(at(20).footer + at(20).tip), at(20).footer);
   const lo = at(6);

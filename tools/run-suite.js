@@ -284,7 +284,7 @@ async function runOne(e) {
   const t0 = Date.now();
   const logFile = path.join(OUT, 'logs', logName(e.id));
   const env = Object.assign({}, process.env);
-  delete env.MANTLE_TEST_VISIBLE;                      // never on Owen's screen from the suite
+  delete env.MANTLE_TEST_VISIBLE;                      // never on the user's screen from the suite
   env.MANTLE_SUITE = '1';
   // this checkout's own built sidecar, unless the caller names one: several node tests (features, screenshot,
   // idle-unload, switcher, launcher-extras, the e2e files) run their Electron/sidecar half only with it

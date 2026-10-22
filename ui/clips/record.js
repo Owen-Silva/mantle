@@ -161,7 +161,7 @@
     clockLoop();
   }
 
-  /* ---- what Owen does ---- */
+  /* ---- what the user does ---- */
   function act(p, then) {
     S.busy = true; draw();
     return p.then(function (r) {

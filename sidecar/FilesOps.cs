@@ -16,7 +16,7 @@
 // silently. Permanent delete, purge and empty require confirmed:true.
 //
 // Passive (tests) adds FOF_NOERRORUI and refuses conflict:'ask' when a clash exists: a Windows
-// dialog would sit modal on Owen's screen with the test waiting behind it.
+// dialog would sit modal on the user's screen with the test waiting behind it.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -161,7 +161,7 @@ namespace Mantle {
       }
 
       // Rename onto a DIFFERENT existing item: the engine would open Windows' replace dialog (on a
-      // test sidecar that is a modal on Owen's screen; live it offers to overwrite the other file).
+      // test sidecar that is a modal on the user's screen; live it offers to overwrite the other file).
       // Refused up front, in words, like File Explorer's own "already exists". A case-only rename
       // (a.txt -> A.txt) is the same item and goes ahead.
       if (op == "rename") {

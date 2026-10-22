@@ -43,7 +43,7 @@ seconds before it touches anything.
 ### Why all of this exists
 
 2026-09-21, the first live run: Mantle hid the `Shell_TrayWnd` window with
-`ShowWindow(SW_HIDE)`. Owen's taskbar is set to **auto-hide**, and hiding the
+`ShowWindow(SW_HIDE)`. The user's taskbar is set to **auto-hide**, and hiding the
 window of an auto-hiding taskbar wedges explorer's own show/hide state machine —
 `SW_SHOW` on the way out did not bring it back, and the PC had to be
 **rebooted**.

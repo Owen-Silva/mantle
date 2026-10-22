@@ -30,7 +30,7 @@
   --warn-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.2l6.2 10.9H1.8z'/%3E%3Cpath d='M8 6.4v3M8 11.2v.01'/%3E%3C/svg%3E");
 }
 
-/* DARK, SEE-THROUGH (lane see-huds, 2026-10-09). Owen, on dark Mantle: "mantle needs to be more see
+/* DARK, SEE-THROUGH (lane see-huds, 2026-10-09). The user, on dark Mantle: "mantle needs to be more see
    through everything". --hud-face is --lg-fill-strong three times over: ~88% at the dark .50, a slab.
    In dark the face is ONE layer of --lg-fill (FINAL RULES: = --lg-fill-pop, both .83), the bar popovers' fill for a surface with nothing
    blurred behind it, so the screen behind shows through about 2.5x as much (share ~.18, was ~.07 at .58, ~.12 at .50).
@@ -289,7 +289,7 @@ body[data-below] .osd.open .more svg { transform: none; }
 }
 
 /* ---- DARK, ONE SHEET: HELM (lane same-huds-css, 2026-10-09) ------------------------------------
-   Owen: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
+   The user: "can you make sure everything is the same" / "go by what helm looks like" (FINAL RULES:
    literal Helm). The face is ONE layer of --lg-fill (root block above). The pill wears the pop-ups'
    edge: its --lg-edge-out hairline plus the --lg-lip-up lip, and NO outer shadow: the window keeps only
    18 DIP round the pill (lib/features/osd.js MARGIN), so --lg-shadow was cut into a hard dark edge

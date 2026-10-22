@@ -6,7 +6,7 @@
  * the REAL page files sections/devices.js and sections/internet.js, settings.devices.* and
  * settings.internet.* are answered here with the real shapes (lib/features/_settings-sections/*.js
  * over the sidecar's replies), everything else goes to the mock. EVERYTHING IS MADE UP: no name,
- * network, address or device here comes from Owen's machine.
+ * network, address or device here comes from the user's machine.
  *
  * ?test=1 makes every write a dry run, as the main half does in a test run.
  * window.__devnet exposes the fake state; window.__mockEmit(event, payload) pushes events.

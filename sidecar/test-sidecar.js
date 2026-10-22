@@ -49,7 +49,7 @@ const STATE_EOF = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + 
 const LNK = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '.lnk');
 const LNK_MISSING = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '-not-here.lnk');
 // A second shortcut that points at a SHELL FOLDER (This PC) rather than a file.
-// Links like this store an item list and no path at all - Owen's pinned File
+// Links like this store an item list and no path at all - the user's pinned File
 // Explorer is one - and they are the reason `lnk` reads the IDList.
 const LNK_SHELL = path.join(os.tmpdir(), 'mantle-sidecar-test-' + process.pid + '-shell.lnk');
 const THIS_PC = '::{20D04FE0-3AEA-1069-A2D8-08002B30309D}';
@@ -171,7 +171,7 @@ function start(args) {
 /*
  * WI-FI NETWORKS, OUTPUT DEVICES, THE MIXER (qsx lane, 2026-09-23: Wlan.cs, AudioMixer.cs).
  *
- * Owen is at the machine and may be recording with audio, so against his machine this is
+ * The user is at the machine and may be recording with audio, so against his machine this is
  * READ ONLY: listing and scanning networks, listing devices and apps. Nothing here connects,
  * disconnects or saves a Wi-Fi profile: the passive sidecar refuses all three, and the profile XML
  * is built by a passive-only test op that writes nothing. The write entry points are proved to
@@ -536,7 +536,7 @@ async function qsxChecks(s) {
   }
 
   // ---- btdevices: the paired Bluetooth devices (BtDevices.cs, 2026-09-23) ----------------------
-  // READ ONLY. Owen may be listening on Bluetooth headphones: nothing here connects or disconnects
+  // READ ONLY. The user may be listening on Bluetooth headphones: nothing here connects or disconnects
   // anything. connect/disconnect are only ever sent to this PASSIVE sidecar, which refuses them
   // before it looks the device up. The connect route is proven by the filter's own list of
   // property sets (KSPROPERTY_TYPE_SETSUPPORT with GUID_NULL), which no driver handler answers.
@@ -678,9 +678,9 @@ async function qsxChecks(s) {
   }
 
   // ---- the panel's live picture: volwatch, net, qswatch (qsx round 2, 2026-09-23) ---------------
-  // Pushes, not polls (Owen, 2026-09-23: "be way more responsive"). READ ONLY: listening changes
+  // Pushes, not polls (the user, 2026-09-23: "be way more responsive"). READ ONLY: listening changes
   // nothing, and every switch below goes to this PASSIVE sidecar, which refuses it. The budgets are
-  // generous multiples of what Owen's laptop measured under load the same day: first volume event
+  // generous multiples of what the user's laptop measured under load the same day: first volume event
   // 410 ms, qs first pushes 605-958 ms, net get 1007 ms cold / 58-172 ms warm.
   try {
     const r = await s.send('ping');
@@ -1067,7 +1067,7 @@ async function featureSeamChecks(s) {
   // The volume keys as CHORDS (osd lane, 2026-09-24): Mantle takes them so Windows' flyout never
   // shows (its host cannot be found on 25H2 to hide it). Bare keys only; a held Up/Down REPEATS (one
   // event per auto-repeat, one step each, as Windows does); a held Mute is ONE toggle; unclaimed they
-  // are never swallowed. Owen's two keyboards: the IdeaPad's built-in one (ACPI IDEA0102, PS/2:
+  // are never swallowed. The user's two keyboards: the IdeaPad's built-in one (ACPI IDEA0102, PS/2:
   // Fn+F2/F3 with typematic repeat = many keydowns, one keyup) and the Logitech USB receiver's media
   // keys (HID consumer control, which may instead send a down/up per step). The hook sees both as
   // the same VKs (0xAF/0xAE/0xAD), so both patterns are rows here.
@@ -1126,7 +1126,7 @@ async function featureSeamChecks(s) {
 
 /*
  * TBHIDE (TaskbarHide.cs, 2026-09-25): while Mantle runs, the Windows taskbar gets an EMPTY WINDOW
- * REGION, so the reveals Explorer does on a foreground change are never seen. Against Owen's machine
+ * REGION, so the reveals Explorer does on a foreground change are never seen. Against the user's machine
  * this is READ ONLY: on/off are refused in passive, the decision logic is proved with made-up window
  * states (`decide`), and the one live read is `status`. The guard process is run with
  * --guard-dry-run against a throwaway node child, so it decides and writes its note but never calls
@@ -1730,7 +1730,7 @@ async function main() {
   }
 
   // ---- app / pins / launch ----------------------------------------------
-  // The AUMID layer: the only way to see a Store pin (5 of Owen's 14 have no
+  // The AUMID layer: the only way to see a Store pin (5 of the user's 14 have no
   // .lnk at all) or to group a UWP window under it.
   try {
     const r = await s.send('app', { aumid: 'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App' });
@@ -1797,7 +1797,7 @@ async function main() {
   }
 
   // launch ACTS, so passive refuses it - and nothing in this suite ever starts
-  // an app on Owen's desktop.
+  // an app on the user's desktop.
   try {
     const r = await s.send('launch', { aumid: 'Not.A.Real.App_0000000000000!App' });
     check('launch is refused in passive, with a reason',
@@ -1810,7 +1810,7 @@ async function main() {
   let hitNote = '';
   // ---- the quick settings panel -----------------------------------------
   // Reads only. NOTHING in this block may toggle a radio or move the
-  // brightness on the machine Owen is sitting at: every switch is expected to
+  // brightness on the machine the user is sitting at: every switch is expected to
   // REFUSE, and that refusal is the test.
   // wifi, bluetooth and brightness answer from a background-refreshed cache
   // (QuickSettings.cs): the first read right after start may be a placeholder
@@ -2341,7 +2341,7 @@ async function main() {
       JSON.stringify(cmds));
   } catch (e) { check('ping lists the commands it serves', false, e.message); }
 
-  // ---- volume (READ ONLY: never change what Owen is listening to) -------
+  // ---- volume (READ ONLY: never change what the user is listening to) -------
   try {
     const r = await s.send('volume');
     check('volume reads level + muted',
@@ -2355,7 +2355,7 @@ async function main() {
   // silent audio session this harness starts and stops itself.
   const qsxNotes = await qsxChecks(s);
 
-  // ---- notifications (READ ONLY: no toast of Owen's is ever touched) -----
+  // ---- notifications (READ ONLY: no toast of the user's is ever touched) -----
   // Only reads and refusals here. remove/open are exercised end to end on
   // toasts posted under Notifications.TestAumid by the notif lane's scratch
   // script, never in this suite, which must not write to the machine.

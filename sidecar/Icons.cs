@@ -13,7 +13,7 @@
 //
 // WHY the cache checks the file (mantle-icon, 2026-10-08). The old rule here was "icons for a
 // given exe path never change while the machine is up", and it is false: an app rebuilt or
-// updated IN PLACE keeps its path and gets a new picture. Owen's bar showed Helm's OLD icon (a
+// updated IN PLACE keeps its path and gets a new picture. The user's bar showed Helm's OLD icon (a
 // ship's wheel) for a whole day after helm.exe was rebuilt with a new one (a round "H"). Two
 // caches held it, and only one was Mantle's:
 //   - WINDOWS' OWN. The shell's image factory (and SHGetFileInfo) answer from Explorer's icon

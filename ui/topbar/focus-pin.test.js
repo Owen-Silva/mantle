@@ -7,7 +7,7 @@
  * main ... -- []" (and, the same cause later in a run: "the CPU dropdown opens from its meter", "grow: the
  * window grew for the panel", "a click on the burner's row opens its panel", "keys: Down reaches ..."). Its
  * page recorder showed CPU detail samples with 5 decorated rows every second, then a topbar.focus for
- * ANOTHER window (Owen switching between Quartz and Helm, his input idle 0 ms), then only plain samples:
+ * ANOTHER window (the user switching between Quartz and Helm, his input idle 0 ms), then only plain samples:
  * the dropdown had closed. A --test instance never takes the keyboard (lib/test-quiet.js), so the
  * desktop's real foreground changes reach its bar through the sidecar's focus hook (main onTopbar), and
  * the page's takeFocus closes any open menu on a new app (right for the live bar: a menu belongs to the
@@ -122,7 +122,7 @@ try {
   }
 
   /* 1. THE FLAKE, deterministic: the apppower e2e's instance (--test, MANTLE_TOPBAR_TEST_PIN_FOCUS=1), its CPU
-   *    dropdown open, Owen switches apps on his desktop before the burner's row is drawn */
+   *    dropdown open, the user switches apps on his desktop before the burner's row is drawn */
   {
     const r = scenario({ test: true, env: { MANTLE_TOPBAR_TEST_PIN_FOCUS: '1' }, between: [APP_B] });
     check('pinned --test bar: an app switch on the desktop leaves the CPU dropdown open', !!(r.page.S.open && r.page.S.open.stat === 'cpu'), { open: r.page.S.open });
@@ -135,7 +135,7 @@ try {
     check('pinned --test bar: the pin is said in the log (no silent difference), with no app or title in it', said.length === 1 && !/a\.exe|b\.exe|\bA\b|\bB\b/.test(said[0]), r.main.logs);
   }
   {
-    // many switches (Owen moving between apps every few seconds through a 60 s run): said once, every one counted
+    // many switches (the user moving between apps every few seconds through a 60 s run): said once, every one counted
     const r = scenario({ test: true, env: { MANTLE_TOPBAR_TEST_PIN_FOCUS: '1' }, between: [APP_B, APP_A, APP_B, { ...APP_B, hwnd: '4004' }] });
     check('pinned --test bar: four desktop switches, the dropdown still open and its rows drawn', !!(r.page.S.open && r.page.S.open.stat === 'cpu') && r.page.drawn.rows === 3, { open: r.page.S.open, drawn: r.page.drawn });
     check('pinned --test bar: the pin is said once however many switches come', r.main.logs.filter((l) => /MANTLE_TOPBAR_TEST_PIN_FOCUS/.test(l)).length === 1, r.main.logs);

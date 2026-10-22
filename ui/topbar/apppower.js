@@ -1,6 +1,6 @@
 /* apppower.js — App power in the CPU / RAM / GPU dropdowns (lane mantle-power-ui, 2026-10-14).
  *
- * Owen, looking at the CPU dropdown's TOP PROCESSES: "a way to limit cpu use or select what things that
+ * The user, looking at the CPU dropdown's TOP PROCESSES: "a way to limit cpu use or select what things that
  * are open can use whatever amount of cpu usage", "and gpu and ram too", "i want to be able to do the cpu
  * limits and gpu and ram and stuff from here". So each top row opens an inline panel under itself:
  *   CPU  Efficiency mode, Priority, CPU limit ("of your whole CPU")

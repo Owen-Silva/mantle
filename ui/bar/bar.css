@@ -1,12 +1,12 @@
 /* bar.css — Mantle's replacement for the Windows taskbar.
  *
- * Shape (Owen, 2026-09-21): "all my pinned to taskbar things just icons centered, and when I put
+ * Shape (the user, 2026-09-21): "all my pinned to taskbar things just icons centered, and when I put
  * my mouse to the bottom of the screen it pulls up a glass UI taskbar with all the pinned app
  * icons, and then shows the regular stuff on the right too." So: 48dip, hidden at rest, one row —
  * a launcher glyph on the left, the app icons centred ON THE SCREEN (not between the clusters,
  * exactly like Windows 11), the readouts on the right.
  *
- * Colour (Owen, same day, pointing at the Northwind site's nav pill): LIGHT frosted glass, not dark
+ * Colour (the user, same day, pointing at the Northwind site's nav pill): LIGHT frosted glass, not dark
  * grey. Every colour below comes from ../shared/glass-light.css, which carries the Northwind pill's
  * own values as --lg-*. tokens.css is still linked first and still owns the dark surfaces (the
  * launcher, the desktop layer); this file takes nothing but geometry from it.
@@ -37,7 +37,7 @@
 
 :root {
   --bar-h: 48px;         /* the contract with lane A: 48 dip, full width, bottom edge */
-  --cell: 36px;          /* one app cell (was 40: Owen wanted the app icons smaller, 2026-09-21) */
+  --cell: 36px;          /* one app cell (was 40: the user wanted the app icons smaller, 2026-09-21) */
   --cell-icon: 24px;     /* the icon inside it (was 32; 24 dip = the Windows taskbar's own icon size) */
   --cell-gap: 6px;
   --gap: 4px;
@@ -84,7 +84,7 @@ body[data-edge="top"] { justify-content: flex-start; }
 body { --dur: var(--lg-dur-out, 260ms); }
 body.up { --dur: var(--lg-dur, var(--m-dur-l)); }
 
-/* THE CURVES (lane mantle-barpolish, 2026-10-15). Owen: the load-in must feel like "a big
+/* THE CURVES (lane mantle-barpolish, 2026-10-15). The user: the load-in must feel like "a big
    businesses product", cutting edge and calm. IN is a damped spring (damping ratio 0.8, sampled
    into linear() at 40 points over the 560 ms main animates on): 90 % of the way in 195 ms, 95 % in
    220 ms, a 1.5 % overshoot (under a pixel of the rise) that settles by itself, so the island
@@ -106,7 +106,7 @@ body.up {
 }
 
 /* ---------------------------------------------------------------- the bar itself
-   THE DIVISION OF LABOUR, rewritten 2026-09-21 after Owen: "when the taskbar expands out it isn't
+   THE DIVISION OF LABOUR, rewritten 2026-09-21 after the user: "when the taskbar expands out it isn't
    that smooth, can you make it expand out smoother". It used to be main's job: the sidecar
    resized the WINDOW every frame for 560ms and the page relaid out inside it every one of those
    frames. That is what wasn't smooth.
@@ -136,7 +136,7 @@ body.up {
      change during a reveal. Before, the reveal faded every one of them in from transparent and grew
      the width from 62 %, so the glass arrived as an empty frame whose content caught up, the dock was
      laid out again on every frame, and the backdrop picture, placed for the 62 % box, ran out short of
-     the glass on the RIGHT while it widened: Owen's "dark outline on the right side" (see
+     the glass on the RIGHT while it widened: the user's "dark outline on the right side" (see
      placeBdrop in bar.js). Now the whole island is one composited object and only its transform and
      opacity move: compositor-only, so nothing is laid out or repainted per frame. */
   --pane-fill: var(--lg-fill);
@@ -190,7 +190,7 @@ body.edge .bar { width: 100%; margin: 0; --pane-w: 100%; --pane-y: var(--bar-h);
    left a 1px ring of the UNTINTED blurred picture under the hairline: in dark that ring was the
    picture at full strength, about twice the pane's brightness and the wallpaper's colour, round every
    edge and widest on the rounded ends, where the anti-aliased curve spreads it over two pixels
-   (Owen's crop, 2026-10-10: ring 42-45,59-64,63-69 on a 16,26,30 pill). Light had the same ring,
+   (the user's crop, 2026-10-10: ring 42-45,59-64,63-69 on a 16,26,30 pill). Light had the same ring,
    the saturated photograph under a dark line. One fill under a translucent line does not double it:
    the line is the token's alpha over the tint, and the curve is one anti-aliased edge (lane mantle-rim). */
 .bar::after {
@@ -241,7 +241,7 @@ body[data-edge="top"] .bar { --pane-lip: var(--lg-lip-dn); --pane-drop: var(--lg
 body[data-edge="top"].edge .bar { --pane-y: calc(var(--bar-h) * -1); }
 body[data-edge="top"].up .bar { --pane-y: 0px; }
 @media (prefers-reduced-motion: reduce) { body[data-edge="top"] .bar, body[data-edge="top"].edge .bar { --pane-y: 0px; } }
-/* DARK: NO DROP SHADOW ON THE BAR (lane clipped-shadow, 2026-10-10; Owen: "fix this black sharp stuff
+/* DARK: NO DROP SHADOW ON THE BAR (lane clipped-shadow, 2026-10-10; the user: "fix this black sharp stuff
    around the outside"). The window ends 1 DIP past the pill (lib/bar-shape.js shapeRect) and at the
    pill's own ends, so the dark drop (--lg-drop-up, .30 + .32 black) was cut there: a 3 px near-black
    band with a hard edge and square corners behind the rounded ends (his crops: 9-10,15-17,17-19 over a
@@ -298,13 +298,13 @@ body:not(.up) .bdrop { transition: none; }
   transition: transform var(--dur) var(--bar-move);
 }
 body[data-edge="top"] .bdrop img { transform-origin: 50% 14px; }
-/* DARK: THE ONE RECIPE (lane same-bars, 2026-10-09; Owen: "everything at 50% ... it will all match way
+/* DARK: THE ONE RECIPE (lane same-bars, 2026-10-09; the user: "everything at 50% ... it will all match way
    better if its the same"). The strip is blurred with --lg-blur and nothing else (the base rule above),
    under ONE layer of --lg-fill. The only deviation is the readability guard every surface shares
    (../shared/glass-adapt.js guard, the top bar's rule): bar.js sets --bar-tint, the same colour at a
    thicker alpha, ONLY when --lg-ink-2 would fall under 4.5:1 over the brightest blurred pixel; over
-   Owen's wallpaper it is never set.
-   FINAL RULES (Owen: "Match Helm's real look"): BOTH bars are Helm's rail, --lg-fill-bar (.75, a dark-
+   the user's wallpaper it is never set.
+   FINAL RULES (the user: "Match Helm's real look"): BOTH bars are Helm's rail, --lg-fill-bar (.75, a dark-
    only token), and the guard floors there. The island's rim is --lg-edge-out, which in dark IS Helm's
    faint white hairline (the base rule), with Helm's lip; its ends are --lg-r-pill (18 in dark). Docked
    flush to the screen edge (body.edge), the bar runs flush like the top bar and Helm: no line and no
@@ -366,7 +366,7 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
 
 /* ---------------------------------------------------------------- centre: the app icons
    Absolutely centred on the WINDOW, so the row does not shift when a chip appears on the right
-   or the clock gets wider — the Windows 11 behaviour Owen is used to. JS sets --dock-max to the
+   or the clock gets wider — the Windows 11 behaviour the user is used to. JS sets --dock-max to the
    space that is actually free between the two clusters, so a full dock can never slide under the
    clock; if even that is not enough, it says so in the state strip rather than cropping quietly. */
 .dock {
@@ -433,7 +433,7 @@ body.pre .left, body.pre .dock, body.pre .right { transition: none; }
 
 /* THE RUNNING INDICATOR, Windows 11's: a short rounded line under the icon, not a dot. 6x3 in ink
    while the app merely has windows, growing to 16x3 in the accent when one of them is the active
-   window — the same language Windows uses, so Owen reads it without learning anything. It is laid
+   window — the same language Windows uses, so the user reads it without learning anything. It is laid
    out for EVERY cell (hidden, not absent) so an icon never shifts when an app opens, and it
    carries no ring: the line is long enough to read on its own over the blurred backdrop.
    The cell is a column box, so `flex` here is the HEIGHT and `width` is free to animate. */
@@ -671,7 +671,7 @@ button.chip:hover { background: var(--lg-press); }
 }
 body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
 .pop[hidden] { display: none; }
-/* DARK POP-UPS: THE ONE RECIPE (lanes see-glass then same-bars, 2026-10-09; Owen: "more see through
+/* DARK POP-UPS: THE ONE RECIPE (lanes see-glass then same-bars, 2026-10-09; the user: "more see through
    everything ... even the taskbar", then "everything at 50% ... it will all match way better if its
    the same"). Once main's picture of what is behind the window lands (bar.js setPopBackdrop adds .bd),
    the pop-up is the bar's glass: ONE layer of tint over the piece of that picture it sits on. The
@@ -1177,7 +1177,7 @@ body.pill .chips { display: none; }
    display:none, so scrollWidth still measures the title for the way back. */
 .media.compact .mchip { gap: 0; }
 .media.compact .mtxt { max-width: 0; }
-/* PICTURE, NO TITLE (Owen, 2026-09-24: "only be allowed to show the songs image ... not the whole
+/* PICTURE, NO TITLE (the user, 2026-09-24: "only be allowed to show the songs image ... not the whole
    song name and artist too"; then "the pause button was fine", so play/pause stays). The title
    gives way for good; the song is in the chip's tooltip, and a click still opens the now-playing
    card. max-width, not display:none, for the same reason as compact above. */
@@ -1313,7 +1313,7 @@ body.pill .chips { display: none; }
 .mc-foot { margin-top: 8px; }
 
 /* ================================================================ DARK: HELM'S LOOK (lane same-bars)
-   FINAL RULES, 2026-10-09. Owen: "they should all also have the same style ... if there is a conflict go
+   FINAL RULES, 2026-10-09. The user: "they should all also have the same style ... if there is a conflict go
    by what helm looks like", then "Match Helm's real look". HELM-SPEC.md rows 3-24, applied to the bar
    and its pop-ups, DARK ONLY (light is frozen this round, so every rule here is scoped to dark). The
    surfaces themselves (one tint over one blurred picture, their edges and radii) are above; this is
@@ -1323,7 +1323,7 @@ body.pill .chips { display: none; }
    hard dark edge there (lane clipped-shadow, 2026-10-10; the why is at body.up .bar above). */
 :root[data-theme="dark"] .pop { border-color: var(--lg-edge-out); box-shadow: var(--lg-lip-up); }
 /* row 24 ("menus and popovers: no open animation; no exit animations") is superseded by the shared
-   motion (lane mantle-motion, 2026-10-16; Owen: all three apps "in unison"): dark plays the same
+   motion (lane mantle-motion, 2026-10-16; the user: all three apps "in unison"): dark plays the same
    spring entrance and accelerate exit as light, the .pop rules above. */
 /* row 18: every divider is Helm's hairline */
 :root[data-theme="dark"] .sep,

@@ -13,7 +13,7 @@
 //     within ~0.4 s of the stop, and the file then stays the same size with the window still open).
 //     Game Bar records the window IT considers active: once, right after the stand-in was put in
 //     front by a program (800 ms before the keys), it recorded the previous app instead. The panel
-//     never moves the foreground (focusable:false), so the app Owen is in is the one recorded.
+//     never moves the foreground (focusable:false), so the app the user is in is the one recorded.
 //
 //   record.target {}                     the window in front: hwnd, pid, exe, title, cls, fullscreen,
 //                                        quns (SHQueryUserNotificationState), desktop (the shell's

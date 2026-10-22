@@ -11,7 +11,7 @@
 //                         events {ev:'sysstorage', what:'progress'|'done'|'cancelled'|'failed', scan,
 //                         done, total, bytes, files, category} - counts and bytes, never a name     (Slow)
 //   sysstorage.scanStop   cancels a running scan                                                    (Ui)
-//   sysstorage.recommend  large or unused files the last scan saw in Owen's own folders (read only) (Ui)
+//   sysstorage.recommend  large or unused files the last scan saw in the user's own folders (read only) (Ui)
 //   sysstorage.temp       the cleanup kinds' sizes                                                  (Slow, worker)
 //   sysstorage.plan       {kinds[]} -> what a cleanup WOULD remove (counts, bytes) + a plan token   (Slow, worker)
 //   sysstorage.cleanup    {plan, confirm:true, dryRun} carries out THAT plan, nothing more          (Slow, worker)
@@ -20,7 +20,7 @@
 //   [Elevated] sysstorage.cleanSystem {kinds} - the administrator kinds (Windows' temp folder,
 //                         Delivery Optimization files, Windows Update downloads)
 //
-// WHY a plan + token: Owen confirms EXACTLY what he saw. The plan keeps the file list it measured; the
+// WHY a plan + token: the user confirms EXACTLY what he saw. The plan keeps the file list it measured; the
 // cleanup deletes only those files, only if each still has the size and time the plan saw, and only
 // once. Downloads and the Recycle Bin are in a plan ONLY when the request names them (the page never
 // ticks them for him), Downloads goes to the Recycle Bin rather than being deleted, and a Recycle Bin
@@ -34,7 +34,7 @@
 // MSFT_StoragePool answer a non-administrator in ~1 s.
 //
 // PRIVACY: nothing here logs. Events carry counts, bytes and category keys only; file names and
-// folders travel only in replies (the page shows them to Owen).
+// folders travel only in replies (the page shows them to the user).
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -564,7 +564,7 @@ namespace Mantle {
         }
         per.Add(Json.Obj("kind", "recycleBin", "removed", why == null ? c.Files : 0, "freed", why == null ? c.Bytes : 0, "reason", why));
       }
-      // 2. the kinds Owen's own rights cover; Downloads goes to the Recycle Bin
+      // 2. the kinds the user's own rights cover; Downloads goes to the Recycle Bin
       foreach (string k in rec.Kinds) {
         if (k == "recycleBin" || AdminKind(k)) continue;
         Collected c = rec.Got[k];

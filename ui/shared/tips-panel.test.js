@@ -1,7 +1,7 @@
 require('../../tools/dev-env.js').lowcpu();
 /* tips-panel.test.js - a tooltip inside an open panel never lies over the panel's words (2026-10-17).
  *
- * Owen's rule: no overlapping UI anywhere. The overlap audit (tools/overlap-audit.js, qs-sound/dark)
+ * The user's rule: no overlapping UI anywhere. The overlap audit (tools/overlap-audit.js, qs-sound/dark)
  * caught the quick-settings sound view's default-device tip ("Speakers (Realtek(R) Audio) is the
  * output (calls still go to ...)") lying over the next device's name and the "Volume mixer" header:
  * every device row is as wide as the panel, so every spot above or below a row is on another row,

@@ -2,7 +2,7 @@
 // 2026-09-28). The page is ui/settings/sections/time.js, its main half
 // lib/features/_settings-sections/time.js.
 //
-// WHY: Owen wants Mantle Settings to replace Windows' Settings outright. Every row of Windows'
+// WHY: the user wants Mantle Settings to replace Windows' Settings outright. Every row of Windows'
 // Date & time page is here, read from where Windows keeps it and changed the way Windows changes
 // it, and where only an administrator may change it the change goes through the elevation broker
 // (sidecar/ELEVATE.md), one UAC prompt per change, exactly like the shield rows in Windows.
@@ -24,7 +24,7 @@
 //   systime.setTray {key, value, dryRun}                   HKCU ...\Explorer\Advanced (seconds in the tray clock)
 //
 // THE ADMINISTRATOR ROWS answer {ok:false, needsAdmin, elevate:{action, args}} to a real call (the
-// main half turns that into the prompt) and a plan to a dryRun. MEASURED on Owen's desktop
+// main half turns that into the prompt) and a plan to a dryRun. MEASURED on the user's desktop
 // (2026-09-28, reads only): the Windows Time service is trigger-started and usually stopped; its
 // service ACL lets interactive users query but not start it (sc sdshow: IU = CCLCSWLOCRRC), so
 // "Sync now" must be an administrator action; whoami /priv lists SeTimeZonePrivilege (Disabled).

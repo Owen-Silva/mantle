@@ -80,7 +80,7 @@ anything — bit `1` is `ABS_AUTOHIDE`, bit `2` is `ABS_ALWAYSONTOP`. `changed` 
 what **we** did, and is therefore the entire list of things a recovery script
 has to undo. Both originals are read with passive calls, so a `--passive` run
 leaves a usable note too. (The example above is this machine: `abmState: 1` —
-Owen's taskbar is *already* auto-hide, so live Mantle changes nothing about it
+the user's taskbar is *already* auto-hide, so live Mantle changes nothing about it
 and holds no taskbar state at all.)
 
 ## Protocol
@@ -180,7 +180,7 @@ Unsolicited lines, distinguished by having `ev` instead of `id`:
 ### The incident, and the rule that came out of it
 
 On **2026-09-21**, the first live run, this sidecar hid the taskbar with
-`ShowWindow(Shell_TrayWnd, SW_HIDE)`. Owen's taskbar is set to **auto-hide**.
+`ShowWindow(Shell_TrayWnd, SW_HIDE)`. The user's taskbar is set to **auto-hide**.
 Mantle was killed, so the `SW_SHOW` never ran — and even when it did, `SW_SHOW`
 means nothing to an auto-hide taskbar: explorer's auto-hide state machine had
 been left mid-flight and stayed stuck hidden. Hovering the screen edge did

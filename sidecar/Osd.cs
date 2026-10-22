@@ -36,7 +36,7 @@
 //
 // WHY THE BRIGHTNESS KEYS ARE DIFFERENT (measured 2026-09-24): they are firmware/ACPI hotkeys, so no
 // key ever reaches the hook and they cannot be taken like volume. What CAN be seen (a read-only probe
-// while Owen pressed brightness, scratchpad brightprobe/): Windows' brightness pop-up is an explorer.exe
+// while the user pressed brightness, scratchpad brightprobe/): Windows' brightness pop-up is an explorer.exe
 // top-level XamlExplorerHostIslandWindow (ex-style NOACTIVATE|NOREDIRECTIONBITMAP|TOOLWINDOW|TOPMOST,
 // about 213x61 or 169x61 logical px, bottom-centre), shown ~20 ms BEFORE the first
 // WmiMonitorBrightnessEvent of a press, reused (one hwnd) through a burst of presses, hidden by explorer

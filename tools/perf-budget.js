@@ -8,7 +8,7 @@
  * WHAT IT DOES. Starts ONE invisible `electron . --test` copy of this checkout (lib/test-quiet.js keeps every
  * window off the screen), then:
  *   1. checks nothing is pre-made: no hidden Settings / Task Manager / Files window exists at rest
- *      (Owen 2026-10-15: "no i dont want these open in the backround i need to save ram");
+ *      (the user, 2026-10-15: "no i dont want these open in the backround i need to save ram");
  *   2. samples total private RAM and the idle CPU of every hidden window (10 s, nothing happening);
  *   3. opens each owned surface COLD n times (its window destroyed first) and WARM n times (closed the way
  *      its X button closes it, then opened again), through the existing test hook: main's
@@ -34,7 +34,7 @@
  * trigger -> ready-to-show (Chromium's first paint of the hidden page). A warm open of a window that is never
  * shown in --test has no outside view: only its R7 line can time it ("no data" until then).
  *
- * MACHINE RULES (Owen's laptop is an i3-1215U with 11.7 GB RAM): unless --no-lock (the caller already holds
+ * MACHINE RULES (the user's laptop is an i3-1215U with 11.7 GB RAM): unless --no-lock (the caller already holds
  * it), the gate takes %TEMP%\claude-heavytest.mutex (atomic mkdir, owner.txt inside) and then
  * %TEMP%\claude-headless-browser.lock (an exclusive file holding {"pid","time","label"}; a dead pid's lock is
  * stale), waits for them checking every 60 s, waits for >= 2.5 GB free RAM, refuses while a
@@ -43,7 +43,7 @@
  *
  * SLACK. Every TIME budget is multiplied by --slack (default 1.5: the plan's runner headroom, and what a
  * Below Normal run on this i3 needs while other lanes build; measured 2026-10-15, see PERF.md). The 1 s cold
- * ceiling is Owen's "never" and is NOT scaled. RAM budgets are not scaled (load does not change bytes).
+ * ceiling is the user's "never" and is NOT scaled. RAM budgets are not scaled (load does not change bytes).
  */
 const fs = require('fs');
 const os = require('os');
@@ -445,7 +445,7 @@ async function cli() {
     }
     locks.push(() => dropFileLock(blk));
   }
-  // MANTLE_TEST_MIN_FREE_GB sets the free-RAM floor for one run when Owen allows it (0 = no floor); unset, it stays 2.5.
+  // MANTLE_TEST_MIN_FREE_GB sets the free-RAM floor for one run when the user allows it (0 = no floor); unset, it stays 2.5.
   const minFreeGb = process.env.MANTLE_TEST_MIN_FREE_GB !== undefined && process.env.MANTLE_TEST_MIN_FREE_GB !== '' && Number(process.env.MANTLE_TEST_MIN_FREE_GB) >= 0 ? Number(process.env.MANTLE_TEST_MIN_FREE_GB) : 2.5;
   if (minFreeGb !== 2.5) say(`perf-budget: free-RAM floor ${minFreeGb} GB for this run (MANTLE_TEST_MIN_FREE_GB; default 2.5)`);
   for (let i = 0; os.freemem() < minFreeGb * 1024 ** 3; i++) {

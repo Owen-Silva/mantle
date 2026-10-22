@@ -473,7 +473,7 @@ namespace Mantle {
 
     // --------------------------------------------------- app identity / shell items
     // The modern shell speaks in APP USER MODEL IDs, not exe paths: a Store app
-    // has no .lnk, five of Owen's fourteen pins are Store apps, and every UWP
+    // has no .lnk, five of the user's fourteen pins are Store apps, and every UWP
     // window is hosted by ApplicationFrameHost.exe. See Apps.cs.
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     public static extern int SHCreateItemFromParsingName(string path, IntPtr bindCtx, ref Guid riid,

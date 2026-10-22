@@ -1,6 +1,6 @@
 'use strict';
 /*
- * The Wallpapers window: Owen's wallpaper library, which replaced Lively's (2026-09-22).
+ * The Wallpapers window: the user's wallpaper library, which replaced Lively's (2026-09-22).
  *
  * A plain browser script (contextIsolation + sandbox); window.mantle is the only way out. It asks
  * lib/wallpaper.js for everything and keeps nothing of its own but what is on screen:
@@ -11,7 +11,7 @@
  * never receives a click, so the place to choose a wallpaper has to be a normal window. It opens
  * from the launcher ("Wallpapers") and from the tray menu.
  *
- * THUMBNAILS: a video with none (anything Owen adds; all nine of his Lively ones brought their own)
+ * THUMBNAILS: a video with none (anything the user adds; all nine of his Lively ones brought their own)
  * gets one here, by playing it muted in a detached <video>, seeking a second in, and drawing that
  * frame. It doubles as the codec check: a video Chromium cannot decode fails right here, and the
  * card says so the moment it is added instead of the desktop going black later.
@@ -23,7 +23,7 @@
  * between cards, Enter puts the card on the desktop, Delete removes it (with Undo in the notice),
  * Esc dismisses the notice, then closes the window. Remove has Undo instead of "are you sure".
  *
- * BUILT-IN (2026-10-09, lane mantle-bg-presets): Owen: "can you also make it so that mantle can have
+ * BUILT-IN (2026-10-09, lane mantle-bg-presets): the user: "can you also make it so that mantle can have
  * the same backrounds preset as quartz and helm". The listing's `presets` (Helm's 23 photos, read by
  * lib/wallpaper-presets.js) get their own view, "Built-in", beside "Your library": never mixed into
  * his own cards, so his Lively library is not buried under 23 photos. The Built-in view has Helm's

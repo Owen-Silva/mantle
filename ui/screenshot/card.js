@@ -4,7 +4,7 @@
  * main to act: save it, open the file, copy its path, show it in its folder, or put the card away.
  * Main parks the window on `screenshot.cardDismiss`, and only then lets the capture go.
  *
- * WHAT IT SAYS (lane shot-save, 2026-10-14; Owen: "screenshots shouldnt all get saved to my
+ * WHAT IT SAYS (lane shot-save, 2026-10-14; the user: "screenshots shouldnt all get saved to my
  * computer automatically only if i press a button in the popup that says save"). A capture is
  * COPIED, not saved: the title is the one fact a person acts on next - "Screenshot copied" (paste
  * it) - one quiet line gives its size, and Save is the card's one button (Ctrl+S with the card
@@ -39,7 +39,7 @@
   function paused() { return S.hover || S.focus || S.saving; }
 
   /* THE TIMER. The deadline is a setTimeout (it runs in a hidden window too: a test's card times
-     out like Owen's); the shrinking hairline is only paint, on animation frames. Every change of
+     out like the user's); the shrinking hairline is only paint, on animation frames. Every change of
      hover, focus or saving comes through sync(), which books the time spent and re-arms. */
   function sync() {
     var now = performance.now();

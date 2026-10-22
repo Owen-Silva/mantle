@@ -10,7 +10,7 @@
  *       hidden (lib/test-quiet.js: never drawn, never focused, in no app list)
  *   <electron.exe> tools/toprow-probe-window.js --show X,Y,W,H --color RRGGBB
  *       a real window at that PHYSICAL rect, one colour, never focused, not in the taskbar (the on-screen
- *       latency measurement; only while Owen allows test windows on screen)
+ *       latency measurement; only while the user allows test windows on screen)
  *
  * stdout: "hwnd <decimal>" once it is up, then "port <P>": a loopback TCP socket on 127.0.0.1:P takes lines
  * "color RRGGBB" (repaints; replies "painted <wall ms>" once the page has drawn it), "title TEXT" ("titled"),

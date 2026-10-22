@@ -10,7 +10,7 @@
 // `dynamic` is needed; it is released before the reply.
 //
 //   {dryRun:true}  creates Shell.Application (which changes nothing) and answers what it would call
-//   {}             calls ToggleDesktop. Refused in --passive: a test sidecar never minimises Owen's windows.
+//   {}             calls ToggleDesktop. Refused in --passive: a test sidecar never minimises the user's windows.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;

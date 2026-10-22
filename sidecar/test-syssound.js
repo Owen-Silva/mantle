@@ -2,7 +2,7 @@
 //
 //   node sidecar/test-syssound.js --exe=<your built Mantle.Sidecar.exe>   [--verbose]
 //
-// NEVER changes Owen's sound: every write is sent with dryRun (and a re-read proves nothing moved),
+// NEVER changes the user's sound: every write is sent with dryRun (and a re-read proves nothing moved),
 // every real write - the test tone and the microphone test included - is sent to a PASSIVE sidecar and
 // must answer the passive refusal, and the format maths is proven with made-up inputs through
 // syssound.decide. Reads are real (devices, levels, formats, spatial sound, the app mixer and each

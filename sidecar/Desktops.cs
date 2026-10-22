@@ -7,7 +7,7 @@
 //   desktops.*         list / switch / create / remove / rename desktops, move a window to one
 // Every write takes {dry:true}: it resolves everything (the desktop, the window's app view, whether
 // Windows lets it move) and answers with the plan WITHOUT making the call. Tests only ever dry-run:
-// they must never switch, create, remove or rename Owen's desktops or move his windows.
+// they must never switch, create, remove or rename the user's desktops or move his windows.
 //
 // TWO COM INTERFACES, AND WHY ONE OF THEM IS PINNED TO A BUILD:
 //   IVirtualDesktopManager (documented, stable): which desktop a window is on. That is all we use it

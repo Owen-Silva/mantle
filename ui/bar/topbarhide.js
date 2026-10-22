@@ -1,6 +1,6 @@
 /* topbarhide.js - the Top bar row in the quick-settings panel (lane tbvideo, 2026-09-26).
  *
- * Owen: "make a way that i can manually hide it". The top bar hides from its own Mantle menu or with
+ * The user: "make a way that i can manually hide it". The top bar hides from its own Mantle menu or with
  * Win+Alt+T, and then it is gone from the screen, so THIS row is where "hidden" is said and undone:
  * "Hidden · point at the top to peek" with a Show top bar button and a line naming Win+Alt+T (lane tbpeek:
  * resting the cursor on the top edge peeks at the bar without un-hiding it; a watch that cannot work

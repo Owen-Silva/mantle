@@ -1,7 +1,7 @@
 /* spotify.js - the "Up next" queue inside the now-playing card (spotq lane; rebuilt on the Spotify
  * DESKTOP APP by the spotapp lane, 2026-09-25).
  *
- * Owen: "make a dropdown so i can see and adjust the queue too". Windows' media session has no
+ * The user: "make a dropdown so i can see and adjust the queue too". Windows' media session has no
  * queue, so this reads Spotify's own. The Web API version needed Premium (he has none), so main now
  * drives the Spotify desktop app itself over a local debugging port (lib/features/_spotify-app.js):
  * Spotify has to be started BY MANTLE for that, and the card says so and offers the button.
@@ -17,7 +17,7 @@
  * the port taken by something else, Spotify's internals not found (an update), not installed, off,
  * and each action's result (verified against a re-read of the queue).
  *
- * SPOTHIDE LANE (2026-09-26): Owen: "i can just start it and play music ... without opening the app".
+ * SPOTHIDE LANE (2026-09-26): the user: "i can just start it and play music ... without opening the app".
  * Mantle starts Spotify HIDDEN (lib/features/_spotify-app.js); tabs Up next | Library (Liked Songs,
  * playlists, artists, albums) with shuffle and repeat; one search where a tap PLAYS it.
  *
@@ -113,7 +113,7 @@
   var HINT = { checking: '', notrunning: 'Not running', noport: 'Needs a restart', starting: 'Starting…', loading: 'Loading…', portbusy: 'Can’t connect',
     internals: 'Can’t connect', noinstall: 'Not installed', error: 'Can’t connect', off: 'Off', missing: 'Off' };
 
-  /* media-ui lane: Spotify's and Mantle's own words for a failure are for Owen's logs, not the card.
+  /* media-ui lane: Spotify's and Mantle's own words for a failure are for the user's logs, not the card.
      A reason that names Spotify's internals (function names, the page, the debugging port, socket
      codes) is said in plain words; anything else passes through with its first letter capitalised.
      The raw text stays on the line's tooltip, so nothing is lost. Exported for node tests. */
@@ -1164,7 +1164,7 @@
       body.appendChild(moreBtn);
       var more = mk('div', 'spq-more'); more.hidden = true;
       body.appendChild(more);
-      /* r6-apfix: Spotify auto-pause's on/off, right here (Owen: "can you just have it avaible somewere
+      /* r6-apfix: Spotify auto-pause's on/off, right here (the user: "can you just have it avaible somewere
          here ... in more below"). One row: what it does, then the switch; a failure is one warn line. */
       var apSw = mk('div', 'spq-apsw'); apSw.hidden = true;
       var apBtn = mk('button', 'spq-apsw-btn'); apBtn.type = 'button'; apBtn.setAttribute('role', 'switch');

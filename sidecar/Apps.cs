@@ -1,7 +1,7 @@
 // Apps.cs - app identity: AUMIDs, Store-app icons, the taskbar pin list, and
 // launching a packaged app.
 //
-// THE PROBLEM THIS SOLVES, in Owen's words: "i want the apps when i have them
+// THE PROBLEM THIS SOLVES, in the user's words: "i want the apps when i have them
 // running to work the same as before just on mantle, and i want to be able to
 // see all my pinned stuff not just some of them."
 //
@@ -635,7 +635,7 @@ namespace Mantle {
     ///
     ///     [1 byte flags][UInt32 cb][cb bytes: one absolute PIDL]
     ///
-    /// - and the blob ends with a single 0xFF. Owen's blob is 10,419 bytes: 13
+    /// - and the blob ends with a single 0xFF. The user's blob is 10,419 bytes: 13
     /// records consuming 10,418 of them, every payload ending exactly on its
     /// own 0x0000 terminator. The bare-PIDL reading desyncs on the second entry,
     /// so it is kept only as a fallback for a machine whose blob really is
@@ -746,7 +746,7 @@ namespace Mantle {
         string parsing = DisplayName(item, Win32.SIGDN_DESKTOPABSOLUTEPARSING);
         string kind = "other", aumid = null, lnk = null;
 
-        // MEASURED, not assumed (2026-09-21, Owen's own 13 pins): an AppsFolder
+        // MEASURED, not assumed (2026-09-21, the user's own 13 pins): an AppsFolder
         // item's DESKTOPABSOLUTEPARSING name is the BARE AUMID -
         // "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" - with no CLSID path
         // in front of it. The prefixed forms are handled too because other

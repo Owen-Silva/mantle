@@ -12,7 +12,7 @@
 // keeps captures in the Videos folder's Captures folder and has no setting that moves only them).
 //
 // BACKGROUND RECORDING COSTS FRAMES: while it is on, the GPU encodes the last seconds of every game
-// all the time. Owen's laptop (i3-1215U, integrated graphics) feels that, so the reads carry it and
+// all the time. The user's laptop (i3-1215U, integrated graphics) feels that, so the reads carry it and
 // the page says it. A test never switches it on: every test write is dryRun (and a passive sidecar
 // refuses a real write).
 //

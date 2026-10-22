@@ -129,7 +129,7 @@ for (const edge of ['bottom', 'top']) {
 }
 
 /* ---------------------------------------------------------------- inside an open panel (2026-09-25)
-   Owen's screenshot: the quick-settings footer link's tip sat on the power tile's warning. The
+   The user's screenshot: the quick-settings footer link's tip sat on the power tile's warning. The
    scene below is the headless one (ui/shared/tips-shoot.js, 1120 x 660, 2026-09-25): the panel,
    the footer link, the warning's line boxes, the battery line left of the link, the pill below. */
 {
@@ -155,7 +155,7 @@ for (const edge of ['bottom', 'top']) {
     `panel, nothing above: the tip goes above the link (${p.side} y ${p.y})`);
   ok(Math.abs(p.x + W / 2 - (link.left + link.right) / 2) < 0.01, 'panel, nothing above: centred on the link');
 
-  // Owen's scene: the warning above, the pill below, the battery line to the left. Never the warning:
+  // The user's scene: the warning above, the pill below, the battery line to the left. Never the warning:
   // the only spot that avoids it is left of the link, over the battery line, narrowed into the panel.
   p = place(Object.assign({}, base, { avoid: warn.concat([battery]) }));
   ok(p.covers.warn === 0 && !warn.some(r => hit(p, r)), `panel, warning above: the tip is not over the warning (${p.side} ${p.x},${p.y} ${p.w}x${p.h})`);
