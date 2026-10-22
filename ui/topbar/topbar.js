@@ -40,7 +40,7 @@
   /* The part of this window that is on its screen, in CSS px: normally innerWidth. The user's "CPU 82%"
      cut at the right edge (2026-09-25) is what a window WIDER than its display shows: headless at
      1920 CSS px on a 1536 px screen puts CPU at 1454-1528 and RAM / GPU / NET past the edge, exactly
-     his screenshot, and an Electron probe window resized to 1920 DIP while hidden laid its page out
+     their screenshot, and an Electron probe window resized to 1920 DIP while hidden laid its page out
      1920 CSS px wide on the 1536 DIP panel (scratchpad eprobe2, case C). So the strip is sized to
      the screen, not the window. screen.* and screenX are DIP and innerWidth is CSS px, equal at page
      zoom 1, which main pins (lib/features/topbar.js). NOT outerWidth / innerWidth as a zoom guess:

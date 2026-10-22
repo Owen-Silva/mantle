@@ -21,7 +21,7 @@
 # this script is the same put-back for the day Mantle cannot run at all.
 #
 # THE RULE, same as Mantle's: an original goes back ONLY where the value is still
-# Mantle's 0. Anything else (a value the user set himself in Windows' Settings, an app
+# Mantle's 0. Anything else (a value the user set themselves in Windows' Settings, an app
 # that is gone) is left exactly as it is.
 #
 # SAFE TO RUN TWICE and SAFE WITH NO RECORD: a second run finds every value
@@ -102,7 +102,7 @@ function Write-BackMarker([string]$file, $done) {
     [System.IO.File]::WriteAllText($tmp, $json, (New-Object System.Text.UTF8Encoding($false)))
     if ([System.IO.File]::Exists($file)) { [System.IO.File]::Replace($tmp, $file, [NullString]::Value) }
     else { [System.IO.File]::Move($tmp, $file) }
-    return "  marker  $name lists the $(@($done).Count) app(s) put back, with the record's stamps (so Mantle leaves a pop-up the user turns off after this as he set it)$note"
+    return "  marker  $name lists the $(@($done).Count) app(s) put back, with the record's stamps (so Mantle leaves a pop-up the user turns off after this as they set it)$note"
   } catch {
     $why = $_.Exception.Message
     try { if ([System.IO.File]::Exists($tmp)) { [System.IO.File]::Delete($tmp) } } catch { }

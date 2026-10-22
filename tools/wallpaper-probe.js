@@ -227,7 +227,7 @@ async function presetsProbe(P, C, d, dir, phase) {
   async function settingsStep(want, pickId) {
     const reply = {};
     app.emit('mantle-open', 'settings', { section: 'personalization', page: 'background', row: 'personalization.background.builtin', via: 'the wallpaper probe', reply });
-    ok(`settings: opened at Personalization > Background (${want || 'his own'} up)`, reply.ok === true, reply);
+    ok(`settings: opened at Personalization > Background (${want || 'their own'} up)`, reply.ok === true, reply);
     const { BrowserWindow } = require('electron');
     const sw = await waitFor(() => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && /ui[\\/]settings[\\/]index\.html/.test(w.webContents.getURL()) && !w.webContents.isLoading()), 15000);
     if (!sw) { ok('settings: the window exists', false, null); return; }
@@ -260,7 +260,7 @@ async function presetsProbe(P, C, d, dir, phase) {
 
   if (phase === '1') {
     let v = await view();
-    ok('window: opens on Your library (one of his own is up) with only his cards', !v.builtin && v.cards.length === P.S.lib.data.items.length && !v.cards.some((x) => /^builtin:/.test(x)), { cards: v.cards.length, lib: P.S.lib.data.items.length });
+    ok('window: opens on Your library (one of their own is up) with only their cards', !v.builtin && v.cards.length === P.S.lib.data.items.length && !v.cards.some((x) => /^builtin:/.test(x)), { cards: v.cards.length, lib: P.S.lib.data.items.length });
     await capture(lw, dir, `p1-window-yours-${v.theme}`);
     await click('#view-builtin');
     await sleep(1500);
@@ -314,22 +314,22 @@ async function presetsProbe(P, C, d, dir, phase) {
     await capture(lw, dir, `p2-window-forest-${v.theme}`);
     await capture(d, dir, 'p2-desktop-forest');
     await cpu('a built-in photo on the desktop after a restart, Wallpapers open, test window', 20000);
-    // back to one of his own
+    // back to one of their own
     await click('#view-yours');
     await sleep(600);
     await click(`.card[data-id="${own}"]`, 'dblclick');
     const back = await waitFor(async () => { const w = await js(d, WALL_SRC); return P.S.lib.data.selected === own && w && w.src && !/assets\/backgrounds/.test(w.src) && w.loaded ? w : null; }, 30000, 500);
     v = await viewWhen((x) => x.ticks.join() === own);
-    ok('back to his own: it is selected, saved, and the desktop draws it', !!back && libJson() === own && P.listing().current && !P.listing().current.preset, { own, selected: P.S.lib.data.selected, desk: back });
-    ok('back to his own: no built-in card is ticked, his card is', v.ticks.join() === own && !v.builtin, v.ticks);
+    ok('back to their own: it is selected, saved, and the desktop draws it', !!back && libJson() === own && P.listing().current && !P.listing().current.preset, { own, selected: P.S.lib.data.selected, desk: back });
+    ok('back to their own: no built-in card is ticked, their card is', v.ticks.join() === own && !v.builtin, v.ticks);
     await capture(lw, dir, `p2-window-own-${v.theme}`);
     await click('#view-builtin');
     await sleep(600);
     v = await view();
-    ok('back to his own: Built-in shows no tick and the neutral credit line', v.builtin && v.ticks.length === 0 && /Photos from Unsplash/.test(v.credit), { ticks: v.ticks, credit: v.credit });
+    ok('back to their own: Built-in shows no tick and the neutral credit line', v.builtin && v.ticks.length === 0 && /Photos from Unsplash/.test(v.credit), { ticks: v.ticks, credit: v.credit });
     await capture(lw, dir, `p2-window-builtin-own-${v.theme}`);
     await settingsStep(null, null);
-    await cpu(`his own wallpaper (${(P.S.lib.data.items.find((i) => i.id === own) || {}).kind || '?'}) on the desktop, Wallpapers + Settings open, test window`, 20000);
+    await cpu(`their own wallpaper (${(P.S.lib.data.items.find((i) => i.id === own) || {}).kind || '?'}) on the desktop, Wallpapers + Settings open, test window`, 20000);
   }
   ok('no console errors in the Wallpapers window, Settings or the desktop page', out.errors.length === 0, out.errors);
   out.passed = out.checks.filter((c) => c.pass).length;

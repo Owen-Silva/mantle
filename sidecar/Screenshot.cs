@@ -33,11 +33,11 @@
 // refuses any other `dir`), each grab deletes the frames the previous one left (a crash included),
 // and `shot.release` deletes this grab's. Nothing here logs a pixel. `synthetic:true` fills the
 // frame with a generated pattern INSTEAD of the screen, so tests can check pixels end to end
-// without ever reading his.
+// without ever reading theirs.
 //
 // PASSIVE (--passive, the test sidecar): a grab only reads the screen and writes to temp, so it
 // runs. `shot.save` writes a file, so in passive it only writes under %TEMP% and refuses anywhere
-// else - a test can never put a file in his Pictures folder, even by mistake.
+// else - a test can never put a file in their Pictures folder, even by mistake.
 //
 // `shot.owner` (lane shotfix, 2026-09-28) names the PROCESS behind a window found in front of the
 // overlay, so screenshot.js can tell Windows' own shell UI (Start, Search, the notification centre,

@@ -610,7 +610,7 @@ const SHOTS = [
   }],
   ['perso-22-gallery-legacy', PG('background', '&perso=legacy'), async (p) => {
     const row = await rowText(p, MW) || '';
-    check("22: with no presets/current sent, his own pick is found from items", /Made-up Rain \(Video\)/.test(row) && /2 in its library/.test(row), row);
+    check("22: with no presets/current sent, their own pick is found from items", /Made-up Rain \(Video\)/.test(row) && /2 in its library/.test(row), row);
     check('22: the gallery says why it is empty', /The built-in wallpapers could not be read: this Mantle sends no built-in list/.test(await p.textContent('#page')) && await p.locator('[data-builtin-id]').count() === 0);
   }],
 ].concat(...['', '&theme=dark'].map((t) => galleryShots(t)));
@@ -642,10 +642,10 @@ function galleryShots(t) {
         ts.every((x) => x.label === P(x.id).title && x.tip.startsWith(P(x.id).title + ' · Photo by ' + P(x.id).credit)));
       const chips = await p.$$eval('[data-cat]', (l) => l.map((b) => b.dataset.cat + '=' + b.getAttribute('aria-pressed')));
       check(`17 ${T}: chips are All then the categories in order, All pressed`, chips.join('|') === ['All=true'].concat(CATS.map((c) => c + '=false')).join('|'), chips.join('|'));
-      check(`17 ${T}: his own pick: no tile checked, the neutral credit line`, !ts.some((x) => x.on || x.check) &&
+      check(`17 ${T}: their own pick: no tile checked, the neutral credit line`, !ts.some((x) => x.on || x.check) &&
         (await credLine(p)) === 'Photos from Unsplash, free under the Unsplash License. Pick one to use it; its photographer is credited here.', await credLine(p));
       const row = await rowText(p, MW) || '';
-      check(`17 ${T}: his own pick still reads (Video), the library counts only his own`, /Made-up Rain \(Video\)/.test(row) && /2 in its library/.test(row), row);
+      check(`17 ${T}: their own pick still reads (Video), the library counts only their own`, /Made-up Rain \(Video\)/.test(row) && /2 in its library/.test(row), row);
       check(`17 ${T}: Open Wallpapers is still there`, await p.locator(sel('personalization.background.wallpapers') + ' button').count() === 1);
       check(`17 ${T}: one tab stop in the grid`, ts.filter((x) => x.tab === 0).length === 1 && ts[0].tab === 0);
       await p.click('[data-cat="Snow"]');
@@ -728,7 +728,7 @@ function galleryShots(t) {
       await dark(p, '20');
       check(`20 ${T}: an unreadable catalog shows its reason instead of a grid`, /The built-in wallpapers could not be read: made up: the list of built-in wallpapers \(catalog\.json\) is missing/.test(await p.textContent('#page')) &&
         await p.locator('[data-builtin-id]').count() === 0 && !(await p.isVisible('[data-shuffle]')));
-      check(`20 ${T}: his own wallpaper row and Open Wallpapers are untouched`, /Made-up Rain \(Video\)/.test(await rowText(p, MW) || '') && await p.locator(sel('personalization.background.wallpapers') + ' button').count() === 1);
+      check(`20 ${T}: their own wallpaper row and Open Wallpapers are untouched`, /Made-up Rain \(Video\)/.test(await rowText(p, MW) || '') && await p.locator(sel('personalization.background.wallpapers') + ' button').count() === 1);
       await toGallery(p);
     }],
     ['perso-21-gallery-refused' + N, PG('background', '&perso=setbad' + t), async (p) => {

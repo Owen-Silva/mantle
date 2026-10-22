@@ -1,7 +1,7 @@
 /* mock-mantle.js - plays main for the Clips pages when they are opened over file:// without Electron
  * (headless shots, the morning screenshots). The real preload.js defines window.mantle first, so under
  * Electron this file does nothing. NOTHING HERE IS FROM THE USER'S MACHINE: every clip is a stand-in with
- * a drawn picture (an SVG made here), never one of his captures.
+ * a drawn picture (an SVG made here), never one of their captures.
  *
  * record.html  ?mock=ready (default) | recording | starting | game | none | failed | nolast
  *              &screenrec=1 (the "Record a region or window" row)   &theme=dark   &dark=1

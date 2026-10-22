@@ -11,7 +11,7 @@
  * never receives a click, so the place to choose a wallpaper has to be a normal window. It opens
  * from the launcher ("Wallpapers") and from the tray menu.
  *
- * THUMBNAILS: a video with none (anything the user adds; all nine of his Lively ones brought their own)
+ * THUMBNAILS: a video with none (anything the user adds; all nine of their Lively ones brought their own)
  * gets one here, by playing it muted in a detached <video>, seeking a second in, and drawing that
  * frame. It doubles as the codec check: a video Chromium cannot decode fails right here, and the
  * card says so the moment it is added instead of the desktop going black later.
@@ -26,7 +26,7 @@
  * BUILT-IN (2026-10-09, lane mantle-bg-presets): the user: "can you also make it so that mantle can have
  * the same backrounds preset as quartz and helm". The listing's `presets` (Helm's 23 photos, read by
  * lib/wallpaper-presets.js) get their own view, "Built-in", beside "Your library": never mixed into
- * his own cards, so his Lively library is not buried under 23 photos. The Built-in view has Helm's
+ * their own cards, so their Lively library is not buried under 23 photos. The Built-in view has Helm's
  * category chips (All first), Shuffle (wallpaper.shuffle in the chosen category) and the credit line
  * under the grid, as Helm and Quartz show it; the details pane credits the photo too, and its link
  * opens the photo's page (wallpaper.creditOpen). A built-in one is set like any other (Enter, a
@@ -76,7 +76,7 @@
     if (!L) return null;
     return L.items.find((i) => i.id === id) || presets().items.find((i) => i.id === id) || null;
   }
-  /** The cards the grid shows now: his library, or the built-in photos in the chosen category. */
+  /** The cards the grid shows now: their library, or the built-in photos in the chosen category. */
   function shown() {
     if (!L) return [];
     if (view !== 'builtin') return L.items;
@@ -617,7 +617,7 @@
 
   function render(listing) {
     L = listing;
-    // First listing: open on the view that holds what is on the desktop (his library otherwise).
+    // First listing: open on the view that holds what is on the desktop (their library otherwise).
     if (view === null) { const cur = current(); view = cur && cur.preset ? 'builtin' : 'yours'; }
     if (focusId && !shown().some((x) => x.id === focusId)) focusId = null;
     if (!focusId) { const sel = shown().find((i) => i.selected); if (sel) focusId = sel.id; }

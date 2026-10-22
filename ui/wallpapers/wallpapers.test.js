@@ -278,22 +278,22 @@ async function run() {
     const tickIds = () => page.$$eval('#grid .card .tick', (a) => a.map((t) => t.closest('.card').dataset.id).join());
     const vw = await page.evaluate(() => ({ yours: document.getElementById('view-yours').getAttribute('aria-selected'), n1: document.getElementById('n-yours').textContent,
       n2: document.getElementById('n-builtin').textContent, cats: document.getElementById('cats').hidden, sh: document.getElementById('shuffle').hidden, credit: document.getElementById('credit').hidden }));
-    check('views: opens on Your library when one of his own is on the desktop, with both counts', vw.yours === 'true' && vw.n1 === '6' && vw.n2 === '23' && vw.cats && vw.sh && vw.credit, JSON.stringify(vw));
-    check('views: his library shows only his own cards', (await cardIds()).join() === 'w1,w2,w3,w4,w5,w6');
+    check('views: opens on Your library when one of their own is on the desktop, with both counts', vw.yours === 'true' && vw.n1 === '6' && vw.n2 === '23' && vw.cats && vw.sh && vw.credit, JSON.stringify(vw));
+    check('views: their library shows only their own cards', (await cardIds()).join() === 'w1,w2,w3,w4,w5,w6');
     await page.click('#view-builtin');
     await page.waitForTimeout(80);
     const bIds = await cardIds();
-    check('built-in: 23 cards, in the catalog\'s order, none of his', bIds.length === 23 && bIds.join() === PRESETS.map((p) => p.id).join(), bIds.length);
+    check('built-in: 23 cards, in the catalog\'s order, none of theirs', bIds.length === 23 && bIds.join() === PRESETS.map((p) => p.id).join(), bIds.length);
     const chips = await page.$$eval('#cats .cat', (a) => a.map((c) => c.textContent + (c.getAttribute('aria-pressed') === 'true' ? '*' : '')));
     check('built-in: Helm\'s category chips, All first and chosen', chips.join('|') === 'All*|Mountains|Forest|Water|Coast|Desert|Sky & Night|Snow|City|Abstract|Minimal', chips.join('|'));
     check('built-in: Shuffle is there', await page.$eval('#shuffle', (b) => !b.hidden && b.textContent.trim() === 'Shuffle'));
-    check('built-in: the credit line says where the photos are from while one of his is on the desktop', /Photos from Unsplash, free under the Unsplash License/.test(await page.textContent('#credit')));
+    check('built-in: the credit line says where the photos are from while one of theirs is on the desktop', /Photos from Unsplash, free under the Unsplash License/.test(await page.textContent('#credit')));
     await page.waitForFunction(() => Array.from(document.querySelectorAll('#grid .card .thumb img')).slice(0, 6).every((i) => i.complete && i.naturalWidth > 0), null, { timeout: 5000 }).catch(() => {});
     const th = await page.$$eval('#grid .card .thumb img', (a) => ({ n: a.length, thumbs: a.every((i) => /\/assets\/backgrounds\/thumbs\/.+\.jpg$/.test(i.src)), loaded: a.slice(0, 6).filter((i) => i.complete && i.naturalWidth > 0).length }));
     check('built-in: every card shows its real thumb (the first row loaded)', th.n === 23 && th.thumbs && th.loaded === 6, JSON.stringify(th));
     check('built-in: the card names the category and says "Photo"', /Photo/i.test(await page.textContent('.card[data-id="builtin:stone"] .chip')) && /Mountains/.test(await page.textContent('.card[data-id="builtin:stone"] .card-meta')));
     check('built-in: the hover text credits the photographer', /Photo by Fabrizio Conti on Unsplash/.test(await page.getAttribute('.card[data-id="builtin:stone"]', 'title')));
-    check('built-in: no tick while one of his own is on the desktop', (await tickIds()) === '');
+    check('built-in: no tick while one of their own is on the desktop', (await tickIds()) === '');
     await page.click('#cats .cat[data-cat="Snow"]');
     await page.waitForTimeout(60);
     check('chips: Snow shows its 2 photos and is the chosen chip', (await cardIds()).join() === 'builtin:snow-peak,builtin:snow-ridge' &&
@@ -356,10 +356,10 @@ async function run() {
     await page.keyboard.press('ArrowLeft');
     await page.waitForTimeout(60);
     check('tabs: Left moves to Your library, and the keyboard goes with it', await page.evaluate(() => document.activeElement.id === 'view-yours' && document.getElementById('view-yours').getAttribute('aria-selected') === 'true') && (await cardIds()).length === 6);
-    check('views: his library is untouched and none of his cards has the tick', (await cardIds()).join() === 'w1,w2,w3,w4,w5,w6' && (await tickIds()) === '');
+    check('views: their library is untouched and none of their cards has the tick', (await cardIds()).join() === 'w1,w2,w3,w4,w5,w6' && (await tickIds()) === '');
     await page.dblclick('.card[data-id="w2"]');
     await page.waitForTimeout(80);
-    check('switch back: one of his own is set again', ((await lastCall('wallpaper.set')) || [])[1].id === 'w2' && (await tickIds()) === 'w2' && !/built in/.test(await page.textContent('#head-sub')));
+    check('switch back: one of their own is set again', ((await lastCall('wallpaper.set')) || [])[1].id === 'w2' && (await tickIds()) === 'w2' && !/built in/.test(await page.textContent('#head-sub')));
     await page.click('#view-builtin');
     await page.waitForTimeout(60);
     check('switch back: no built-in card keeps a tick', (await tickIds()) === '' && /Photos from Unsplash/.test(await page.textContent('#credit')));
@@ -406,7 +406,7 @@ async function run() {
 
     await page.goto(PAGE + '?m=oldmain', { waitUntil: 'load' });
     await page.waitForSelector('#grid .card[data-id]');
-    check('an older main (no presets sent): his library still works', (await cardIds()).length === 6);
+    check('an older main (no presets sent): their library still works', (await cardIds()).length === 6);
     await page.click('#view-builtin');
     await page.waitForTimeout(60);
     check('an older main: the Built-in view says why it is empty', /sent no built-in wallpapers/.test(await page.textContent('#empty')));

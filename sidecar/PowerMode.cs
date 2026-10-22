@@ -172,7 +172,7 @@ namespace Mantle {
     // ------------------------------------------------------------------ the power PLANS
     //
     // WHY (2026-09-24): the user's active plan is "Hone Ultimate Power Plan V5", and Windows applies a
-    // power MODE only on Balanced, so the mode switch alone is a dead control on his machine. The
+    // power MODE only on Balanced, so the mode switch alone is a dead control on their machine. The
     // panel offers the installed plans instead (PowerEnumerate + PowerReadFriendlyName, the list
     // Control Panel > Power Options shows) and the modes once Balanced is chosen.
     const uint AccessScheme = 16;              // POWER_DATA_ACCESSOR ACCESS_SCHEME

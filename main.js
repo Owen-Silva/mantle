@@ -108,8 +108,8 @@ try {
  * Mantle's first live run hid the Shell_TrayWnd window with ShowWindow(SW_HIDE).
  * The user's Windows taskbar is set to AUTO-HIDE. Hiding the window of an auto-hiding
  * taskbar wedges explorer's own show/hide state machine: when Mantle was killed
- * the sidecar's SW_SHOW ran, and the taskbar still did not come back. He had to
- * REBOOT, in the middle of his work. His words: "dont ever let that happen
+ * the sidecar's SW_SHOW ran, and the taskbar still did not come back. They had to
+ * REBOOT, in the middle of their work. Their words: "dont ever let that happen
  * again."
  *
  * The principle every rule below serves: A KILLED MANTLE MUST LEAVE WINDOWS
@@ -448,7 +448,7 @@ app.setAppUserModelId('com.owensilva.mantle');
 // and a blank capturePage() are both symptoms of the same optimisation, so it
 // goes off. These pages are idle between ticks; the cost is not measurable.
 // lane mantle-player: a --test copy never publishes a media session to Windows (HardwareMediaKeyHandling is
-// Chromium's SMTC link), so a muted test video never shows in the user's media flyout or his live bar's chip.
+// Chromium's SMTC link), so a muted test video never shows in the user's media flyout or their live bar's chip.
 app.commandLine.appendSwitch('disable-features', flags.test ? 'CalculateNativeWinOcclusion,HardwareMediaKeyHandling' : 'CalculateNativeWinOcclusion');
 /*
  * The GPU service runs INSIDE the main process. Measured 2026-09-21 (private
@@ -608,7 +608,7 @@ if (flags.live) {
  * Block this thread for real, before the app is ready and before anything else
  * is running. A setTimeout would let the boot race past the pause it is supposed
  * to be, and the pause is the point: it is the window in which the user can read the
- * recovery line and change his mind.
+ * recovery line and change their mind.
  */
 function sleepSync(ms) {
   try {
@@ -1940,9 +1940,9 @@ async function revealByPage(geo, why, visible) {
 let raiseComplaint = null;      // what was last found covering us, so it is logged once
 async function raiseBar(why) {
   if (!barWin || barWin.isDestroyed()) return;
-  // --test --flyout drives the bar with no one at it, possibly while the user works (or records his
+  // --test --flyout drives the bar with no one at it, possibly while the user works (or records their
   // screen) in front: every "raise" becomes "send to the back", so the test bar never covers
-  // him. Its pictures are captured with PrintWindow, which does not need it on top.
+  // them. Its pictures are captured with PrintWindow, which does not need it on top.
   if (flags.test && (flags.flyout !== null || flags.testLiveBar)) { thumbs.toBack(hwndOf(barWin)); return; }
   try { barWin.moveTop(); } catch (_) { /* free when it works, nothing when it does not */ }
   if (sidecar.blockedReason()) return;
@@ -4083,7 +4083,7 @@ function startPinWatch() {
  *
  * The user: "these buttons need to go to a wrapper version of where they used to go
  * ... some of them just go to settings now". Clicking volume or Wi-Fi should
- * change volume or Wi-Fi, not dump him in the Windows Settings app -- so every
+ * change volume or Wi-Fi, not dump them in the Windows Settings app -- so every
  * control is read and written here, through the sidecar, and the Settings app is
  * not in the path at all.
  *
@@ -4761,7 +4761,7 @@ async function mediaRead() {
      protected app, which then shows with its controls off. A pick of it does not outlive the
      player: once protected apps are alone again, this wins (lib/media-pick.js drops it).
      A pick of a PLAYER survives this (2026-09-25): the player blinking out for a moment is not
-     the user changing his mind. Not a failure: ok stays true, and the reason says what happened for
+     the user changing their mind. Not a failure: ok stays true, and the reason says what happened for
      anyone reading the payload. */
   if (choice.protectedOnly) {
     return {
@@ -6226,7 +6226,7 @@ function testShellBaseline() {
     // NOT "passive would refuse it": the sidecar allows traywatch in passive
     // (it only ever raises the caller's OWN window). It is simply not asked for,
     // because a test run's bar is an ordinary framed window that has no business
-    // outranking the user's real taskbar while he is working.
+    // outranking the user's real taskbar while they are working.
     watchReason: 'test mode: the sidecar was not asked to watch the Windows taskbar, so the real taskbar sits above the test bar as it should',
   });
   state.set('workarea', { reserved: false, reason: 'test mode: no app bar was registered, so no screen space was reserved' });
@@ -6521,13 +6521,13 @@ async function applyMode() {
 // tint is 40 % WHITE and the renderer paints a ~55 % white fill on top of it; the
 // two together are the ~68 % white the design calls for, with the blur still
 // carrying the colour of whatever is behind the bar.
-// ...and 40 % white was "more glass ui like and less white" away from what he
+// ...and 40 % white was "more glass ui like and less white" away from what they
 // wanted -- the wallpaper behind the island has to READ through it. 35 %, with
 // lane B's CSS fill down to .20: the blur still does the work, the colour behind
 // it still comes through.
 /*
  * GLASS_TINT is GONE (2026-09-21). Every Mantle window now blurs its OWN captured
- * backdrop, because no DWM mode could give the user what he asked for: acrylic ignores
+ * backdrop, because no DWM mode could give the user what they asked for: acrylic ignores
  * the alpha in its tint (a fixed, near-opaque frost) and blur-behind paints a black
  * slab -- both measured live. A tint constant that no call passes any more would
  * only be a thing to wonder about, so it is deleted rather than left at 0.
@@ -7173,7 +7173,7 @@ async function applyLive() {
 
   // 0b. The desktop layer goes under the icons FIRST (lane mn-wake, 2026-10-12; audit #3). It is
   //     made HIDDEN and is shown only once it is there (makeDesktopWindow holdShow), so until this
-  //     lands the user sees Windows' own wallpaper, never a full-screen layer over his apps. It used to
+  //     lands the user sees Windows' own wallpaper, never a full-screen layer over their apps. It used to
   //     be shown as soon as its first picture landed and go under the icons only after the taskbar,
   //     the bar, the edge clip and the taskbar hiding: ~3 s over every open app at every start.
   //     Explorer's desktop can still be getting ready at logon, so a held layer that could not go
@@ -7704,7 +7704,7 @@ function armDesktopGoneTest() {
  * shell it is part of (or, in a test instance, for the LIVE shell). Measured 2026-09-22 through
  * the UIA tray: it lists as title "Electron", exe
  * <repo>\node_modules\electron\dist\electron.exe, hidden. The user's own browser is a browser built on
- * Electron, ALSO electron.exe, so the exe NAME alone would hide his browser's
+ * Electron, ALSO electron.exe, so the exe NAME alone would hide their browser's
  * icon too. The match is an electron.exe that lives in a mantle checkout (mantle, mantle-live,
  * any mantle-*), this process's own exe, or a live tooltip in the "Mantle (live|test)" form
  * updateTray() writes.
@@ -8097,7 +8097,7 @@ app.on('window-all-closed', () => shutdown('every window was closed'));
  * An uncaught exception has always meant "put Windows back and go" (a shell in an unknown state is
  * worse than no shell). But it went with exit code 0, so the logon task's RestartOnFailure
  * (tools/mantle-logon-task.xml) never saw a failure, and one bad moment left the user with no bar and
- * no launcher until he noticed and started Mantle by hand. Now the crash is written down
+ * no launcher until they noticed and started Mantle by hand. Now the crash is written down
  * (<userData>/crash.json), Mantle arranges its own way back exactly as "Restart Mantle" does
  * (arrangeRestart), and exits with code 1 so the task records the failure too. At most 3 of those
  * in 10 minutes: the 4th crash stays down, and says why, rather than flicker the taskbar forever.

@@ -103,7 +103,7 @@ const T = require('./test-lib');
 
     // ---- the app in front (lane sysmon-game, 2026-09-29): never SLOWED, but always PUT BACK. A child
     // this test started stands in for "the app in front" (testFgPid: passive only); the user's window is
-    // never read for this. Before the fix the restore was refused too, and the app he was in when the
+    // never read for this. Before the fix the restore was refused too, and the app they were in when the
     // game closed stayed slowed until Mantle restarted.
     {
       const fk = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore', windowsHide: true });

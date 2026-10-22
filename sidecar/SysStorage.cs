@@ -20,10 +20,10 @@
 //   [Elevated] sysstorage.cleanSystem {kinds} - the administrator kinds (Windows' temp folder,
 //                         Delivery Optimization files, Windows Update downloads)
 //
-// WHY a plan + token: the user confirms EXACTLY what he saw. The plan keeps the file list it measured; the
+// WHY a plan + token: the user confirms EXACTLY what they saw. The plan keeps the file list it measured; the
 // cleanup deletes only those files, only if each still has the size and time the plan saw, and only
 // once. Downloads and the Recycle Bin are in a plan ONLY when the request names them (the page never
-// ticks them for him), Downloads goes to the Recycle Bin rather than being deleted, and a Recycle Bin
+// ticks them for them), Downloads goes to the Recycle Bin rather than being deleted, and a Recycle Bin
 // that grew since the plan is left alone.
 //
 // MEASURED here (2026-09-29, one 256 GB NVMe): Storage Sense keeps its switches as DWORDs named "01",

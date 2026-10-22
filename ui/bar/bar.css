@@ -244,7 +244,7 @@ body[data-edge="top"].up .bar { --pane-y: 0px; }
 /* DARK: NO DROP SHADOW ON THE BAR (lane clipped-shadow, 2026-10-10; the user: "fix this black sharp stuff
    around the outside"). The window ends 1 DIP past the pill (lib/bar-shape.js shapeRect) and at the
    pill's own ends, so the dark drop (--lg-drop-up, .30 + .32 black) was cut there: a 3 px near-black
-   band with a hard edge and square corners behind the rounded ends (his crops: 9-10,15-17,17-19 over a
+   band with a hard edge and square corners behind the rounded ends (their crops: 9-10,15-17,17-19 over a
    14,24,27 desktop; 20 over a 31 grey window). There is no room for it, so dark ends on the hairline
    and lip. The -0 twin keeps the reveal's box-shadow transition the same shape, so nothing snaps.
    Light is held as it was. */

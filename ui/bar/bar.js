@@ -4,7 +4,7 @@
  * so there is no require(), no import, no Node. `window.mantle` (installed by lane B's preload,
  * or by mock-mantle.js when this page is opened outside Electron) is the ONLY way out of here.
  *
- * THE SHAPE (the user, 2026-09-21): the bar is HIDDEN at rest. He pushes the mouse to the bottom of
+ * THE SHAPE (the user, 2026-09-21): the bar is HIDDEN at rest. They push the mouse to the bottom of
  * the screen, main shows the window and sends 'bar.reveal', and the glass detaches into view:
  * pinned app icons centred on the screen, the readouts on the right.
  *
@@ -19,7 +19,7 @@
  *
  * 1. NOTHING FAILS SILENTLY. Every call that can reject or reply {ok:false}, and every State
  *    piece that is not ok, ends up as a chip in the state strip with a short label and the reason
- *    in its tooltip. A console line does not count — the user will never have devtools open on his
+ *    in its tooltip. A console line does not count — the user will never have devtools open on their
  *    taskbar.
  *
  * 2. IDLE COST ~0. This page is alive every waking hour. There is exactly ONE timer at rest: the
@@ -1172,7 +1172,7 @@
   /* THE MEDIA CHIP GIVES WAY TO THE APPS (2026-09-22). Measured in the first --test run with a
      real session: a 1106 px island with 13 pins had a 494 px span for 540 px of icons once the
      chip's title took its ~160 px, so two pinned apps went. An app the user launches from matters more
-     than a song title he can see in the card, so when the icons do not fit the chip drops to art +
+     than a song title they can see in the card, so when the icons do not fit the chip drops to art +
      glyph (the title stays in its tooltip), and it takes the title back only when the icons would
      still fit WITH it. Both sides of that test are the same geometry, so it cannot flap. The ~7 px
      is the art-to-title gap, which goes with the title. */
@@ -3090,7 +3090,7 @@
      digits on the minutes and seconds, one space before the meridiem. Hand-formatted rather than
      Intl, because Intl's hour12 output is locale-dependent (it gives "4:15:32 p.m." on some
      locales and a narrow no-break space before the meridiem on modern ICU), and the user asked for
-     the Windows en-US string, not for whatever his locale happens to render. The DATE line below
+     the Windows en-US string, not for whatever their locale happens to render. The DATE line below
      still goes through toLocaleDateString: that one SHOULD follow the machine. */
   function clockText(now) {
     var h = now.getHours();

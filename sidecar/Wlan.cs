@@ -1,8 +1,8 @@
 // Wlan.cs - `wlan`: the Wi-Fi LIST behind the '>' on the Quick Settings Wi-Fi
 // tile. The networks in range, a scan when asked, connect and disconnect.
 //
-// The user wants Mantle's panel to be the whole of Windows 11's Wi-Fi flyout, so he
-// never has to open Windows' own. Network.cs answers "am I connected, how well";
+// The user wants Mantle's panel to be the whole of Windows 11's Wi-Fi flyout, so they
+// never have to open Windows' own. Network.cs answers "am I connected, how well";
 // this file answers "what else is out there, and get me onto it".
 //
 // NOTHING HERE WAITS ON A LANE. `wlan` is handed off the way `search` is
@@ -24,7 +24,7 @@
 //
 // WHAT A TEST MAY DO (the user's machine, 2026-09-23 brief): list and scan freely -
 // they change nothing. connect, disconnect and every profile write are refused
-// in --passive. What proves them without touching his Wi-Fi is `probe`, which
+// in --passive. What proves them without touching their Wi-Fi is `probe`, which
 // calls each write entry point against an interface GUID that cannot exist (and
 // hands WlanSetProfile a deliberately invalid profile on top), and `profile`,
 // which returns the generated XML for a test key. Both run ONLY in --passive.

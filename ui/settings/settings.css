@@ -10,7 +10,7 @@
  * (--lg-ease); this window is opaque and small, so a short transition costs nothing here.
  *
  * THE CALM PASS (lane setlook, 2026-09-29; the user on the live Home: "this does not look very good"). What
- * he saw: acrylic over his dark terminal read as mid-grey (139,139,139 measured) with white cards on it,
+ * they saw: acrylic over their dark terminal read as mid-grey (139,139,139 measured) with white cards on it,
  * the sidebar a separate lighter slab with its own corner, and a wall of tan warning pills. So:
  *  - ONE window: the sidebar has no fill, border or corner of its own; the whole window is one light
  *    tint (html.glass below) and the cards are the only layer on it, drawn by a hairline.

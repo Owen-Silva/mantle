@@ -1,6 +1,6 @@
 /* gcal.js - Google Calendar inside the clock's calendar flyout (lane mantle-gcal, 2026-10-16).
  *
- * The user, 10-16: the clock's calendar should sync with his Google Calendar (Sign in with Google, read-only).
+ * The user, 10-16: the clock's calendar should sync with their Google Calendar (Sign in with Google, read-only).
  * Added INSIDE the existing flyout (bar.js buildCalPop), nothing else moved:
  *   - a small dot under each day that has events, in the calendar's colour (neutral when several
  *     calendars meet on one day);

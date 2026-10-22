@@ -1,7 +1,7 @@
 // TaskMgr.cs - the native half of Mantle's task manager (lane taskmgr, 2026-09-28).
 //
-// WHY: the user opens Windows' Task Manager for one job: free RAM before and while he plays Valorant
-// (he closes Spotify by hand for ~300 MB). lib/features/taskmgr.js is that job, RAM first; this
+// WHY: the user opens Windows' Task Manager for one job: free RAM before and while they play Valorant
+// (they close Spotify by hand for ~300 MB). lib/features/taskmgr.js is that job, RAM first; this
 // file reads the process table and does the three things a row can ask for. It is asked ONLY
 // while the task manager window is open (about every 1.5 s): nothing here runs on its own.
 //

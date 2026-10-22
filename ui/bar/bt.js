@@ -168,7 +168,7 @@
 
   /* THE QUICK-SETTINGS TILE (2026-09-27). The user: "when i turn blutooth off it just does this and
      then doesnt let me turn it back on" - the tile read "No radio" and went dead. The sidecar took
-     Win32's radio enumeration as the truth, and his Realtek radio is not enumerated while it is
+     Win32's radio enumeration as the truth, and their Realtek radio is not enumerated while it is
      OFF (sidecar/Bluetooth.cs Present). The sidecar now reads Windows' radio list (`radio`, and
      `present` only false when that list has no Bluetooth radio at all), and this turns ONE part
      (qs.get's `bluetooth`) into the tile:

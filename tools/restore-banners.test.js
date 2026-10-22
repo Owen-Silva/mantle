@@ -2,7 +2,7 @@
 /* restore-banners.test.js - tools/restore-banners.ps1 on REAL registry keys, test app ids only
  * (lane mantle-toasts2, 2026-10-15). Every key it makes is
  *   HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Mantle.ToastTest.rb<random>-<x>
- * with a record file in a temp folder (-RecordFile), so neither the user's apps nor his real
+ * with a record file in a temp folder (-RecordFile), so neither the user's apps nor their real
  * %APPDATA%\mantle\notif-banners.json are ever read or written. Every key is deleted in the finally.
  *   a: Mantle's 0, original 1        -> back to 1
  *   b: Mantle's 0, original null     -> the value is deleted (Windows' default)

@@ -16,7 +16,7 @@
  * marks it pending; the reply - the mode read back from Windows - has the last word; a refusal
  * springs back and its reason is written under the control. Only on the Balanced plan does
  * Windows apply a power mode, so on any other plan the control is drawn muted with that reason
- * (the user's machine, 2026-09-24: "Hone Ultimate Power Plan V5", so muted is what he sees today).
+ * (the user's machine, 2026-09-24: "Hone Ultimate Power Plan V5", so muted is what they see today).
  *
  * KEYBOARD: the three segments are a radiogroup - Left/Right (Up/Down) move and apply, Home/End
  * jump, Enter/Space apply the focused one.

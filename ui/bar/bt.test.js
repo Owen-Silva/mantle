@@ -163,7 +163,7 @@ check('busyOf', show(T.busyOf({ busy: { device: id, op: 'connect', ms: 800 } }))
   T.busyOf({ busy: null }) === null && T.busyOf({ busy: { device: id, op: 'pair' } }) === null);
 
 // ---- the quick-settings tile (2026-09-27: an OFF radio read "No radio" and the tile went dead)
-// OFF is the sidecar's real read on the user's machine with his radio switched off, after the fix.
+// OFF is the sidecar's real read on the user's machine with their radio switched off, after the fix.
 const OFF = { ok: true, present: true, on: false, radio: 'off', canSwitch: true, airplane: false, access: 'Allowed', via: 'winrt', reason: null, ageMs: 292, stale: false };
 const ON = Object.assign({}, OFF, { on: true, radio: 'on' });
 let t = T.tile(OFF);

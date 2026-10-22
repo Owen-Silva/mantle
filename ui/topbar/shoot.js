@@ -587,7 +587,7 @@ async function glassChecks(browser, check) {
     check(`glass ${n}: exactly ONE tint layer`, row.layers === 1, JSON.stringify(row.box));
     check(`glass ${n}: the measured composite alpha of the tint over a flat backdrop is ${row.token}'s ${row.tokenAlpha} (+-.02)`, row.alpha != null && Math.abs(row.alpha - row.tokenAlpha) <= 0.02, `alpha ${row.alpha} pixel ${row.flatPixel}`);
     // Over the user's wallpaper the tint stays the token's or at most .04 thicker (a bar's need is now
-    // --lg-guard-bar, 4.2 in dark, so over his snow-peak the strip is Helm's .50 exactly).
+    // --lg-guard-bar, 4.2 in dark, so over their snow-peak the strip is Helm's .50 exactly).
     check(`glass ${n}: over the user's wallpaper (a) the tint is the token's, or at most .04 thicker for readability`, row.a && row.a.guard && (row.a.guard.engaged === false || row.a.guard.alpha <= row.tokenAlpha + 0.04), JSON.stringify(row.a && row.a.guard));
     for (const sk of ['a', 'b', 'c']) check(`glass ${n}: ink-2 reads >= ${row.need}:1 over the brightest ground pixel, scene ${sk}`, row[sk] && row[sk].worst >= row.need, JSON.stringify(row[sk]));
     for (const sk of ['a', 'b', 'c']) check(`glass ${n}: no page error, scene ${sk}`, !(row[sk] && row[sk].errs), JSON.stringify(row[sk] && row[sk].errs));

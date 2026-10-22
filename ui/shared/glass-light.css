@@ -2,8 +2,8 @@
  *
  * WHY THIS FILE EXISTS, AND WHY IT IS NOT IN tokens.css: tokens.css is Mantle's dark instrument
  * glass, and the launcher, the desktop layer and the chamber are all still built from it. On
- * 2026-09-21 the user pointed at the Northwind site's detached nav pill and said THAT is the glass he
- * wants for the bar. So the bar resolves colour through --lg-* from here, and tokens.css is left
+ * 2026-09-21 the user pointed at the Northwind site's detached nav pill and said THAT is the glass they
+ * want for the bar. So the bar resolves colour through --lg-* from here, and tokens.css is left
  * untouched for everyone else. The values are the Northwind originals or a direct consequence of
  * them: northwind-site/css/shell.css, .nav.is-detached (line ~509) and the :root ink ramp.
  *
@@ -11,7 +11,7 @@
  * never edited for a repaint:
  *   1. light pane over DWM ACRYLIC → acrylic renders a near-opaque white slab. The user: "it needs to
  *      be more glass ui like and less white … it needs to show the background behind it better".
- *   2. dark pane over DWM BLUR-BEHIND → over his dark desktop that is a black slab: "now its
+ *   2. dark pane over DWM BLUR-BEHIND → over their dark desktop that is a black slab: "now its
  *      kinda just black, i just wanted it a little bit more translucent".
  *   3. THE BAR BLURS ITS OWN BACKDROP. Neither DWM mode is tunable, so main now sends a PNG of
  *      the screen strip behind the bar ~4x a second, the page blurs it (.bdrop, blur(12px)
@@ -236,7 +236,7 @@
   /* The BARS' readability floor: the contrast --lg-ink-2 must keep over the brightest blurred pixel
      before a bar's tint thickens past --lg-fill-bar (glass-adapt.js guardTokens; other surfaces keep
      the guard's 4.7). The user, 2026-10-10: "mantle is still slightly off". At 4.7 the top bar sat at .56
-     over his snow-peak, 6 levels darker than Helm's strip right under it (L 52 vs 58, the same photo
+     over their snow-peak, 6 levels darker than Helm's strip right under it (L 52 vs 58, the same photo
      rows), a visible step at the seam. Helm's own strip at .50 gives its secondary ink 4.3:1 there, so
      the bars accept what Helm shows (4.2, a small margin under it) and still thicken over a bright
      photo (top bar over cloud-peaks or sand-ripples: .76, was .80). */

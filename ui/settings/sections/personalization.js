@@ -6,8 +6,8 @@
  * personalization.js -> sidecar/SysPerso*.cs). Nothing links out to ms-settings.
  *
  * THE TRUTH ABOUT WHAT THE USER SEES: Mantle draws its OWN wallpaper (lib/wallpaper.js, the Wallpapers
- * window; his Lively library was imported once) above Windows' background, and it REPLACES Start and
- * the taskbar. So Background leads with Mantle's wallpaper (his own library, or one of the 23 built-in
+ * window; their Lively library was imported once) above Windows' background, and it REPLACES Start and
+ * the taskbar. So Background leads with Mantle's wallpaper (their own library, or one of the 23 built-in
  * photos Helm and Quartz have, picked right here) and says when Windows' own shows through;
  * Start and Taskbar show Mantle's own options (settings.mantle) and open them inside Mantle Settings.
  * Colors leads with Mantle's OWN look (Light / Dark / Match Windows, theme.get / theme.set; Match Windows
@@ -57,11 +57,11 @@
   const INTERVALS = [[60000, '1 minute'], [600000, '10 minutes'], [1800000, '30 minutes'], [3600000, '1 hour'], [21600000, '6 hours'], [86400000, '1 day']];
 
   /* ---- the built-in wallpapers (lane mantle-bg-settings, 2026-10-09)
-   * The user asked for the same 23 built-in photos as Helm and Quartz. lib/wallpaper.js lists them beside his
+   * The user asked for the same 23 built-in photos as Helm and Quartz. lib/wallpaper.js lists them beside their
    * own library (wallpaper.list `presets`, the pick of either kind in `current`); a pick is
-   * wallpaper.set { id: 'builtin:<name>' }, saved like one of his own. This is Helm's gallery in the kit's
+   * wallpaper.set { id: 'builtin:<name>' }, saved like one of their own. This is Helm's gallery in the kit's
    * voice: category chips (All first), Shuffle, the thumbnails with the accent check on the pick, and the
-   * photographer's credit under them. His own library stays first: Open Wallpapers sits above, untouched.
+   * photographer's credit under them. Their own library stays first: Open Wallpapers sits above, untouched.
    * Every refusal is said in the card (a photo that cannot be used, a refused pick, an unread catalog). */
   const CHECK = '<path d="M3.6 8.3l2.9 2.9 5.9-6.4"/>';
   const SHUFFLE = '<path d="M1.5 4.5h2.4c1.3 0 2.4.7 3 1.8l2.2 3.4c.6 1.1 1.7 1.8 3 1.8h2.4M1.5 11.5h2.4c1.3 0 2.4-.7 3-1.8M9.1 6.3c.6-1.1 1.7-1.8 3-1.8h2.4M12.8 2.8l1.7 1.7-1.7 1.7M12.8 9.8l1.7 1.7-1.7 1.7"/>';
@@ -278,7 +278,7 @@
       if (kit.disposed) return null;
       gal.draw(w);
       if (!w || w.ok === false) return mwp.set({ value: '—', tone: 'warn', reason: 'Mantle\'s wallpaper could not be read: ' + ((w && w.reason) || 'no reason came back') });
-      // the pick of either kind: `current` (a built-in photo or his own); his own library is `items` alone
+      // the pick of either kind: `current` (a built-in photo or their own); their own library is `items` alone
       const own = (w.items || []).filter((x) => !x.preset);
       const sel = currentOf(w);
       const pb = w.playback || {};

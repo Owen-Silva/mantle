@@ -2,7 +2,7 @@
 // (WindowList.Focus, sidecar/Windows.cs). Lane mn-focus, 2026-10-12. Used by test-focus-ladder.js.
 //
 // WHAT IT REBUILDS: the user clicks a pin on the bar. The bar is focusable:false (WS_EX_NOACTIVATE), so
-// the click lands in Electron's process WITHOUT making it the foreground process; the app he was in
+// the click lands in Electron's process WITHOUT making it the foreground process; the app they were in
 // keeps the foreground; and the process that then calls SetForegroundWindow is the sidecar, which
 // neither is the foreground process nor received that click. Here:
 //   A        an ordinary window in its own process: clicked first, so Windows makes it foreground

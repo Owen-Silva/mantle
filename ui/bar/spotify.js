@@ -2,12 +2,12 @@
  * DESKTOP APP by the spotapp lane, 2026-09-25).
  *
  * The user: "make a dropdown so i can see and adjust the queue too". Windows' media session has no
- * queue, so this reads Spotify's own. The Web API version needed Premium (he has none), so main now
+ * queue, so this reads Spotify's own. The Web API version needed Premium (they have none), so main now
  * drives the Spotify desktop app itself over a local debugging port (lib/features/_spotify-app.js):
  * Spotify has to be started BY MANTLE for that, and the card says so and offers the button.
  * It is drawn ONLY when the card is showing Spotify: one collapsed row, "Spotify", between the
  * transport buttons and the source list, which opens to:
- *   - "Next in queue" (songs he added) and "Coming up" (the playlist/album that follows), with art; a
+ *   - "Next in queue" (songs they added) and "Coming up" (the playlist/album that follows), with art; a
  *     click on a row plays it (Spotify's own jump: the songs before it are used up);
  *   - per row, on hover or keyboard focus: move up / move down (queued songs only: Spotify reorders
  *     only its queue) and remove;

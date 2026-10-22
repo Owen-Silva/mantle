@@ -51,7 +51,7 @@ namespace Mantle {
     /// RESORT since 2026-09-27, never the answer to "is there a radio": it finds
     /// a radio that is ON, and on the user's Realtek adapter a radio switched OFF is
     /// not enumerated at all, while Windows' radio list still has it (read on
-    /// his machine: GetRadiosAsync "Bluetooth Off", this false). Read() used it
+    /// their machine: GetRadiosAsync "Bluetooth Off", this false). Read() used it
     /// as the truth, so an off radio read present:false, the tile said "No
     /// radio", and Set() refused to switch it back on. Now it only cross-checks
     /// an EMPTY radio list, and stands in when the list cannot be read at all.
