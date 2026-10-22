@@ -2,7 +2,7 @@
 # commit:file:rule:line of the public history.
 #   lib/keep-ready.js:35 and ui/notes/notes-page.test.js:103: keyboard-shortcut labels (`keys: 'Win+I'`)
 #   sidecar/test-clipboard.js:97: a made-up fixture marker that proves pins are stored encrypted
-bde25b2dd5f3fb41d6bbee3b8d6533a6d08bfc8b:lib/keep-ready.js:generic-api-key:35
-32982d9a5f28768c1953406dfe5ce407bbf5ec79:lib/keep-ready.js:generic-api-key:35
-050936912d9818ac2949795f5a841b5aa665198a:ui/notes/notes-page.test.js:generic-api-key:103
-9d4f08eb06053fffe65ce14eeedd3fb45c55f344:sidecar/test-clipboard.js:generic-api-key:97
+1816afaf62217707008a430fbe87383f955f8e64:lib/keep-ready.js:generic-api-key:35
+4cdde6412fbf996aa917abf1dcac16e2fe4c9f27:lib/keep-ready.js:generic-api-key:35
+77b7c050d4bfc56a476ea099ea34dfddbfb3a38b:ui/notes/notes-page.test.js:generic-api-key:103
+b6c0eace5124be55d1e484034b611d102a011b22:sidecar/test-clipboard.js:generic-api-key:97
