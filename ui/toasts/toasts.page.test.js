@@ -4,6 +4,8 @@
  * scripts, so mock-mantle.js stands down). Every check pushes main's events through the page's own code,
  * moves the real mouse, clicks, and reads what the page asked main for. Nothing reaches Windows.
  * Light and dark (data-theme), with shots in MANTLE_SHOTS_DIR (default %TEMP%\mantle-toasts-shots).
+ * Mantle's own banners (lib/own-banners.js) too: words, buttons, progress, detail + Copy, update in place,
+ * a button disabled while it runs, the X and toasts.drop; their PNGs go to MANTLE_SHOT_DIR when it is set.
  *   node ui/toasts/toasts.page.test.js   -> "TOASTS PAGE TEST: n passed, m failed"
  * LINE 1 is not optional: lowcpu.js pins this process and its browser.
  */
@@ -16,6 +18,8 @@ let chromium;
 
 const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/');
 const SHOTS = path.resolve(process.env.MANTLE_SHOTS_DIR || path.join(os.tmpdir(), 'mantle-toasts-shots'));
+// Mantle's own banners (the updater's): PNGs of available / progress / error, light and dark, only when this is set
+const OWN_SHOTS = process.env.MANTLE_SHOT_DIR ? path.resolve(process.env.MANTLE_SHOT_DIR) : null;
 const LIFE = 700, RESUME = 400;
 
 let passed = 0; const failures = [];
@@ -56,10 +60,15 @@ const FAKE = ([life, resume, theme]) => {
     const set = () => { document.documentElement.dataset.theme = theme; };
     if (document.documentElement) set(); else new MutationObserver((_m, o) => { if (document.documentElement) { set(); o.disconnect(); } }).observe(document, { childList: true });
   }
-  window.__fake ={ calls, emit(ch, p) { (on[ch] || []).forEach((f) => f(p)); } };
+  // answer[ch](args) -> what main answers (a value or a promise); none = { ok: true }
+  window.__fake ={ calls, answer: {}, emit(ch, p) { (on[ch] || []).forEach((f) => f(p)); } };
   window.mantle = {
     on(ch, fn) { (on[ch] = on[ch] || []).push(fn); return () => {}; },
-    call(ch, args) { calls.push({ ch, args: args === undefined ? null : JSON.parse(JSON.stringify(args)) }); return Promise.resolve({ ok: true }); },
+    call(ch, args) {
+      calls.push({ ch, args: args === undefined ? null : JSON.parse(JSON.stringify(args)) });
+      const a = window.__fake.answer[ch];
+      return a ? Promise.resolve(a(args)) : Promise.resolve({ ok: true });
+    },
   };
 };
 // a 2x1 png, so an image banner has a real picture to load
@@ -300,6 +309,150 @@ async function open(browser, theme) {
       await page.evaluate(([c, x]) => window.__fake.emit(c, x), ['toasts.lift', { px: 62, kind: 'up', ms: 336 }]);
       await page.waitForTimeout(360);
       check('reduced motion: an up during the held down cancels it (the stack stays up, no late jump down)', Math.abs((await yNow()) + 62) < 0.5, await yNow());
+      await ctx.close();
+    }
+    // ---- MANTLE'S OWN BANNERS (lib/own-banners.js: the updater's), light and dark
+    if (OWN_SHOTS) fs.mkdirSync(OWN_SHOTS, { recursive: true });
+    const OWN = (extra) => Object.assign({ id: -1, own: true, app: 'Mantle', icon: null, title: 'Mantle v0.2.0 is out', body: 'You are on v0.1.0. Update downloads it, installs it and restarts Mantle.',
+      detail: null, progress: null, tone: 'info', actions: [{ id: 'later', label: 'Later' }, { id: 'update', label: 'Update', primary: true }], sticky: true, opens: 'none' }, extra || {});
+    const inksOwn = {};
+    for (const theme of ['light', 'dark']) {
+      const T = theme + ' own: ';
+      const P = await open(browser, theme);
+      const { page, st, emit, calls, until } = P;
+      const settled = (sel) => until(() => page.evaluate((s) => { const t = document.querySelector(s); return !!t && t.classList.contains('in') && getComputedStyle(t).transform === 'none'; }, sel), 2000);
+      const shot = async (name) => { if (!OWN_SHOTS) return; await sleep(300); await page.screenshot({ path: path.join(OWN_SHOTS, `own-${name}-${theme}.png`) }); };
+      const card = () => page.evaluate(() => {
+        const t = document.querySelector('.toast.own');
+        if (!t) return null;
+        const q = (s) => t.querySelector(s);
+        const vis = (s) => { const e = q(s); return !!e && !e.closest('[hidden]') && getComputedStyle(e).display !== 'none'; };
+        return {
+          app: q('.app').textContent, title: q('.title').textContent, body: q('.body').textContent, letter: (q('.letter') || {}).textContent || null,
+          buttons: Array.from(t.querySelectorAll('.own-btn')).map((b) => ({ label: b.textContent, primary: b.classList.contains('primary'), disabled: b.disabled, x: b.getBoundingClientRect().x })),
+          detail: vis('.own-detail') ? q('.own-detail').textContent : null, progress: vis('.own-progress') ? q('.own-pwords').textContent : null,
+          pct: q('.own-ppct').textContent, ind: q('.own-bar').classList.contains('ind'), fill: q('.own-bar i').style.transform,
+          note: vis('.own-note') ? q('.own-note').textContent : null, say: q('.own-copy-say').textContent,
+          when: getComputedStyle(q('.when')).display, x: Number(getComputedStyle(q('.x')).opacity), xDisabled: q('.x').disabled,
+          error: t.classList.contains('tone-error'), titleInk: getComputedStyle(q('.title')).color, out: t.classList.contains('out'),
+        };
+      });
+
+      // ---- available: words, the M letter, buttons right-aligned with the primary last; no age, the X showing
+      await emit('toasts.show', { banners: [OWN()] });
+      await until(async () => (await st()).items.some((i) => i.id === -1 && i.shown));
+      await settled('.toast.own');
+      let c = await card();
+      check(T + 'renders app, title, body and the M letter; no detail, no progress', c && c.app === 'Mantle' && c.title === 'Mantle v0.2.0 is out' && /v0\.1\.0/.test(c.body) && c.letter === 'M' && c.detail === null && c.progress === null, c);
+      check(T + 'buttons: Later then Update (the primary last, nearest the corner), right-aligned', c && c.buttons.length === 2 && c.buttons[0].label === 'Later' && c.buttons[1].label === 'Update' && c.buttons[1].primary && !c.buttons[0].primary && c.buttons[1].x > c.buttons[0].x, c && c.buttons);
+      const rightGap = await page.evaluate(() => { const t = document.querySelector('.toast.own').getBoundingClientRect(), b = document.querySelector('.toast.own .own-btn.primary').getBoundingClientRect(); return Math.round(t.right - b.right); });
+      check(T + 'the primary button ends at the card\'s right padding (right-aligned row)', rightGap >= 8 && rightGap <= 16, rightGap);
+      check(T + 'sticky: the X shows, no "now" age', c && c.x > 0.5 && c.when === 'none', c);
+      const s0 = await st();
+      check(T + 'it is sticky (no timer) and own in the page state', s0.items[0].own === true && s0.items[0].sticky === true && s0.items[0].running === false, s0.items);
+      await shot('available');
+      // ---- a click on the body opens nothing
+      await page.click('.toast.own .title');
+      await sleep(250);
+      check(T + 'a click on the card\'s body does not call toasts.click and the card stays', (await calls('toasts.click')).length === 0 && (await st()).items.some((i) => i.id === -1 && !i.leaving));
+
+      // ---- a button disables itself while its action runs: a double click is ONE toasts.action
+      await page.evaluate(() => { window.__fake.answer['toasts.action'] = () => new Promise((r) => { window.__release = r; }); });
+      const pb = await page.evaluate(() => { const r = document.querySelector('.toast.own .own-btn.primary').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+      await page.mouse.dblclick(pb.x, pb.y);
+      await sleep(150);
+      c = await card();
+      const acts1 = await calls('toasts.action');
+      check(T + 'double click on Update: one toasts.action { id:-1, action:"update" }, the button disabled while it runs', acts1.length === 1 && acts1[0].id === -1 && acts1[0].action === 'update' && c.buttons[1].disabled === true && c.buttons[0].disabled === false, { acts1, b: c.buttons });
+      check(T + 'the page state lists it as pending', (await st()).items[0].pending.includes('update'));
+      await page.evaluate(() => window.__release({ ok: true, keep: true, reason: null }));
+      await sleep(100);
+      c = await card();
+      check(T + 'answered (keep:true): the button works again, the card stays', c && c.buttons[1].disabled === false && !c.out, c && c.buttons);
+
+      // ---- a failure answer shows its reason on the card
+      await page.evaluate(() => { window.__fake.answer['toasts.action'] = () => ({ ok: false, keep: true, reason: 'git is not on PATH' }); });
+      await page.click('.toast.own .own-btn.primary');
+      await until(async () => (await card()).note);
+      c = await card();
+      check(T + 'ok:false: the reason shows on the card in words', c.note === 'git is not on PATH' && !c.out, c.note);
+      await page.evaluate(() => { delete window.__fake.answer['toasts.action']; });
+
+      // ---- update IN PLACE: the same element, no exit/enter, progress text, % and the bar
+      await page.evaluate(() => { window.__ownEl = document.querySelector('.toast.own'); });
+      const nLayBefore = (await calls('toasts.layout')).length;
+      await emit('toasts.update', { banner: OWN({ title: 'Updating Mantle', body: '', actions: [], progress: { text: 'Downloading v0.2.0...', pct: 42 } }) });
+      await sleep(80);
+      c = await card();
+      const same = await page.evaluate(() => ({ same: document.querySelector('.toast.own') === window.__ownEl, n: document.querySelectorAll('.toast.own').length, in: window.__ownEl.classList.contains('in'), anims: window.__ownEl.getAnimations().length }));
+      check(T + 'update in place: the SAME card (one, still in, no exit, enter or slide of its own)', same.same && same.n === 1 && same.in && !c.out && same.anims === 0, same);
+      check(T + 'progress: the words, 42% and the bar at 0.42; the note and buttons gone', c.progress === 'Downloading v0.2.0...' && c.pct === '42%' && !c.ind && /scaleX\(0\.42\)/.test(c.fill) && c.note === null && c.buttons.length === 0 && c.title === 'Updating Mantle', c);
+      check(T + 'a height change in place re-asks the window\'s shape (toasts.layout)', !!(await until(async () => (await calls('toasts.layout')).length > nLayBefore, 1000)));
+      await shot('progress');
+      await emit('toasts.update', { banner: OWN({ title: 'Updating Mantle', body: '', actions: [], progress: { text: 'Installing...', pct: null } }) });
+      await sleep(60);
+      c = await card();
+      check(T + 'pct null: indeterminate (a sliding bar, no %)', c.progress === 'Installing...' && c.ind && c.pct === '', c);
+      const slide = await page.evaluate(() => document.querySelector('.toast.own .own-bar i').getAnimations().length);
+      check(T + 'indeterminate: the bar slides (one animation; reduced motion has none)', slide === 1, slide);
+
+      // ---- error: quiet danger ink, detail selectable in monospace, Copy goes through main
+      const ERR = OWN({ title: 'Update failed: the download stopped', body: 'Still on v0.1.0. Nothing was changed.', tone: 'error', progress: null,
+        detail: 'git pull --ff-only\nnpm ci\nLog: C:/example/update.log', actions: [{ id: 'dismiss', label: 'Close' }] });
+      await emit('toasts.update', { banner: ERR });
+      await sleep(80);
+      c = await card();
+      check(T + 'error tone: still the same card, marked tone-error, with the detail', c.error && c.detail === ERR.detail && (await page.evaluate(() => document.querySelector('.toast.own') === window.__ownEl)), c);
+      inksOwn[theme] = { err: c.titleInk };
+      await shot('error');
+      const looks = await page.evaluate(() => { const d = document.querySelector('.toast.own .own-detail'), cs = getComputedStyle(d); return { sel: cs.userSelect || cs.webkitUserSelect, font: cs.fontFamily, ws: cs.whiteSpace }; });
+      check(T + 'detail: selectable (user-select text), monospace, wraps', looks.sel === 'text' && /Cascadia|Consolas|monospace/i.test(looks.font) && looks.ws === 'pre-wrap', looks);
+      await page.evaluate(() => { window.__fake.answer['toasts.copy'] = () => ({ ok: true }); });
+      await page.click('.toast.own .own-copy');
+      await until(async () => (await card()).say);
+      const cps = await calls('toasts.copy');
+      check(T + 'Copy: toasts.copy { id:-1 } and "Copied"', cps.length === 1 && cps[0].id === -1 && (await card()).say === 'Copied', { cps, say: (await card()).say });
+      await page.evaluate(() => { window.__fake.answer['toasts.copy'] = () => ({ ok: false, reason: 'the clipboard is held by another app' }); });
+      await page.click('.toast.own .own-copy');
+      await until(async () => /^Not copied/.test((await card()).say));
+      check(T + 'Copy failing: "Not copied: <reason>" in words', (await card()).say === 'Not copied: the clipboard is held by another app', (await card()).say);
+
+      // ---- the X: toasts.action close, then the card goes
+      await page.click('.toast.own .x');
+      const closeCall = await until(async () => (await calls('toasts.action')).filter((a) => a.action === 'close').pop() || null, 1500);
+      check(T + 'the X calls toasts.action { id:-1, action:"close" } (not toasts.click)', closeCall && closeCall.id === -1 && (await calls('toasts.click')).length === 0, closeCall);
+      check(T + 'and the card goes', !!(await until(async () => !(await st()).items.some((i) => i.id === -1), 1500)), await st());
+
+      // ---- toasts.drop takes it away; a re-post of the same id comes back as a fresh card
+      await emit('toasts.show', { banners: [OWN()] });
+      await until(async () => (await st()).items.some((i) => i.id === -1 && i.shown));
+      await emit('toasts.drop', { id: -1 });
+      check(T + 'toasts.drop: the card leaves', !!(await until(async () => !(await st()).items.some((i) => i.id === -1), 1500)), await st());
+
+      // ---- never under "+N more", and "+N more" never takes it away
+      await emit('toasts.show', { banners: [OWN()] });
+      await until(async () => (await st()).items.some((i) => i.id === -1 && i.shown));
+      await emit('toasts.show', { banners: [B(70), B(71), B(72), B(73)] });
+      const mix = await until(async () => { const s = await st(); return s.more ? s : null; });
+      check(T + 'with four apps\' banners the own one stays on screen ("+N more" holds apps only)', mix && mix.items.find((i) => i.id === -1).onScreen && mix.more === '+2 more', mix);
+      await page.click('.more');
+      await sleep(400);
+      const after = await st();
+      check(T + '"+N more" takes the apps\' banners, not Mantle\'s own', after.items.length === 1 && after.items[0].id === -1, after.items);
+      await P.ctx.close();
+    }
+    check('own: the error ink differs between light and dark (theme reaches it)', inksOwn.light && inksOwn.dark && inksOwn.light.err !== inksOwn.dark.err, inksOwn);
+    {
+      // reduced motion: the indeterminate bar does not slide
+      const ctx = await browser.newContext({ viewport: { width: 392, height: 700 }, deviceScaleFactor: 1, reducedMotion: 'reduce' });
+      const page = await ctx.newPage();
+      await page.addInitScript(FAKE, [LIFE, RESUME, 'light']);
+      await page.goto(PAGE);
+      await page.waitForFunction(() => window.__toasts && window.__fake.calls.some((c) => c.ch === 'toasts.ready'));
+      await page.evaluate(([c, x]) => window.__fake.emit(c, x), ['toasts.show', { banners: [OWN({ actions: [], progress: { text: 'Installing...', pct: null } })] }]);
+      await page.waitForFunction(() => window.__toasts.state().items.some((i) => i.id === -1 && i.shown));
+      const n = await page.evaluate(() => document.querySelector('.toast.own .own-bar i').getAnimations().length);
+      check('own, reduced motion: the indeterminate bar does not move', n === 0, n);
       await ctx.close();
     }
   } finally {

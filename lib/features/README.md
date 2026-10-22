@@ -94,6 +94,8 @@ notifs qs wallpaper shell tray media battery volume net apps mantle test.
 | `ctx.onOption(key, fn)` | ADDED (lane settings). `fn(value, key)` when Mantle Settings changes one of the module's `options` (below); `key` `'*'` = any. Only declared keys (else throws). Not needed if you read the setting each time you act |
 | `ctx.host.features` | ADDED (lane settings), for Mantle Settings: `list()` (features.list plus each one's `options` with current values, `keys`, `keysReason`), `setEnabled(name, on)` (the tray's switch, `{ok, reason, feature}`), `setOption(name, key, value)` (`value` null = default; `{ok, reason, option}`), `onChange(fn)`, `restart(name)` (ADDED core-lib: a feature that is down, back without restarting Mantle; `Promise<{ok, reason, feature}>`, see the top). Writes are logged "by <your label>" |
 | `ctx.host.switcher` | ADDED (lane settings). `{ get(), set(patch) }` for main's Alt+Tab and Win+N / Win+A switches, or null |
+| `ctx.host.ownBanners` | ADDED (lane mantle-updater). Mantle's own banners (`lib/own-banners.js`: `post(key, banner, onAction)`, `drop(key)`, `list()`, `act(id, action)`, `onChange(fn)`), drawn by the toasts feature, or null |
+| `ctx.host.updates` | ADDED (lane mantle-updater). For `updates` only: `{ root, restart(why), tray(label) }` (main's restartForUpdate and the tray's update row), or null |
 | `ctx.test.fireChord(chord)` / `.fireKey(key)` | TEST ONLY. `ctx.test` is `null` in a live run. Routes exactly like the hook would (so a chord for a feature that is off/unhealthy is NOT delivered). Returns `{ delivered, feature }` / `{ delivered, handlers }` or `{ delivered:false, reason }` |
 
 Handler errors: a throw (or rejected promise) in an onChord / onKey / onEnabled / sidecar.on /

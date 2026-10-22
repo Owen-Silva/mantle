@@ -8,7 +8,8 @@
 <!-- Mantle's own notification banners (lib/features/toasts.js): what an app posted, on the island glass,
      bottom right, stacking upward. Up to three at once, newest nearest the corner, "+N more" above them for the rest. A click
      goes where lib/features/_toasts-core.js clickPlan says; X closes the banner and leaves the toast in
-     the list; hovering holds every banner. The window exists only while a banner is up (RAM). -->
+     the list; hovering holds every banner. The window exists only while a banner is up (RAM).
+     Mantle's own banners (the updater's) use the same card with buttons, progress and detail (tpl-own). -->
 <link rel="stylesheet" href="../shared/glass-light.css">
 <link rel="stylesheet" href="toasts.css">
 <link rel="stylesheet" href="../shared/bar-follow.css">
@@ -35,6 +36,26 @@
     </div>
     <img class="pic" alt="" hidden>
   </article>
+</template>
+<!-- Mantle's OWN banner (lib/own-banners.js, the updater): goes under .main of a card whose banner has own:true.
+     Detail is plain text the user can select and copy; the progress line is text + a thin bar (no pct =
+     indeterminate); the note is a button's failure, in words; the buttons sit right-aligned, primary last. -->
+<template id="tpl-own">
+  <div class="own-box">
+    <div class="own-detail-wrap" hidden>
+      <pre class="own-detail"></pre>
+      <div class="own-copy-row">
+        <span class="own-copy-say" aria-live="polite"></span>
+        <button type="button" class="own-copy" title="Copy this text">Copy</button>
+      </div>
+    </div>
+    <div class="own-progress" hidden>
+      <div class="own-ptext"><span class="own-pwords"></span><span class="own-ppct"></span></div>
+      <div class="own-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+    </div>
+    <div class="own-note" role="status" hidden></div>
+    <div class="own-actions" hidden></div>
+  </div>
 </template>
 <script src="mock-mantle.js"></script>
 <script src="../shared/bar-follow.js"></script>
