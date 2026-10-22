@@ -849,6 +849,10 @@ const POP_WIPE_MS = 200;
 let restoreChain = Promise.resolve();
 // lib/features.js's handle, from app ready on (null before, and in any path that runs before it).
 let features = null;
+// lane mantle-updater: Mantle's OWN banners (lib/own-banners.js), which lib/features/toasts.js draws beside the
+// apps' ones (the updates feature's "a new Mantle is out"), and the tray row that feature asks for.
+const ownBanners = require('./lib/own-banners').createOwnBanners({ log: (l) => process.stdout.write(`mantle: own banners: ${l}\n`) });
+let updatesTrayLabel = null;
 
 // --- the hover bar -----------------------------------------------------------
 // How close to the bottom edge the cursor has to get, in DIP. Two, not one:
@@ -3227,6 +3231,14 @@ function startFeatures() {
           open: (id) => COMMANDS['notifs.open']({ id }),
           openList: () => { broadcast('bar.winkey', { key: 'n', only: 'open' }); return { ok: true }; },
         },
+        // lane mantle-updater: the banner bus, and what lib/features/updates.js needs of main: the app folder,
+        // the restart (the same restore-then-relaunch road as "Restart Mantle"), and its tray row
+        ownBanners,
+        updates: {
+          root: ROOT,
+          restart: (why) => restartForUpdate(why),
+          tray: (label) => { const next = typeof label === 'string' && label ? label : null; if (next !== updatesTrayLabel) { updatesTrayLabel = next; requestTray(); } },
+        },
         // lane settings: Mantle Settings shows and flips the tray's Alt+Tab and Win+N / Win+A switches
         switcher: { get: () => switcher.settingsView(), set: (patch, who) => { switcher.setSettings(patch, who); return switcher.settingsView(); } },
         // lane dm-core: Mantle's appearance for main-drawn colours (window grounds, DWM frames)
@@ -5240,6 +5252,25 @@ async function arrangeRestart() {
     }
   }
   return { ok: true, via: plan.via, why: plan.why || null };
+}
+
+/*
+ * The restart after an update (lib/updater.js apply, through lib/features/updates.js). EXACTLY shell.restart's
+ * road: arrangeRestart() (the "Mantle" task, or app.relaunch with this process's own argv, so the same
+ * flags), then shutdown(), which runs the verified restore (app bar removed, the taskbar's auto-hide flag back,
+ * read back) BEFORE this process exits. So whatever the new version does, Windows is already back when it
+ * starts; and lib/update-watch.js, started by the updater just before this, puts it back again and tells the
+ * user how to start Mantle if the new one never says it is up. A way back that cannot be arranged answers
+ * ok:false and does NOT quit: the updater then rolls the update back and this Mantle keeps running.
+ */
+async function restartForUpdate(why) {
+  if (shuttingDown) return { ok: false, reason: 'Mantle is already shutting down' };
+  if (shellPaused) return { ok: false, reason: 'Mantle is paused because Windows was put back: restart Mantle first, then update' };
+  const r = await arrangeRestart();
+  if (!r.ok) return { ok: false, reason: r.reason };
+  process.stdout.write(`mantle: restart for an update (via ${r.via})${r.why ? `: ${r.why}` : ''}\n`);
+  setTimeout(() => shutdown(why || 'Mantle was updated'), 0);
+  return { ok: true, reason: null, via: r.via };
 }
 
 const COMMANDS = {
@@ -8307,6 +8338,8 @@ function trayTemplate(o) {
   // The way back sits right under the fault it fixes: the link gave up restarting on its own.
   if (!o.paused && o.sidecar && o.sidecar.gaveUp) out.push({ id: 'retry', label: 'Reconnect Mantle to Windows' });
   if (o.recovery) out.push({ label: `    ${o.recovery}`, enabled: false });
+  // lane mantle-updater: a new Mantle is out (lib/features/updates.js); the click brings its banner back
+  if (o.update) out.push({ id: 'update', label: o.update });
   out.push({ type: 'separator' });
   const keys = o.shortcuts || {};
   out.push(Object.assign({ id: 'launcher', label: 'Open launcher' }, keys.launcher ? { accelerator: 'Alt+Space', registerAccelerator: false } : {}));
@@ -8361,7 +8394,7 @@ var trayBatch = null;   // var, not const: a State change can ask before this li
 function trayInputKey() {
   const st = state.get();
   return [st.features, st.switcher, st.shortcuts, JSON.stringify(state.problems()), shellPaused, recoveryNote,
-    sidecar.status, !!sidecar.gaveUp, typeof COMMANDS['settings.open'] === 'function', features ? features.size : 0];
+    sidecar.status, !!sidecar.gaveUp, typeof COMMANDS['settings.open'] === 'function', features ? features.size : 0, updatesTrayLabel];
 }
 function trayBatcher() {
   if (!trayBatch) {
@@ -8384,6 +8417,7 @@ function updateTrayNow() {
     shortcuts: st.shortcuts || {},
     hasSettings: typeof COMMANDS['settings.open'] === 'function',
     featureItems: trayFeatureItems(),
+    update: updatesTrayLabel,
   };
   const items = trayTemplate(o);
   const tip = trayHealth(o.problems, o).tip;
@@ -8426,6 +8460,13 @@ const TRAY_ACTIONS = {
     // Windows was asked back: a crash while paused must not start Mantle (and its taskbar hiding) again.
     supervisor.standDown('Windows was put back from the tray menu ("Restore Windows taskbar")');
     restoreShell('the tray menu asked for it').finally(() => updateTray());
+  },
+  update: () => {
+    const show = COMMANDS['updates.show'];
+    if (typeof show !== 'function') { trayNotice('The update could not be shown', 'the updates feature is not running'); return; }
+    Promise.resolve(show({})).then((r) => {
+      if (r && r.ok === false) trayNotice('The update could not be shown', r.reason || 'no reason was given');
+    }, (err) => trayNotice('The update could not be shown', err.message));
   },
   retry: () => {
     COMMANDS['shell.reconnect']().then((r) => {

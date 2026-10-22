@@ -120,6 +120,35 @@ To start Mantle at sign-in, `npm run autostart` registers a "Mantle" logon task
 (`tools/mantle-logon-task.xml`) and starts it. To remove Mantle: `npm run autostart:remove`, then
 `npm run quit` (or `npm run restore` if it is not running).
 
+### Updating
+
+When a new release is published, Mantle shows its own banner, *Mantle vX is out*, with **Update** and
+**Later**. It asks GitHub's releases API (`releases/latest`, no account) two minutes after it starts
+and then every 6 hours. A release counts only when its tag's commit is not already in your checkout, so a
+folder at or ahead of the release is never asked.
+
+**Update** fetches the release's tag and fast-forwards your clone to it (`git merge --ff-only`), runs
+`npm install` only if `package.json` or `package-lock.json` changed, rebuilds the sidecar only if its
+sources changed, then restarts Mantle the way *Restart Mantle* does, with the same flags: Windows is put
+back first, then the new version starts. The banner shows each step. If a step fails, Mantle goes back to
+the commit it was on (`git reset --keep`), runs `npm install` again if it had run, keeps the old version
+running, and shows the reason and the log (`update.log` in `%APPDATA%\mantle`). If the new version has not
+started within three minutes, a small watcher runs `tools/restore-windows.ps1` and tells you how to start
+Mantle again.
+
+The button is offered only when the folder is a plain `git clone` (not a linked worktree) whose `origin`
+is this repo, on its default branch, with no uncommitted changes to tracked files, a fast-forward is
+possible, and the release does not change Electron or koffi (the running Mantle has them loaded, so npm
+cannot replace them). Otherwise the banner says which of these failed and shows the commands to update by
+hand.
+
+**Later** hides that release's banner for a day; the tray menu keeps an *Update Mantle to vX…* row. A
+check that fails (*Couldn't check for updates: no internet connection*) shows in the tray and the
+desktop's *Needs attention* strip. To stop checking, turn off **Check for Mantle updates** in tray >
+Features or Mantle Settings. To turn the updater off for one folder entirely, put a file named
+`no-updates.local` in it (any contents; `*.local` is gitignored). A `--test` run and a linked worktree
+never check.
+
 ## Configure
 
 Mantle's own settings live in its Settings window and in `%APPDATA%\mantle`. Nothing personal is
@@ -368,6 +397,10 @@ tools/toback.ps1     send a test instance's windows to the back without activati
 tools/kill-test.ps1  stop ONE test instance by profile name (never `taskkill electron.exe`)
 tools/restore-windows.ps1  put Windows back with no Node, no Electron, no Mantle
 tools/check.js       node --check everything + a present/missing list of the lane files
+lib/updater.js       the in-app updater: the latest release, the git checks, Update and its rollback
+lib/update-watch.js  after an update's restart: the new Mantle said it is up, or Windows is put back
+lib/features/updates.js  when it checks, the banner, the tray row
+lib/own-banners.js   Mantle's own banners (the update one), drawn by lib/features/toasts.js
 ```
 
 ## Testing rules
@@ -382,6 +415,18 @@ powershell -NoProfile -File tools/kill-test.ps1 -Match mainlane   # to stop it
 
 `--profile-name` is what both scripts match, as the whole flag. Never
 `taskkill electron.exe`: other apps (browsers, editors) are Electron apps too.
+
+## Releases
+
+A release is a tag `v<version in package.json>` on the default branch with a GitHub release on it. The
+updater reads `releases/latest`, which never returns a draft or a pre-release.
+
+```
+# set "version" in package.json (here 0.2.0), commit it on master, then:
+git tag v0.2.0
+git push origin master v0.2.0
+gh release create v0.2.0 --verify-tag --title "Mantle 0.2.0" --notes "What changed, in a few lines"
+```
 
 ## Licence
 

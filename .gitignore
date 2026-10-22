@@ -25,3 +25,6 @@ client_secret*.json
 look.json
 stills/
 assets/backgrounds/wallpaper.png
+# Machine-local switches, e.g. no-updates.local (turns the in-app updater off for this folder).
+*.local
+*.local.*
