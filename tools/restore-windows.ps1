@@ -7,6 +7,9 @@
 #                             the thing that is running this)
 #   ... -RestartExplorer      last resort: bounce explorer.exe if the taskbar is
 #                             still not right after everything else
+#   ... -SparePid <pid>       stop every Mantle process except this one (the
+#                             update watcher, lib/update-watch.js, runs on
+#                             Mantle's own electron.exe and calls this script)
 #
 # -----------------------------------------------------------------------------
 # WHY THIS FILE EXISTS
@@ -36,7 +39,8 @@
 param(
   [string]$StateFile = (Join-Path $env:APPDATA 'mantle\shell-state.json'),
   [switch]$NoKill,
-  [switch]$RestartExplorer
+  [switch]$RestartExplorer,
+  [int]$SparePid = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -288,7 +292,7 @@ if ($NoKill) {
   }
   try {
     $electrons = @(Get-CimInstance Win32_Process -Filter "Name='electron.exe'" -ErrorAction Stop |
-      Where-Object { $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($needle) })
+      Where-Object { $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($needle) -and $_.ProcessId -ne $SparePid })
   } catch {
     $electrons = @()
     Problem "could not list electron.exe processes: $($_.Exception.Message)"
