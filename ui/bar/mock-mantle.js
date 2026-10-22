@@ -196,7 +196,7 @@
     var out = [];
     for (var i = 0; i < n; i++) {
       var t = names && names[i % names.length] ? names[i % names.length] + (i >= names.length ? ' (' + (i + 1) + ')' : '') : prefix + ' ' + (i + 1);
-      out.push({ title: t, tip: 'C:\\Users\\owen\\Documents\\' + t, icon: i % 3 === 2 ? null : icon, item: (kind === 'task' ? 'c:1:' : 'a:') + (i + 1), kind: kind, pinned: prefix === 'pinned', canRemove: kind === 'item' && prefix !== 'pinned' });
+      out.push({ title: t, tip: 'C:\\Users\\alex\\Documents\\' + t, icon: i % 3 === 2 ? null : icon, item: (kind === 'task' ? 'c:1:' : 'a:') + (i + 1), kind: kind, pinned: prefix === 'pinned', canRemove: kind === 'item' && prefix !== 'pinned' });
     }
     return out;
   }
@@ -1208,7 +1208,7 @@
      __mockMain.gcal(X) pushes a new case to an open page. Event times are made relative to TODAY. */
   var GCAL = q.get('gcal') || 'off';
   var GCAL_CALS = [
-    { id: 'owen@example.com', name: 'Owen', color: '#039be5' },
+    { id: 'alex@example.com', name: 'Alex', color: '#039be5' },
     { id: 'club@group.calendar.google.com', name: 'Club', color: '#33b679' },
     { id: 'personal@group.calendar.google.com', name: 'Personal', color: '#f6bf26' },
     { id: 'work@group.calendar.google.com', name: 'Work', color: '#8e24aa' }
@@ -1261,7 +1261,7 @@
       : k === 'ratelimit' ? { kind: 'rate', reason: 'Google asked Mantle to slow down; it will try again later', at: Date.now() }
       : k === 'expired' ? { kind: 'auth', reason: 'Google ended Mantle\u2019s sign-in; sign in again in Settings', at: Date.now() } : null;
     return { enabled: true, test: false, client: k !== 'disconnected', clientReason: null, connected: signed && k !== 'expired', signedIn: signed,
-      needsSignIn: k === 'expired', signingIn: false, account: signed ? 'owen@example.com' : null,
+      needsSignIn: k === 'expired', signingIn: false, account: signed ? 'alex@example.com' : null,
       calendars: GCAL_CALS.map(function (c, i) { return { id: c.id, name: c.name, color: c.color, primary: i === 0, on: true }; }),
       syncedAt: k === 'syncing' ? 0 : Date.now() - ago * 60000, syncing: k === 'syncing', error: err, nextAt: 0, canEncrypt: true, ver: 1 };
   }
@@ -1282,7 +1282,7 @@
           memory: { n: 7, wsMB: SPQ_SHOWN ? 1077 : 236, privateMB: 613, privateWsMB: SPQ_SHOWN ? 587 : 188, visible: SPQ_SHOWN ? 1 : 0 }, memoryReason: null, player: SPQ_PLAYER, playerReason: null };
       case 'spotify.library':
         return { ok: true, liked: { uri: 'spotify:collection:tracks', name: 'Liked Songs' }, skipped: 1, total: 8, at: 1,
-          items: [spqLib(1, 'playlist', 'My Playlist #4', 'Owen Silva'), spqLib(2, 'playlist', 'My Playlist #2', 'Owen Silva'), spqLib(3, 'artist', 'Benson Boone', ''),
+          items: [spqLib(1, 'playlist', 'My Playlist #4', 'Alex Kim'), spqLib(2, 'playlist', 'My Playlist #2', 'Alex Kim'), spqLib(3, 'artist', 'Benson Boone', ''),
             spqLib(4, 'playlist', 'Your Top Songs 2025', 'Spotify'), spqLib(5, 'artist', 'glaive', ''), spqLib(6, 'album', 'The Heist', 'Macklemore & Ryan Lewis'), spqLib(7, 'show', 'A Podcast', 'Some Network')] };
       case 'spotify.searchAll':
         return { ok: true, q: payload && payload.q, via: 'Spotify’s bundle',

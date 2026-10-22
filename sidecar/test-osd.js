@@ -164,11 +164,11 @@ async function powerMode(s) {
 async function powerDecide(s) {
   const EFF = '961cc777-2547-4f9d-8174-7d86181b8a7a', PERF = 'ded574b5-45a0-4f42-8737-46345c09c238';
   const BAL = '00000000-0000-0000-0000-000000000000', HONE = '44444444-4444-4444-4444-444444444452';
-  const owen = { source: 'battery', ac: BAL, dc: PERF, actual: PERF, effective: EFF, saver: 1, saverAt: 100 };
+  const base = { source: 'battery', ac: BAL, dc: PERF, actual: PERF, effective: EFF, saver: 1, saverAt: 100 };
   const d = async (facts) => { const r = await s.send('powermode.decide', facts); return r.ok === false ? { error: r.error } : (r.result || {}); };
   const j = (x) => JSON.stringify(x);
 
-  let r = await d(owen);
+  let r = await d(base);
   check('decide: on battery, Energy saver on: the mode is the battery choice (performance), efficiency in force',
     r.ok === true && r.mode === 'performance' && r.inForce === 'efficiency' && r.by === 'dc' && r.saver === true, j(r));
   check('...locked (not settable) but on Balanced', r.available === true && r.settable === false, j(r));
@@ -177,25 +177,25 @@ async function powerDecide(s) {
     /Always use energy saver/.test(r.reason || '') && /Settings > System > Power & battery > Energy saver/.test(r.reason || ''), r.reason);
   check('...configured carries both sources', r.configured && r.configured.ac === 'balanced' && r.configured.battery === 'performance', j(r.configured));
 
-  r = await d(Object.assign({}, owen, { source: 'ac', effective: BAL, actual: BAL, saver: 0 }));
+  r = await d(Object.assign({}, base, { source: 'ac', effective: BAL, actual: BAL, saver: 0 }));
   check('decide: plugged in, Energy saver off: the AC choice, settable, no reason',
     r.mode === 'balanced' && r.by === 'ac' && r.inForce === 'balanced' && r.settable === true && r.reason === null && r.saver === false, j(r));
 
-  r = await d(Object.assign({}, owen, { effective: BAL, saver: 0 }));
+  r = await d(Object.assign({}, base, { effective: BAL, saver: 0 }));
   check('decide: effective and actual disagree with no Energy saver: the choice shown, the in-force mode beside it, still settable',
     r.mode === 'performance' && r.inForce === 'balanced' && r.settable === true && r.reason === null, j(r));
 
-  r = await d(Object.assign({}, owen, { saverAt: 20 }));
+  r = await d(Object.assign({}, base, { saverAt: 20 }));
   check('decide: Energy saver on at a 20% threshold: quick-settings route and the level, no "Always use"',
     /Win\+A/.test(r.reason || '') && /20% battery/.test(r.reason || '') && !/Always use/.test(r.reason || ''), r.reason);
-  r = await d(Object.assign({}, owen, { saver: 2 }));
+  r = await d(Object.assign({}, base, { saver: 2 }));
   check('decide: Energy saver at high savings (2) counts as on', r.saver === true && r.settable === false, j(r));
-  r = await d(Object.assign({}, owen, { dc: EFF, saver: 1 }));
+  r = await d(Object.assign({}, base, { dc: EFF, saver: 1 }));
   check('decide: Energy saver on when efficiency is the choice anyway: no "comes back" clause', /Energy saver is on/.test(r.reason || '') && !/comes back/.test(r.reason || ''), r.reason);
-  r = await d(Object.assign({}, owen, { saver: -1, legacySaver: true, saverAt: -1 }));
+  r = await d(Object.assign({}, base, { saver: -1, legacySaver: true, saverAt: -1 }));
   check('decide: no Energy saver status, but Windows 10 battery saver flag set: locked', r.saver === true && r.settable === false && /Energy saver is on/.test(r.reason || ''), j(r));
 
-  r = await d(Object.assign({}, owen, { ac: null, dc: null, configuredWhy: 'this Windows has no per-source power mode call', saver: 0 }));
+  r = await d(Object.assign({}, base, { ac: null, dc: null, configuredWhy: 'this Windows has no per-source power mode call', saver: 0 }));
   check('decide: no per-source call (older Windows): falls back to the ACTUAL overlay', r.ok === true && r.mode === 'performance' && r.by === 'actual', j(r));
   r = await d({ source: 'battery', effective: EFF, saver: 0 });
   check('decide: only the effective overlay readable: last resort', r.ok === true && r.mode === 'efficiency' && r.by === 'effective', j(r));
@@ -203,26 +203,26 @@ async function powerDecide(s) {
   check('decide: nothing readable: not ok, the error and why in words', r.ok === false && r.settable === false && /error 5/.test(r.reason || '') && /per-source/.test(r.reason || ''), j(r));
   r = await d({ planOk: false, planRc: 2 });
   check('decide: the plan unreadable: not ok, says so', r.ok === false && /power plan is active \(error 2\)/.test(r.reason || ''), j(r));
-  r = await d(Object.assign({}, owen, { plan: HONE, planName: 'Hone Ultimate Power Plan V5' }));
+  r = await d(Object.assign({}, base, { plan: HONE, planName: 'Hone Ultimate Power Plan V5' }));
   check('decide: off Balanced (even with Energy saver on): the plan reason first, not available',
     r.available === false && r.settable === false && /only on the Balanced power plan/.test(r.reason || '') && /Hone/.test(r.reason || ''), j(r));
-  r = await d(Object.assign({}, owen, { source: 'unknown', actual: EFF, saver: 0 }));
+  r = await d(Object.assign({}, base, { source: 'unknown', actual: EFF, saver: 0 }));
   check('decide: power source unknown: the actual overlay (Windows\' pick for the source it is on)', r.mode === 'efficiency' && r.by === 'actual', j(r));
 
   // VERIFY: judged on the value written for that source, never on the mode in force.
   const v = async (facts, want, wroteFor, rc) => d(Object.assign({}, facts, { want, wroteFor, rc }));
-  r = await v(owen, 'performance', 'battery', 0);
+  r = await v(base, 'performance', 'battery', 0);
   check('verify: THE BUG - a battery write of performance that landed, efficiency pinned by Energy saver: ok', r.ok === true && r.reason === null, j(r));
-  r = await v(Object.assign({}, owen, { dc: BAL }), 'performance', 'battery', 0);
+  r = await v(Object.assign({}, base, { dc: BAL }), 'performance', 'battery', 0);
   check('verify: the battery value did not move: not ok, says what it still reports and for which source',
     r.ok === false && /still reports Balanced for on battery/.test(r.reason || ''), j(r));
-  r = await v(owen, 'performance', 'battery', 5);
+  r = await v(base, 'performance', 'battery', 5);
   check('verify: powrprof error: not ok with the code', r.ok === false && /refused the power mode change \(error 5\)/.test(r.reason || ''), j(r));
-  r = await v(Object.assign({}, owen, { ac: PERF }), 'performance', 'ac', 0);
+  r = await v(Object.assign({}, base, { ac: PERF }), 'performance', 'ac', 0);
   check('verify: written for plugged in, unplugged meanwhile: judged on the AC value that was written', r.ok === true, j(r));
-  r = await v(Object.assign({}, owen, { effective: PERF, saver: 0 }), 'performance', null, 0);
+  r = await v(Object.assign({}, base, { effective: PERF, saver: 0 }), 'performance', null, 0);
   check('verify: the overlay call (no source): judged on the current mode', r.ok === true, j(r));
-  r = await v(Object.assign({}, owen, { dc: BAL, actual: BAL, saver: 0 }), 'performance', null, 0);
+  r = await v(Object.assign({}, base, { dc: BAL, actual: BAL, saver: 0 }), 'performance', null, 0);
   check('verify: the overlay call that did not take: names the current source', r.ok === false && /still reports Balanced for on battery/.test(r.reason || ''), j(r));
   r = await v({ planOk: false, planRc: 2 }, 'performance', 'battery', 0);
   check('verify: the read-back failed: not ok, says it could not be read back', r.ok === false && /could not be read back/.test(r.reason || ''), j(r));

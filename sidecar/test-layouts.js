@@ -168,11 +168,11 @@ async function main() {
       typeof all.result.skipped.tool === 'number', JSON.stringify(all.ok && all.result.skipped));
 
     /* ---- the fence: a window that is not the harness's ---- */
-    const owen = others.find((w) => !w.refuse);
-    if (owen) {
-      const dry = await send('layouts.place', { hwnd: owen.hwnd, frame: { x: 0, y: 0, w: 800, h: 600 }, state: 'normal', dryRun: true });
+    const theirs = others.find((w) => !w.refuse);
+    if (theirs) {
+      const dry = await send('layouts.place', { hwnd: theirs.hwnd, frame: { x: 0, y: 0, w: 800, h: 600 }, state: 'normal', dryRun: true });
       t.check('fence: dryRun on a real window only describes the move', dry.ok && dry.result.dryRun === true && typeof dry.result.would === 'string', JSON.stringify(dry).slice(0, 160));
-      const real = await send('layouts.place', { hwnd: owen.hwnd, frame: { x: 0, y: 0, w: 800, h: 600 }, state: 'normal' });
+      const real = await send('layouts.place', { hwnd: theirs.hwnd, frame: { x: 0, y: 0, w: 800, h: 600 }, state: 'normal' });
       t.check('fence: a real move of a real window is refused (passive)', !real.ok && real.error.indexOf(T.PASSIVE_REFUSAL) === 0, JSON.stringify(real).slice(0, 160));
     } else t.check('fence: (no other window to try the fence on)', true);
 

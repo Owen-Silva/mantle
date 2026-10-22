@@ -6194,7 +6194,7 @@ function sidecarUnavailable(reason) {
     watchReason: `the Windows taskbar is not being watched, so it can come up over Mantle's bar: ${reason}`,
   });
   if (flags.test) return;   // in test mode the shell pieces are deliberately untouched anyway
-  state.set('taskbar', { autohide: false, reason: `the Windows taskbar is untouched and still where Owen put it: ${reason}` });
+  state.set('taskbar', { autohide: false, reason: `the Windows taskbar is untouched and still where you put it: ${reason}` });
   state.set('workarea', { reserved: false, reason: `Mantle's bar is not registered as an app bar, so maximised windows will sit under it: ${reason}` });
   state.set('desktop', {
     attached: false,
@@ -7752,7 +7752,7 @@ function stopTrayPoll() {
 // Putting Windows back. Every exit road leads here, and it must never throw.
 // ---------------------------------------------------------------------------
 function markRestored(why) {
-  state.set('taskbar', { autohide: false, reason: `the Windows taskbar is back the way Owen had it: ${why}` });
+  state.set('taskbar', { autohide: false, reason: `the Windows taskbar is back the way you had it: ${why}` });
   state.set('workarea', { reserved: false, reason: `the app bar is gone and the whole screen is available again: ${why}` });
   state.set('desktop', { attached: false, mode: null, reason: `the desktop layer is detached: ${why}` });
   state.set('hotkey', { winTap: false, reason: `the Win key opens the Windows Start menu again: ${why}` });

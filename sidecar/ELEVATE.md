@@ -70,7 +70,7 @@ Rules for the two methods:
 
 ```js
 const { elevate } = require('../elevate');     // lib/elevate.js
-const r = await elevate(ctx.sidecar, 'system.renamePc', { name: 'OWEN-PC' },
+const r = await elevate(ctx.sidecar, 'system.renamePc', { name: 'MY-PC' },
                         { why: 'Settings > System > Rename', owner: win });
 // { ok: true, result: {...} }  or  { ok: false, reason: 'plain words', kind }
 ```

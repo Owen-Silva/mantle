@@ -225,9 +225,9 @@ function canReach(s0, e0, ms, me, org, mon, app, which) {
 
 async function virtualized(s) {
   // Owen's live layout, by hand
-  const owen = [{ id: 'T', bounds: [0, 0, 1920, 1080], work: [0, 35, 1920, 1080], dpi: 120, primary: true }];
+  const oneMon = [{ id: 'T', bounds: [0, 0, 1920, 1080], work: [0, 35, 1920, 1080], dpi: 120, primary: true }];
   const f9 = [100, 100, 900, 700], w9 = [91, 100, 909, 709];    // 9/0/9/9: the measured 125 % borders
-  const op = (z, appDpi) => s.send('snap.plan', { monitors: owen, frame: f9, window: w9, zone: z, appDpi }).then((x) => x.result || {});
+  const op = (z, appDpi) => s.send('snap.plan', { monitors: oneMon, frame: f9, window: w9, zone: z, appDpi }).then((x) => x.result || {});
   let tl = await op('tl', 0), bl = await op('bl', 0);
   check('plan (top bar, 125 %, 1045 tall): a per-monitor-aware tl is exactly 35..558 and meets bl on one line',
     tl.fit === true && same(tl.reach, xywh([0, 35, 960, 558])) && bl.fit === true && tl.reach.y + tl.reach.h === bl.reach.y, fmt(tl.reach) + ' / ' + fmt(bl.reach));

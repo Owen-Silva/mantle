@@ -39,14 +39,14 @@
   function emit(name, payload) { (listeners[name] || []).forEach(function (cb) { cb(payload); }); }
 
   var APPS = [
-    ['Outlook', 'Inbox - owen@example.com - Outlook', '#1a64c8', 1.6],
+    ['Outlook', 'Inbox - alex@example.com - Outlook', '#1a64c8', 1.6],
     ['Code', 'taskview.js - mantle - Visual Studio Code', '#2a2f3a', 1.78],
     ['Spotify', 'Spotify Premium', '#1c8c4a', 1.6],
     ['Terminal', 'Windows PowerShell', '#20242e', 1.5],
     ['Explorer', 'Downloads - File Explorer', '#d9a520', 1.45],
     ['Notepad', 'README.md - Notepad', '#6a7890', 1.3],
     ['Calculator', 'Calculator', '#505a70', 0.62],
-    ['Browser', 'Owen Silva - portfolio - Browser', '#6a4ad8', 1.78],
+    ['Browser', 'Alex Kim - portfolio - Browser', '#6a4ad8', 1.78],
     ['Discord', '#general - Discord', '#5865f2', 1.6],
     ['Photos', 'IMG_2291.jpg - Photos', '#b04a70', 1.5],
     ['Excel', 'Budget 2026.xlsx - Excel', '#1e7a45', 1.7],

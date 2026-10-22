@@ -803,7 +803,7 @@ namespace Mantle {
         string why;
         bool ok = ReleaseAll(true, out why);
         GuardSay(note, "taskbar guard: sidecar " + watch + " exited (code " + code + ") and the taskbar's empty window region was still there with no live Mantle holding it," +
-                       " so the guard cleared it: " + why + (ok ? "; the Windows taskbar is back the way Owen had it" : ""));
+                       " so the guard cleared it: " + why + (ok ? "; the Windows taskbar is back the way you had it" : ""));
         return 0;
       } catch (Exception ex) {
         GuardSay(note, "taskbar guard: failed (" + ex.Message + "); run tools\\restore-windows.ps1 or restart Explorer if the taskbar is invisible");

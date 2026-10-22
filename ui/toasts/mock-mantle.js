@@ -13,7 +13,7 @@
           (on['toasts.show'] || []).forEach(function (f) {
             f({ banners: [
               { id: 1, app: 'Helm', title: 'Done in 14s', body: 'The build finished and every test passed.', opens: 'app' },
-              { id: 2, app: 'Discord', title: 'Owen', body: 'are you on tonight? we need a fifth for ranked', opens: 'app' },
+              { id: 2, app: 'Discord', title: 'Jordan', body: 'are you on tonight? we need a fifth for ranked', opens: 'app' },
               { id: 3, app: 'Windows Security', title: 'Scan finished', body: 'No current threats.', opens: 'protocol' },
             ] });
           });

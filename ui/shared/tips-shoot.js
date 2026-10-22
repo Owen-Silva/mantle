@@ -131,12 +131,12 @@ const shots = [];
        mode did not change: ..." line, both texts mixed through the frost, the tip's end off the
        panel. Same scene here: ?pm=refuse makes the mock refuse a mode change, so a click on
        Efficiency leaves a warning up; then the pointer rests on the footer link.
-         owen      the warning carries the words of Owen's screenshot (two lines, as on his screen):
+         real      the warning carries the words of Owen's screenshot (two lines, as on his screen):
                    light and dark desktop, 1x and 1.25x. The tip must stay INSIDE the panel.
          refused   the mock's own refusal (three lines, so the footer is boxed in on every side):
                    the tip may leave the panel for the room beside it, but never covers the warning. */
-    const OWEN_WARN = 'Power mode did not change: Windows accepted the change but still reports Efficiency.';
-    const powerScenes = [[1, 'light', 'owen'], [1, 'dark', 'owen'], [1.25, 'light', 'owen'], [1.25, 'dark', 'owen'], [1.25, 'light', 'refused']];
+    const REAL_WARN = 'Power mode did not change: Windows accepted the change but still reports Efficiency.';
+    const powerScenes = [[1, 'light', 'real'], [1, 'dark', 'real'], [1.25, 'light', 'real'], [1.25, 'dark', 'real'], [1.25, 'light', 'refused']];
     for (const [scale, wall, words] of powerScenes) {
       const tag = `${wall} ${scale}x ${words}`;
       const sctx = await browser.newContext({ deviceScaleFactor: scale, viewport: { width: 1120, height: 660 } });
@@ -145,8 +145,8 @@ const shots = [];
       await page.waitForTimeout(700);
       await page.click('#pop .pmbtn[data-mode="efficiency"]');
       await page.waitForTimeout(500);
-      if (words === 'owen') {
-        await page.evaluate((t) => { const n = Array.from(document.querySelectorAll('#pop .pmnote')).find(e => !e.hidden); if (n) n.textContent = t; }, OWEN_WARN);
+      if (words === 'real') {
+        await page.evaluate((t) => { const n = Array.from(document.querySelectorAll('#pop .pmnote')).find(e => !e.hidden); if (n) n.textContent = t; }, REAL_WARN);
       }
       await hover(page, '#pop .qslink');
       await page.waitForTimeout(800);
@@ -188,7 +188,7 @@ const shots = [];
       ok(s.shown && s.anchor === 'button.qslink' && s.text === g.title && g.tipText === g.title, `${tag}: the footer link's tip is up with its whole title ("${s.text}")`);
       ok(!g.warnLines.some(w => hit(t, w)) && s.box && s.box.covers && s.box.covers.warn === 0,
         `${tag}: the tip covers no line of the warning (covers ${covered.length ? covered.map(w => '"' + w.t + '"').join(', ') : 'no text'}; side ${s.box && s.box.side})`);
-      if (words === 'owen') ok(inPanel, `${tag}: the tip stays inside the panel (${box})`);
+      if (words === 'real') ok(inPanel, `${tag}: the tip stays inside the panel (${box})`);
       else ok(t.left >= 0 && t.right <= g.vw && t.top >= 0 && t.bottom <= g.pill.top - 0.5, `${tag}: boxed in, the tip uses the room beside the panel: in the window, never over the pill (${box}; pill top ${Math.round(g.pill.top)})`);
       ok(gap >= 0 && gap <= 7.5, `${tag}: the tip sits next to the link (gap ${gap.toFixed(1)} px, side ${s.box && s.box.side})`);
       ok(g.ov !== 'ellipsis' && g.ws !== 'nowrap' && g.sw <= g.cw + 0.5 && g.sh <= g.ch + 0.5, `${tag}: wrapped in whole lines, nothing cut (overflow ${g.ov}, ${g.ws}, ${g.sw}/${g.cw} wide, ${g.sh}/${g.ch} tall)`);

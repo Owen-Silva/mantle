@@ -502,9 +502,9 @@
         if (g === 'off') return { ok: false, reason: 'the mock does not play gcal.status' };
         const on = g !== 'disconnected';
         return later(40, { enabled: true, test: false, client: on, clientReason: null, signedIn: on, connected: on && g !== 'expired', needsSignIn: g === 'expired', signingIn: false,
-          account: on && g !== 'nocals' ? 'owen@example.com' : null, canEncrypt: true, syncing: false, syncedAt: on ? Date.now() - 3 * 60000 : 0, nextAt: 0, ver: 1,
+          account: on && g !== 'nocals' ? 'alex@example.com' : null, canEncrypt: true, syncing: false, syncedAt: on ? Date.now() - 3 * 60000 : 0, nextAt: 0, ver: 1,
           error: g === 'expired' ? { kind: 'auth', reason: 'Google ended Mantle’s sign-in; sign in again in Settings', at: Date.now() } : g === 'offline' ? { kind: 'offline', reason: 'no internet connection', at: Date.now() } : null,
-          calendars: on && g !== 'nocals' ? [{ id: 'owen@example.com', name: 'Owen', color: '#039be5', primary: true, on: true }, { id: 'club@group.calendar.google.com', name: 'Club', color: '#33b679', primary: false, on: true },
+          calendars: on && g !== 'nocals' ? [{ id: 'alex@example.com', name: 'Alex', color: '#039be5', primary: true, on: true }, { id: 'club@group.calendar.google.com', name: 'Club', color: '#33b679', primary: false, on: true },
             { id: 'work@group.calendar.google.com', name: 'Work', color: '#8e24aa', primary: false, on: false }] : [] });
       }
       case 'gcal.signIn': case 'gcal.signOut': case 'gcal.pickClient': return later(120, { ok: true, dryRun: true, reason: 'test run: nothing is sent to Google' });

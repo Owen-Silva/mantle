@@ -453,7 +453,7 @@ async function otherPages(browser, check) {
    pre-show (no frame shows a dropdown before its glass; a slow or failed picture shows the fallback and
    says why), and the strip's bottom edge (Owen's dark line), row by row. */
 const SCENES_DIR = (process.env.MANTLE_GLASS_SCENES || path.join(require('os').tmpdir(), 'mantle-shots', 'glass-scenes')).replace(/\\/g, '/') + '/';
-const SCENES = [['a', 'a-owen-snow-peak.jpg'], ['b', 'b-bright-sand-ripples.jpg'], ['c', 'c-dark-terminal.png']];
+const SCENES = [['a', 'a-snow-peak.jpg'], ['b', 'b-bright-sand-ripples.jpg'], ['c', 'c-dark-terminal.png']];
 const GLASS_OUT = process.env.MANTLE_GLASS_OUT || path.join(require('os').tmpdir(), 'mantle-shots', 'glass-topbar');
 const PRISTINE = process.env.MANTLE_TOPBAR_PRISTINE || '';   // a copy of the page before this lane (index.html URL), for before/after
 const FLAT = '#6a6a6a';

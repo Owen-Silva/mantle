@@ -76,7 +76,7 @@ const PLAYER = { paused: false, shuffle: false, repeat: 0, context: 'spotify:pla
 const INFO = () => ({ ok: true, state: 'connected', window: { state: 'hidden', how: 'Mantle started it hidden' }, running: true, visible: false,
   memory: { n: 6, wsMB: 431, privateMB: 512, privateWsMB: 358, visible: 0 }, memoryReason: null, player: Object.assign({}, PLAYER), playerReason: null, liked: false });
 const LIB = () => ({ ok: true, liked: { uri: 'spotify:collection:tracks', name: 'Liked Songs' }, total: 5, skipped: 1, at: Date.now(), items: [
-  { uri: 'spotify:playlist:' + id22(90), kind: 'playlist', name: 'Late night drive', sub: 'Owen', image: art(1) },
+  { uri: 'spotify:playlist:' + id22(90), kind: 'playlist', name: 'Late night drive', sub: 'Alex', image: art(1) },
   { uri: 'spotify:playlist:' + id22(91), kind: 'playlist', name: 'Focus flow', sub: 'Spotify', image: art(4) },
   { uri: 'spotify:artist:' + id22(92), kind: 'artist', name: 'Frank Ocean', sub: '', image: art(6) },
   { uri: 'spotify:album:' + id22(93), kind: 'album', name: 'Currents', sub: 'Tame Impala', image: art(7) }] });

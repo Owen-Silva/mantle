@@ -320,7 +320,7 @@ namespace Mantle {
     public static string Refuse(string file, string path, uint pid, uint session, bool elevated, uint fgPid, uint ownSession) {
       if (pid <= 8) return "a system process";
       if (pid == (uint)Program.OwnPid) return "Mantle's own sidecar (it runs the keyboard hook: slowing it slows every key)";
-      if (fgPid != 0 && pid == fgPid) return "the app in front (the game, or what Owen is using)";
+      if (fgPid != 0 && pid == fgPid) return "the app in front (the game, or what you are using)";
       if (session != ownSession) return "another session (a Windows service)";
       if (elevated) return "runs as administrator";
       string f = file ?? "";
@@ -931,7 +931,7 @@ namespace Mantle {
           else if (!string.IsNullOrEmpty(onlyIf) && PrioName(before) != onlyIf) {
             allSame = false;
             pr["after"] = PrioName(before); pr["skipped"] = true;
-            pr["why"] = "left at " + PrioName(before) + ": it was not " + onlyIf + " (the app or Owen set it)";
+            pr["why"] = "left at " + PrioName(before) + ": it was not " + onlyIf + " (the app or you set it)";
           } else if (passiveNo) {
             allSame = false;
             pr["why"] = FeatureTable.PassiveRefusal + ": it would have set priority " + wantPrio; allOk = false;
