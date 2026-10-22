@@ -244,7 +244,7 @@
 
   /* THE DIVISION OF LABOUR: main animates the WINDOW (it slides it up from under the screen, and
      in pill mode grows its width and rounds its corners). This page animates PAINT ONLY, over
-     main's own duration and Northwind's curve, so the glass detaches as the window arrives instead of
+     main's own duration and the nav curve, so the glass detaches as the window arrives instead of
      racing it. Before the first event the page paints in the flush (fully transparent) state with
      no transition at all — body.pre, set in index.html. */
   var revealed = false, gotFirstEvent = false, barMode = 'edge';
@@ -267,7 +267,7 @@
   function slide(on, why, mode, ms) {
     if (mode) setMode(mode);
     /* Main tells us how long it is taking; the page must not out-run or lag the window. In goes at
-       Northwind's 560ms. Out is capped at OUT_MAX whatever main asks for, because main drops the window
+       the nav's 560ms. Out is capped at OUT_MAX whatever main asks for, because main drops the window
        ~350ms after the event and an exit the window cuts off is the snap we are fixing. The two
        durations live in SEPARATE variables so neither write can land on the wrong state: bar.css
        picks --lg-dur under body.up and --lg-dur-out without it, so the exit has a real duration

@@ -2,7 +2,7 @@
  *
  * THE THEME IS THE TASKBAR'S (the user, 2026-09-21): "everything that we build for this wrapper,
  * their UI needs to be this exact same theme as the taskbar". So this file is ui/bar/bar.css's
- * material, rule for rule: Northwind's light frosted glass, every colour resolved through --lg-*
+ * material, rule for rule: the reference site's light frosted glass, every colour resolved through --lg-*
  * from ../shared/glass-light.css, and the bar's own typeface and 12.5px base — "the exact same
  * theme" includes the face. tokens.css is still linked first (as it is on the bar) and still owns
  * Mantle's dark instrument palette for the surfaces that have not moved yet, but this file now
@@ -79,7 +79,7 @@ html, body {
   --pane-fill: var(--lg-fill-strong);
 
   /* .panel itself paints NOTHING but the drop shadow: a background-color here would be buried
-     under the backdrop <img>. The shadow is Northwind's own stack, the way up: this panel floats
+     under the backdrop <img>. The shadow is the reference stack, the way up: this panel floats
      above the desktop exactly like the nav pill floats above the page. */
   background: transparent;
   box-shadow: var(--lg-shadow);

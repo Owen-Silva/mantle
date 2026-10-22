@@ -128,7 +128,7 @@ html, body {
   border-radius: 16px;            /* the tile radius; inner controls use --lg-r */
   padding: 14px 16px 15px;
   /* the pane itself paints NOTHING but its drop shadow: the fill and the two hairlines are on
-     ::after, above the backdrop image. Northwind's shadow the right way up — these panes float on
+     ::after, above the backdrop image. The reference shadow the right way up — these panes float on
      the wallpaper the way the nav pill floats above the page. */
   background: transparent;
   box-shadow: var(--lg-shadow);

@@ -71,7 +71,7 @@
      untested. ?apps=N overrides it. */
   var PIN_COUNT = q.get('apps') === null ? 12 : Math.max(0, parseInt(q.get('apps'), 10) || 0);
 
-  /* Northwind's --dur-nav / the hide budget main works to. The mock sends them the way main does, so
+  /* The reference --dur-nav / the hide budget main works to. The mock sends them the way main does, so
      the page is never the thing that decides how long the morph lasts. */
   var DUR_IN = 560, DUR_OUT = 320;
 
@@ -135,7 +135,7 @@
      'app:Microsoft.WindowsCalculator…' is a packaged-app pin, whose id is not an exe path. */
   var PINNED = [
     { id: 'edge',    name: 'Microsoft Edge',  exe: 'msedge.exe',   aumid: 'MSEdge', icon: ICON_A,
-      wins: ['Mantle build brief — Edge', 'Windows 11 shell docs — Edge', 'Northwind — example.com — Edge'], min: 2 },
+      wins: ['Mantle build brief — Edge', 'Windows 11 shell docs — Edge', 'Example Domain — example.com — Edge'], min: 2 },
     { id: 'code',    name: 'Visual Studio Code', exe: 'Code.exe',  aumid: 'Microsoft.VisualStudioCode', icon: ICON_B, wins: ['mantle — bar.js — Visual Studio Code'], active: 0 },
     { id: 'app:Microsoft.WindowsCalculator_8wekyb3d8bbwe!App', name: 'Calculator', exe: '', aumid: 'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App', icon: ICON_A, wins: [] },
     { id: 'term',    name: 'Terminal',        exe: 'wt.exe',       aumid: 'Microsoft.WindowsTerminal_8wekyb3d8bbwe!App', icon: ICON_A, wins: ['Windows PowerShell'] },
@@ -212,7 +212,7 @@
     var long = JL === 'long';
     r.sections.push({ name: 'Pinned', kind: 'pinned', items: jlItems(long ? 5 : 2, 'pinned', 'item', ICON_B, DOCS.slice(3)) });
     r.sections.push({ name: 'Recent', kind: 'recent', items: jlItems(long ? 12 : 6, 'recent', 'item', ICON_B, DOCS) });
-    if (long) r.sections.push({ name: 'Most visited', kind: 'custom', items: jlItems(8, 'Site', 'link', ICON_A, ['GitHub', 'Northwind dashboard', 'Wikipedia', 'YouTube', 'Weather', 'Gmail', 'Robinhood', 'Claude']) });
+    if (long) r.sections.push({ name: 'Most visited', kind: 'custom', items: jlItems(8, 'Site', 'link', ICON_A, ['GitHub', 'Project dashboard', 'Wikipedia', 'YouTube', 'Weather', 'Gmail', 'Robinhood', 'Claude']) });
     r.sections.push({ name: 'Tasks', kind: 'tasks', items: long ? tasks.concat([{ sep: true }, { title: 'Settings', tip: 'msedge.exe edge://settings', icon: ICON_A, item: 'c:1:9', kind: 'task' }]) : tasks });
     return r;
   }
@@ -1045,7 +1045,7 @@
   var dlItems = [
     ['Kitchen Remodel - Floor Plan.pdf', 421888, 2 * MIN, dlIcon('PDF', '#d8453b')],
     ['monthly-report-template.docx', 90112, 14 * MIN, dlIcon('DOCX', '#2f6fd6')],
-    ['northwind-site-assets.zip', 25794560, 64 * MIN, dlIcon('ZIP', '#b8872a')],
+    ['site-assets.zip', 25794560, 64 * MIN, dlIcon('ZIP', '#b8872a')],
     ['Screenshot 2026-09-27 101522.png', 1258291, 3 * HR, dlIcon('PNG', '#7a55c7')],
     ['node-v22.12.0-x64.msi', 31561728, 5 * HR, dlIcon('MSI', '#56606b')],
     ['Car Insurance Policy.pdf', 2411724, 27 * HR, dlIcon('PDF', '#d8453b')],

@@ -3,7 +3,7 @@
    One Theme: glass-light.css --lg-* tokens only; no glow (the accent is for the selected tab's tick,
    the playing row's tick, "on" toggles, the heart and focus). The card's own rhythm: 4/8 spacing,
    8 px row corners, one hairline above the section. Hover/pressed are steps(2) like the rest of the
-   bar (two paints, not a ramp); movement (the chevrons) is on the Northwind curve; reduced motion = none. */
+   bar (two paints, not a ramp); movement (the chevrons) is on the nav curve; reduced motion = none. */
 
 .spq { margin-top: 10px; padding-top: 7px; border-top: 1px solid var(--lg-edge-out); }
 .spq[hidden], .spq [hidden] { display: none !important; }

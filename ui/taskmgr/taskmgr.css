@@ -14,7 +14,7 @@
  * SYSMON PASS (2026-09-29, "minimalistic ... obvious what to do"): a row shows ONE action (Close) on
  * hover or when chosen, the rest behind its "..." menu; search + More in the header; CPU and memory
  * lines at the top; every control has hover, pressed, focus-visible and disabled states; motion on
- * the Northwind curve and none under reduced motion. */
+ * the nav curve and none under reduced motion. */
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
 body {

@@ -113,7 +113,7 @@
     // commands — the user's own PowerShell functions
     mk('command', 'dash', 'PowerShell profile'),
     mk('command', 'bot', 'PowerShell profile'),
-    mk('command', 'northwind', 'PowerShell profile'),
+    mk('command', 'notes', 'PowerShell profile'),
     mk('command', 'axiom', 'PowerShell profile'),
     mk('command', 'gpush', 'PowerShell profile'),
     mk('command', 'jarvis', 'PowerShell profile'),

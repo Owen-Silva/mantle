@@ -6,7 +6,7 @@
  * bar's fills over it: the sidebar is --lg-fill, a card is --lg-fill-strong with the bar's two
  * hairlines (the white lip inside, the .10 ink edge outside). No new palette (dark is the same
  * tokens re-valued, plus the few rules at the end of this file), no glow except the focus ring. The controls are the bar's shapes: --lg-sunk chips, the accent block
- * only for an ON switch, --lg-warn words for anything that cannot act. Motion is Northwind's curve
+ * only for an ON switch, --lg-warn words for anything that cannot act. Motion is the nav curve
  * (--lg-ease); this window is opaque and small, so a short transition costs nothing here.
  *
  * THE CALM PASS (lane setlook, 2026-09-29; the user on the live Home: "this does not look very good"). What

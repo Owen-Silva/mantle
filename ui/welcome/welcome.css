@@ -5,7 +5,7 @@
  * :root[data-theme="dark"] only, as Settings does). The window is frameless and CLEAR; .card is the
  * island it draws: the popovers' face (--lg-fill-pop) laid over --lg-ground so it is OPAQUE (no blurred
  * capture exists for this window, and the theme's rule for that is the flat fill of the same palette),
- * the white lip inside, the hairline outside, Northwind's shadow. No glow; the accent marks state only
+ * the white lip inside, the hairline outside, the reference shadow. No glow; the accent marks state only
  * (the step you are on, the primary button, the part of the screen each item is about).
  *
  * MOTION is short and always ends: the card comes in over 220 ms, a step's panel over 200 ms, the

@@ -1,6 +1,6 @@
 // Recorder.cs - Mantle's screen recorder: ONE recording per child process (lane mantle-screenrec, 2026-10-15).
 //
-// The user asked for Win+Shift+S to RECORD a window or an area as well (his Northwind demo videos were recorded
+// The user asked for Win+Shift+S to RECORD a window or an area as well (his product demo videos were recorded
 // from a browser window with Game Bar, which can record one app window and never an area, the desktop or
 // Explorer). Game Bar stays the recorder IN games: lib/features/screenrec.js refuses while a game is in
 // front, and this process never opens, reads or injects into any other process. It only asks Windows

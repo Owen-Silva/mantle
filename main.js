@@ -882,7 +882,7 @@ const DRAG_HOLD_MS = 1500;
 const HIDE_SLIDE_MS = 350;     // between the 'bar.hide' event and barWin.hide(): the page's 320 ms exit, plus 30
 
 /*
- * THE MOVEMENT. The user: it must feel like the Northwind site's nav detaching.
+ * THE MOVEMENT. The user: it must feel like the reference site's nav detaching.
  *
  * MAIN ANIMATES THE WINDOW; the page only fades paint properties. A renderer
  * cannot move its own window, so a CSS transform sliding the page inside a static
@@ -891,7 +891,7 @@ const HIDE_SLIDE_MS = 350;     // between the 'bar.hide' event and barWin.hide()
  * its own thread at ~60 fps, which is the only place the real edges can move.
  *
  * 560 ms out, 320 ms back: leaving is not an event, arriving is. The curve is the
- * Northwind nav's own -- fast off the mark, long settle, no overshoot.
+ * reference nav's own -- fast off the mark, long settle, no overshoot.
  */
 const REVEAL_MS = 560;
 const HIDE_MS = 320;
@@ -6517,7 +6517,7 @@ async function applyMode() {
 // ...and 50 % dark was still "not transparent, like way more" (the user, 14:31). 15 % dark:
 // the blur does the work, the page fill is .20, the labels carry a drop shadow.
 // ...and on 2026-09-21, with the hover bar, the whole look flipped: LIGHT frosted
-// glass, the Northwind site's nav pill -- white over a blur, dark ink text. So the DWM
+// glass, the reference site's nav pill -- white over a blur, dark ink text. So the DWM
 // tint is 40 % WHITE and the renderer paints a ~55 % white fill on top of it; the
 // two together are the ~68 % white the design calls for, with the blur still
 // carrying the colour of whatever is behind the bar.

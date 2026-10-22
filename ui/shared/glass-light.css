@@ -2,10 +2,10 @@
  *
  * WHY THIS FILE EXISTS, AND WHY IT IS NOT IN tokens.css: tokens.css is Mantle's dark instrument
  * glass, and the launcher, the desktop layer and the chamber are all still built from it. On
- * 2026-09-21 the user pointed at the Northwind site's detached nav pill and said THAT is the glass he
+ * 2026-09-21 the user pointed at a reference site's detached nav pill and said THAT is the glass he
  * wants for the bar. So the bar resolves colour through --lg-* from here, and tokens.css is left
- * untouched for everyone else. The values are the Northwind originals or a direct consequence of
- * them: northwind-site/css/shell.css, .nav.is-detached (line ~509) and the :root ink ramp.
+ * untouched for everyone else. The values are the reference site's originals or a direct consequence
+ * of them: its shell.css, .nav.is-detached (line ~509) and the :root ink ramp.
  *
  * THE BLUR TOOK THREE ATTEMPTS, and every --lg-* name survived all of them, so ui/bar/bar.css was
  * never edited for a repaint:
@@ -24,12 +24,12 @@
  *  - The fill is a breath, not a pane. What carries the pane's shape is the two hairlines and the
  *    shadow, never opacity.
  *  - NO text-shadow: on light glass the ink carries itself.
- *  - Northwind's motion, untouched: 560ms on cubic-bezier(.22,.68,.30,1) (shell.css lines 118-121).
+ *  - The reference site's motion, untouched: 560ms on cubic-bezier(.22,.68,.30,1) (shell.css lines 118-121).
  */
 :root {
   /* ---- the pane -------------------------------------------------------
      LIGHT, over a blur the bar makes itself. .45 is "a little bit more translucent" than the
-     Northwind pill's .68 (the user's words), which is affordable precisely because .bdrop is genuinely
+     reference pill's .68 (the user's words), which is affordable precisely because .bdrop is genuinely
      blurring the screen underneath instead of a DWM mode guessing at it. */
   --lg-fill:        rgba(255,255,255,.45);
   /* the tint with NOTHING blurred under it: the moment before the first strip arrives, and every
@@ -42,13 +42,13 @@
      terminal) read straight through the card. .88 keeps the glass hint and lets the text win. */
   --lg-fill-pop:    rgba(255,255,255,.88);
 
-  /* the two hairlines. INNER is the white lip just inside the top edge (Northwind's border colour);
+  /* the two hairlines. INNER is the white lip just inside the top edge (the reference site's border colour);
      OUTER separates the pane from the screen. It is .10 ink, NOT the .35 black the dark set
      used — on a light pane that black read as a hard drawn box around the bar. */
   --lg-edge-in:  rgba(255,255,255,.62);
   --lg-edge-out: rgba(11,14,26,.10);
 
-  /* Northwind's shadow stack. The bar is docked at the BOTTOM of the screen, so its shadow is thrown
+  /* The reference site's shadow stack. The bar is docked at the BOTTOM of the screen, so its shadow is thrown
      UPWARD — the same three layers with the y offsets negated. --lg-shadow is the original
      (downward) one, for popovers, which float above the bar exactly like the pill floats above
      the page. */
@@ -121,7 +121,7 @@
   --lg-hover: rgba(11,14,26,.06);
   --lg-press: rgba(11,14,26,.10);
   --lg-tile:  rgba(11,14,26,.08);            /* the letter tile behind an app with no icon */
-  --lg-sunk:  rgba(11,14,26,.05);            /* a chip: a recess, Northwind's quiet-button fill */
+  --lg-sunk:  rgba(11,14,26,.05);            /* a chip: a recess, the reference quiet-button fill */
 
   /* ---- THE REST OF THE SET, in light too (lane mantle-premium, 2026-10-16) ---------------------
      These names were dark-only, so a light rule that reached one (the Win+. emoji picker's search field,
@@ -188,7 +188,7 @@
   --lg-r-pop:  16px;                         /* popovers: the quick-settings and calendar panels */
 
   /* ---- motion ----------------------------------------------------------
-     Northwind's nav detach, verbatim: --dur-nav 560ms on --ease-nav cubic-bezier(.22,.68,.30,1)
+     The reference site's nav detach, verbatim: --dur-nav 560ms on --ease-nav cubic-bezier(.22,.68,.30,1)
      (shell.css lines 118-121). The user asked for the reveal to feel like exactly that, so the number
      lives here rather than being retyped per rule. --lg-dur is overwritten per event by bar.js,
      because main sends the duration it is actually animating the WINDOW with: the page's paint

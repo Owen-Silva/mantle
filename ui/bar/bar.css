@@ -6,8 +6,8 @@
  * a launcher glyph on the left, the app icons centred ON THE SCREEN (not between the clusters,
  * exactly like Windows 11), the readouts on the right.
  *
- * Colour (the user, same day, pointing at the Northwind site's nav pill): LIGHT frosted glass, not dark
- * grey. Every colour below comes from ../shared/glass-light.css, which carries the Northwind pill's
+ * Colour (the user, same day, pointing at the reference site's nav pill): LIGHT frosted glass, not dark
+ * grey. Every colour below comes from ../shared/glass-light.css, which carries the reference pill's
  * own values as --lg-*. tokens.css is still linked first and still owns the dark surfaces (the
  * launcher, the desktop layer); this file takes nothing but geometry from it.
  *
@@ -112,7 +112,7 @@ body.up {
    frames. That is what wasn't smooth.
 
    Now the window is shown ONCE, already at its final rect, and never moves for a reveal. THE PAGE
-   ANIMATES THE PILL: transform + width on one element, on the Northwind curve, with the paint
+   ANIMATES THE PILL: transform + width on one element, on the nav curve, with the paint
    transitions (fill, edges, ink, --pane-on) running alongside exactly as before. The window is 14
    dip taller than the pill — the pill on top, a transparent strip below it — so its bottom edge
    is the screen edge and the pill has somewhere to rise FROM.
@@ -120,7 +120,7 @@ body.up {
    "Nothing moves at rest" still holds, and is still the rule: every transition below runs on a
    state change (a reveal, a hide, a hover) and nothing is animating in between.
 
-   The state lives in a token pair, exactly the way Northwind's .nav / .nav.is-detached does it: one
+   The state lives in a token pair, exactly the way the reference site's .nav / .nav.is-detached does it: one
    element, two sets of values, everything interpolating between them. Nothing is swapped. */
 .bar {
   position: relative;
@@ -660,7 +660,7 @@ button.chip:hover { background: var(--lg-press); }
   max-width: 340px;
   padding: 11px 12px;
   /* denser than the bar (it has to hold readable rows over anything) but the same glass. Its
-     shadow is the Northwind stack the right way up: the popover floats above the bar exactly like
+     shadow is the reference stack the right way up: the popover floats above the bar exactly like
      the nav pill floats above the page. */
   background-color: var(--lg-fill-pop);   /* r6-art: not --lg-fill-strong, see glass-light.css */
   border: 1px solid var(--lg-edge-in);
@@ -704,7 +704,7 @@ body[data-edge="top"] .pop { bottom: auto; top: calc(100% + 7px); }
 /* THE ENTRANCE (2026-09-24). It used to be the WINDOW growing up behind the popover for 200 ms, and
    those resizes are what made the pill jump when a button was pressed (main.js barTall). The window
    no longer changes size, so the same wipe is drawn here: uncovered from its bottom edge up, 200 ms
-   on the Northwind curve (POP_WIPE_MS in main). display:none restarts it, so it runs on every open and
+   on the nav curve (POP_WIPE_MS in main). display:none restarts it, so it runs on every open and
    never when one flyout replaces another in place. -60px keeps the shadow (56px blur) uncut, and
    `backwards` drops the clip once it has run.
    NOW (lane mantle-motion, 2026-10-16): the bar's own spring, the motion every Mantle pop-in shares.

@@ -199,7 +199,7 @@ body.snap .bdrop, body.snap .panel::after { transition: none; }
   padding: var(--inset) var(--inset) 0;
   /* the selection ring is an INSET shadow, not a border: a border would take 2px off the preview
      box and main's rectangles (layout.js previewW) would no longer be the box on screen */
-  /* the ring and the wash glide to the next tile on the Northwind curve, quickly: a held Tab repeats ~30
+  /* the ring and the wash glide to the next tile on the nav curve, quickly: a held Tab repeats ~30
      times a second, so anything longer than half of --lg-dur-out would trail behind the keys */
   transition: background-color calc(var(--lg-dur-out) / 2) var(--lg-ease), box-shadow calc(var(--lg-dur-out) / 2) var(--lg-ease);
 }
