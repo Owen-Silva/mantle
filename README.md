@@ -4,9 +4,9 @@ A shell layer for Windows 11: its own bar, launcher, desktop, notifications and 
 drawn in Electron, with Explorer still running underneath so one keystroke, one tray click or one
 crash puts Windows back exactly as it was.
 
-![Mantle on a Windows 11 desktop](docs/screenshot.png)
+![Mantle's bar along the bottom of the screen with its quick settings panel open: Wi-Fi, Bluetooth, brightness, volume, power mode, game mode and hot corners, over a dark water wallpaper](docs/screenshot.png)
 
-<!-- TODO: add docs/screenshot.png, a real capture of the bar, the launcher and the desktop. -->
+*The bar and its quick settings panel, rendered headless from the repo's own UI page and its mock data (placeholder app icons, a sample Wi-Fi name) over one of the bundled wallpapers. Not a capture of a real desktop.*
 
 > **At your own risk.** Mantle takes over parts of the Windows shell (the taskbar, the Win key,
 > Alt+Tab, notification banners, the desktop layer). It has been built and tested on one
