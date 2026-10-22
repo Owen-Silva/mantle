@@ -1,6 +1,6 @@
 /* ---- App counts on the bar (lane badge, 2026-10-09; wired in by lane mn-helmbadge, 2026-10-12) --------
  * The number disc on an app's icon (ui/bar/helmbadge.js; first user Helm: chats waiting on the user + chats
- * stopped on an error they have not opened): macOS's dock badge. Top-right of the cell, over the icon's
+ * stopped on an error he has not opened): macOS's dock badge. Top-right of the cell, over the icon's
  * corner, clear of the running line. Accent = only waiting; warn = at least one error. Text is
  * --lg-acc-on on both (light: white on #4436E8 7.2:1, on #8A4B00 ~6.6:1; dark: #11161c on the steel blue
  * --lg-acc / the amber --lg-warn). A hairline of the bar's own fill keeps the disc crisp over any icon

@@ -4,7 +4,7 @@
 //   node sidecar/test-sysgaming.js [--exe=<path>]      (or MANTLE_SIDECAR_EXE)
 //
 // NEVER changes the user's settings, and above all never switches background recording on (it costs
-// frames on their integrated graphics): every write is proven by its dryRun (a passive sidecar answers
+// frames on his integrated graphics): every write is proven by its dryRun (a passive sidecar answers
 // it because it changes nothing) and by the passive refusal of the real write, and the values are
 // read again at the end to prove nothing moved. Prints counts and shapes only, never the folder path.
 'use strict';

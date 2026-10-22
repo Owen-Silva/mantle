@@ -184,7 +184,7 @@ On **2026-09-21**, the first live run, this sidecar hid the taskbar with
 Mantle was killed, so the `SW_SHOW` never ran — and even when it did, `SW_SHOW`
 means nothing to an auto-hide taskbar: explorer's auto-hide state machine had
 been left mid-flight and stayed stuck hidden. Hovering the screen edge did
-nothing. They had to **reboot**, in the middle of their work.
+nothing. He had to **reboot**, in the middle of his work.
 
 > **Never call `ShowWindow` or `SetWindowPos` on `Shell_TrayWnd` or
 > `Shell_SecondaryTrayWnd`.** Not to hide it, not to show it, not to fix it.

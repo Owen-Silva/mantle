@@ -18,7 +18,7 @@
 // BEFORE it changes a value: {"v":1,"owned":{"<aumid>": <original ShowBanner or null>}, ...}. This file
 // only remembers its path, and on EVERY exit (Program.SafetyRestore: clean quit, stdin EOF = main died,
 // Ctrl+C, an unhandled exception) puts each owned app's original back - but ONLY where the value is
-// still the 0 Mantle wrote. A value the user changed themselves in Windows' Settings is never overwritten.
+// still the 0 Mantle wrote. A value the user changed himself in Windows' Settings is never overwritten.
 // Main re-applies on the next sidecar start (ctx.sidecar.onReady), so a sidecar restart costs at most a
 // moment of Windows' own banner, never a lost one. The crash supervisor (Supervisor.cs BannersBack, run
 // OUTSIDE main's process tree so a tree kill of main cannot take it) does the same through RestoreFrom

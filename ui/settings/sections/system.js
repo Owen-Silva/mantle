@@ -1140,7 +1140,7 @@
   /* ---------------------------------------------------------------- Storage (lane storage, over SysStorage.cs)
    * Drives with a bar, the category scan (its own sidecar thread; progress arrives as
    * settings.system.storage events, counts only), Temporary files with a cleanup PLAN the user confirms
-   * (Downloads and the Recycle Bin are never ticked for them), Storage Sense, cleanup recommendations
+   * (Downloads and the Recycle Bin are never ticked for him), Storage Sense, cleanup recommendations
    * (read only) and Advanced storage settings (read only, each with its reason). */
   const S_KINDS = ['temp', 'thumbnails', 'systemTemp', 'deliveryOptimization', 'windowsUpdate', 'recycleBin', 'downloads'];
   const S_ADMIN = ['systemTemp', 'deliveryOptimization', 'windowsUpdate'];

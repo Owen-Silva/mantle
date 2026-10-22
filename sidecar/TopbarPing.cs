@@ -2,14 +2,14 @@
 // The user: "can we have something up on the topbar to the right of the NET that shows my ping?", then
 // "can you ping the valorant server?"
 //
-// WHAT IT MEASURES: the round trip to the VALORANT data centre they would play on. Riot's game servers
+// WHAT IT MEASURES: the round trip to the VALORANT data centre he would play on. Riot's game servers
 // do not answer ping, so each NA location is stood in for by a public endpoint in that place (AWS
 // region endpoints, Akamai/Linode speed-test hosts). The list is DATA: sidecar/ping-targets.json
 // (beside bin\, so a git checkout carries it), one set per game/region; add a set, point "use" at it.
 //
 // HARD RULE (the user, 2026-10-09): plain network round trips to public endpoints ONLY. Nothing here
 // reads Riot's lockfile or local API, looks at or into any Riot/VALORANT/Vanguard process, or holds
-// any Riot token. Vanguard is a kernel anti-cheat and their account matters more than accuracy.
+// any Riot token. Vanguard is a kernel anti-cheat and his account matters more than accuracy.
 //
 // HOW: System.Net.NetworkInformation.Ping (IcmpSendEcho2 underneath: no ping.exe, no process
 // spawned), SendPingAsync with a 1 s timeout. A host that never answers ICMP falls back to a TCP

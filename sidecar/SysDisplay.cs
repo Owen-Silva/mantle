@@ -1923,7 +1923,7 @@ namespace Mantle {
       bool anyCaps = false, supported = false, enabled = false, byDefault = false;
       foreach (Gpu g in gs) if (g.CapsOk && !g.Software) { anyCaps = true; supported |= g.HwSupported; enabled |= g.HwEnabled; byDefault |= g.HwDefault; }
       object setting = reg == 2 ? (object)true : (reg == 1 ? (object)false : (anyCaps ? (object)byDefault : null));
-      // Only meaningful where a driver supports it: the user's registry says 2 (on) while their only
+      // Only meaningful where a driver supports it: the user's registry says 2 (on) while his only
       // hardware adapter answers 2.7=0x0 / 2.9=0x0 (measured 2026-09-28), i.e. the value is inert.
       bool restart = anyCaps && supported && setting is bool && (bool)setting != enabled;
       return Json.Obj("on", setting, "registry", reg, "registryReason", why,

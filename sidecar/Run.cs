@@ -1,6 +1,6 @@
 // Run.cs - Win+R's launch, its lookup and Windows' Run history (lane keysrun, 2026-10-15).
 //
-// WHY: the user uses Win+R for %appdata% and their .minecraft folders, perfmon /report, a curl install
+// WHY: the user uses Win+R for %appdata% and his .minecraft folders, perfmon /report, a curl install
 // line and the like, and Mantle now takes Win+R (lib/features/run.js, the launcher's Run mode).
 // Windows' Run box hands what it parsed to ShellExecuteEx, so this does the same: one call, the
 // program (or document, or protocol) in lpFile, the typed arguments VERBATIM in lpParameters,

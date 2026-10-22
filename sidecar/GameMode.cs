@@ -864,7 +864,7 @@ namespace Mantle {
       r["file"] = file;
       // PUTTING BACK is allowed on the app in front (lane sysmon-game, 2026-09-29): the in-front rule is
       // there so game mode never slows what the user is using. It used to refuse the restore too, so the app
-      // they were in when the game closed stayed in Efficiency mode at below-normal priority until Mantle
+      // he was in when the game closed stayed in Efficiency mode at below-normal priority until Mantle
       // restarted. A write that only lifts the throttle can never slow anything.
       if (Easing(it)) fgPid = 0;
       if (IsGameish(file) || pid <= 8 || pid == (uint)Program.OwnPid || pid == fgPid || session != own) {

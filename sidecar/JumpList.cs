@@ -244,7 +244,7 @@ namespace Mantle {
     /// The shortcut Windows itself would start this app from (the resolver's best one for the
     /// AppID: a Start menu .lnk with its arguments), for "new window" on a running app that is not
     /// pinned and for a pin Mantle adds itself. The user's browser is why: its exe is a bare
-    /// electron.exe, which started alone opens nothing of theirs.
+    /// electron.exe, which started alone opens nothing of his.
     static object DoShortcut(Dictionary<string, object> req) {
       string how;
       string appid = ResolveAppId(req, out how);

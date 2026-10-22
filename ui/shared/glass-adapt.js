@@ -1,12 +1,12 @@
 /* glass-adapt.js : how bright the blurred picture under a DARK glass surface may be (lane see-glass,
  * 2026-10-09).
  *
- * The user, over their mountain wallpaper in dark: "mantle needs to be more see through everything", then
+ * The user, over his mountain wallpaper in dark: "mantle needs to be more see through everything", then
  * "can you change it to 50% since that is the same as i set helm to". So the dark tint is ONE layer of
  * --lg-fill (.50 of #1E1F22) over the blurred picture, and --lg-blur no longer dims it. Half a tint of
  * near-black cannot keep light ink readable over a white page or a bright photo on its own: over pure
  * white the ground under the text is ~sRGB 143, --lg-ink on that is 2.9:1 and --lg-ink-2 1.9:1.
- * Thickening the tint for everyone would put the slab back over their wallpaper, which never needed it.
+ * Thickening the tint for everyone would put the slab back over his wallpaper, which never needed it.
  *
  * So the glass darkens only as much as the picture under it forces. Every surface that blurs a
  * captured picture (the bar, its popovers, the launcher, the switcher, the desktop panes) already

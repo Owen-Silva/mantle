@@ -4,7 +4,7 @@
 #
 # WHY this script exists instead of `taskkill /im electron.exe`: the user's own
 # browser is an Electron app and is usually running. Killing electron.exe
-# wholesale would take their browser, their tabs and anything else Electron-shaped
+# wholesale would take his browser, his tabs and anything else Electron-shaped
 # down with it. This matches the '--profile-name=<x>' flag on the command line --
 # the whole flag, never a bare substring, because '-Match ws' once matched
 # 'browser' in a path and hit the wrong process.

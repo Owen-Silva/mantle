@@ -9,8 +9,8 @@
 // The user's taskbar is set to AUTO-HIDE. Mantle was killed - so the SW_SHOW never
 // ran - and even when it did, SW_SHOW is meaningless to an auto-hide taskbar:
 // explorer's auto-hide state machine had been left mid-flight and stayed stuck
-// hidden. Hovering the screen edge did nothing. They had to REBOOT, in the middle
-// of their work. Their words: "dont ever let that happen again."
+// hidden. Hovering the screen edge did nothing. He had to REBOOT, in the middle
+// of his work. His words: "dont ever let that happen again."
 //
 // THE RULE that came out of it, and it is absolute:
 //
@@ -107,8 +107,8 @@ namespace Mantle {
 
       if (wasAutohide) {
         // Nothing to do, and nothing to undo later. This is the user's machine:
-        // their taskbar is already auto-hide, so the live path below never runs
-        // for them and Mantle holds no taskbar state at all.
+        // his taskbar is already auto-hide, so the live path below never runs
+        // for him and Mantle holds no taskbar state at all.
         verified = true;
         reason = "was already auto-hide";
         Program.Emit(Json.Obj("ev", "taskbar", "autohide", true, "reason", reason));

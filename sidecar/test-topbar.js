@@ -3,7 +3,7 @@
 //   MANTLE_SIDECAR_EXE=<your exe> node sidecar/test-topbar.js
 //
 // PASSIVE, like every sidecar test. The user's apps are only ever READ (and this prints counts, never
-// a title or a menu label of theirs). Every write - a menu command, a window action - goes to a
+// a title or a menu label of his). Every write - a menu command, a window action - goes to a
 // FIXTURE this test compiles into %TEMP%: a tiny WinForms exe whose windows sit at -6000,-6000,
 // are WS_EX_NOACTIVATE + WS_EX_TOOLWINDOW (no taskbar button, no Alt+Tab entry) and are shown
 // without activation, so nothing on the screen moves and the focus never changes. A DECOY - the

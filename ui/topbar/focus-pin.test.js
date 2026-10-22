@@ -7,7 +7,7 @@
  * main ... -- []" (and, the same cause later in a run: "the CPU dropdown opens from its meter", "grow: the
  * window grew for the panel", "a click on the burner's row opens its panel", "keys: Down reaches ..."). Its
  * page recorder showed CPU detail samples with 5 decorated rows every second, then a topbar.focus for
- * ANOTHER window (the user switching between Quartz and Helm, their input idle 0 ms), then only plain samples:
+ * ANOTHER window (the user switching between Quartz and Helm, his input idle 0 ms), then only plain samples:
  * the dropdown had closed. A --test instance never takes the keyboard (lib/test-quiet.js), so the
  * desktop's real foreground changes reach its bar through the sidecar's focus hook (main onTopbar), and
  * the page's takeFocus closes any open menu on a new app (right for the live bar: a menu belongs to the
@@ -122,7 +122,7 @@ try {
   }
 
   /* 1. THE FLAKE, deterministic: the apppower e2e's instance (--test, MANTLE_TOPBAR_TEST_PIN_FOCUS=1), its CPU
-   *    dropdown open, the user switches apps on their desktop before the burner's row is drawn */
+   *    dropdown open, the user switches apps on his desktop before the burner's row is drawn */
   {
     const r = scenario({ test: true, env: { MANTLE_TOPBAR_TEST_PIN_FOCUS: '1' }, between: [APP_B] });
     check('pinned --test bar: an app switch on the desktop leaves the CPU dropdown open', !!(r.page.S.open && r.page.S.open.stat === 'cpu'), { open: r.page.S.open });

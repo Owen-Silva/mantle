@@ -251,7 +251,7 @@ namespace Mantle {
         }
 
         // Another LIVE Mantle main for this folder (the record names it): the one that died lost Electron's
-        // single-instance lock to it (a relaunch while the user started Mantle themselves), or was replaced. Not a
+        // single-instance lock to it (a relaunch while the user started Mantle himself), or was replaced. Not a
         // crash, and starting main again could only lose that lock again. That Mantle has its own supervisor
         // (waiting for this one's mutex), so this one exits.
         int other = !recIsHis ? OtherLiveMain(mainPid, launched == mainPid && haveCode && raw == 0 ? 5000 : 0) : 0;

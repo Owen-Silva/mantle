@@ -9,7 +9,7 @@
 // It also reads Startup.cs itself to prove the HARD RULE holds in the source: one write site, no
 // delete, no file call, and no argument named `id` (it would collide with the protocol's request id).
 //
-// Privacy: nothing the user has in their startup list is printed. Failures name an index and a source,
+// Privacy: nothing the user has in his startup list is printed. Failures name an index and a source,
 // never an entry's name or command.
 //
 // Prints one summary line, "STARTUP TEST: n passed, m failed".

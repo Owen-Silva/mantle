@@ -131,7 +131,7 @@ const shots = [];
        mode did not change: ..." line, both texts mixed through the frost, the tip's end off the
        panel. Same scene here: ?pm=refuse makes the mock refuse a mode change, so a click on
        Efficiency leaves a warning up; then the pointer rests on the footer link.
-         real      the warning carries the words of the user's screenshot (two lines, as on their screen):
+         real      the warning carries the words of the user's screenshot (two lines, as on his screen):
                    light and dark desktop, 1x and 1.25x. The tip must stay INSIDE the panel.
          refused   the mock's own refusal (three lines, so the footer is boxed in on every side):
                    the tip may leave the panel for the room beside it, but never covers the warning. */

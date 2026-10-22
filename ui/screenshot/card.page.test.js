@@ -50,7 +50,7 @@ async function open(browser, theme, q) {
 
 /* ---- IN THE CORNER, GLIDING WITH THE BAR (lane corner-follow-card, 2026-10-17). The user, of the banners: "this
    and anything else that comes up here needs to go in the corner not up like this ... just have them smoothly
-   move up if the taskbar comes up". The window is the card plus the bar's reach (62 DIP on their screen) ABOVE it;
+   move up if the taskbar comes up". The window is the card plus the bar's reach (62 DIP on his screen) ABOVE it;
    main sends screenshot.lift { px, kind, ms } (lib/bar-follow.js) and ui/shared/bar-follow.js lifts #lift:
      - the card sits at the window's BOTTOM (its 12 px margin), the reach above it, lift 0;
      - up: the bar's spring (linear(), the 41 points) over main's ms, really travelling, landing 62 up;
