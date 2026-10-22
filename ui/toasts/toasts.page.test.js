@@ -398,7 +398,7 @@ async function open(browser, theme) {
 
       // ---- error: quiet danger ink, detail selectable in monospace, Copy goes through main
       const ERR = OWN({ title: 'Update failed: the download stopped', body: 'Still on v0.1.0. Nothing was changed.', tone: 'error', progress: null,
-        detail: 'git pull --ff-only\nnpm ci\nLog: C:/example/update.log', actions: [{ id: 'dismiss', label: 'Close' }] });
+        detail: 'git merge --ff-only v0.1.1\nnpm install\nLog: C:/example/update.log', actions: [{ id: 'dismiss', label: 'Close' }] });
       await emit('toasts.update', { banner: ERR });
       await sleep(80);
       c = await card();

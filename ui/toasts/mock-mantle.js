@@ -19,7 +19,7 @@
       emit('toasts.update', { banner: own({ title: 'Updating Mantle', body: '', actions: [], progress: { text: 'Installing...', pct: null } }) });
       setTimeout(function () {
         emit('toasts.update', { banner: own({ title: 'Update failed: the install step stopped', body: 'Still on v0.1.0. Nothing was changed.', tone: 'error',
-          detail: 'git pull --ff-only\nnpm ci\nLog: <the log file>', actions: [{ id: 'dismiss', label: 'Close' }] }) });
+          detail: 'git merge --ff-only v0.1.1\nnpm install\nLog: <the log file>', actions: [{ id: 'dismiss', label: 'Close' }] }) });
       }, 2500);
     }, 300);
   }
