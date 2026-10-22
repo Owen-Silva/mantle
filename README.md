@@ -377,4 +377,4 @@ Unicode License v3 (`ui/emoji/DATA-LICENSE.txt`). See `CREDITS.md`.
 
 ## Contributing
 
-Issues are welcome. Pull requests are not accepted right now.
+Issues welcome; pull requests are not accepted right now.
