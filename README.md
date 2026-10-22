@@ -8,6 +8,21 @@ crash puts Windows back exactly as it was.
 
 *The bar and its quick settings panel, rendered headless from the repo's own UI page and its mock data (placeholder app icons, a sample Wi-Fi name) over one of the bundled wallpapers. Not a capture of a real desktop.*
 
+## Download
+
+```
+git clone https://github.com/Owen-Silva/mantle.git
+cd mantle
+npm install
+npm run build:sidecar
+npm test
+```
+
+There is no installer: Mantle runs from the folder you clone. `npm test` is a safe first run (three
+ordinary windows, Windows untouched). You need Windows 11, Git, Node.js 24 and the .NET Framework
+that ships with Windows ([Requirements](#requirements)); going live and starting at sign-in are
+under [Install](#install).
+
 > **At your own risk.** Mantle takes over parts of the Windows shell (the taskbar, the Win key,
 > Alt+Tab, notification banners, the desktop layer). It has been built and tested on one
 > Windows 11 machine. Read the next section before your first live run, and keep it to hand.
@@ -82,6 +97,7 @@ talks to Windows.
 ## Requirements
 
 - **Windows 11** (developed on 25H2). Windows 10 is not supported.
+- **Git**, to clone the repo.
 - **Node.js 24** and npm. `npm install` brings Electron 44 and koffi.
 - **.NET Framework 4.x**, which ships with Windows: the sidecar is compiled by the in-box
   `C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe`. No .NET SDK and no Visual Studio needed.
