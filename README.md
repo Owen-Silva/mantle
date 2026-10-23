@@ -137,6 +137,11 @@ running, and shows the reason and the log (`update.log` in `%APPDATA%\mantle`). 
 started within three minutes, a small watcher runs `tools/restore-windows.ps1` and tells you how to start
 Mantle again.
 
+Mantle remembers a version that did not start. If it is offered again, the banner says so first, with the
+reason, and gives two choices: **Try again** or **Skip this version**. A skipped version is not offered
+again; a newer release, or that version starting fine, clears the record (`update-failed-release.json` in
+`%APPDATA%\mantle`).
+
 The button is offered only when the folder is a plain `git clone` (not a linked worktree) whose `origin`
 is this repo, on its default branch, with no uncommitted changes to tracked files, a fast-forward is
 possible, and the release does not change Electron or koffi (the running Mantle has them loaded, so npm
