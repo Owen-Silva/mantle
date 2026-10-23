@@ -128,7 +128,8 @@ and then every 6 hours. A release counts only when its tag's commit is not alrea
 folder at or ahead of the release is never asked.
 
 **Update** fetches the release's tag and fast-forwards your clone to it (`git merge --ff-only`), runs
-`npm install` only if `package.json` or `package-lock.json` changed, rebuilds the sidecar only if its
+`npm install --no-save` only if `package.json` or `package-lock.json` changed (`--no-save` keeps both files
+exactly as the release has them, so your clone stays clean for the next update), rebuilds the sidecar only if its
 sources changed, then restarts Mantle the way *Restart Mantle* does, with the same flags: Windows is put
 back first, then the new version starts. The banner shows each step. If a step fails, Mantle goes back to
 the commit it was on (`git reset --keep`), runs `npm install` again if it had run, keeps the old version
