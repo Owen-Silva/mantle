@@ -1,13 +1,14 @@
 // MaxFold.cs - a QUICK unfold when any app window maximizes or restores (lane unfold-max, 2026-10-23).
 //
-// WHAT THE USER SEES (Owen: "EXACTLY like the iPhone Duo", ONE version; 23:10: "barely any" tint, lighter):
+// WHAT THE USER SEES (Owen: "EXACTLY like the iPhone Duo", ONE version; matched to Apple's own footage,
+// mantle-night/duo-ref/SPEC.md: no tint, a neutral black multiply):
 // for ~0.24 s after a window maximizes or restores, its live content holds still at the NEW rect while the
 // "display opens around it": the cover half (left by default) is in place and sharp, the other half
 // swings open from the hinge in the centre (its visible width grows 0 -> W/2), blurred progressively toward
-// its moving free edge (cubic falloff, sharp AT the hinge), darkened toward that edge in one smooth
-// gradient, a faint Mantle indigo (#4436E8) hint only right at that edge; the not-yet-open part shows the
-// window's outline, dim and soft; the whole screen starts a little darker and brightens; the last frame is
-// identical to the window, so hiding the overlay is invisible. Click-through, never activates, never delays input.
+// its moving free edge (close to linear falloff, sharp AT the hinge), darkened toward that edge in one smooth
+// neutral gradient (never below ~0.37); the stationary half stays at full brightness; the not-yet-open part
+// shows the window's outline, dim and soft; blur and dimming linger after the panel lands and fade over the
+// last 15 %; the last frame is identical to the window, so hiding the overlay is invisible. Click-through, never activates, never delays input.
 // "Animation effects" off (SPI_GETCLIENTAREAANIMATION) = a 120 ms cross-fade only.
 //
 // HOW (phase 1, measured on Owen's i3-1215U, 1920x1080 @125 %; scratch notes in the lane's handoff):
@@ -21,11 +22,11 @@
 //   overlay is CLAMPED, so every offset is made by shifting rcSource, never rcDestination.
 // - Blur = several 1:1 taps of the same strip, ~1.4 px apart along the opening axis with gaussian weights,
 //   stacked (alpha_k = w_k / what is still uncovered above it) over the overlay's own opaque near-black
-//   base; strips on small steps of radius (cubic in the distance from the hinge, capped at R_CAP where the
-//   taps would stand apart as copies). Darkening = two more thumbnails over the taps, of a tiny cloaked
-//   per-pixel-alpha ramp window stretched over the panel (a linear ramp and a cubic faint-indigo one), so it
+//   base; strips on small steps of radius (BLUR_EXP power of the distance from the hinge, capped at R_CAP
+//   where the taps would stand apart as copies). Darkening = two more thumbnails over the taps, of a tiny
+//   cloaked per-pixel-alpha ramp window stretched over the panel (a linear ramp and a d^4 one), so it
 //   is one smooth gradient, not a step per strip; without them it falls back to per-strip coverage (said).
-//   Tap budget 80 (+2 veils), shrunk for the rest of a play when a frame's taps take > 7 ms to set.
+//   Tap budget 64 (+2 veils), shrunk for the rest of a play when a frame's taps take > 5 ms to set.
 //
 // WINDOWS' OWN ANIMATION STAYS ON (no SPI change, nothing global). Maximize: Windows' morph grows inside the
 // new rect, under our opaque overlay, which stays up (converged = identical) until holdMs after the event.
@@ -80,38 +81,44 @@ namespace Mantle {
     public static string R_Thumb(int hr) { return "Windows would not let Mantle draw the window (0x" + hr.ToString("X8") + ")"; }
 
     const string TestOnly = "maxfold.{0} is for tests only (a passive sidecar)";
-    // Tap budget: 80 thumbnails at most, 24 new registrations a frame, 14 taps in one strip (A/B against the
-    // old 17-25-tap build on this machine: no frame gap over 20 ms in 24 plays with up to 78 taps; 94 taps
-    // gave 12-24 ms renders and 30 ms gaps).
-    const int MAX_POOL = 80, GROW_PER_FRAME = 24, MAX_TAPS_PER_STRIP = 14;
+    // Tap budget: 64 thumbnails at most, 24 new registrations a frame, 10 taps in one strip (measured on this
+    // machine against the old 17-25-tap build; see the commit message for the numbers).
+    const int MAX_POOL = 64, GROW_PER_FRAME = 24, MAX_TAPS_PER_STRIP = 10;
     // Time guard: a frame whose taps took longer than SLOW_MS to set (DWM busy) shrinks the next frames' tap
     // budget by a third (never below MIN_BUDGET): a little less blur instead of a skipped frame.
-    const double SLOW_MS = 7.0; const int MIN_BUDGET = 24;
+    const double SLOW_MS = 5.0; const int MIN_BUDGET = 24;
     const double GOLDEN = 2.39996323;
     // The blur: strips sit on small steps of blur radius (STEP_PX, or STEP_REL of the radius once larger, so the
     // cubic falloff has no visible seams), taps per strip grow with the radius (TAPS_PER_PX, ~1.4 px apart, so
     // they overlap into a smooth smear instead of standing apart as copies), gaussian weights (SIGMA, in units
-    // of the radius). The smear runs along the opening axis only (ASPECT_Y 0): every strip is the window's full
-    // height, so a vertical shift cannot stay inside the window's frame (it would be clamped to an exact copy).
-    const double STEP_PX = 1.0, STEP_REL = 0.2, TAPS_PER_PX = 1.3, ASPECT_Y = 0.0, SIGMA = 0.5;
-    // The widest blur a strip draws: what MAX_TAPS_PER_STRIP taps fill at ~1.4 px spacing. A wider radius
-    // with the same taps shows the copies (measured on the frames: 17 px with 14 taps read as double text).
-    const double R_CAP = 9.0;
+    // of the radius). The smear runs along the opening axis only (ASPECT_Y 0): tried at 0.4 (vertical shifts
+    // crop the destination, see SetTap), 14 taps spread over two axes read as jittered outlined text, while
+    // the same taps on one axis overlap into a clean smear.
+    const double STEP_PX = 1.25, STEP_REL = 0.25, TAPS_PER_PX = 1.3, ASPECT_Y = 0.0, SIGMA = 0.5;
+    // The widest blur a strip draws: what MAX_TAPS_PER_STRIP taps fill at ~1.5 px spacing. A wider radius
+    // with the same taps shows the copies (measured on the frames: 17 px with 14 taps read as double text);
+    // more taps cost frame time (the Duo model holds the full effect for the whole motion: 73 taps a frame
+    // gave 30 ms gaps on this machine, so 7 px with 10 taps).
+    const double R_CAP = 7.0;
     // The veil: one more thumbnail, of a tiny cloaked window holding a per-pixel-alpha ramp of the base colour
     // (alpha 0 at the hinge -> 1 at the free edge), stretched over the opening panel at opacity darkCap-ish:
     // the darkening and indigo tint as ONE smooth gradient, drawn over the taps, instead of a step per strip.
-    // The second veil (the shade) follows the blur's cubic falloff: opacity min(SHADE_CAP, SHADE_PER_S * s).
+    // The second veil (the shade) is a d^4 ramp at opacity SHADE_CAP * s: the steep drop at the free edge.
     const int VEIL_W = 256, VEIL_H = 4;
-    // Owen 23:10: "barely any" tint, lighter, the window's outline visible throughout. The shade is the one
-    // faint indigo hint (SHADE_MIX of the tint over black); the not-yet-open part shows the window at BEYOND.
-    const double SHADE_CAP = 0.22, SHADE_PER_S = 0.55, SHADE_MIX = 0.22, BEYOND = 0.24;
-    const double BEYOND_TAPS_PER_PX = 1.0; const int BEYOND_MAX_TAPS = 10;
+    // Measured on Apple's own Duo footage (mantle-night/duo-ref/SPEC.md, it overrides the earlier guesses):
+    // the darkening is a NEUTRAL black multiply (no tint: SHADE_MIX 0, baseMix 0), the stationary half stays
+    // at full brightness (innerDark 0), the free edge bottoms out near 0.37 (linear darkCap .32 times the d^4
+    // shade SHADE_CAP .45), the blur falls off closer to linear than cubic (BLUR_EXP), and blur + dimming
+    // LINGER after the panel has landed, fading over the last LINGER of the play. The not-yet-open part
+    // shows the window at BEYOND (Owen 23:10: "see the outline").
+    const double SHADE_CAP = 0.45, SHADE_MIX = 0.0, BEYOND = 0.24, LINGER = 0.15, BLUR_EXP = 1.35;
+    const double BEYOND_TAPS_PER_PX = 1.0; const int BEYOND_MAX_TAPS = 8;
 
     // ------------------------------------------------------------ settings (scratch/SPEC-LOOK.md "Config")
     sealed class Cfg {
       public int Ms = 240; public double[] Curve; public double BlurFrac = 0.012;
       public int TintR = 0x44, TintG = 0x36, TintB = 0xE8;
-      public double BaseMix = 0.06, InnerDark = 0.18, DarkCap = 0.32;
+      public double BaseMix = 0.0, InnerDark = 0.0, DarkCap = 0.32;
       public int Strips = 24; public bool CoverLeft = true; public int HoldMs = 300;
       public bool Invisible, DryRun;
       public int TestWinAnim = -1, TestReduced = -1; // passive only: stand-ins for the two Windows settings
@@ -277,8 +284,8 @@ namespace Mantle {
       var c = new Cfg();
       c.Ms = Clamp(Json.GetInt(req, "ms", 240), 60, 2000);
       c.BlurFrac = Math.Max(0, Math.Min(0.027, Num(req, "blurFrac", 0.012)));
-      c.BaseMix = Clamp01(Num(req, "baseMix", 0.06));
-      c.InnerDark = Clamp01(Num(req, "innerDark", 0.18));
+      c.BaseMix = Clamp01(Num(req, "baseMix", 0.0));
+      c.InnerDark = Clamp01(Num(req, "innerDark", 0.0));
       c.DarkCap = Clamp01(Num(req, "darkCap", 0.32));
       c.Strips = Clamp(Json.GetInt(req, "strips", 24), 1, 32);
       c.HoldMs = Clamp(Json.GetInt(req, "holdMs", 300), 0, 1500);
@@ -754,8 +761,9 @@ namespace Mantle {
       p.ShowMs = (p.ShownQpc - p.T0) * QpcMs;
       p.TimingOk = Timing(out p.Missed0, out p.Dropped0);
       _play = p;
-      // The first frame needs one tap; the next ones need many: register a batch now, after the overlay is up.
-      Grow(p, 1 + GROW_PER_FRAME, false);
+      // The first frame needs two taps; the next ones need many: register the whole pool now, after the
+      // overlay is up (the next frame is a vsync away), so no later frame pays for registrations.
+      if (!p.Reduced) Grow(p, MAX_POOL, true);
       // The hook callback runs INSIDE GetMessage, which would keep waiting: wake the loop for the frames.
       N.PostThreadMessageW((int)N.GetCurrentThreadId(), WM_KICK, IntPtr.Zero, IntPtr.Zero);
       _watchFired = false; _watchSeq = p.Seq;
@@ -830,7 +838,7 @@ namespace Mantle {
         // sections: 0 linear rising, 1 linear falling, 2 cubic rising, 3 cubic falling
         int q = x / VEIL_W; double t = (x % VEIL_W) / (double)(VEIL_W - 1);
         if ((q & 1) == 1) t = 1 - t;
-        if (q >= 2) t = t * t * t;
+        if (q >= 2) t = t * t * t * t; // the shade: d^4, the measured drop right at the free edge
         int a = (int)Math.Round(t * 255);
         int z = q >= 2 ? 1 : 0; // linear ramps: the base colour; cubic ramps (the shade): the faint indigo
         int v = (a << 24) | ((cr[z] * a + 127) / 255 << 16) | ((cg[z] * a + 127) / 255 << 8) | ((cb[z] * a + 127) / 255); // premultiplied BGRA
@@ -928,9 +936,41 @@ namespace Mantle {
     static double Ease(Cfg c, double p) {
       if (p <= 0) return 0;
       if (p >= 1) return c.Curve != null ? c.Curve[c.Curve.Length - 1] : 1;
-      if (c.Curve == null) { double u = 1 - p; return 1 - u * u * u; }
+      if (c.Curve == null) return DuoEase(p);
       double x = p * (c.Curve.Length - 1); int i = (int)Math.Floor(x); if (i >= c.Curve.Length - 1) return c.Curve[c.Curve.Length - 1];
       double f = x - i; return c.Curve[i] + (c.Curve[i + 1] - c.Curve[i]) * f;
+    }
+
+    /// No curve from main: the Duo's measured panel motion, cubic-bezier(.5, 0, .12, 1) (the same as main's
+    /// _maxfold-tokens.js DUO_EASE): slow start, peak speed early-mid, strong ease-out.
+    static double DuoEase(double x) {
+      const double x1 = 0.5, y1 = 0, x2 = 0.12, y2 = 1;
+      double t = x;
+      for (int i = 0; i < 8; i++) {
+        double bx = 3 * (1 - t) * (1 - t) * t * x1 + 3 * (1 - t) * t * t * x2 + t * t * t - x;
+        double dx = 3 * (1 - t) * (1 - t) * x1 + 6 * (1 - t) * t * (x2 - x1) + 3 * t * t * (1 - x2);
+        if (Math.Abs(bx) < 1e-6) break;
+        if (Math.Abs(dx) < 1e-6) break;
+        t = Math.Max(0, Math.Min(1, t - bx / dx));
+      }
+      for (int i = 0; i < 20; i++) { // bisection polish (Newton can stall where the slope is flat)
+        double bx = 3 * (1 - t) * (1 - t) * t * x1 + 3 * (1 - t) * t * t * x2 + t * t * t;
+        if (Math.Abs(bx - x) < 1e-6) break;
+        double lo = 0, hi = 1; t = 0.5;
+        for (int j = 0; j < 30; j++) { double b2 = 3 * (1 - t) * (1 - t) * t * x1 + 3 * (1 - t) * t * t * x2 + t * t * t; if (b2 < x) lo = t; else hi = t; t = (lo + hi) / 2; }
+        break;
+      }
+      return 3 * (1 - t) * (1 - t) * t * y1 + 3 * (1 - t) * t * t * y2 + t * t * t;
+    }
+
+    /// Progress -> geometry and effect strength. The panel opens over the first 1-LINGER of the play on the
+    /// curve (e may overshoot; v = its clamp); the effect strength s holds at 1 while it moves and fades
+    /// linearly to 0 over the last LINGER, after the panel has landed (the Duo's release).
+    static void Phase(Cfg c, double prog, out double e, out double v, out double s) {
+      double u = Math.Min(1, prog / (1 - LINGER));
+      e = Ease(c, u); v = Clamp01(e);
+      s = prog <= 1 - LINGER ? 1 : Clamp01((1 - prog) / LINGER);
+      if (prog >= 1) s = 0;
     }
 
     /// Sets every tap for progress `prog` (elMs = elapsed, for the reduced cross-fade). True = this frame is
@@ -944,7 +984,7 @@ namespace Mantle {
         p.LastExact = cov >= 1; p.MaxTaps = Math.Max(p.MaxTaps, 1);
         return p.LastExact;
       }
-      double e = Ease(c, prog), s = Clamp01(1 - e), v = Clamp01(e);
+      double e, v, s; Phase(c, prog, out e, out v, out s);
       if (s <= 0 && v >= 1) {
         SetTap(p, 0, new N.RECT(0, 0, p.W, p.H), 0, 0, 1.0);
         HideFrom(p, 1); VeilOff(p);
@@ -955,8 +995,8 @@ namespace Mantle {
       double inner = 1 - c.InnerDark * s;
       int panelMax = c.CoverLeft ? p.W - xh : xh;
       int pw = (int)Math.Round(v * panelMax);
-      double R = Math.Min(R_CAP, Math.Min(c.BlurFrac, 0.027) * p.W * s); // blur radius at the free edge (px)
-      double A = Math.Min(c.DarkCap, 2 * s);                      // darkening at the free edge
+      double R = Math.Min(R_CAP, Math.Min(c.BlurFrac, 0.027) * p.W) * s; // blur radius at the free edge (px)
+      double A = c.DarkCap * s;                                   // darkening at the free edge (linear part)
       bool veil = VeilUsable(p);
       // Strips. With the veil: on equal steps of radius (boundary j at d = (j/K)^(1/3), radius R*(j+.5)/K), so
       // neighbouring strips differ by <= STEP_PX of blur. Without it (fallback): K equal widths, as before, and
@@ -973,13 +1013,13 @@ namespace Mantle {
         if (lv.Length < 2) lv = new double[] { 0, R };
       } else { K = Math.Max(1, c.Strips); lv = null; }
       var bx = new int[K + 1];
-      for (int j = 0; j <= K; j++) bx[j] = veil ? (int)Math.Round(pw * (R <= 0 ? (double)j / K : Math.Pow(lv[j] / R, 1.0 / 3))) : (int)((long)pw * j / K);
+      for (int j = 0; j <= K; j++) bx[j] = veil ? (int)Math.Round(pw * (R <= 0 ? (double)j / K : Math.Pow(lv[j] / R, 1.0 / BLUR_EXP))) : (int)((long)pw * j / K);
       var n = new int[K]; var r = new double[K]; var cv = new double[K];
       int need = 0, sharpTo = 0; bool lead = veil;
       for (int i = 0; i < K; i++) {
         if (bx[i + 1] - bx[i] < 1) continue;
         double dMid = ((bx[i] + bx[i + 1]) * 0.5) / Math.Max(1, pw);
-        r[i] = veil ? (lv[i] + lv[i + 1]) * 0.5 : R * dMid * dMid * dMid;
+        r[i] = veil ? (lv[i] + lv[i + 1]) * 0.5 : R * Math.Pow(dMid, BLUR_EXP);
         n[i] = Clamp(1 + (int)Math.Round(r[i] * TAPS_PER_PX), 1, MAX_TAPS_PER_STRIP);
         if (r[i] < 0.5) n[i] = 1;
         cv[i] = veil ? inner : inner * (1 - A * dMid);
@@ -1016,7 +1056,7 @@ namespace Mantle {
         StackTaps(p, ref k, dst, m, ox, oy, wt, cv[i]);
       }
       HideFrom(p, k);
-      if (veilSlot == 1) SetVeils(p, c.CoverLeft ? new N.RECT(xh, 0, xh + pw, p.H) : new N.RECT(xh - pw, 0, xh, p.H), A, Math.Min(SHADE_CAP, SHADE_PER_S * s), c.CoverLeft);
+      if (veilSlot == 1) SetVeils(p, c.CoverLeft ? new N.RECT(xh, 0, xh + pw, p.H) : new N.RECT(xh - pw, 0, xh, p.H), A, SHADE_CAP * s, c.CoverLeft);
       else VeilOff(p);
       p.MaxTaps = Math.Max(p.MaxTaps, k);
       p.LastExact = false;
@@ -1130,6 +1170,12 @@ namespace Mantle {
       if (sl0 < p.FrL && dst.R - dst.L - (p.FrL - sl0) >= 1) { dst.L += p.FrL - sl0; }
       int sr0 = dst.R + p.SrcOX + dx;
       if (sr0 > p.FrR && dst.R - dst.L - (sr0 - p.FrR) >= 1) { dst.R -= sr0 - p.FrR; }
+      // the same vertically: the rows it gives up keep the exact tap 0 underneath (opaque wherever the
+      // coverage is 1), so they lose a little blur, never brightness
+      int st0 = dst.T + p.SrcOY + dy;
+      if (st0 < p.FrT && dst.B - dst.T - (p.FrT - st0) >= 1) { dst.T += p.FrT - st0; }
+      int sb0 = dst.B + p.SrcOY + dy;
+      if (sb0 > p.FrB && dst.B - dst.T - (sb0 - p.FrB) >= 1) { dst.B -= sb0 - p.FrB; }
       int w = dst.R - dst.L, h = dst.B - dst.T;
       int sl = dst.L + p.SrcOX + dx, st = dst.T + p.SrcOY + dy;
       // the shifted source stays inside the window's visible frame
@@ -1284,12 +1330,12 @@ namespace Mantle {
       _pose = p;
       lock (_gate) _overlayVisPub = true;
       N.DwmFlush();
-      double e = Ease(c, prog), s = Clamp01(1 - e), v = Clamp01(e);
+      double e, v, s; Phase(c, prog, out e, out v, out s);
       int xh = p.W / 2, panelMax = c.CoverLeft ? p.W - xh : xh;
       return Json.Obj("overlay", _overlay.ToInt64(), "w", p.W, "h", p.H, "xh", xh, "pw", (int)Math.Round(v * panelMax),
         "e", R3(e), "s", R3(s), "inner", R3(1 - c.InnerDark * s), "taps", p.Visible, "exact", exact, "growHr", p.GrowHr,
-        "veil", VeilNote(p), "veilOn", p.VeilVis[0], "beyond", R3(BEYOND * (1 - c.InnerDark * s)), "darkEdge", R3(Math.Min(c.DarkCap, 2 * s)), "shadeEdge", R3(Math.Min(SHADE_CAP, SHADE_PER_S * s)),
-        "blurPx", R2(Math.Min(R_CAP, Math.Min(c.BlurFrac, 0.027) * p.W * s)), "base", "#" + ((c.BaseColorRef() & 0xFF).ToString("X2")) +
+        "veil", VeilNote(p), "veilOn", p.VeilVis[0], "beyond", R3(BEYOND * (1 - c.InnerDark * s)), "darkEdge", R3(c.DarkCap * s), "shadeEdge", R3(SHADE_CAP * s),
+        "blurPx", R2(Math.Min(R_CAP, Math.Min(c.BlurFrac, 0.027) * p.W) * s), "base", "#" + ((c.BaseColorRef() & 0xFF).ToString("X2")) +
         (((c.BaseColorRef() >> 8) & 0xFF).ToString("X2")) + (((c.BaseColorRef() >> 16) & 0xFF).ToString("X2")));
     }
 

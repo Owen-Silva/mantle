@@ -31,7 +31,7 @@ const REFUSED = T.PASSIVE_REFUSAL;
 const FRAMES = path.resolve((process.argv.find((a) => a.startsWith('--frames=')) || '').slice(9) || path.join(__dirname, '..', 'scratch', 'frames'));
 const RECORD = path.join(os.tmpdir(), 'mantle-maxfold-test', 'maxfold-windows.json');
 const LOCK = path.join(os.tmpdir(), 'mantle-electron-lock');
-const BASE = { r: 4, g: 3, b: 14 }; // lerp(#000, #4436E8, .06): barely any tint (Owen, 23:10)
+const BASE = { r: 0, g: 0, b: 0 }; // neutral black: the Duo's darkening has no tint (duo-ref/SPEC.md)
 const med = (a) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
 const mx = (a) => (a.length ? Math.max.apply(null, a) : NaN);
 const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
@@ -334,15 +334,14 @@ function lookChecks(look) {
       // blur radius at the free edge = blurPx * d^3: a clear falloff only when the edge blur is a few px
       if (pz.blurPx > 1.5) {
         out.push([`${tag}: sharp at the hinge, blurrier toward the moving edge (edge blur ${f2(pz.blurPx)} px; ${sharp.map(f2).join(' ')})`,
-          sharp[0] > 0.8 && sharp[last] < sharp[0] - (pz.blurPx > 4 ? 0.1 : 0.03), '']);
+          sharp[0] > 0.7 && sharp[last] < sharp[0] - (pz.blurPx > 4 ? 0.1 : 0.03), '']);
       } else {
         out.push([`${tag}: nearly landed: sharp across the panel (edge blur ${f2(pz.blurPx)} px; ${sharp.map(f2).join(' ')})`, sharp.every((v) => v > 0.85 && v < 1.15), '']);
       }
       if (pz.s > 0.05) {
         out.push([`${tag}: darker toward the moving edge (${dark.map(f2).join(' ')})`, dark[last] < dark[0] - 0.02, '']);
-        // Owen 23:10: "barely any" tint: a faint indigo hint near the moving edge only while the shade shows
-        if (pz.shadeEdge >= 0.1) out.push([`${tag}: a faint indigo hint toward the moving edge (b-g shift ${tint.map(f2).join(' ')})`, tint[last] > tint[0], '']);
-        out.push([`${tag}: barely any tint anywhere (b-g shift ${tint.map(f2).join(' ')} <= 8)`, tint.every((v) => Math.abs(v) <= 8), '']);
+        // the Duo's darkening is a neutral black multiply: never bluer than the window (b-g only shrinks)
+        out.push([`${tag}: no tint, the darkening is neutral (b-g shift ${tint.map(f2).join(' ')} <= 1)`, tint.every((v) => v <= 1), '']);
       } else {
         out.push([`${tag}: nearly landed: brightness close to the window's (${dark.map(f2).join(' ')})`, dark.every((v) => v > 0.9), '']);
       }
