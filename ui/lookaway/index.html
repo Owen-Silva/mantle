@@ -1,0 +1,20 @@
+<!doctype html>
+<!--
+  Mantle look-away detector (lane lookaway, 2026-10-23). A HIDDEN page: it is never shown.
+  It opens the camera only when main says so, looks at a few small frames a second with
+  MediaPipe's face model, and sends main ONLY numbers (is a face there, which way the head points).
+  No frame is drawn, kept, saved or sent anywhere. The policy below allows no network at all:
+  scripts and the model come from Mantle's own files, and fetch/XHR may only read file: URLs.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src file: 'wasm-unsafe-eval'; connect-src file:; worker-src 'none'; img-src 'none'; media-src 'none'; style-src 'none'; font-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Mantle look-away detector</title>
+</head>
+<body>
+<script src="../../node_modules/@mediapipe/tasks-vision/vision_bundle.js"></script>
+<script src="pose.js"></script>
+<script src="detector.js"></script>
+</body>
+</html>
