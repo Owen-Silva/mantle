@@ -585,6 +585,8 @@
     if (f.resting) return { tone: 'rest', text: 'Resting while ' + String(f.resting).replace(/^while\s+/i, '') };
     if (f.stopped) return { tone: 'warn', text: 'Stopped' + (f.reason ? ': ' + f.reason : '') };
     if (f.keys === false && !chordless(f)) return { tone: 'warn', text: 'On, but its keys are Windows\' right now: ' + (f.keysReason || 'no reason came back') };
+    // look-away blur's line says what the camera is doing ("Watching", "Paused while another app uses the camera")
+    if (f.name === 'lookaway' && f.reason && f.reason !== 'working') return { tone: 'ok', text: f.reason };
     var chords = Array.isArray(f.chords) && f.chords.length ? ' · ' + f.chords.join(', ') : '';
     return { tone: 'ok', text: (f.running === false ? 'On, starting' : 'On') + chords };
   }

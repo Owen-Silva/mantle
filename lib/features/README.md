@@ -123,7 +123,8 @@ never goes stale and nothing is written behind your back; a running feature hear
 through `ctx.onOption`. A card or menu that already writes the key keeps working: both roads write
 the same store. Richer settings (the hot corners' four-corner map) keep their own commands, and
 Mantle Settings calls those. Declared now: gamemode (auto, liftSaver), topbar (hidden, overGames),
-screenshot (mode, saveDir), spotify (closeForGames, reviveAfterGames, trimAboveMB).
+screenshot (mode, saveDir), spotify (closeForGames, reviveAfterGames, trimAboveMB),
+unfold (when), lookaway (delay, turn).
 
 ## Keys: what the hook does with your chords
 
@@ -163,7 +164,7 @@ sidecar's history). Its chords go back to Windows, its commands answer "... is r
 VALORANT runs", and its state piece reads HEALTHY with `resting` set (no strip row). When the last
 game exits, wakeAll() runs your install() again with a fresh ctx: the same path as start-up.
 Resting now: clipboard, osd, screenshot, snap, taskview, topbar, search (Win+S needs the launcher,
-which rests too), ontop (its pins go off top for the game and back on after, lib/features/ontop.js), notes (its pad closes),
+which rests too), ontop (its pins go off top for the game and back on after, lib/features/ontop.js), notes (its pad closes), unfold (its full-screen page is destroyed and the screen cover is let go), lookaway (its hidden camera page is destroyed, so the camera is off for the game),
 settings (the Mantle Settings window is destroyed; Win+I opens Windows' Settings until the game exits). Main also closes the launcher (Win key -> Start) and the switcher (Alt+Tab ->
 Windows), and unloads the wallpaper. Kept: the bar, the desktop layer, main, the sidecar.
 The timer deliberately does NOT rest (a countdown must survive a game): it learns of the rest from
