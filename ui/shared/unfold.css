@@ -3,36 +3,70 @@
  *
  * THE CONTRACT (names): the class .unfold, the attributes data-unfold / data-unfold-size, the
  * --unfold-* tokens below, and MantleUnfold in unfold.js. Lane unfold-unlock owns the VALUES and the
- * implementation (tuning, a cheaper technique if a full-screen blur is too slow on this iGPU); the
- * names stay, so every other surface keeps working unchanged.
+ * implementation; the names stay, so every other surface keeps working unchanged.
  *
- * The effect: the content holds still in space while the screen opens AROUND it from a centre seam
- * (the hinge). On the way it is blurred, stretched a little along the opening axis and lit by a
- * faint neutral sheen, and it comes into focus as the opening lands. Folding is the same, reversed.
+ * THE EFFECT (Owen, 2026-10-23: "exactly like the iPhone Duo", tinted Mantle indigo, ONE version: it
+ * is the content itself, not a glass panel, so there is no light/dark variant):
+ *   - a vertical hinge in the centre. The RIGHT half (the cover side) is already in place; the LEFT
+ *     half swings open from the hinge, its visible width growing from 0 to half the width;
+ *   - the content is ONE picture fixed in space: the halves are windows onto it, nothing slides;
+ *   - on the way it is out of focus and darkened, the darkening deepest at the moving free edge and
+ *     carrying the indigo; it lands sharp and at full brightness.
+ * The full-screen unlock (ui/unfold/) does this per pixel in WebGL (blur sharp at the hinge, cubic
+ * toward the free edge). On ONE element CSS can only do it cheaply, so here: the left half opens with
+ * clip-path, the whole element comes out of a uniform blur + brightness(), and the indigo shade is two
+ * composited layers MantleUnfold adds while it moves (a gradient riding the free edge, scaled with the
+ * opening, and a flat shade on the cover half; only on a positioned element, removed at rest).
  *
  *   data-unfold="folded"   closed: nothing visible (the rest pose of a surface that opens)
  *   data-unfold="open"     open and sharp
- *   data-unfold="blurred"  covered: the whole frame visible but out of focus (look-away)
+ *   data-unfold="blurred"  covered: the whole frame visible, out of focus and shaded (look-away)
  *
  *   data-unfold-size="full"   unlock, wake, look-back       (the showpiece)
  *   data-unfold-size="pop"    launcher, task view           (the default)
  *   data-unfold-size="quick"  maximize / restore            (seen many times a day: short)
  *
  * Curves come from glass-light.css (--m-spring in, --m-accel out), so this motion is one family
- * with the bar's spring Owen approved. Colours: neutral only (no tint hue, no neon).
- * Windows "Animation effects" off (prefers-reduced-motion) = a short cross-fade, nothing moves. */
+ * with the bar's spring Owen approved. Windows "Animation effects" off (prefers-reduced-motion) = a
+ * short cross-fade, nothing moves. */
 
 :root {
   --unfold-in:  var(--m-spring, cubic-bezier(.2, .9, .25, 1));
   --unfold-out: var(--m-accel, cubic-bezier(.3, 0, .8, .15));
 
-  --unfold-full-ms:  700ms;  --unfold-full-blur:  18px;  --unfold-full-stretch:  1.06;
-  --unfold-pop-ms:   340ms;  --unfold-pop-blur:    8px;  --unfold-pop-stretch:   1.03;
-  --unfold-quick-ms: 240ms;  --unfold-quick-blur:  6px;  --unfold-quick-stretch: 1.02;
+  /* blur: the most out of focus the content gets (CSS px). For full, at the moving free edge early
+     in the opening (the Duo's 48 px on a 2670 px source = 34.5 px on our 1920 px screen = 28 CSS px
+     at 125 %); the page caps it at 1.5x. Stretch: 1 (the Duo has no real stretch: what reads as a
+     smear is the progressive blur); the names are kept for the surfaces that read them. */
+  --unfold-full-ms:  700ms;  --unfold-full-blur:  28px;  --unfold-full-stretch:  1;
+  --unfold-pop-ms:   340ms;  --unfold-pop-blur:    8px;  --unfold-pop-stretch:   1;
+  --unfold-quick-ms: 240ms;  --unfold-quick-blur:  6px;  --unfold-quick-stretch: 1;
 
-  --unfold-fold-ms:    420ms;  /* open -> blurred (look-away) */
-  --unfold-cover-blur: 28px;   /* how far out of focus the covered screen sits */
-  --unfold-sheen: rgba(255, 255, 255, .10);
+  /* the full-screen page only (ui/unfold/, WebGL): the swing of the moving half (an even ease in and
+     out, like a hand opening the phone), the blur at its free edge at the start of the swing in the
+     picture's own pixels (the Duo recreation's cap: 72; it falls to 0 as it lands, sharp at the hinge,
+     cubic toward the edge), and the darkening's gain (2x the transition strength, capped at the shade) */
+  --unfold-hinge: cubic-bezier(.45, 0, .4, 1);
+  --unfold-edge-blur: 72px;
+  --unfold-edge-dark: 2;
+
+  --unfold-fold-ms:    420ms;  /* open -> blurred (look-away): the same motion folding shut */
+  --unfold-cover-blur: 30px;   /* how far out of focus the covered screen sits: unreadable */
+  --unfold-reveal-ms:  200ms;  /* blurred -> open, the look-back: it must feel instant */
+
+  /* the tint: Mantle indigo, HARD-CODED (the light theme's --lg-acc, not following the theme: the
+     effect is one version). The shade is the colour the content darkens toward: the tint at 30 %
+     over black, so the darkening carries the indigo instead of going grey. */
+  --unfold-tint:  #4436E8;
+  --unfold-shade: #141046;
+  --unfold-dark:       .62;  /* the darkening at the moving free edge early in the opening (its cap) */
+  --unfold-dark-cover: .34;  /* the cover side's darkening at the start; it brightens as it opens */
+  --unfold-dark-blur:  .50;  /* the covered (look-away) screen's darkening, everywhere */
+  --unfold-dim:        .78;  /* an element's brightness() while folded or blurred */
+
+  /* kept for the names: the edge light of the first version. Unused by the Duo look (it has none). */
+  --unfold-sheen: rgba(255, 255, 255, 0);
+  --unfold-sheen-w: 0px;
 }
 
 .unfold {
@@ -49,33 +83,81 @@
 .unfold[data-unfold-size="full"]  { --u-ms: var(--unfold-full-ms);  --u-blur: var(--unfold-full-blur);  --u-stretch: var(--unfold-full-stretch); }
 .unfold[data-unfold-size="quick"] { --u-ms: var(--unfold-quick-ms); --u-blur: var(--unfold-quick-blur); --u-stretch: var(--unfold-quick-stretch); }
 
+/* closed: the cover (right) half is where it will be; the left half is shut at the hinge */
 .unfold[data-unfold="folded"] {
-  clip-path: inset(0 50% 0 50%);
-  filter: blur(var(--u-blur));
+  clip-path: inset(0 0 0 50%);
+  filter: blur(var(--u-blur)) brightness(var(--unfold-dim));
   transform: scaleX(var(--u-stretch));
   opacity: 0;
   transition-timing-function: var(--unfold-out);
+  /* folding shut: the fade is the LAST 40 %, after the half has swung most of the way closed */
+  transition-delay: 0s, 0s, 0s, calc(var(--u-ms) * .6);
 }
 .unfold[data-unfold="open"] {
   clip-path: inset(0 0 0 0);
-  filter: blur(0);
+  filter: blur(0) brightness(1);
   transform: none;
   opacity: 1;
 }
 .unfold[data-unfold="blurred"] {
   --u-ms: var(--unfold-fold-ms);
   clip-path: inset(0 0 0 0);
-  filter: blur(var(--unfold-cover-blur));
+  filter: blur(var(--unfold-cover-blur)) brightness(var(--unfold-dim));
   transform: scaleX(var(--u-stretch));
   opacity: 1;
 }
 
+/* the indigo shade (MantleUnfold adds these two to a positioned .unfold while it moves or is blurred;
+   transform and opacity only, so the compositor runs them) */
+.unfold > .unfold-cast {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  pointer-events: none;
+  z-index: 2147483000;
+  opacity: 0;                    /* no state yet = no shade */
+  will-change: transform, opacity;
+  transition:
+    transform var(--u-ms) var(--unfold-in),
+    opacity   var(--u-ms) var(--unfold-in);
+}
+/* the moving half's shade: deepest at the free edge, clear at the hinge, scaled with the opening so
+   the deep end always rides the edge */
+.unfold > .unfold-cast-m {
+  left: 0;
+  transform-origin: 100% 50%;
+  border-top-left-radius: inherit;
+  border-bottom-left-radius: inherit;
+  /* at the hinge it meets the cover half's shade at about the same depth, so the crease reads as a
+     fold, not a seam between two pictures */
+  background: linear-gradient(90deg, var(--unfold-shade), color-mix(in srgb, var(--unfold-shade) 55%, transparent));
+}
+/* the cover half's shade: flat, it starts darker and brightens as the other half opens */
+.unfold > .unfold-cast-s {
+  right: 0;
+  border-top-right-radius: inherit;
+  border-bottom-right-radius: inherit;
+  background: var(--unfold-shade);
+}
+.unfold[data-unfold="folded"]  > .unfold-cast-m { transform: scaleX(0); opacity: var(--unfold-dark); transition-timing-function: var(--unfold-out); }
+.unfold[data-unfold="folded"]  > .unfold-cast-s { opacity: var(--unfold-dark-cover); transition-timing-function: var(--unfold-out); }
+.unfold[data-unfold="open"]    > .unfold-cast-m { transform: scaleX(1); opacity: 0; }
+.unfold[data-unfold="open"]    > .unfold-cast-s { opacity: 0; }
+.unfold[data-unfold="blurred"] > .unfold-cast-m { transform: scaleX(1); opacity: var(--unfold-dark-blur); }
+.unfold[data-unfold="blurred"] > .unfold-cast-s { opacity: calc(var(--unfold-dark-blur) * .7); }
+
 /* set by MantleUnfold.rest(): jump to a pose without playing anything */
-.unfold.unfold-snap { transition: none !important; }
+.unfold.unfold-snap,
+.unfold.unfold-snap > .unfold-cast { transition: none !important; }
 
 @media (prefers-reduced-motion: reduce) {
-  .unfold { transition: opacity 120ms linear; }
+  .unfold { transition: opacity 120ms linear; transition-delay: 0s; }
   .unfold[data-unfold="folded"],
   .unfold[data-unfold="blurred"] { clip-path: inset(0 0 0 0); transform: none; }
   .unfold[data-unfold="folded"] { filter: none; }
+  .unfold > .unfold-cast { display: none; }
 }
