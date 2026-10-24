@@ -29,10 +29,11 @@
  * its visible width is the front view of a panel turning flat (sin of the swing, --unfold-hinge fitted
  * to the footage's widths: a slow first frames, fastest early, a long soft landing). The picture is ONE
  * image fixed in space; the halves are windows onto it. On the leaf the blur is per pixel: radius =
- * cap x strength x d, d = 0 at the hinge and 1 at the free edge (the panel's own coordinate; the
- * footage's profile is close to linear), cap --unfold-edge-blur (3.3 % of the width). AFTER the blur
- * the leaf dims by distance from the hinge as measured (a gentle slope, steep in the outer quarter, its
- * free edge at --unfold-dark, never black), a NEUTRAL multiply toward black: the real Duo has no tint
+ * cap x strength x d (1.5 - 0.5 d), d = 0 at the hinge and 1 at the free edge (the panel's own
+ * coordinate; fitted to the footage: sharp at the hinge, faster than linear), cap --unfold-edge-blur
+ * (2.5 % of the width; mid-swing the leaf's outlines stay readable, as on Apple's clip). AFTER the blur the leaf dims by distance from the hinge as measured (a light
+ * shading off the hinge that levels out, then the outer quarter falling away, its free edge at
+ * --unfold-dark, never black), a NEUTRAL multiply toward black: the real Duo has no tint
  * (--unfold-shade is black). Outlines read through it at every moment. The leaf LANDS with its blur
  * (LAND_BLUR of it) and dimming still on, and they release together over about 0.35 s after the
  * landing, as the footage shows; then the stage dissolves into the live screen. Endpoints are sharp at
@@ -77,7 +78,8 @@
   var RELEASE_END = 0.93;  // gl: blur and dimming fully released (sharp, full brightness)
   var HANDOVER = 0.86;     // from here the stage dissolves into the live screen
   var APPEAR = 0.065;      // gl: the screen lights up out of the black over the first 6.5 % (about 70 ms)
-  var LAND_BLUR = 0.7;     // gl: the blur still on the landed leaf, of its start (the footage: 1.3-3.3 % of the width)
+  var LAND_BLUR = 0.55;    // gl: the blur still on the landed leaf, of its start (1.4 % of the width at the free edge: Apple's
+                           // landed leaf shows 1.3 %; it eases off late in the swing, as the swing's square)
   // layers: how much of the shade the covered screen and the not-yet-open screen wear (the gl look's values)
   function coverTint() { return num('--unfold-dark-blur', 0.24); }
   function playTint() { return num('--unfold-dark', 0.45); }
@@ -264,16 +266,25 @@
     '      float dpx = hw - x;',
     '      a *= clamp(w - dpx + 0.5, 0.0, 1.0);',
     '      float d = clamp(dpx / max(w, 1.0), 0.0, 1.0);',
-    '      r = uEdge.x * uPlay.y * d;',   // the footage: closer to linear than cubic, sharp at the hinge
-    // the leaf's dimming by distance from the hinge, measured on Apple's clip at the landing (gain 0.92
-    // 0.88 0.85 0.82 0.80 0.68 0.43 at d 0.07 .. 0.89): a gentle slope, steep in the outer quarter
-    '      float e = 0.45 * d + 0.55 * d * d * d * d;',
+    // the blur by distance from the hinge, fitted to Apple's landed leaf (sigma 0.7, 0.7, 1.1, 1.4, 1.4,
+    // 1.4, 2.1 % of the open width at d 0.07 .. 0.93): sharp AT the hinge, rising faster than linear,
+    // easing toward the free edge (d (1.5 - 0.5 d): 0 at the hinge, 1 at the edge, no corner)
+    '      r = uEdge.x * uPlay.y * d * (1.5 - 0.5 * d);',
+    // the leaf's dimming by distance from the hinge, fitted to Apple's clip at the landing (gain 0.92
+    // 0.86 0.85 0.83 0.81 0.75 0.58 0.38 at d 0.07 .. 0.97): a light shading off the hinge that levels
+    // out, then the outer quarter falling away to the free edge (e = 1 there, so --unfold-dark is the
+    // edge's dimming); a shade lighter than Apple's throughout, as Owen asked
+    '      float q = 1.0 - d;',
+    '      float d6 = d * d * d; d6 *= d6;',
+    '      float e = 0.203 * (1.0 - q * q * q * q * q) + 0.797 * d6 * sqrt(d);',
     '      ke = uEdge.z * uEdge.w * clamp(uEdge.y * e, 0.0, 1.0);',
     '    }',
     '  } else {',
     '    float d = min(1.0, abs(x - hw) / hw);',
     '    float u = uCover.y;',
-    '    float g = sat(2.0 * u * mix(d * d * d, 1.0, u));',
+    // the outer edges lead, the hinge follows; it reaches the full cover exactly at u = 1, so the fold
+    // moves for its whole duration (2u here saturated at u = 0.71 and then stood still)
+    '    float g = sat(u * mix(d * d * d, 1.0, u));',
     '    r = uCover.z * g;',
     '    ke = uCover.w * g;',
     '  }',
@@ -462,8 +473,8 @@
     gl.uniform3f(P.frame.uShade, shade[0], shade[1], shade[2]);
     var dpr = W / Math.max(1, innerWidth);
     G.cover = { blur: num('--unfold-cover-blur', 30) * dpr, dark: num('--unfold-dark-blur', 0.24) };
-    // the cap is px of a 1920-wide picture (3.3 % of the width, the footage's most), scaled to this one
-    G.edge = { blur: Math.min(SIG(NLV) * 0.95, num('--unfold-edge-blur', 64) * W / 1920), gain: num('--unfold-edge-dark', 1), cap: num('--unfold-dark', 0.6) };
+    // the cap is px of a 1920-wide picture (2.5 % of the width: under the footage's most, 3.3 %, so the swinging leaf's outlines stay readable), scaled to this one
+    G.edge = { blur: Math.min(SIG(NLV) * 0.95, num('--unfold-edge-blur', 48) * W / 1920), gain: num('--unfold-edge-dark', 1), cap: num('--unfold-dark', 0.6) };
     G.darkFixed = num('--unfold-dark-cover', 0.12);
     G.ready = true; G.builds++;
     glSync();
@@ -541,15 +552,16 @@
     });
   }
 
-  /** what is left of the blur and dimming x (0..1) of the way through the release: flat at the landing
-   * (no corner), then falling a little faster toward the end, as the footage (0.43 -> 0.57 -> 0.72 -> 1
-   * at the free edge in thirds of the release) */
-  function release(x) { x = clamp(x); return 1 - x * x * (1.6 - 0.6 * x); }
+  /** what is left of the blur and dimming x (0..1) of the way through the release: it starts letting
+   * go the moment the leaf lands and falls almost evenly, a touch faster toward the end, as Apple's
+   * clip does in quarters of its release (blur 1, 0.75, 0.5, 0.25, 0; the free edge's dimming 1, 0.78,
+   * 0.56, 0.22, 0); this gives 1, 0.78, 0.54, 0.28, 0 */
+  function release(x) { x = clamp(x); return 1 - x * (0.85 + 0.15 * x); }
   /** the unfold at time t (0..1 of its duration): open (the leaf's visible width, 0..1 of the half),
    * strength (the blur, 0..1 of the cap), dark (the leaf's dimming, 0..1 of its profile) */
   function playFrame(t) {
     var swing = E.hinge(clamp(t / OPEN_END)), R = release(span(t, OPEN_END, RELEASE_END));
-    return { cover: false, t: t, open: Math.sin(swing * Math.PI / 2), strength: (1 - (1 - LAND_BLUR) * swing) * R, dark: R,
+    return { cover: false, t: t, open: Math.sin(swing * Math.PI / 2), strength: (1 - (1 - LAND_BLUR) * swing * swing) * R, dark: R,
       fixedDark: (G.darkFixed == null ? 0 : G.darkFixed) * R, fixedLight: E.fadeIn(span(t, 0, APPEAR)),
       stage: 1 - E.fadeOut(span(t, HANDOVER, 1)) };
   }
