@@ -27,10 +27,11 @@
  *  - Warnings are words, not fills: a small warn glyph (a CSS mask, below) and the words in
  *    --lg-warn; an armed power row is the selection wash with a warn tick, not a tan block.
  *  - NO text-shadow. On light glass the ink carries itself.
- *  - Nothing animates at rest. There is exactly ONE animation in this file: the ENTER, run when
- *    the window becomes visible (main hides it instantly, so there is no exit). No keyframes, no
- *    loops, no filter animation. Hover/selection changes are stepped and short (<=150ms), so
- *    they read as a switch rather than a fade.
+ *  - Nothing animates at rest. The ENTER is not in this file any more: it is the unfold
+ *    (ui/shared/unfold-live.js/.css, the iPhone Duo hinge, size 'pop') on .panel, run when the
+ *    window becomes visible; it rests folded again when the window is hidden. No keyframes, no
+ *    loops. Hover/selection changes are stepped and short (<=150ms), so they read as a switch
+ *    rather than a fade.
  *  - --lg-acc appears in exactly two places, as it always has: the selected row's left bar and
  *    the focused input's underline. Warnings are --lg-warn (burnt orange) — the dark theme's
  *    --amber sits at ~2:1 on this pane.
@@ -38,7 +39,7 @@
 
 :root {
   --panel-r: 20px;    /* a big panel: not the bar's 24px island pill, not a control's 8px */
-  --in: var(--m-dur-s);   /* the enter: the shared pop-in (glass-light.css --m-*, lane mantle-motion). Main shows the window and this runs once. */
+  --in: var(--m-dur-s);   /* the shared pop duration (glass-light.css --m-*): the shadow's theme change rides on it */
 }
 
 * { box-sizing: border-box; }
@@ -84,16 +85,10 @@ html, body {
   background: transparent;
   box-shadow: var(--lg-shadow);
 
-  /* THE ENTER. The panel starts down, small and clear; body.up (set on visibilitychange) is the
-     whole animation. The paint tokens ride along on the same curve, as the bar's do. */
-  opacity: 0;
-  transform: translateY(8px);
-  transition:
-    opacity    calc(var(--in) * .4) var(--m-fade-in),
-    transform  var(--in) var(--m-spring),
-    box-shadow calc(var(--in) * .4) var(--m-fade-in);
+  /* The content never moves: the unfold (unfold-live.js) opens the pane round it from a centre hinge.
+     Only a theme change eases the shadow. */
+  transition: box-shadow calc(var(--in) * .4) var(--m-fade-in);
 }
-body.up .panel { opacity: 1; transform: translateY(0) scale(1); }
 
 /* No backdrop has arrived yet, or it was just cleared: the tint goes up a layer (::after below). */
 
@@ -171,8 +166,8 @@ body.no-backdrop .panel::after {
 :root[data-theme="dark"] .panel {
   box-shadow: none;
 }
-/* dark rises the same 8 px on the same spring as light (lane mantle-motion) */
-body:not(.up) .panel { transition: none; }   /* going down happens hidden: snap, both themes */
+/* dark arrives on the same unfold as light */
+body:not(.up) .panel { transition: none; }   /* a theme change while hidden: snap, both themes */
 :root[data-theme="dark"] .row { transition: background-color var(--lg-dur-ui) var(--lg-ease-ui); }
 :root[data-theme="dark"] .row.is-sel { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
 :root[data-theme="dark"] .row.is-sel:not(.is-armed) .row-main::before { content: none; }
@@ -560,8 +555,4 @@ kbd {
 @media (hover: hover) {
   .row:not(.is-sel):hover { background: var(--lg-hover); }
 }
-/* reduced motion: opacity only, 120 ms (the shared rule, lane mantle-motion) */
-@media (prefers-reduced-motion: reduce) {
-  .panel { transform: none; }
-  body.up .panel { transition: opacity 120ms linear, box-shadow 120ms linear; }
-}
+/* reduced motion: unfold-live.js turns the unfold into a 120 ms cross-fade (nothing moves) */
