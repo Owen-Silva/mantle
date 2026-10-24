@@ -1,0 +1,81 @@
+/* unfold.css - the "unfold" motion (after the iPhone Duo's fold/unfold animation), shared by every
+ * Mantle surface that opens with it (wave unfold, 2026-10-23).
+ *
+ * THE CONTRACT (names): the class .unfold, the attributes data-unfold / data-unfold-size, the
+ * --unfold-* tokens below, and MantleUnfold in unfold.js. Lane unfold-unlock owns the VALUES and the
+ * implementation (tuning, a cheaper technique if a full-screen blur is too slow on this iGPU); the
+ * names stay, so every other surface keeps working unchanged.
+ *
+ * The effect: the content holds still in space while the screen opens AROUND it from a centre seam
+ * (the hinge). On the way it is blurred, stretched a little along the opening axis and lit by a
+ * faint neutral sheen, and it comes into focus as the opening lands. Folding is the same, reversed.
+ *
+ *   data-unfold="folded"   closed: nothing visible (the rest pose of a surface that opens)
+ *   data-unfold="open"     open and sharp
+ *   data-unfold="blurred"  covered: the whole frame visible but out of focus (look-away)
+ *
+ *   data-unfold-size="full"   unlock, wake, look-back       (the showpiece)
+ *   data-unfold-size="pop"    launcher, task view           (the default)
+ *   data-unfold-size="quick"  maximize / restore            (seen many times a day: short)
+ *
+ * Curves come from glass-light.css (--m-spring in, --m-accel out), so this motion is one family
+ * with the bar's spring Owen approved. Colours: neutral only (no tint hue, no neon).
+ * Windows "Animation effects" off (prefers-reduced-motion) = a short cross-fade, nothing moves. */
+
+:root {
+  --unfold-in:  var(--m-spring, cubic-bezier(.2, .9, .25, 1));
+  --unfold-out: var(--m-accel, cubic-bezier(.3, 0, .8, .15));
+
+  --unfold-full-ms:  700ms;  --unfold-full-blur:  18px;  --unfold-full-stretch:  1.06;
+  --unfold-pop-ms:   340ms;  --unfold-pop-blur:    8px;  --unfold-pop-stretch:   1.03;
+  --unfold-quick-ms: 240ms;  --unfold-quick-blur:  6px;  --unfold-quick-stretch: 1.02;
+
+  --unfold-fold-ms:    420ms;  /* open -> blurred (look-away) */
+  --unfold-cover-blur: 28px;   /* how far out of focus the covered screen sits */
+  --unfold-sheen: rgba(255, 255, 255, .10);
+}
+
+.unfold {
+  --u-ms: var(--unfold-pop-ms);
+  --u-blur: var(--unfold-pop-blur);
+  --u-stretch: var(--unfold-pop-stretch);
+  transform-origin: 50% 50%;
+  transition:
+    clip-path var(--u-ms) var(--unfold-in),
+    filter    var(--u-ms) var(--unfold-in),
+    transform var(--u-ms) var(--unfold-in),
+    opacity   calc(var(--u-ms) * .4) var(--unfold-in);
+}
+.unfold[data-unfold-size="full"]  { --u-ms: var(--unfold-full-ms);  --u-blur: var(--unfold-full-blur);  --u-stretch: var(--unfold-full-stretch); }
+.unfold[data-unfold-size="quick"] { --u-ms: var(--unfold-quick-ms); --u-blur: var(--unfold-quick-blur); --u-stretch: var(--unfold-quick-stretch); }
+
+.unfold[data-unfold="folded"] {
+  clip-path: inset(0 50% 0 50%);
+  filter: blur(var(--u-blur));
+  transform: scaleX(var(--u-stretch));
+  opacity: 0;
+  transition-timing-function: var(--unfold-out);
+}
+.unfold[data-unfold="open"] {
+  clip-path: inset(0 0 0 0);
+  filter: blur(0);
+  transform: none;
+  opacity: 1;
+}
+.unfold[data-unfold="blurred"] {
+  --u-ms: var(--unfold-fold-ms);
+  clip-path: inset(0 0 0 0);
+  filter: blur(var(--unfold-cover-blur));
+  transform: scaleX(var(--u-stretch));
+  opacity: 1;
+}
+
+/* set by MantleUnfold.rest(): jump to a pose without playing anything */
+.unfold.unfold-snap { transition: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .unfold { transition: opacity 120ms linear; }
+  .unfold[data-unfold="folded"],
+  .unfold[data-unfold="blurred"] { clip-path: inset(0 0 0 0); transform: none; }
+  .unfold[data-unfold="folded"] { filter: none; }
+}
