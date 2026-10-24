@@ -31,7 +31,7 @@ const REFUSED = T.PASSIVE_REFUSAL;
 const FRAMES = path.resolve((process.argv.find((a) => a.startsWith('--frames=')) || '').slice(9) || path.join(__dirname, '..', 'scratch', 'frames'));
 const RECORD = path.join(os.tmpdir(), 'mantle-maxfold-test', 'maxfold-windows.json');
 const LOCK = path.join(os.tmpdir(), 'mantle-electron-lock');
-const BASE = { r: 20, g: 16, b: 70 }; // lerp(#000, #4436E8, .30)
+const BASE = { r: 4, g: 3, b: 14 }; // lerp(#000, #4436E8, .06): barely any tint (Owen, 23:10)
 const med = (a) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
 const mx = (a) => (a.length ? Math.max.apply(null, a) : NaN);
 const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
@@ -108,7 +108,7 @@ const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
 
     const doneN = (n) => s.waitEvent('maxfold', 3000, (e) => e.kind === 'done' && s.collect('maxfold').filter((x) => x.kind === 'done').indexOf(e) === n);
     let doneCount = 0;
-    const lat = { max: [], restore: [] }, first = [], gaps = [], frames = [], missed = [], totals = [], cut = [];
+    const lat = { max: [], restore: [] }, first = [], gaps = [], frames = [], missed = [], totals = [], cut = [], taps = [], rms = [];
     for (let i = 0; i < 6; i++) {
       // maximize
       const m = await w.cmd('max', 'OK');
@@ -117,6 +117,7 @@ const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
       const d = await doneN(doneCount++);
       const q = Number(/qpc=(\d+)/.exec(m)[1]);
       lat.max.push((d.shownQpc - q) / w.freq * 1000); first.push(d.firstFrameMs);
+      taps.push(d.maxTaps); rms.push(d.renderMaxMs);
       if (d.cancelled) cut.push(`max:${d.cancelWhy}`); else { gaps.push(d.gapMaxMs); frames.push(d.frames); missed.push(d.missedDelta); totals.push(d.totalMs); }
       if (i === 0) {
         const fr = /frame (-?\d+) (-?\d+) (-?\d+) (-?\d+)/.exec(rect).slice(1).map(Number);
@@ -145,6 +146,7 @@ const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
       const d2 = await doneN(doneCount++);
       const q2 = Number(/qpc=(\d+)/.exec(r)[1]);
       lat.restore.push((d2.shownQpc - q2) / w.freq * 1000); first.push(d2.firstFrameMs);
+      taps.push(d2.maxTaps); rms.push(d2.renderMaxMs);
       if (d2.cancelled) cut.push(`restore:${d2.cancelWhy}`); else { gaps.push(d2.gapMaxMs); frames.push(d2.frames); missed.push(d2.missedDelta); }
       if (i === 0) {
         t.check('restore (flagged): done, ended sharp, no hold (no morph to hide)', d2.action === 'restore' && d2.endedSharp && !d2.cancelled && d2.totalMs < 290, JSON.stringify(d2).slice(0, 300));
@@ -155,6 +157,7 @@ const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
     numbers.latencyMax = lat.max.map(f2).join(' '); numbers.latencyRestore = lat.restore.map(f2).join(' ');
     numbers.firstFrame = first.map(f2).join(' '); numbers.frames = frames.join(' '); numbers.gapMax = gaps.map(f2).join(' ');
     numbers.missed = missed.join(' '); numbers.totalMaxMs = totals.map(f2).join(' ');
+    numbers.maxTaps = taps.join(' '); numbers.renderMaxMs = rms.map(f2).join(' ');
     const lk = locked ? '' : ' [LOCK NOT HELD]';
     numbers.cutByInput = cut.join(' ') || 'none';
     // Owen is at the PC: a real key press mid-play cancels it BY DESIGN; only that reason is excused.
@@ -258,8 +261,8 @@ const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
     const pr = await s.call('maxfold.pose', { window: w.hwnd, p: 0, reduced: true });
     const br = W.parseBands(await w.cmd(`bands ${pr.overlay} 10 ${path.join(FRAMES, 'maxfold-reduced-p000.png')}`, 'BANDS', 20000));
     await s.call('maxfold.pose', { off: true });
-    t.check('reduced frame: the whole window at .55 over the base, sharp everywhere (no blur)', br && br.bands.every((x) => Math.abs(x.gradO / (0.55 * x.gradS) - 1) < 0.12),
-      br && br.bands.map((x) => f2(x.gradO / (0.55 * x.gradS))).join(' '));
+    t.check('reduced frame: the whole window at .7 over the base, sharp everywhere (no blur)', br && br.bands.every((x) => Math.abs(x.gradO / (0.7 * x.gradS) - 1) < 0.12),
+      br && br.bands.map((x) => f2(x.gradO / (0.7 * x.gradS))).join(' '));
 
     // ---- nothing took the focus, and nothing activated a test window
     const fgEnd = await w.cmd('fg');
@@ -315,12 +318,15 @@ function lookChecks(look) {
       else if (x0 >= pz.pw) beyond.push(b.bands[i]);
     }
     if (beyond.length) {
-      const off = beyond.map((x) => Math.max(Math.abs(x.r - BASE.r), Math.abs(x.g - BASE.g), Math.abs(x.b - BASE.b)));
-      out.push([`${tag}: beyond the free edge only the indigo base (worst channel error ${f2(mx(off))})`, mx(off) <= 3 && beyond.every((x) => x.gradO < 0.2), '']);
+      // the not-yet-open part: the window's outline, dim (pz.beyond of it over the base), as soft as the free edge
+      const lumErrB = beyond.map((x) => Math.abs(x.lumO - (pz.beyond * x.lumS + (1 - pz.beyond) * lumB)));
+      const shB = beyond.map((x) => x.gradO / (pz.beyond * Math.max(1e-6, x.gradS)));
+      out.push([`${tag}: beyond the free edge the window's outline shows, dim (${f2(pz.beyond)}) and soft (brightness error ${f2(mx(lumErrB))}; sharpness ${shB.map(f2).join(' ')})`,
+        mx(lumErrB) < 5 && shB.every((v) => v > 0.15 && v < 1.15), '']);
     }
     if (p === 0) { out.push([`${tag}: the panel has not opened (width ${pz.pw})`, pz.pw === 0, '']); continue; }
     if (open.length >= 2) {
-      const cov = (d) => pz.inner * (1 - Math.min(0.6, 2 * pz.s) * d);
+      const cov = (d) => pz.inner * (1 - pz.darkEdge * d);
       const sharp = open.map((o) => o.x.gradO / (cov(o.d) * o.x.gradS));
       const dark = open.map((o) => o.x.lumO / o.x.lumS);
       const tint = open.map((o) => o.x.tintO - o.x.tintS);
@@ -334,7 +340,9 @@ function lookChecks(look) {
       }
       if (pz.s > 0.05) {
         out.push([`${tag}: darker toward the moving edge (${dark.map(f2).join(' ')})`, dark[last] < dark[0] - 0.02, '']);
-        out.push([`${tag}: more indigo toward the moving edge (b-g shift ${tint.map(f2).join(' ')})`, tint[last] > tint[0], '']);
+        // Owen 23:10: "barely any" tint: a faint indigo hint near the moving edge only while the shade shows
+        if (pz.shadeEdge >= 0.1) out.push([`${tag}: a faint indigo hint toward the moving edge (b-g shift ${tint.map(f2).join(' ')})`, tint[last] > tint[0], '']);
+        out.push([`${tag}: barely any tint anywhere (b-g shift ${tint.map(f2).join(' ')} <= 8)`, tint.every((v) => Math.abs(v) <= 8), '']);
       } else {
         out.push([`${tag}: nearly landed: brightness close to the window's (${dark.map(f2).join(' ')})`, dark.every((v) => v > 0.9), '']);
       }

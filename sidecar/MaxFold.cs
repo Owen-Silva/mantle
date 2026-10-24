@@ -1,12 +1,13 @@
 // MaxFold.cs - a QUICK unfold when any app window maximizes or restores (lane unfold-max, 2026-10-23).
 //
-// WHAT THE USER SEES (Owen: "EXACTLY like the iPhone Duo", tinted Mantle indigo #4436E8, ONE version):
+// WHAT THE USER SEES (Owen: "EXACTLY like the iPhone Duo", ONE version; 23:10: "barely any" tint, lighter):
 // for ~0.24 s after a window maximizes or restores, its live content holds still at the NEW rect while the
 // "display opens around it": the cover half (left by default) is in place and sharp, the other half
 // swings open from the hinge in the centre (its visible width grows 0 -> W/2), blurred progressively toward
-// its moving free edge (cubic falloff, sharp AT the hinge), darkened toward that edge over an indigo-tinted
-// near-black base; the whole screen starts a little darker and brightens; the last frame is identical to
-// the window, so hiding the overlay is invisible. Click-through, never activates, never delays input.
+// its moving free edge (cubic falloff, sharp AT the hinge), darkened toward that edge in one smooth
+// gradient, a faint Mantle indigo (#4436E8) hint only right at that edge; the not-yet-open part shows the
+// window's outline, dim and soft; the whole screen starts a little darker and brightens; the last frame is
+// identical to the window, so hiding the overlay is invisible. Click-through, never activates, never delays input.
 // "Animation effects" off (SPI_GETCLIENTAREAANIMATION) = a 120 ms cross-fade only.
 //
 // HOW (phase 1, measured on Owen's i3-1215U, 1920x1080 @125 %; scratch notes in the lane's handoff):
@@ -18,10 +19,13 @@
 //   0.4-1.0 ms a frame; on screen 12/16/24 full-screen taps gave 0 missed/dropped/late DWM frames.
 //   A tap is pixel-exact only with rcSource = rcDestination in size (1:1), and a rcDestination outside the
 //   overlay is CLAMPED, so every offset is made by shifting rcSource, never rcDestination.
-// - Blur = several 1:1 taps of the same strip at golden-angle spiral offsets, equal-weight stacked
-//   (alpha_k = w / (1 - (n-1-k) w)) over the overlay's own opaque base colour; the base showing through
-//   (coverage < 1) IS the darkening and the indigo tint. 10 strips across the opening panel, the radius
-//   growing with the cube of the distance from the hinge (scratch/SPEC-LOOK.md).
+// - Blur = several 1:1 taps of the same strip, ~1.4 px apart along the opening axis with gaussian weights,
+//   stacked (alpha_k = w_k / what is still uncovered above it) over the overlay's own opaque near-black
+//   base; strips on small steps of radius (cubic in the distance from the hinge, capped at R_CAP where the
+//   taps would stand apart as copies). Darkening = two more thumbnails over the taps, of a tiny cloaked
+//   per-pixel-alpha ramp window stretched over the panel (a linear ramp and a cubic faint-indigo one), so it
+//   is one smooth gradient, not a step per strip; without them it falls back to per-strip coverage (said).
+//   Tap budget 80 (+2 veils), shrunk for the rest of a play when a frame's taps take > 7 ms to set.
 //
 // WINDOWS' OWN ANIMATION STAYS ON (no SPI change, nothing global). Maximize: Windows' morph grows inside the
 // new rect, under our opaque overlay, which stays up (converged = identical) until holdMs after the event.
@@ -76,17 +80,46 @@ namespace Mantle {
     public static string R_Thumb(int hr) { return "Windows would not let Mantle draw the window (0x" + hr.ToString("X8") + ")"; }
 
     const string TestOnly = "maxfold.{0} is for tests only (a passive sidecar)";
-    const int MAX_POOL = 96, GROW_PER_FRAME = 16, MAX_TAPS_PER_STRIP = 12;
+    // Tap budget: 80 thumbnails at most, 24 new registrations a frame, 14 taps in one strip (A/B against the
+    // old 17-25-tap build on this machine: no frame gap over 20 ms in 24 plays with up to 78 taps; 94 taps
+    // gave 12-24 ms renders and 30 ms gaps).
+    const int MAX_POOL = 80, GROW_PER_FRAME = 24, MAX_TAPS_PER_STRIP = 14;
+    // Time guard: a frame whose taps took longer than SLOW_MS to set (DWM busy) shrinks the next frames' tap
+    // budget by a third (never below MIN_BUDGET): a little less blur instead of a skipped frame.
+    const double SLOW_MS = 7.0; const int MIN_BUDGET = 24;
     const double GOLDEN = 2.39996323;
+    // The blur: strips sit on small steps of blur radius (STEP_PX, or STEP_REL of the radius once larger, so the
+    // cubic falloff has no visible seams), taps per strip grow with the radius (TAPS_PER_PX, ~1.4 px apart, so
+    // they overlap into a smooth smear instead of standing apart as copies), gaussian weights (SIGMA, in units
+    // of the radius). The smear runs along the opening axis only (ASPECT_Y 0): every strip is the window's full
+    // height, so a vertical shift cannot stay inside the window's frame (it would be clamped to an exact copy).
+    const double STEP_PX = 1.0, STEP_REL = 0.2, TAPS_PER_PX = 1.3, ASPECT_Y = 0.0, SIGMA = 0.5;
+    // The widest blur a strip draws: what MAX_TAPS_PER_STRIP taps fill at ~1.4 px spacing. A wider radius
+    // with the same taps shows the copies (measured on the frames: 17 px with 14 taps read as double text).
+    const double R_CAP = 9.0;
+    // The veil: one more thumbnail, of a tiny cloaked window holding a per-pixel-alpha ramp of the base colour
+    // (alpha 0 at the hinge -> 1 at the free edge), stretched over the opening panel at opacity darkCap-ish:
+    // the darkening and indigo tint as ONE smooth gradient, drawn over the taps, instead of a step per strip.
+    // The second veil (the shade) follows the blur's cubic falloff: opacity min(SHADE_CAP, SHADE_PER_S * s).
+    const int VEIL_W = 256, VEIL_H = 4;
+    // Owen 23:10: "barely any" tint, lighter, the window's outline visible throughout. The shade is the one
+    // faint indigo hint (SHADE_MIX of the tint over black); the not-yet-open part shows the window at BEYOND.
+    const double SHADE_CAP = 0.22, SHADE_PER_S = 0.55, SHADE_MIX = 0.22, BEYOND = 0.24;
+    const double BEYOND_TAPS_PER_PX = 1.0; const int BEYOND_MAX_TAPS = 10;
 
     // ------------------------------------------------------------ settings (scratch/SPEC-LOOK.md "Config")
     sealed class Cfg {
       public int Ms = 240; public double[] Curve; public double BlurFrac = 0.012;
       public int TintR = 0x44, TintG = 0x36, TintB = 0xE8;
-      public double BaseMix = 0.30, InnerDark = 0.35, DarkCap = 0.6;
-      public int Strips = 10; public bool CoverLeft = true; public int HoldMs = 300;
+      public double BaseMix = 0.06, InnerDark = 0.18, DarkCap = 0.32;
+      public int Strips = 24; public bool CoverLeft = true; public int HoldMs = 300;
       public bool Invisible, DryRun;
       public int TestWinAnim = -1, TestReduced = -1; // passive only: stand-ins for the two Windows settings
+      /// The shade veil's colour: the only place the indigo shows, faintly, near the moving edge.
+      public uint ShadeColorRef() {
+        int r = Clamp((int)Math.Round(TintR * SHADE_MIX), 0, 255), g = Clamp((int)Math.Round(TintG * SHADE_MIX), 0, 255), b = Clamp((int)Math.Round(TintB * SHADE_MIX), 0, 255);
+        return (uint)(r | (g << 8) | (b << 16));
+      }
       public uint BaseColorRef() {
         int r = Clamp((int)Math.Round(TintR * BaseMix), 0, 255), g = Clamp((int)Math.Round(TintG * BaseMix), 0, 255), b = Clamp((int)Math.Round(TintB * BaseMix), 0, 255);
         return (uint)(r | (g << 8) | (b << 16));
@@ -140,6 +173,10 @@ namespace Mantle {
     // ------------------------------------------------------------ thread-owned state
     static IntPtr _overlay, _brush;
     static uint _brushColor = 0xFFFFFFFF;
+    static IntPtr _veil;                 // the veil's source window (cloaked; shown only while a play uses it)
+    static uint _veilColor = 0xFFFFFFFF, _veilShade = 0xFFFFFFFF;
+    static string _veilWhy;              // null = the veil works; else why the darkening falls back to per-strip steps
+    static bool _veilShown;
     static bool _overlayTop;
     static N.WinEventProc _evProc;
     static N.WndProc _wndProc;
@@ -171,6 +208,8 @@ namespace Mantle {
       public readonly List<IntPtr> Pool = new List<IntPtr>(); public int Visible; public int GrowHr;
       public bool[] Keys; public uint LastInput; public bool Posed;
       public string Mode;
+      public readonly IntPtr[] Veil = new IntPtr[2]; public int VeilAt = -1; public readonly bool[] VeilVis = new bool[2]; public int VeilHr; public int VeilRegs; public bool VeilUsed;
+      public readonly List<double> RenderMs = new List<double>(); public double GrowMsMax; public int PoolMax; public int Budget = MAX_POOL; public int Sheds; public bool First;
       public readonly long[] Split = new long[6]; // first-frame stages: facts, thumbnail, taps, resize, show, paint
     }
 
@@ -238,10 +277,10 @@ namespace Mantle {
       var c = new Cfg();
       c.Ms = Clamp(Json.GetInt(req, "ms", 240), 60, 2000);
       c.BlurFrac = Math.Max(0, Math.Min(0.027, Num(req, "blurFrac", 0.012)));
-      c.BaseMix = Clamp01(Num(req, "baseMix", 0.30));
-      c.InnerDark = Clamp01(Num(req, "innerDark", 0.35));
-      c.DarkCap = Clamp01(Num(req, "darkCap", 0.6));
-      c.Strips = Clamp(Json.GetInt(req, "strips", 10), 1, 16);
+      c.BaseMix = Clamp01(Num(req, "baseMix", 0.06));
+      c.InnerDark = Clamp01(Num(req, "innerDark", 0.18));
+      c.DarkCap = Clamp01(Num(req, "darkCap", 0.32));
+      c.Strips = Clamp(Json.GetInt(req, "strips", 24), 1, 32);
       c.HoldMs = Clamp(Json.GetInt(req, "holdMs", 300), 0, 1500);
       string cover = Json.GetString(req, "cover");
       c.CoverLeft = !string.Equals(cover, "right", StringComparison.OrdinalIgnoreCase);
@@ -280,7 +319,8 @@ namespace Mantle {
           "flagged", _flaggedPub != 0 ? 1 : 0, "flaggedHwnd", _flaggedPub != 0 ? (object)_flaggedPub : null, "flagsSet", _flagsSet,
           "recordFile", RecordPath(), "recordExists", RecordExists(),
           "winAnim", WinAnim(), "reduced", !ClientAnim(), "invisible", _cfg.Invisible, "dryRun", _cfg.DryRun,
-          "passive", Program.Passive, "thread", alive ? "running" : "ended", "hookProblem", _hookProblem, "fgHarness", _fgHarness);
+          "passive", Program.Passive, "thread", alive ? "running" : "ended", "hookProblem", _hookProblem, "fgHarness", _fgHarness,
+          "veil", !_armed ? null : _veilWhy == null ? "on" : "off (" + _veilWhy + ")");
       }
       return null;
     }
@@ -493,6 +533,8 @@ namespace Mantle {
       _watchdog = null;
       try { if (_overlay != IntPtr.Zero) N.DestroyWindow(_overlay); } catch (Exception) { }
       _overlay = IntPtr.Zero; _overlayTop = false;
+      try { if (_veil != IntPtr.Zero) N.DestroyWindow(_veil); } catch (Exception) { }
+      _veil = IntPtr.Zero; _veilColor = 0xFFFFFFFF; _veilShown = false;
       try { if (_brush != IntPtr.Zero) N.DeleteObject(_brush); } catch (Exception) { }
       _brush = IntPtr.Zero; _brushColor = 0xFFFFFFFF;
       _zoom.Clear(); _harnessPid.Clear();
@@ -705,13 +747,15 @@ namespace Mantle {
       if (hr != 0) { f.ThumbHr = hr; Decide(f, out reason, out mode); Skip(action, reason); return; }
       p.Pool.Add(th);
       p.Split[1] = Stopwatch.GetTimestamp();
-      Render(p, 0, 0, false);
+      p.First = true; Render(p, 0, 0, false); p.First = false; // the first frame: two taps, nothing more
       p.Split[2] = Stopwatch.GetTimestamp();
       Show(p, g);
       p.ShownQpc = Stopwatch.GetTimestamp();
       p.ShowMs = (p.ShownQpc - p.T0) * QpcMs;
       p.TimingOk = Timing(out p.Missed0, out p.Dropped0);
       _play = p;
+      // The first frame needs one tap; the next ones need many: register a batch now, after the overlay is up.
+      Grow(p, 1 + GROW_PER_FRAME, false);
       // The hook callback runs INSIDE GetMessage, which would keep waiting: wake the loop for the frames.
       N.PostThreadMessageW((int)N.GetCurrentThreadId(), WM_KICK, IntPtr.Zero, IntPtr.Zero);
       _watchFired = false; _watchSeq = p.Seq;
@@ -754,8 +798,66 @@ namespace Mantle {
       int one = 1;
       N.DwmSetWindowAttribute(_overlay, 3 /*TRANSITIONS_FORCEDISABLED*/, ref one, 4);
       N.DwmSetWindowAttribute(_overlay, 12 /*EXCLUDED_FROM_PEEK*/, ref one, 4);
+      _veilWhy = MakeVeil(inst);
+      if (_veilWhy != null) Program.EmitLog("warn", "maxfold: the smooth darkening is off, it steps per strip instead (" + _veilWhy + ")");
       ApplyLook(CurCfg());
       return null;
+    }
+
+    /// The veil's source: a 2*VEIL_W x VEIL_H layered window, cloaked (never on screen, still composed by DWM, so
+    /// a thumbnail of it draws), holding two ramps of the base colour with per-pixel alpha: [0, VEIL_W) rises
+    /// 0 -> 1 (cover left: the free edge is on the right), [VEIL_W, 2*VEIL_W) falls 1 -> 0 (cover right).
+    static string MakeVeil(IntPtr inst) {
+      _veil = N.CreateWindowExW(0x00080000 | 0x20 | 0x08000000 | 0x80, "MantleMaxFoldOverlay", "", 0x80000000 /*WS_POPUP*/,
+                                0, 0, 4 * VEIL_W, VEIL_H, IntPtr.Zero, IntPtr.Zero, inst, IntPtr.Zero);
+      if (_veil == IntPtr.Zero) return "CreateWindowEx error " + Marshal.GetLastWin32Error();
+      int one = 1;
+      int hr = N.DwmSetWindowAttribute(_veil, 13 /*DWMWA_CLOAK*/, ref one, 4);
+      if (hr != 0) { N.DestroyWindow(_veil); _veil = IntPtr.Zero; return "DWM would not cloak its source (0x" + hr.ToString("X8") + ")"; }
+      N.DwmSetWindowAttribute(_veil, 3 /*TRANSITIONS_FORCEDISABLED*/, ref one, 4);
+      N.DwmSetWindowAttribute(_veil, 12 /*EXCLUDED_FROM_PEEK*/, ref one, 4);
+      string err = PaintVeil(CurCfg().BaseColorRef(), CurCfg().ShadeColorRef());
+      if (err != null) { N.DestroyWindow(_veil); _veil = IntPtr.Zero; }
+      return err;
+    }
+
+    static string PaintVeil(uint col, uint shade) {
+      if (_veil == IntPtr.Zero) return "no source window";
+      int w = 4 * VEIL_W, h = VEIL_H;
+      int[] cr = { (int)(col & 0xFF), (int)(shade & 0xFF) }, cg = { (int)((col >> 8) & 0xFF), (int)((shade >> 8) & 0xFF) }, cb = { (int)((col >> 16) & 0xFF), (int)((shade >> 16) & 0xFF) };
+      var px = new int[w * h];
+      for (int x = 0; x < w; x++) {
+        // sections: 0 linear rising, 1 linear falling, 2 cubic rising, 3 cubic falling
+        int q = x / VEIL_W; double t = (x % VEIL_W) / (double)(VEIL_W - 1);
+        if ((q & 1) == 1) t = 1 - t;
+        if (q >= 2) t = t * t * t;
+        int a = (int)Math.Round(t * 255);
+        int z = q >= 2 ? 1 : 0; // linear ramps: the base colour; cubic ramps (the shade): the faint indigo
+        int v = (a << 24) | ((cr[z] * a + 127) / 255 << 16) | ((cg[z] * a + 127) / 255 << 8) | ((cb[z] * a + 127) / 255); // premultiplied BGRA
+        for (int y = 0; y < h; y++) px[y * w + x] = v;
+      }
+      IntPtr screen = N.GetDC(IntPtr.Zero), mem = IntPtr.Zero, bmp = IntPtr.Zero, old = IntPtr.Zero;
+      try {
+        mem = N.CreateCompatibleDC(screen);
+        var bi = new N.BITMAPINFOHEADER();
+        bi.biSize = (uint)Marshal.SizeOf(typeof(N.BITMAPINFOHEADER)); bi.biWidth = w; bi.biHeight = -h; bi.biPlanes = 1; bi.biBitCount = 32;
+        IntPtr bits;
+        bmp = N.CreateDIBSection(mem, ref bi, 0, out bits, IntPtr.Zero, 0);
+        if (bmp == IntPtr.Zero || bits == IntPtr.Zero) return "CreateDIBSection failed";
+        Marshal.Copy(px, 0, bits, px.Length);
+        old = N.SelectObject(mem, bmp);
+        var dst = new N.POINT(); var src = new N.POINT(); var sz = new N.SIZE(); sz.cx = w; sz.cy = h;
+        var bf = new N.BLENDFUNCTION(); bf.BlendOp = 0; bf.BlendFlags = 0; bf.SourceConstantAlpha = 255; bf.AlphaFormat = 1 /*AC_SRC_ALPHA*/;
+        if (!N.UpdateLayeredWindow(_veil, screen, ref dst, ref sz, mem, ref src, 0, ref bf, 2 /*ULW_ALPHA*/))
+          return "UpdateLayeredWindow error " + Marshal.GetLastWin32Error();
+        _veilColor = col; _veilShade = shade;
+        return null;
+      } finally {
+        if (old != IntPtr.Zero) N.SelectObject(mem, old);
+        if (bmp != IntPtr.Zero) N.DeleteObject(bmp);
+        if (mem != IntPtr.Zero) N.DeleteDC(mem);
+        N.ReleaseDC(IntPtr.Zero, screen);
+      }
     }
 
     /// Base colour + alpha. Alpha is 254, not 255, on purpose: occlusion trackers (Chromium's) treat a
@@ -769,6 +871,10 @@ namespace Mantle {
         if (nb != IntPtr.Zero) { if (_brush != IntPtr.Zero) N.DeleteObject(_brush); _brush = nb; _brushColor = col; }
       }
       N.SetLayeredWindowAttributes(_overlay, 0, (byte)(c.Invisible ? 0 : 254), 2 /*LWA_ALPHA*/);
+      if (_veil != IntPtr.Zero && _veilWhy == null && (col != _veilColor || c.ShadeColorRef() != _veilShade)) {
+        string err = PaintVeil(col, c.ShadeColorRef());
+        if (err != null) { _veilWhy = err; Program.EmitLog("warn", "maxfold: the smooth darkening is off, it steps per strip instead (" + err + ")"); }
+      }
     }
 
     static IntPtr OverlayProc(IntPtr h, uint msg, IntPtr w, IntPtr l) {
@@ -832,7 +938,7 @@ namespace Mantle {
     static bool Render(Play p, double prog, double elMs, bool growAll) {
       Cfg c = p.C;
       if (p.Reduced) {
-        double cov = Math.Min(1, 0.55 + 0.45 * Math.Min(1, elMs / 120.0));
+        double cov = Math.Min(1, 0.7 + 0.3 * Math.Min(1, elMs / 120.0));
         SetTap(p, 0, new N.RECT(0, 0, p.W, p.H), 0, 0, cov);
         HideFrom(p, 1);
         p.LastExact = cov >= 1; p.MaxTaps = Math.Max(p.MaxTaps, 1);
@@ -841,57 +947,168 @@ namespace Mantle {
       double e = Ease(c, prog), s = Clamp01(1 - e), v = Clamp01(e);
       if (s <= 0 && v >= 1) {
         SetTap(p, 0, new N.RECT(0, 0, p.W, p.H), 0, 0, 1.0);
-        HideFrom(p, 1);
+        HideFrom(p, 1); VeilOff(p);
         p.LastExact = true; p.MaxTaps = Math.Max(p.MaxTaps, 1);
         return true;
       }
       int xh = p.W / 2;
       double inner = 1 - c.InnerDark * s;
-      SetTap(p, 0, c.CoverLeft ? new N.RECT(0, 0, xh, p.H) : new N.RECT(xh, 0, p.W, p.H), 0, 0, inner);
       int panelMax = c.CoverLeft ? p.W - xh : xh;
       int pw = (int)Math.Round(v * panelMax);
-      int K = Math.Max(1, c.Strips);
-      double B = Math.Min(c.BlurFrac, 0.027) * p.W;
-      var n = new int[K]; var r = new double[K]; var cv = new double[K]; var x0 = new int[K]; var x1 = new int[K];
-      int need = 0;
+      double R = Math.Min(R_CAP, Math.Min(c.BlurFrac, 0.027) * p.W * s); // blur radius at the free edge (px)
+      double A = Math.Min(c.DarkCap, 2 * s);                      // darkening at the free edge
+      bool veil = VeilUsable(p);
+      // Strips. With the veil: on equal steps of radius (boundary j at d = (j/K)^(1/3), radius R*(j+.5)/K), so
+      // neighbouring strips differ by <= STEP_PX of blur. Without it (fallback): K equal widths, as before, and
+      // the darkening is each strip's coverage.
+      // radius levels: steps of STEP_PX, or STEP_REL of the radius once that is larger (a 15 % change of a wide
+      // blur is as invisible as 0.8 px of a narrow one), at most c.Strips strips
+      int K; double[] lv;
+      if (veil) {
+        var levels = new List<double>(); levels.Add(0);
+        double rr = 0;
+        while (rr < R && levels.Count <= c.Strips) { rr = Math.Min(R, rr + Math.Max(STEP_PX, STEP_REL * rr)); levels.Add(rr); }
+        if (levels[levels.Count - 1] < R) levels[levels.Count - 1] = R;
+        lv = levels.ToArray(); K = Math.Max(1, lv.Length - 1);
+        if (lv.Length < 2) lv = new double[] { 0, R };
+      } else { K = Math.Max(1, c.Strips); lv = null; }
+      var bx = new int[K + 1];
+      for (int j = 0; j <= K; j++) bx[j] = veil ? (int)Math.Round(pw * (R <= 0 ? (double)j / K : Math.Pow(lv[j] / R, 1.0 / 3))) : (int)((long)pw * j / K);
+      var n = new int[K]; var r = new double[K]; var cv = new double[K];
+      int need = 0, sharpTo = 0; bool lead = veil;
       for (int i = 0; i < K; i++) {
-        int a = (int)((long)pw * i / K), b = (int)((long)pw * (i + 1) / K);
-        if (b - a < 1) continue;
-        if (c.CoverLeft) { x0[i] = xh + a; x1[i] = xh + b; } else { x0[i] = xh - b; x1[i] = xh - a; }
-        double d = (i + 0.5) / K;
-        r[i] = B * s * d * d * d;
-        n[i] = Clamp(1 + (int)Math.Round(r[i] / 3), 1, MAX_TAPS_PER_STRIP);
-        cv[i] = inner * (1 - Math.Min(c.DarkCap, 2 * s) * d);
+        if (bx[i + 1] - bx[i] < 1) continue;
+        double dMid = ((bx[i] + bx[i + 1]) * 0.5) / Math.Max(1, pw);
+        r[i] = veil ? (lv[i] + lv[i + 1]) * 0.5 : R * dMid * dMid * dMid;
+        n[i] = Clamp(1 + (int)Math.Round(r[i] * TAPS_PER_PX), 1, MAX_TAPS_PER_STRIP);
+        if (r[i] < 0.5) n[i] = 1;
+        cv[i] = veil ? inner : inner * (1 - A * dMid);
+        // the sharp strips next to the hinge join the cover tap (same coverage when the veil does the darkening)
+        if (lead && n[i] == 1) { sharpTo = bx[i + 1]; n[i] = 0; continue; }
+        lead = false;
         need += n[i];
       }
-      Grow(p, 1 + need, growAll);
-      int avail = p.Pool.Count - 1;
+      int veilSlot = veil && pw >= 1 && A * 255 >= 0.5 ? 1 : 0;
+      // the not-yet-open part: the window's outline, dim, as soft as the free edge next to it (no seam)
+      int beyondW = panelMax - pw, beyond = beyondW >= 1 ? (R < 0.5 || p.First ? 1 : Clamp(1 + (int)Math.Round(R * BEYOND_TAPS_PER_PX), 1, BEYOND_MAX_TAPS)) : 0;
+      long g0 = Stopwatch.GetTimestamp();
+      Grow(p, Math.Min(p.Budget, 1 + beyond + need), growAll);
+      double gms = (Stopwatch.GetTimestamp() - g0) * QpcMs; if (gms > p.GrowMsMax) p.GrowMsMax = gms;
+      int avail = Math.Min(p.Pool.Count, p.Budget) - 1 - beyond;
       while (need > avail) {
         int best = -1; for (int i = 0; i < K; i++) if (n[i] > 1 && (best < 0 || n[i] > n[best])) best = i;
         if (best < 0) break;
         n[best]--; need--;
       }
+      SetTap(p, 0, c.CoverLeft ? new N.RECT(0, 0, xh + sharpTo, p.H) : new N.RECT(xh - sharpTo, 0, p.W, p.H), 0, 0, inner);
       int k = 1;
+      var ox = new int[MAX_TAPS_PER_STRIP]; var oy = new int[MAX_TAPS_PER_STRIP]; var wt = new double[MAX_TAPS_PER_STRIP];
+      if (beyond > 0 && p.Pool.Count > beyond) {
+        var bdst = c.CoverLeft ? new N.RECT(xh + pw, 0, p.W, p.H) : new N.RECT(0, 0, xh - pw, p.H);
+        int m = BlurTaps(beyond, R, ox, oy, wt);
+        StackTaps(p, ref k, bdst, m, ox, oy, wt, BEYOND * inner);
+      }
       for (int i = 0; i < K; i++) {
         if (n[i] == 0) continue;
-        if (k + n[i] > p.Pool.Count) break; // the pool could not grow (said in GrowHr): the base shows there
-        var dst = new N.RECT(x0[i], 0, x1[i], p.H);
-        double w = cv[i] / n[i];
-        for (int j = 0; j < n[i]; j++) {
-          int dx = 0, dy = 0;
-          if (j > 0) {
-            double rad = r[i] * Math.Sqrt((j + 0.5) / n[i]), ang = j * GOLDEN;
-            dx = (int)Math.Round(rad * Math.Cos(ang)); dy = (int)Math.Round(rad * Math.Sin(ang));
-          }
-          double alpha = w / (1 - (n[i] - 1 - j) * w);
-          SetTap(p, k, dst, dx, dy, alpha);
-          k++;
-        }
+        if (k + n[i] > Math.Min(p.Pool.Count, p.Budget)) break; // the pool could not grow (said in GrowHr): the base shows there
+        var dst = c.CoverLeft ? new N.RECT(xh + bx[i], 0, xh + bx[i + 1], p.H) : new N.RECT(xh - bx[i + 1], 0, xh - bx[i], p.H);
+        int m = BlurTaps(n[i], r[i], ox, oy, wt);
+        StackTaps(p, ref k, dst, m, ox, oy, wt, cv[i]);
       }
       HideFrom(p, k);
+      if (veilSlot == 1) SetVeils(p, c.CoverLeft ? new N.RECT(xh, 0, xh + pw, p.H) : new N.RECT(xh - pw, 0, xh, p.H), A, Math.Min(SHADE_CAP, SHADE_PER_S * s), c.CoverLeft);
+      else VeilOff(p);
       p.MaxTaps = Math.Max(p.MaxTaps, k);
       p.LastExact = false;
       return false;
+    }
+
+    /// Weights -> stacked alphas (draw order = pool order, the last drawn on top): from the top down,
+    /// alpha_k = w_k / (what is still uncovered above it), total coverage = cov.
+    static void StackTaps(Play p, ref int k, N.RECT dst, int m, int[] ox, int[] oy, double[] wt, double cov) {
+      double sum = 0; for (int j = 0; j < m; j++) sum += wt[j];
+      double P = 1;
+      var al = new double[m];
+      for (int j = m - 1; j >= 0; j--) { double w = wt[j] / sum * cov; al[j] = P <= 1e-9 ? 1 : Math.Min(1, w / P); P *= 1 - al[j]; }
+      for (int j = 0; j < m; j++) { SetTap(p, k, dst, ox[j], oy[j], al[j]); k++; }
+    }
+
+    /// The offsets and weights of one strip's taps: tap 0 exact; taps 1.. evenly spaced across [-r, r] along the
+    /// opening axis (stratified, so neighbours are ~2r/n px apart and overlap into a smear instead of standing
+    /// apart as copies), each lifted off the line by a golden-ratio sequence inside +-ASPECT_Y*r (the softness
+    /// across the axis), gaussian weights by distance; taps that round to the same pixel offset are merged.
+    /// Returns how many distinct taps.
+    static int BlurTaps(int n, double r, int[] ox, int[] oy, double[] wt) {
+      int m = 0;
+      for (int j = 0; j < n; j++) {
+        double fx = 0, fy = 0;
+        if (j > 0) {
+          // alternate sides so a budget cut (n smaller) still stays centred
+          int pair = (j + 1) / 2, pairs = n / 2; bool left = (j & 1) == 1;
+          fx = (left ? -1 : 1) * (pair - 0.5) / Math.Max(1, pairs); // 0..1 outward
+          double g = (j * 0.6180339887) % 1.0;
+          fy = (2 * g - 1);
+        }
+        int dx = (int)Math.Round(r * fx), dy = (int)Math.Round(r * ASPECT_Y * fy);
+        double rho2 = fx * fx + fy * fy * ASPECT_Y * ASPECT_Y;
+        double w = Math.Exp(-rho2 / (2 * SIGMA * SIGMA));
+        int at = -1; for (int q = 0; q < m; q++) if (ox[q] == dx && oy[q] == dy) { at = q; break; }
+        if (at >= 0) { wt[at] += w; continue; }
+        ox[m] = dx; oy[m] = dy; wt[m] = w; m++;
+      }
+      return m;
+    }
+
+    static bool VeilUsable(Play p) { return _veil != IntPtr.Zero && _veilWhy == null && p.VeilHr == 0; }
+
+    /// The two veil thumbnails over the opening panel: [0] a linear ramp at opacity = the edge darkening, [1] a
+    /// cubic ramp (the blur's own falloff) that deepens the shade where the blur is widest, so what is left of
+    /// the copies sits in shadow, as on the Duo. Kept the LAST registered thumbnails (drawn over every tap):
+    /// both re-registered, in order, whenever the pool grew past them.
+    static void SetVeils(Play p, N.RECT dst, double lin, double cub, bool rising) {
+      if (p.VeilAt != p.Pool.Count) {
+        for (int i = 0; i < 2; i++) if (p.Veil[i] != IntPtr.Zero) { N.DwmUnregisterThumbnail(p.Veil[i]); p.Veil[i] = IntPtr.Zero; p.VeilVis[i] = false; }
+        if (!_veilShown) { N.SetWindowPos(_veil, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0040 /*NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|SHOW*/); _veilShown = true; }
+        for (int i = 0; i < 2; i++) {
+          IntPtr th; int hr = N.DwmRegisterThumbnail(_overlay, _veil, out th);
+          if (hr != 0) {
+            p.VeilHr = hr;
+            Program.EmitLog("warn", "maxfold: the smooth darkening is off for this play, it steps per strip instead (DwmRegisterThumbnail 0x" + hr.ToString("X8") + ")");
+            for (int j = 0; j < i; j++) { N.DwmUnregisterThumbnail(p.Veil[j]); p.Veil[j] = IntPtr.Zero; }
+            return;
+          }
+          p.Veil[i] = th; p.VeilRegs++;
+        }
+        p.VeilAt = p.Pool.Count;
+      }
+      SetVeil(p, 0, dst, lin, rising ? 0 : 1);
+      SetVeil(p, 1, dst, cub, rising ? 2 : 3);
+      p.VeilUsed = true;
+    }
+
+    static void SetVeil(Play p, int i, N.RECT dst, double alpha, int section) {
+      byte op = (byte)Clamp((int)Math.Round(alpha * 255), 0, 255);
+      var t = new N.TNP();
+      if (op == 0) { if (!p.VeilVis[i]) return; t.dwFlags = 0x8; t.fVisible = 0; N.DwmUpdateThumbnailProperties(p.Veil[i], ref t); p.VeilVis[i] = false; return; }
+      t.dwFlags = 0x1 | 0x2 | 0x4 | 0x8 | 0x10;
+      t.rcDestination = dst;
+      t.rcSource = new N.RECT(section * VEIL_W, 0, (section + 1) * VEIL_W, VEIL_H);
+      t.opacity = op;
+      t.fVisible = 1; t.fSourceClientAreaOnly = 0;
+      N.DwmUpdateThumbnailProperties(p.Veil[i], ref t);
+      p.VeilVis[i] = true;
+    }
+
+    static void VeilOff(Play p) {
+      var t = new N.TNP(); t.dwFlags = 0x8; t.fVisible = 0;
+      for (int i = 0; i < 2; i++) if (p.Veil[i] != IntPtr.Zero && p.VeilVis[i]) { N.DwmUpdateThumbnailProperties(p.Veil[i], ref t); p.VeilVis[i] = false; }
+    }
+
+    /// End of a play or pose: the veil thumbnail goes, its source window is hidden again (nothing at rest).
+    static void DropVeil(Play p) {
+      for (int i = 0; i < 2; i++) if (p.Veil[i] != IntPtr.Zero) { try { N.DwmUnregisterThumbnail(p.Veil[i]); } catch (Exception) { } p.Veil[i] = IntPtr.Zero; p.VeilVis[i] = false; }
+      p.VeilAt = -1;
+      if (_veilShown && _veil != IntPtr.Zero) { N.SetWindowPos(_veil, IntPtr.Zero, 0, 0, 0, 0, 0x0080 | 0x0001 | 0x0002 | 0x0004 | 0x0010); _veilShown = false; }
     }
 
     static void Grow(Play p, int want, bool all) {
@@ -906,6 +1123,13 @@ namespace Mantle {
     }
 
     static void SetTap(Play p, int idx, N.RECT dst, int dx, int dy, double alpha) {
+      // A shift that would read outside the window's frame sideways trims the destination instead (that
+      // sliver keeps the taps below it), so the offset holds: clamping it would turn the tap into a second
+      // exact copy (what left the not-yet-open part sharp). Vertically every strip is full height: clamped.
+      int sl0 = dst.L + p.SrcOX + dx;
+      if (sl0 < p.FrL && dst.R - dst.L - (p.FrL - sl0) >= 1) { dst.L += p.FrL - sl0; }
+      int sr0 = dst.R + p.SrcOX + dx;
+      if (sr0 > p.FrR && dst.R - dst.L - (sr0 - p.FrR) >= 1) { dst.R -= sr0 - p.FrR; }
       int w = dst.R - dst.L, h = dst.B - dst.T;
       int sl = dst.L + p.SrcOX + dx, st = dst.T + p.SrcOY + dy;
       // the shifted source stays inside the window's visible frame
@@ -942,7 +1166,11 @@ namespace Mantle {
         return;
       }
       double prog = Math.Min(1, el / p.C.Ms);
+      long r0 = Stopwatch.GetTimestamp();
       bool exact = Render(p, prog, el, false);
+      double rms = (Stopwatch.GetTimestamp() - r0) * QpcMs;
+      p.RenderMs.Add(rms);
+      if (rms > SLOW_MS && p.Budget > MIN_BUDGET) { p.Budget = Math.Max(MIN_BUDGET, p.Budget * 2 / 3); p.Sheds++; }
       p.Frames++;
       if ((p.Reduced && exact) || prog >= 1) {
         if (!exact) { Render(p, 1, 1e9, false); }
@@ -981,6 +1209,8 @@ namespace Mantle {
       try { _watchdog.Change(Timeout.Infinite, Timeout.Infinite); } catch (Exception) { }
       HideOverlay();
       long endQpc = Stopwatch.GetTimestamp();
+      DropVeil(p);
+      p.PoolMax = p.Pool.Count;
       foreach (IntPtr th in p.Pool) { try { N.DwmUnregisterThumbnail(th); } catch (Exception) { } }
       p.Pool.Clear(); p.Visible = 0;
       if (_play == p) _play = null;
@@ -988,13 +1218,16 @@ namespace Mantle {
       var gaps = new List<double>(p.Gaps); gaps.Sort();
       double med = gaps.Count == 0 ? 0 : gaps[gaps.Count / 2], max = gaps.Count == 0 ? 0 : gaps[gaps.Count - 1];
       int over20 = 0; foreach (double g in gaps) if (g > 20) over20++;
+      var rms = new List<double>(p.RenderMs); rms.Sort();
+      double rMed = rms.Count == 0 ? 0 : rms[rms.Count / 2], rMax = rms.Count == 0 ? 0 : rms[rms.Count - 1];
       bool sharp = !cancelled && p.LastExact;
       var last = Json.Obj("action", p.Action, "mode", p.Mode,
         "firstFrameMs", R2(p.ShowMs), "queueMs", R1(p.QueueMs),
         "frames", p.Frames, "gapMedMs", R2(med), "gapMaxMs", R2(max), "over20", over20,
         "missedDelta", tOk ? (object)(long)(m1 - p.Missed0) : null, "droppedDelta", tOk ? (object)(long)(d1 - p.Dropped0) : null,
         "totalMs", R1((endQpc - p.T0) * QpcMs), "endedSharp", sharp, "cancelled", cancelled, "cancelWhy", why,
-        "maxTaps", p.MaxTaps, "growHr", p.GrowHr == 0 ? null : (object)("0x" + p.GrowHr.ToString("X8")),
+        "maxTaps", p.MaxTaps, "pool", p.PoolMax, "renderMedMs", R2(rMed), "renderMaxMs", R2(rMax), "growMaxMs", R2(p.GrowMsMax), "sheds", p.Sheds, "budget", p.Budget,
+        "veil", VeilNote(p), "veilRegs", p.VeilRegs, "growHr", p.GrowHr == 0 ? null : (object)("0x" + p.GrowHr.ToString("X8")),
         "w", p.W, "h", p.H, "shownQpc", p.ShownQpc, "t0Qpc", p.T0, "split", SplitText(p));
       lock (_gate) { _last = last; _doneCount++; if (cancelled) _cancelledCount++; _playingPub = false; }
       var ev = new Dictionary<string, object>(StringComparer.Ordinal);
@@ -1055,7 +1288,8 @@ namespace Mantle {
       int xh = p.W / 2, panelMax = c.CoverLeft ? p.W - xh : xh;
       return Json.Obj("overlay", _overlay.ToInt64(), "w", p.W, "h", p.H, "xh", xh, "pw", (int)Math.Round(v * panelMax),
         "e", R3(e), "s", R3(s), "inner", R3(1 - c.InnerDark * s), "taps", p.Visible, "exact", exact, "growHr", p.GrowHr,
-        "blurPx", R2(Math.Min(c.BlurFrac, 0.027) * p.W * s), "base", "#" + ((c.BaseColorRef() & 0xFF).ToString("X2")) +
+        "veil", VeilNote(p), "veilOn", p.VeilVis[0], "beyond", R3(BEYOND * (1 - c.InnerDark * s)), "darkEdge", R3(Math.Min(c.DarkCap, 2 * s)), "shadeEdge", R3(Math.Min(SHADE_CAP, SHADE_PER_S * s)),
+        "blurPx", R2(Math.Min(R_CAP, Math.Min(c.BlurFrac, 0.027) * p.W * s)), "base", "#" + ((c.BaseColorRef() & 0xFF).ToString("X2")) +
         (((c.BaseColorRef() >> 8) & 0xFF).ToString("X2")) + (((c.BaseColorRef() >> 16) & 0xFF).ToString("X2")));
     }
 
@@ -1063,8 +1297,17 @@ namespace Mantle {
       Play p = _pose; _pose = null;
       if (p == null) return;
       HideOverlay();
+      DropVeil(p);
       foreach (IntPtr th in p.Pool) { try { N.DwmUnregisterThumbnail(th); } catch (Exception) { } }
       p.Pool.Clear();
+    }
+
+    /// "on", or the reason the darkening steps per strip instead (no silent fallback).
+    static string VeilNote(Play p) {
+      if (_veilWhy != null) return "off (" + _veilWhy + ")";
+      if (_veil == IntPtr.Zero) return "off (no source window)";
+      if (p != null && p.VeilHr != 0) return "off (DwmRegisterThumbnail 0x" + p.VeilHr.ToString("X8") + ")";
+      return "on";
     }
 
     // ------------------------------------------------------------ the flag (DWMWA_TRANSITIONS_FORCEDISABLED)
@@ -1296,6 +1539,19 @@ namespace Mantle {
       [DllImport("user32.dll")] public static extern IntPtr BeginPaint(IntPtr h, byte[] ps);
       [DllImport("user32.dll")] public static extern bool EndPaint(IntPtr h, byte[] ps);
       [DllImport("gdi32.dll")] public static extern IntPtr CreateSolidBrush(uint color);
+      [StructLayout(LayoutKind.Sequential)] public struct POINT { public int x, y; }
+      [StructLayout(LayoutKind.Sequential)] public struct SIZE { public int cx, cy; }
+      [StructLayout(LayoutKind.Sequential, Pack = 1)] public struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
+      [StructLayout(LayoutKind.Sequential)] public struct BITMAPINFOHEADER {
+        public uint biSize; public int biWidth, biHeight; public ushort biPlanes, biBitCount; public uint biCompression, biSizeImage;
+        public int biXPelsPerMeter, biYPelsPerMeter; public uint biClrUsed, biClrImportant; }
+      [DllImport("user32.dll", SetLastError = true)] public static extern bool UpdateLayeredWindow(IntPtr h, IntPtr dstDC, ref POINT dst, ref SIZE sz, IntPtr srcDC, ref POINT src, uint key, ref BLENDFUNCTION bf, uint flags);
+      [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr h);
+      [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr h, IntPtr dc);
+      [DllImport("gdi32.dll")] public static extern IntPtr CreateCompatibleDC(IntPtr dc);
+      [DllImport("gdi32.dll")] public static extern bool DeleteDC(IntPtr dc);
+      [DllImport("gdi32.dll")] public static extern IntPtr SelectObject(IntPtr dc, IntPtr o);
+      [DllImport("gdi32.dll")] public static extern IntPtr CreateDIBSection(IntPtr dc, ref BITMAPINFOHEADER bi, uint usage, out IntPtr bits, IntPtr section, uint offset);
       [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr o);
       [DllImport("dwmapi.dll")] public static extern int DwmRegisterThumbnail(IntPtr dest, IntPtr src, out IntPtr thumb);
       [DllImport("dwmapi.dll")] public static extern int DwmUnregisterThumbnail(IntPtr thumb);
