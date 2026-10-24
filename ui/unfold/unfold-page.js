@@ -87,8 +87,11 @@
   var BLACK_MAX = 8;       // a picture whose small copy is darker than this everywhere is a black capture
   var VSYNC = 1000 / 60;   // this laptop's panel; a median of the deltas lies when many frames drop
 
+  var EARLY_MS = 200;      // the pacer counts the drops that began in the clock's first EARLY_MS apart
+  var LAG_MS = 8;          // a frame callback this late after its frame began: the frame reached the page late
+
   var S = { pose: 'parked', seq: 0, op: null, anims: [], loop: null, hard: null, still: false, stillW: 0, stillH: 0,
-    lastStats: null, runs: 0, errors: [], drawn: null, freezeT: null, glLast: null };
+    lastStats: null, runs: 0, errors: [], drawn: null, freezeT: null, glLast: null, prep: null };
 
   /* ---- tokens and curves --------------------------------------------------------------------- */
 
@@ -543,10 +546,14 @@
 
   function glPrepare(url) {
     var t0 = performance.now();
+    S.prep = { decode: null, build: null };
     return decode(url).then(function (img) {
+      var t1 = performance.now();
+      S.prep.decode = Math.round(t1 - t0);
       if (isBlack(img)) { glFree(); drop(); throw plainError('the picture of the screen came back black'); }
       if (!G.ok || G.lost) throw new Error(G.why || NO_GL);
       glBuild(img, img.naturalWidth, img.naturalHeight);
+      S.prep.build = Math.round(performance.now() - t1);   // the upload, every blur level and a GPU sync
       S.still = true; S.stillW = img.naturalWidth; S.stillH = img.naturalHeight;
       return Math.round(performance.now() - t0);
     });
@@ -656,32 +663,58 @@
     S.pose = name;
   }
 
-  /** frame pacing of one run, read off requestAnimationFrame */
+  /** frame pacing of one run, read off requestAnimationFrame. Besides the totals: `early`, the frames
+   * dropped in gaps that began in the clock's first EARLY_MS; `worst` and `worstAt`, the longest gap and
+   * when it began (ms into the clock); `lagged`, frames whose callback ran over LAG_MS after its frame
+   * began, and `lagMax` (the frame signal came late: Mantle runs the GPU service inside its MAIN process,
+   * so main's compositor thread or this page was short of processor time); `drawMax`, the longest the
+   * page spent issuing one gl frame; `longTasks` / `longMs`, the page's tasks over 50 ms during the
+   * clock. Drops with no lagged frames, no long tasks and a small drawMax waited on the GPU itself. */
   function pacer() {
-    var deltas = [], last = 0, on = true;
-    function tick(now) { if (!on) return; if (last) deltas.push(now - last); last = now; requestAnimationFrame(tick); }
+    var deltas = [], starts = [], last = 0, t0 = 0, on = true, lagged = 0, lagMax = 0, meter = { max: 0 };
+    var lt = { n: 0, ms: 0 }, obs = null, clock0 = performance.now();
+    var take = function (list) { list.forEach(function (e) { if (e.startTime + e.duration >= clock0) { lt.n++; lt.ms += e.duration; } }); };
+    try { obs = new PerformanceObserver(function (l) { take(l.getEntries()); }); obs.observe({ entryTypes: ['longtask'] }); } catch (_) { obs = null; }
+    function tick(now) {
+      if (!on) return;
+      var lag = performance.now() - now;
+      if (last) { deltas.push(now - last); starts.push(last - t0); if (lag > LAG_MS) lagged++; if (lag > lagMax) lagMax = lag; } else t0 = now;
+      last = now; requestAnimationFrame(tick);
+    }
     requestAnimationFrame(tick);
-    return function stop() {
+    var stop = function () {
       on = false;
+      if (obs) { try { take(obs.takeRecords()); obs.disconnect(); } catch (_) { /* gone */ } }
       var s = deltas.slice().sort(function (a, b) { return a - b; });
       var q = function (p) { return s.length ? +s[Math.min(s.length - 1, Math.floor(p * s.length))].toFixed(1) : null; };
-      var dropped = 0, long = 0;
-      deltas.forEach(function (d) { if (d > VSYNC * 1.5) { long++; dropped += Math.max(1, Math.round(d / VSYNC) - 1); } });
+      var dropped = 0, long = 0, early = 0, worst = 0, worstAt = null;
+      deltas.forEach(function (d, i) {
+        if (d > VSYNC * 1.5) { long++; var k = Math.max(1, Math.round(d / VSYNC) - 1); dropped += k; if (starts[i] < EARLY_MS) early += k; }
+        if (d > worst) { worst = d; worstAt = starts[i]; }
+      });
       return { frames: deltas.length, p50: q(0.5), p95: q(0.95), max: s.length ? +s[s.length - 1].toFixed(1) : null,
-        vsync: +VSYNC.toFixed(2), long: long, dropped: dropped };
+        vsync: +VSYNC.toFixed(2), long: long, dropped: dropped, early: early, worstAt: worstAt == null ? null : Math.round(worstAt),
+        lagged: lagged, lagMax: +lagMax.toFixed(1), drawMax: +meter.max.toFixed(1), longTasks: lt.n, longMs: Math.round(lt.ms) };
     };
+    stop.meter = meter;
+    return stop;
   }
 
   /** a gl timeline: draw(t) every frame off the frame clock, t from 0 to 1 over D ms (or held at
-   * S.freezeT); resolves when it has drawn t = 1 or is stopped */
-  function glLoop(D, draw) {
+   * S.freezeT); resolves when it has drawn t = 1 or is stopped. meter.max: the longest draw (ms). */
+  function glLoop(D, draw, meter) {
     var on = true, t0 = null, raf = 0, last = -1, fin;
     var done = new Promise(function (r) { fin = r; });
     function tick(ts) {
       if (!on) return;
       if (t0 === null) t0 = ts;
       var t = S.freezeT != null ? S.freezeT : Math.min(1, (ts - t0) / D);
-      if (t !== last) { last = t; try { draw(t); } catch (e) { S.errors.push('draw: ' + String(e && e.message || e)); } }
+      if (t !== last) {
+        last = t;
+        var a = performance.now();
+        try { draw(t); } catch (e) { S.errors.push('draw: ' + String(e && e.message || e)); }
+        if (meter) meter.max = Math.max(meter.max, performance.now() - a);
+      }
       if (t >= 1 && S.freezeT == null) { on = false; fin(); return; }
       raf = requestAnimationFrame(tick);
     }
@@ -705,7 +738,7 @@
       return tr[0].animate(frames, { duration: D, easing: 'linear', fill: 'forwards' });
     });
     if (S.freezeT != null) anims.forEach(function (a) { a.pause(); a.currentTime = S.freezeT * D; });
-    var loop = draw ? glLoop(D, draw) : null;
+    var loop = draw ? glLoop(D, draw, stop.meter) : null;
     S.anims = anims; S.loop = loop;
     return new Promise(function (resolve) {
       var done = false, hard = null;
@@ -852,15 +885,19 @@
     play: function (c) {
       var D = ms('--unfold-' + (c.size || 'full') + '-ms', 700);
       if (!c.still || reduced() || c.reduced) return fadeOut('fading', 160, c.seq, 'played', { technique: 'fade', reduced: reduced() || !!c.reduced });
-      var prepMs = 0, tech = pick(c);
+      var prepMs = 0, tech = pick(c), parts = null, firstAt = 0;
+      S.prep = null;
       return ready(c, tech).then(function (m) {
         prepMs = m;
+        parts = S.prep ? { decode: S.prep.decode, build: S.prep.build } : {};
         if (S.op !== c) return null;   // finish/skip came while the picture was decoding
         if (tech.name !== 'gl') return warm();
         pose('opening', [[stage, { opacity: 1 }]]);
+        firstAt = performance.now();
         return glFirst(playFrame(0));
       }).then(function () {
         if (S.op !== c) return null;
+        if (parts && firstAt) parts.first = Math.round(performance.now() - firstAt);   // the first frame up to the clock's start
         S.drawn = tech.name;
         if (tech.name === 'css') return cssPlay(D);
         if (tech.name === 'gl') return run('opening', D, [], GONE, false, function (t) { show(playFrame(t)); });
@@ -872,7 +909,7 @@
         if (!r) return null;
         if (!r.cancelled) { S.pose = 'gone'; stage.setAttribute('data-pose', 'gone'); }
         S.runs++;
-        return tell(c.seq, 'played', { stats: r.stats, timedOut: r.timedOut, prepMs: prepMs, technique: tech.name,
+        return tell(c.seq, 'played', { stats: r.stats, timedOut: r.timedOut, prepMs: prepMs, prep: parts || undefined, technique: tech.name,
           fallback: tech.fallback || (tech.name === 'gl' && G.lost ? G.why : undefined), still: [S.stillW, S.stillH] });
       }, function (err) {
         var why = said(err, 'the picture of the screen could not be shown');
