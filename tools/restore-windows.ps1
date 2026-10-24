@@ -617,6 +617,65 @@ if (Test-Path -LiteralPath $osdScript) {
 }
 
 # -----------------------------------------------------------------------------
+# (f5) Give a window back its own minimize/maximize animation if a dead Mantle
+# left it switched off (sidecar/MaxFold.cs: while "Unfold when windows maximize"
+# is on, the maximized foreground window gets DWMWA_TRANSITIONS_FORCEDISABLED).
+# The record "maxfold-windows.json" beside $StateFile ({hwnd, pid, set:true,
+# assumedOriginal:false}) is written before the attribute is set and deleted when
+# it is cleared, so a record that is still here means it never was. Only a window
+# that still exists AND still belongs to the same process is touched (a handle
+# can be reused by another app). Never says a window name.
+# -----------------------------------------------------------------------------
+$maxfoldRecord = Join-Path (Split-Path -Parent $StateFile) 'maxfold-windows.json'
+if (Test-Path -LiteralPath $maxfoldRecord) {
+  $mfKeep = $false
+  try {
+    $mf = (Get-Content -LiteralPath $maxfoldRecord -Raw -ErrorAction Stop) | ConvertFrom-Json
+    if ($mf -eq $null -or $mf.hwnd -eq $null -or $mf.pid -eq $null) { throw 'it has no hwnd or pid' }
+    $mfHwnd = [IntPtr]([long]$mf.hwnd)
+    $mfPid = [uint32]$mf.pid
+    if ($mf.set -ne $true) {
+      Say "  window animation: nothing to put back (the record says nothing is switched off)"
+    } else {
+      if (-not ('MantleMaxFoldRestore' -as [type])) {
+        Add-Type -Language CSharp -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class MantleMaxFoldRestore {
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+  [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hWnd, int attr, ref int value, int size);
+}
+'@
+      }
+      $mfOwner = [uint32]0
+      if (-not [MantleMaxFoldRestore]::IsWindow($mfHwnd)) {
+        Say "  window animation: nothing to put back (that window is gone)"
+      } elseif (([MantleMaxFoldRestore]::GetWindowThreadProcessId($mfHwnd, [ref]$mfOwner) -eq 0) -or ($mfOwner -ne $mfPid)) {
+        Say "  window animation: nothing to put back (that window now belongs to another app)"
+      } else {
+        # 3 = DWMWA_TRANSITIONS_FORCEDISABLED; the value Windows had (assumedOriginal, normally FALSE).
+        $mfValue = if ($mf.assumedOriginal -eq $true) { 1 } else { 0 }
+        $mfHr = [MantleMaxFoldRestore]::DwmSetWindowAttribute($mfHwnd, 3, [ref]$mfValue, 4)
+        if ($mfHr -eq 0) {
+          Say "  window animation: put back on the window Mantle had changed"
+        } else {
+          $mfKeep = $true
+          Problem ("window animation: Windows refused to put it back (0x{0:X8}); the record is kept for the next Mantle start" -f $mfHr)
+        }
+      }
+    }
+  } catch {
+    Problem "window animation: the record could not be used ($($_.Exception.Message)); it is deleted"
+  }
+  if (-not $mfKeep) {
+    try { Remove-Item -LiteralPath $maxfoldRecord -Force -ErrorAction Stop } catch { Problem "window animation: could not delete $maxfoldRecord ($($_.Exception.Message))" }
+  }
+} else {
+  Say "  window animation: nothing to put back (no record)"
+}
+
+# -----------------------------------------------------------------------------
 # (g) Mark the state file restored, so the next Mantle does not think a run died
 # dirty and recover over the top of a desktop that is already fine.
 #
