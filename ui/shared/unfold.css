@@ -5,13 +5,15 @@
  * --unfold-* tokens below, and MantleUnfold in unfold.js. Lane unfold-unlock owns the VALUES and the
  * implementation; the names stay, so every other surface keeps working unchanged.
  *
- * THE EFFECT (Owen, 2026-10-23: "exactly like the iPhone Duo", tinted Mantle indigo, ONE version: it
- * is the content itself, not a glass panel, so there is no light/dark variant):
+ * THE EFFECT (Owen, 2026-10-23: "literally like the iPhone Duo", premium; measured on Apple's own
+ * clips (the wave's duo-ref notes, SPEC.md). ONE version: it is the content itself, not a
+ * glass panel, so no light/dark variant, and no tint: the real Duo's dimming is neutral):
  *   - a vertical hinge in the centre. The RIGHT half (the cover side) is already in place; the LEFT
  *     half swings open from the hinge, its visible width growing from 0 to half the width;
  *   - the content is ONE picture fixed in space: the halves are windows onto it, nothing slides;
- *   - on the way it is out of focus and darkened, the darkening deepest at the moving free edge and
- *     carrying the indigo; it lands sharp and at full brightness.
+ *   - on the way the moving half is out of focus and dimmed toward black (outlines stay readable),
+ *     both deepest at its free edge; it lands with them still on, they release together, and it
+ *     ends sharp and at full brightness.
  * The full-screen unlock (ui/unfold/) does this per pixel in WebGL (blur sharp at the hinge, cubic
  * toward the free edge). On ONE element CSS can only do it cheaply, so here: the left half opens with
  * clip-path, the whole element comes out of a uniform blur + brightness(), and the indigo shade is two
@@ -37,32 +39,38 @@
   /* blur: the most out of focus the content gets (CSS px). For full, at the moving free edge early
      in the opening (the Duo's 48 px on a 2670 px source = 34.5 px on our 1920 px screen = 28 CSS px
      at 125 %); the page caps it at 1.5x. Stretch: 1 (the Duo has no real stretch: what reads as a
-     smear is the progressive blur); the names are kept for the surfaces that read them. */
-  --unfold-full-ms:  700ms;  --unfold-full-blur:  28px;  --unfold-full-stretch:  1;
+     smear is the progressive blur); the names are kept for the surfaces that read them.
+     full-ms: the unlock's whole unfold, the Duo's SHAPE from Apple's clip at real speed (the leaf
+     lands at 62 %, its blur and dimming release over the next 0.35 s, then the hand-over): 1.1 s,
+     the coordinator's 1.0-1.4 s "premium" range (the phone takes 2.7 s because a hand opens it). */
+  --unfold-full-ms:  1100ms; --unfold-full-blur:  28px;  --unfold-full-stretch:  1;
   --unfold-pop-ms:   340ms;  --unfold-pop-blur:    8px;  --unfold-pop-stretch:   1;
   --unfold-quick-ms: 240ms;  --unfold-quick-blur:  6px;  --unfold-quick-stretch: 1;
 
-  /* the full-screen page only (ui/unfold/, WebGL): the swing of the moving half (an even ease in and
-     out, like a hand opening the phone), the blur at its free edge at the start of the swing in the
-     picture's own pixels (the Duo recreation's cap: 72; it falls to 0 as it lands, sharp at the hinge,
-     cubic toward the edge), and the darkening's gain (2x the transition strength, capped at the shade) */
-  --unfold-hinge: cubic-bezier(.45, 0, .4, 1);
-  --unfold-edge-blur: 72px;
-  --unfold-edge-dark: 2;
+  /* the full-screen page only (ui/unfold/, WebGL), from Apple's own clips (duo-ref SPEC.md): the swing
+     of the leaf (fitted to the footage's leaf widths: slow first frames, fastest early, a long soft
+     landing), the blur at its free edge in px of a 1920-wide picture (3.3 % of the width, the most the
+     footage shows; scaled to the screen's width; sharp at the hinge, close to linear toward the edge),
+     and the dimming profile's gain (1 = as measured on the landed leaf) */
+  --unfold-hinge: cubic-bezier(.2, .1, .05, .4);
+  --unfold-edge-blur: 64px;
+  --unfold-edge-dark: 1;
 
   --unfold-fold-ms:    420ms;  /* open -> blurred (look-away): the same motion folding shut */
-  --unfold-cover-blur: 30px;   /* how far out of focus the covered screen sits: unreadable */
+  --unfold-cover-blur: 30px;   /* how far out of focus the covered screen sits: shapes and outlines stay */
   --unfold-reveal-ms:  200ms;  /* blurred -> open, the look-back: it must feel instant */
 
-  /* the tint: Mantle indigo, HARD-CODED (the light theme's --lg-acc, not following the theme: the
-     effect is one version). The shade is the colour the content darkens toward: the tint at 30 %
-     over black, so the darkening carries the indigo instead of going grey. */
+  /* the colour. Measured on Apple's clips the dimming is a NEUTRAL black multiply with no hue (the
+     per-channel ratios equal within 0.03), so the shade is black and nothing is tinted ("literally
+     like the Duo"; Owen had already found the indigo "way too blue"). --unfold-tint keeps Mantle
+     indigo for the name only; the look does not use it. Lighter than the first version throughout:
+     the free edge never goes black and outlines read through the blur. */
   --unfold-tint:  #4436E8;
-  --unfold-shade: #141046;
-  --unfold-dark:       .62;  /* the darkening at the moving free edge early in the opening (its cap) */
-  --unfold-dark-cover: .34;  /* the cover side's darkening at the start; it brightens as it opens */
-  --unfold-dark-blur:  .50;  /* the covered (look-away) screen's darkening, everywhere */
-  --unfold-dim:        .78;  /* an element's brightness() while folded or blurred */
+  --unfold-shade: #000000;
+  --unfold-dark:       .60;  /* the leaf's dimming at its free edge (gain .40: the footage's .30-.45) */
+  --unfold-dark-cover: 0;    /* the fixed half's dimming: none, it stays at full brightness (Apple's clips) */
+  --unfold-dark-blur:  .24;  /* the covered (look-away) screen's dimming, everywhere */
+  --unfold-dim:        .86;  /* an element's brightness() while folded or blurred */
 
   /* kept for the names: the edge light of the first version. Unused by the Duo look (it has none). */
   --unfold-sheen: rgba(255, 255, 255, 0);

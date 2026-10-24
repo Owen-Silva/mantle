@@ -23,7 +23,7 @@ for (const c of require('../../tools/dev-env.js').playwrightCandidates()) { try 
 const PAGE = pathToFileURL(path.join(__dirname, 'index.html')).href + '?display=7';
 const MOCK = path.join(__dirname, 'mock-mantle.js');
 const VIEW = { width: 640, height: 360 };
-const FULL_MS = 700, REVEAL_MS = 200, PAD = 400;
+const FULL_MS = 1100, REVEAL_MS = 200, PAD = 400;
 let passed = 0;
 const failures = [];
 const check = (name, ok, detail) => { if (ok) passed++; else failures.push(detail !== undefined ? `${name} (${String(detail).slice(0, 300)})` : name); return ok; };
@@ -40,6 +40,13 @@ function picture(o) {
     g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
     g.fillStyle = '#fff';
     for (let x = 0; x < w; x += 4) g.fillRect(x, 0, 2, h);
+    return c.toDataURL('image/png');
+  }
+  if (kind === 'edge') {
+    // a light top half over a dark bottom half: along a row near the edge between them the luminance
+    // changes smoothly as the blur grows toward the free edge, and a step between blur levels shows
+    g.fillStyle = '#2b2e36'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#dcdde3'; g.fillRect(0, 0, w, Math.round(h / 2));
     return c.toDataURL('image/png');
   }
   if (kind === 'black') {
@@ -71,7 +78,8 @@ async function main() {
     await page.goto(PAGE, { waitUntil: 'load' });
     await page.waitForFunction(() => window.__told && window.__told.some((t) => t.msg.event === 'ready'), null, { timeout: 10000 });
     if (!pics) pics = { ok: await page.evaluate(picture, { w: VIEW.width, h: VIEW.height }), black: await page.evaluate(picture, { w: VIEW.width, h: VIEW.height, kind: 'black' }),
-      stripes: await page.evaluate(picture, { w: VIEW.width, h: VIEW.height, kind: 'stripes' }) };
+      stripes: await page.evaluate(picture, { w: VIEW.width, h: VIEW.height, kind: 'stripes' }),
+      edge: await page.evaluate(picture, { w: VIEW.width, h: VIEW.height, kind: 'edge' }) };
     pages.push(page);
     return page;
   }
@@ -321,46 +329,81 @@ async function main() {
       const held = async (f) => {
         const fr = await page.evaluate((v) => window.__unfold.freeze(v, true), f);
         const w = fr.frame.open * hx, at = (d) => look(Math.round(hx - d * w));
-        return { f: fr.frame, R: { fixed: await look(hx + 12), nearHinge: await look(hx - 6), d1: await at(0.1), d2: await at(0.2), d3: await at(0.3), d9: await at(0.9),
+        return { f: fr.frame, R: { fixed: await look(hx + 12), nearHinge: await at(0.03), d1: await at(0.06), d2: await at(0.12), d9: await at(0.9),
           out: fr.frame.open < 0.9 ? await look(Math.max(5, Math.round(hx - w - 24))) : null } };
       };
       await op(page, { op: 'arm' });
       const ps = await send(page, { op: 'play', still: pics.stripes, size: 'full' });
       await page.waitForFunction(() => document.getElementById('stage').dataset.pose === 'opening' && window.__unfold.state().running > 0, null, { timeout: 8000 });
-      const q = await held(0.25), h2 = await held(0.5), h3 = await held(0.75);
-      for (const [n, x] of [['25', q], ['50', h2], ['75', h3]]) console.log(`  look at ${n} %: open ${x.f.open.toFixed(3)}, strength ${x.f.strength.toFixed(3)}, fixed half darkening ${x.f.fixedDark.toFixed(3)}; ` + JSON.stringify(x.R));
+      // 25 %: swinging; 50 %: landed with its blur and dimming still on (the Duo's linger); 75 %:
+      // releasing; 97 %: released (sharp, full brightness) as the stage hands over
+      const q = await held(0.25), h2 = await held(0.5), h3 = await held(0.75), h4 = await held(0.97);
+      for (const [n, x] of [['25', q], ['50', h2], ['75', h3], ['97', h4]]) console.log(`  look at ${n} %: open ${x.f.open.toFixed(3)}, blur ${x.f.strength.toFixed(3)}, dimming ${x.f.dark.toFixed(3)}; ` + JSON.stringify(x.R));
       const R = q.R;
+      const neutral = (m) => m && Math.abs(m[2] - m[0]) <= 3 && Math.abs(m[2] - m[1]) <= 3 && Math.abs(m[1] - m[0]) <= 3;
       check('look 25 %: part way open (the moving half between a fifth and nine tenths open)', q.f.open > 0.2 && q.f.open < 0.9, q.f.open);
-      check('look 25 %: the fixed half is sharp', R.fixed && R.fixed.c > 120, JSON.stringify(R.fixed));
+      check('look 25 %: the fixed half is sharp and at full brightness (Apple\'s clips)', R.fixed && R.fixed.c > 120 && R.fixed.top >= 250, JSON.stringify(R.fixed));
       check('look 25 %: sharp at the hinge on the moving half too', R.nearHinge && R.nearHinge.c > 120, JSON.stringify(R.nearHinge));
-      check('look 25 %: the blur grows from the hinge toward the moving free edge', R.d1 && R.d2 && R.d3 && R.d9 && R.d1.c > R.d2.c && R.d2.c > R.d3.c && R.d3.c > R.d9.c && R.d9.c < 25,
-        JSON.stringify([R.d1 && R.d1.c, R.d2 && R.d2.c, R.d3 && R.d3.c, R.d9 && R.d9.c]));
-      check('look 25 %: cubic, not linear (a third of the way out still holds the stripes)', R.d3 && R.d3.c > 30, JSON.stringify(R.d3));
-      check('look 25 %: the free edge darkens toward Mantle indigo (dark, blue over red and green)', R.d9 && R.d9.mean[2] > R.d9.mean[0] + 15 && R.d9.mean[2] > R.d9.mean[1] + 15 && R.d9.mean[0] < 90, JSON.stringify(R.d9 && R.d9.mean));
+      check('look 25 %: the blur grows from the hinge toward the moving free edge', R.d1 && R.d2 && R.d9 && R.nearHinge.c > R.d1.c && R.d1.c > R.d2.c && R.d2.c >= R.d9.c && R.d9.c < 25,
+        JSON.stringify([R.nearHinge && R.nearHinge.c, R.d1 && R.d1.c, R.d2 && R.d2.c, R.d9 && R.d9.c]));
+      // Owen 2026-10-23, live: "way too blue", "more transparent so you can see the outline of the
+      // background"; Apple's clips: the dimming is a neutral black multiply and the free edge never black
+      check('look 25 %: the free edge dims, but never to black (the blurred stripes stay well above it)', R.d9 && R.d9.mean[1] > 45 && R.d9.mean[1] < 110, JSON.stringify(R.d9 && R.d9.mean));
+      check('look 25 %: no tint anywhere (the free edge, the hinge and the fixed half are neutral)', neutral(R.d9 && R.d9.mean) && neutral(R.nearHinge && R.nearHinge.mean) && neutral(R.fixed && R.fixed.mean),
+        JSON.stringify([R.d9 && R.d9.mean, R.nearHinge && R.nearHinge.mean, R.fixed && R.fixed.mean]));
       check('look 25 %: past the free edge is the unlit display (black)', R.out && R.out.top <= 3, JSON.stringify(R.out));
-      check('look 25 %: the fixed half is darker than at rest (it brightens as it opens)', R.fixed && R.fixed.top < 235 && h3.R.fixed && h3.R.fixed.top > R.fixed.top, JSON.stringify([R.fixed && R.fixed.top, h3.R.fixed && h3.R.fixed.top]));
-      check('look 50 %: wider, and the focus has come in (sharper a third of the way out than at 25 %)', h2.f.open > q.f.open && h2.R.d3 && h2.R.d3.c > R.d3.c + 20, JSON.stringify([h2.f.open, h2.R.d3 && h2.R.d3.c]));
-      check('look 50 %: the free edge lighter than at 25 % (the darkening eases off)', h2.R.d9 && h2.R.d9.mean[1] > R.d9.mean[1], JSON.stringify([h2.R.d9 && h2.R.d9.mean, R.d9.mean]));
-      check('look 75 %: landed open and sharp all the way to the edge', h3.f.open > 0.97 && h3.R.d9 && h3.R.d9.c > 120, JSON.stringify([h3.f.open, h3.R.d9]));
-      check('look: the content is fixed in space (the stripes keep their phase at 25, 50 and 75 %)', [q, h2, h3].every((x) => x.R.fixed && x.R.fixed.phase === R.fixed.phase && x.R.nearHinge && x.R.nearHinge.phase === R.nearHinge.phase),
-        JSON.stringify([q, h2, h3].map((x) => [x.R.fixed && x.R.fixed.phase, x.R.nearHinge && x.R.nearHinge.phase])));
+      check('look 50 %: landed open with the blur and dimming still on (the Duo lands first, then releases)', h2.f.open > 0.95 && h2.R.d9 && h2.R.d9.c < 25 && h2.R.d9.mean[1] < 110, JSON.stringify([h2.f.open, h2.R.d9]));
+      check('look 75 %: releasing (the free edge lighter and no blurrier than at 50 %)', h3.R.d9 && h2.R.d9 && h3.R.d9.mean[1] > h2.R.d9.mean[1] && h3.R.d9.c >= h2.R.d9.c, JSON.stringify([h2.R.d9, h3.R.d9]));
+      check('look 97 %: released, sharp and at full brightness all the way to the edge', h4.f.open > 0.999 && h4.R.d9 && h4.R.d9.c > 120 && h4.R.d9.top >= 250 && h4.R.fixed && h4.R.fixed.top >= 250, JSON.stringify([h4.f.open, h4.R.d9, h4.R.fixed]));
+      check('look: the content is fixed in space (the stripes keep their phase at 25, 50, 75 and 97 %)', [q, h2, h3, h4].every((x) => x.R.fixed && x.R.fixed.phase === R.fixed.phase),
+        JSON.stringify([q, h2, h3, h4].map((x) => x.R.fixed && x.R.fixed.phase)));
       await page.evaluate(() => window.__unfold.freeze(null));
       a = await answer(page, ps, 4000);
       check('look: the held play ends played once let go (not timed out)', a.msg && a.msg.event === 'played' && a.msg.timedOut === false, JSON.stringify(a.msg));
       // the cover: the outer edges first, the hinge last, then evenly out of focus and shaded
       const cs = await send(page, { op: 'cover', still: pics.stripes });
       await page.waitForFunction(() => document.getElementById('stage').dataset.pose === 'covering' && window.__unfold.state().running > 0, null, { timeout: 8000 });
-      const cf = await page.evaluate(() => window.__unfold.freeze(0.15, true));
+      const cf = await page.evaluate(() => window.__unfold.freeze(0.05, true));   // the fold eases in fast: 5 % is early in it
       const cHinge = await look(hx + 4), cEdge = await look(12);
       await page.evaluate(() => window.__unfold.freeze(null));
       a = await answer(page, cs, 4000);
       const eHinge = await look(hx + 4), eEdge = await look(12);
-      console.log(`  cover at 15 % (fold ${cf.frame.fold.toFixed(3)}): hinge ${JSON.stringify(cHinge)}, edge ${JSON.stringify(cEdge)}; covered: hinge ${JSON.stringify(eHinge)}, edge ${JSON.stringify(eEdge)}`);
+      console.log(`  cover at 5 % (fold ${cf.frame.fold.toFixed(3)}): hinge ${JSON.stringify(cHinge)}, edge ${JSON.stringify(cEdge)}; covered: hinge ${JSON.stringify(eHinge)}, edge ${JSON.stringify(eEdge)}`);
       check('cover mid-fold: the edges blur first (flatter at the edge than at the hinge)', cHinge && cEdge && cEdge.c < cHinge.c, JSON.stringify([cHinge && cHinge.c, cEdge && cEdge.c]));
       check('covered: evenly out of focus (no stripes at the hinge or the edge)', a.msg && a.msg.ok === true && eHinge && eEdge && eHinge.c < 8 && eEdge.c < 8, JSON.stringify([eHinge, eEdge]));
-      check('covered: shaded toward Mantle indigo everywhere', eHinge && eEdge && eHinge.mean[2] > eHinge.mean[0] + 10 && eEdge.mean[2] > eEdge.mean[0] + 10 && eHinge.top < 160, JSON.stringify([eHinge && eHinge.mean, eEdge && eEdge.mean]));
+      check('covered: lightly dimmed (the same lighter look: well above half brightness) and neutral everywhere', eHinge && eEdge && eHinge.mean[1] > 80 && eHinge.mean[1] < 122 && eEdge.mean[1] > 80 && [eHinge.mean, eEdge.mean].every((m) => Math.abs(m[2] - m[0]) <= 3 && Math.abs(m[1] - m[0]) <= 3), JSON.stringify([eHinge && eHinge.mean, eEdge && eEdge.mean]));
       a = await op(page, { op: 'reveal' });
       check('look: the cover reveals', a.msg && a.msg.event === 'revealed' && (await state(page)).stage === 0, JSON.stringify(a.msg));
+      // ONE smooth gradient (Owen, live: the blur showed steps where its levels change): a light top
+      // half over a dark bottom half, rows just above and below the edge, across the moving half at
+      // 15/25/35 %. As the blur grows toward the free edge the luminance along a row changes smoothly:
+      // the slope over the next 5 px never turns from the slope over the last 5 px by more than KINK
+      // (a hand-over between levels shows as such a turn) and no neighbour jumps more than JUMP.
+      {
+        const KINK = 3, JUMP = 12;
+        await op(page, { op: 'arm' });
+        const es = await send(page, { op: 'play', still: pics.edge, size: 'full' });
+        await page.waitForFunction(() => document.getElementById('stage').dataset.pose === 'opening' && window.__unfold.state().running > 0, null, { timeout: 8000 });
+        const bands = [];
+        for (const f of [0.15, 0.25, 0.35]) {
+          const fr = await page.evaluate((v) => window.__unfold.freeze(v, true), f);
+          const w = Math.round(fr.frame.open * hx), x0 = Math.round(hx - w + 2), x1 = Math.round(hx);
+          for (const dy of [-12, -5, 5, 12]) {
+            const row = await page.evaluate((v) => window.__unfold.probe(v[0], v[1], v[2]), [Math.round(H / 2 + dy), x0, x1]);
+            const L = (row || []).map((p) => 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]);
+            let kink = 0, jump = 0;
+            const K = 5;
+            for (let i = 1; i < L.length; i++) jump = Math.max(jump, Math.abs(L[i] - L[i - 1]));
+            for (let i = K; i + K < L.length; i++) kink = Math.max(kink, Math.abs((L[i + K] - L[i]) / K - (L[i] - L[i - K]) / K));
+            bands.push({ f, dy, n: L.length, kink: +kink.toFixed(2), jump: +jump.toFixed(1) });
+          }
+        }
+        await page.evaluate(() => window.__unfold.freeze(null));
+        await answer(page, es, 4000);
+        console.log('  smoothness (edge picture, kink/jump per row): ' + bands.map((b) => `${b.f}/${b.dy}:${b.kink}/${b.jump}`).join(' '));
+        check('look: the blur is one smooth gradient across the moving half (no turn or jump where its levels hand over)',
+          bands.length === 12 && bands.every((b) => b.n > 20 && b.kink <= KINK && b.jump <= JUMP), JSON.stringify(bands.filter((b) => !(b.n > 20 && b.kink <= KINK && b.jump <= JUMP))));
+      }
       // the comparison technique on request (the bench's), no fallback reason
       await op(page, { op: 'arm' });
       a = await op(page, { op: 'play', still: pics.ok, size: 'full', tech: 'layers' });
@@ -378,7 +421,7 @@ async function main() {
       check('no WebGL: play is played by layers, frames counted, the reason carried', a.msg && a.msg.event === 'played' && a.msg.technique === 'layers' && a.msg.fallback === r0.fallback && a.msg.stats && a.msg.stats.frames > 0 && !a.msg.timedOut, JSON.stringify(a.msg));
       a = await op(np, { op: 'cover', still: pics.ok });
       const npc = await np.evaluate(() => ({ ground: +getComputedStyle(document.getElementById('ground')).opacity, tint: +getComputedStyle(document.getElementById('tint')).opacity }));
-      check('no WebGL: cover covers (the frosted picture and the tint up), the reason carried', a.msg && a.msg.ok === true && a.msg.technique === 'layers' && a.msg.fallback === r0.fallback && npc.ground > 0.9 && npc.tint > 0.2, JSON.stringify(a.msg) + ' ' + JSON.stringify(npc));
+      check('no WebGL: cover covers (the frosted picture and the tint up), the reason carried', a.msg && a.msg.ok === true && a.msg.technique === 'layers' && a.msg.fallback === r0.fallback && npc.ground > 0.9 && npc.tint > 0.15 && npc.tint < 0.4, JSON.stringify(a.msg) + ' ' + JSON.stringify(npc));
       a = await op(np, { op: 'reveal' });
       check('no WebGL: reveal', a.msg && a.msg.event === 'revealed' && (await state(np)).stage === 0, JSON.stringify(a.msg));
     }
