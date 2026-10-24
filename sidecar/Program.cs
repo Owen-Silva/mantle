@@ -1821,6 +1821,12 @@ namespace Mantle {
       try { detail.Add(ToastBanners.RestoreForExit()); }
       catch (Exception ex) { done = false; detail.Add("notification banners: put back failed (" + ex.Message + "); tools\\restore-banners.ps1 finishes it"); }
 
+      // The maximize unfold's one change in Windows (MaxFold.cs): Windows' own minimize/restore
+      // animation switched off on ONE app window. It is set on that window, so it OUTLIVES this
+      // process like the banners do; the record file is what the next start and the script read.
+      try { detail.Add(MaxFold.RestoreForExit()); }
+      catch (Exception ex) { done = false; detail.Add("window animation: put back failed (" + ex.Message + "); tools\\restore-windows.ps1 finishes it"); }
+
       // GDI handles are process-owned, so this is tidiness rather than safety -
       // but a leaked DC is the kind of thing that only shows up as "Windows got
       // slow after a week", and one call costs nothing.

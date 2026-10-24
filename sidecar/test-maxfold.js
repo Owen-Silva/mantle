@@ -277,6 +277,19 @@ const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
     const n2 = s.collect('maxfold').length;
     await w.cmd('restore', 'OK'); await w.cmd('max', 'OK'); await T.sleep(400);
     t.check('off: a maximize makes no event at all (no hook)', s.collect('maxfold').length === n2);
+
+    // ---- the exit road (Program.SafetyRestore): a window still flagged when the sidecar quits gets
+    // Windows' animation back from MaxFold.RestoreForExit, said in the restore event, record deleted
+    c = await s.call('maxfold.config', { on: true, invisible: true, testWinAnim: true, testReduced: false });
+    const fq = await s.call('maxfold.flag', { window: w.hwnd, on: true });
+    t.check('exit road: the harness window is flagged and the record written before the quit', fq.flagged && fq.set && fs.existsSync(RECORD), JSON.stringify(fq));
+    const nr = s.collect('restore').length;
+    const q = await s.send('quit');
+    const rev = await s.waitEvent('restore', 4000, (ev) => s.collect('restore').indexOf(ev) >= nr).catch(() => null);
+    t.check('exit road: quit puts the window animation back and says so in the restore detail',
+      q.ok === true && !!rev && /window animation: put back on the one window Mantle had switched it off for/.test(rev.detail || ''), JSON.stringify(rev).slice(0, 600));
+    t.check('exit road: ...and the record is gone after the quit', !fs.existsSync(RECORD));
+    try { await s.waitExit(4000); } catch (_) { /* stop() below kills it */ }
   } catch (e) {
     t.fail('the run threw', e.stack ? e.stack.split('\n').slice(0, 3).join(' / ') : String(e));
   } finally {

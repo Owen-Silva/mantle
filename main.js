@@ -3067,11 +3067,21 @@ const launcherGate = surfaceGate.createGate({
   // A hidden launcher is centred on the main display AS IT IS NOW first (lane mn-display: after a
   // resolution or scale change it opened where the old display's centre was), so the first picture
   // is of what is behind it where it opens.
-  prepare: () => (!launcherAlive() ? null
-    : launcherWin.isVisible() ? launcherBackdrop.once('the launcher is opening')
-      : (launcherRecentre('the launcher is opening'), new Promise((resolve) => launcherFirstPicture(launcherWin, resolve)))),
+  // A reopen DURING the fold shut (see THE FOLD SHUT below) cancels its hide here, at the request,
+  // and the page hears the close it was owed, so this open runs as any open does: the window is still
+  // up, so it takes the "up" branch, and the reveal says launcher:visible true and takes off the
+  // click-through.
+  prepare: () => {
+    launcherNoteKeyboardOwner();
+    launcherFoldCancel('it was opened again');
+    return (!launcherAlive() ? null
+      : launcherWin.isVisible() ? launcherBackdrop.once('the launcher is opening')
+        : (launcherRecentre('the launcher is opening'), new Promise((resolve) => launcherFirstPicture(launcherWin, resolve))));
+  },
   reveal: ({ again }) => {
     if (!launcherAlive()) throw new Error('there is no launcher window');
+    // never click-through once it is up (a fold shut sets it; the hide or this takes it off)
+    try { launcherWin.setIgnoreMouseEvents(false); } catch (_) { /* a window that never had it set */ }
     const wasVisible = launcherWin.isVisible();
     if (flags.test) {
       // A test run must never take focus from whoever is at the machine.
@@ -3092,13 +3102,114 @@ const launcherGate = surfaceGate.createGate({
     }
     if (!flags.test) armLauncherKeyboard();
   },
-  conceal: () => {
+  conceal: (why) => {
     stopLauncherKbWatch();
+    // Already folding shut (the blur the hand-back causes, Esc twice): that fold hides it.
+    if (launcherFold && launcherFold.win === launcherWin && !launcherWin.isDestroyed()) return;
     launcherBackdrop.stop('the launcher closed');
-    launcherWin.hide();
-    broadcast('launcher:visible', false);
+    launcherGiveKeyboardBack(launcherWin, why);
+    launcherFoldShut(why);
   },
 });
+
+/*
+ * THE FOLD SHUT (wave unfold, 2026-10-23; lane unfold-wire). The page folds the pane shut before the
+ * window hides (window.MantleLauncherFold, ui/launcher/launcher.js: the iPhone Duo fold, size 'pop',
+ * 340 ms; with Windows' animation effects off, unfold-live.js's 120 ms fade), so a close is seen. Main
+ * used to hide at once, and the hide was all anyone saw. In order:
+ *   1. the keyboard goes back FIRST (live): to the window that had it when the launcher was asked open,
+ *      through the sidecar's focus ladder with the foreground right handed on (as Task View gives it
+ *      back), and only while the launcher still holds it, so it is never pulled back from a window you
+ *      went to. Not after a launch (the app just started should get it) and not for a rest. With
+ *      nobody to give it to (a Mantle window had it, or none), the hide hands it on, as before;
+ *   2. the window is click-through while it folds;
+ *   3. hidden when the page says the fold has landed or at LAUNCHER_FOLD_CAP_MS, whichever is first;
+ *      a page that throws, rejects, has no fold or never answers is hidden anyway, and the reason is
+ *      logged. Then launcher:visible false, as before (not earlier: the page snaps shut on it).
+ * A reopen during the fold cancels the hide (prepare, above). A rest hides at once (the window is
+ * destroyed next). Every road out of a fold either hides the window or hands it to a reveal, and both
+ * take the click-through off.
+ */
+const LAUNCHER_FOLD_CAP_MS = 400;
+const LAUNCHER_FOLD_JS = 'window.MantleLauncherFold && window.MantleLauncherFold()';
+let launcherFold = null;      // the fold in progress: { win, timer, done }, until it hides or a reopen cancels it
+let launcherPrevFg = 0;       // live: the window that had the keyboard when the launcher was asked open (never Mantle's)
+
+/** Live, at the open request (before the launcher takes the keyboard): who has it now. */
+function launcherNoteKeyboardOwner() {
+  if (flags.test) return;
+  let fg = null;
+  try { fg = raiseWin.foreground(); } catch (_) { fg = null; }
+  // Mid-fold the launcher may still hold it itself: the owner noted at the first open stands.
+  if (launcherFold && fg && fg.mine) return;
+  launcherPrevFg = fg && fg.hwnd && !fg.mine ? fg.hwnd : 0;
+}
+
+function launcherGiveKeyboardBack(win, why) {
+  const prev = launcherPrevFg;
+  if (flags.test || !prev || why === 'launched' || why === 'rest' || !win || win.isDestroyed()) return;
+  let holds = null;
+  try { holds = raiseWin.hasKeyboard(win); } catch (_) { holds = null; }
+  if (holds === null) holds = win.isFocused();
+  if (!holds) return;
+  const g = fgGrant.grant(sidecar.info && sidecar.info.pid);
+  sidecar.call('focus', { hwnd: String(prev) }, 1500).catch((err) => {
+    const e = fgGrant.splitTried(err && err.message);
+    process.stdout.write(`mantle: launcher: the keyboard could not go back to the window that had it (${e.shown || 'no reason given'}${e.tried ? `; ${e.tried}` : ''}; right ${fgGrant.words(g)}); it moves when the launcher hides\n`);
+  });
+}
+
+/** The page's answer -> null when the fold played as it should, else the words for the log. */
+function launcherFoldWords(r) {
+  if (!r || typeof r !== 'object') return 'at once: the page has no fold (window.MantleLauncherFold is missing)';
+  if (r.cancelled) return 'with its fold cut short';
+  if (r.ok === false) return `without its fold: ${r.reason || 'the page said it could not fold'}`;
+  if (r.timedOut) return 'after its fold ran on the page\'s own timer (no frames came)';
+  return null;
+}
+
+function launcherFoldShut(why) {
+  const win = launcherWin;
+  const f = { win, timer: null, done: false };
+  launcherFold = f;
+  if (why === 'rest') { launcherFoldEnd(f, null); return; }
+  try { win.setIgnoreMouseEvents(true); } catch (_) { /* then the folding pane takes clicks for 0.4 s at most */ }
+  let asked;
+  try { asked = win.webContents.executeJavaScript(LAUNCHER_FOLD_JS, true); }
+  catch (err) { launcherFoldEnd(f, `at once: the page could not be asked to fold (${err.message})`); return; }
+  f.timer = setTimeout(() => launcherFoldEnd(f, `at the ${LAUNCHER_FOLD_CAP_MS} ms cap: the fold had not landed`), LAUNCHER_FOLD_CAP_MS);
+  Promise.resolve(asked).then(
+    (r) => launcherFoldEnd(f, launcherFoldWords(r)),
+    (err) => launcherFoldEnd(f, `at once: the page's fold failed (${(err && err.message) || err})`));
+}
+
+/** The hide the fold was holding back. Runs once per fold; a cancelled fold never gets here. */
+function launcherFoldEnd(f, words) {
+  if (f.done) return;
+  f.done = true;
+  if (f.timer) clearTimeout(f.timer);
+  if (launcherFold === f) launcherFold = null;
+  if (words) process.stdout.write(`mantle: launcher: hidden ${words}\n`);
+  if (!f.win.isDestroyed()) {
+    try { f.win.setIgnoreMouseEvents(false); } catch (_) { /* hidden next anyway */ }
+    try { f.win.hide(); } catch (err) { process.stdout.write(`mantle: launcher: could not hide it after its fold (${err.message})\n`); }
+  }
+  broadcast('launcher:visible', false);
+}
+
+/** A reopen during the fold: no hide. The page hears the close it was owed (it keeps what you typed
+ *  a moment ago, and the open's launcher:visible true unfolds it again); the reveal takes the
+ *  click-through off. -> true when there was a fold to cancel. */
+function launcherFoldCancel(why) {
+  const f = launcherFold;
+  if (!f) return false;
+  launcherFold = null;
+  f.done = true;
+  if (f.timer) clearTimeout(f.timer);
+  process.stdout.write(`mantle: launcher: the hide after its fold was cancelled: ${why}\n`);
+  broadcast('launcher:visible', false);
+  return true;
+}
 
 /** Its keyboard, live only (audit #7): checked, retried once through the sidecar, else SAID. */
 function armLauncherKeyboard() {
@@ -3397,7 +3508,7 @@ async function restNow(why) {
   restState = { why, since: t0, closed: [], before, after: null, text: null };
   if (features) await features.restAll(why);
   if (launcherWin && !launcherWin.isDestroyed()) {
-    hideLauncher();
+    hideLauncher('rest');            // at once, no fold and no keyboard hand-back: it is destroyed next
     const win = launcherWin;
     launcherWin = null;
     try { win.destroy(); } catch (_) { /* gone */ }
@@ -5597,7 +5708,7 @@ const COMMANDS = {
   'apps.launch': async (a) => {
     const res = await apps.launch(a && a.id, { dryRun: !!flags.test, spotifyPort: spotifyQueueOn() });
     if (res && res.dryRun) process.stdout.write(`mantle: apps.launch dry run (--test): ${res.reason || 'nothing started'}\n`);
-    if (res && res.ok && !res.dryRun) hideLauncher();
+    if (res && res.ok && !res.dryRun) hideLauncher('launched');
     return res;
   },
   // The launcher's power rows and Windows Search file rows. lib/launcher-index.js does the work;
@@ -5605,7 +5716,7 @@ const COMMANDS = {
   // hands the index module. A --test instance is ALWAYS a power dry run.
   'launcher.power': async (a) => {
     const res = await require(modulePathFor(ROOT)).power(a, { sidecar: (c, x, ms) => sidecar.call(c, x, ms), dryRun: !!flags.test });
-    if (res && res.ok && !res.dryRun) hideLauncher();
+    if (res && res.ok && !res.dryRun) hideLauncher('launched');
     return res;
   },
   'launcher.files': async (a) => require(modulePathFor(ROOT)).files(a, { sidecar: (c, x, ms) => sidecar.call(c, x, ms) }),
@@ -5615,7 +5726,7 @@ const COMMANDS = {
       res.dryRun = true;
       process.stdout.write(`mantle: launcher.openFile dry run (--test): ${logSafe(a, res.reason) || (res.ok ? 'nothing opened' : 'refused')}\n`);
     }
-    if (res && res.ok && !res.dryRun) hideLauncher();
+    if (res && res.ok && !res.dryRun) hideLauncher('launched');
     return res;
   },
 
