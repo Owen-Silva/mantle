@@ -50,7 +50,7 @@
   /* the full-screen page only (ui/unfold/, WebGL), from Apple's own clips (duo-ref SPEC.md): the swing
      of the leaf (fitted to the footage's leaf widths: slow first frames, fastest early, a long soft
      landing), the blur at its free edge in px of a 1920-wide picture (3.3 % of the width, the most the
-     footage shows; scaled to the screen's width; sharp at the hinge, close to linear toward the edge),
+     footage shows; scaled to the screen's width; sharp at the hinge, rising a little faster than linear),
      and the dimming profile's gain (1 = as measured on the landed leaf) */
   --unfold-hinge: cubic-bezier(.2, .1, .05, .4);
   --unfold-edge-blur: 64px;
@@ -67,7 +67,7 @@
      the free edge never goes black and outlines read through the blur. */
   --unfold-tint:  #4436E8;
   --unfold-shade: #000000;
-  --unfold-dark:       .60;  /* the leaf's dimming at its free edge (gain .40: the footage's .30-.45) */
+  --unfold-dark:       .66;  /* the leaf's dimming at its free edge (gain .34; Apple's landed leaf: .38 at 97 %) */
   --unfold-dark-cover: 0;    /* the fixed half's dimming: none, it stays at full brightness (Apple's clips) */
   --unfold-dark-blur:  .24;  /* the covered (look-away) screen's dimming, everywhere */
   --unfold-dim:        .86;  /* an element's brightness() while folded or blurred */

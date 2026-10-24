@@ -159,7 +159,7 @@ async function main() {
       check(tag + 'mid-open: the left half part way open', /inset\(0px 0px 0px (\d+(\.\d+)?)%\)/.test(r.midClip) && parseFloat(/0px (\d+(\.\d+)?)%\)/.exec(r.midClip)[1]) < 50, r.midClip);
       check(tag + 'open said shade true', r.open.shade === true, JSON.stringify(r.open));
       check(tag + 'open takes about --unfold-pop-ms (340)', r.openMs >= 300 && r.openMs < 600, r.openMs);
-      check(tag + 'blurred keeps the shade up', r.blur && r.blur.state === 'blurred' && r.blur.shade === true && /unfold-cast-m/.test(r.blurKids) && r.blurCast > 0.3, JSON.stringify(r.blur) + ' ' + r.blurCast);
+      check(tag + 'blurred keeps the shade up (light: --unfold-dark-blur, outlines read through it)', r.blur && r.blur.state === 'blurred' && r.blur.shade === true && /unfold-cast-m/.test(r.blurKids) && r.blurCast > 0.15 && r.blurCast < 0.4, JSON.stringify(r.blur) + ' ' + r.blurCast);
     } else {
       check(tag + 'no shade with reduced motion', r.open.shade === false && r.midKids === 'B,I', r.midKids);
       check(tag + 'reduced open is the short fade', r.openMs < 300, r.openMs);
@@ -195,7 +195,7 @@ async function main() {
     check('play -> played', a.msg && a.msg.event === 'played', JSON.stringify(a));
     check('play: technique gl, no fallback', a.msg && a.msg.technique === 'gl' && !a.msg.fallback, a.msg && JSON.stringify([a.msg.technique, a.msg.fallback]));
     const gl1 = await page.evaluate(() => window.__unfold.gl());
-    check('play: 12 blur levels from 2 to 72 px in one atlas', gl1.levels && gl1.levels.length === 12 && gl1.levels[0][0] === 2 && gl1.levels[11][0] === 72 && gl1.atlas && gl1.atlas[0] > 0, JSON.stringify(gl1));
+    check('play: 12 blur levels from 1.4 to 150 px in one atlas', gl1.levels && gl1.levels.length === 12 && Math.abs(gl1.levels[0][0] - 1.36) < 0.01 && Math.abs(gl1.levels[11][0] - 150) < 1 && gl1.atlas && gl1.atlas[0] > 0, JSON.stringify(gl1));
     check('play: frames counted', a.msg && a.msg.stats && a.msg.stats.frames > 0, JSON.stringify(a.msg && a.msg.stats));
     check('play: stats carry p50/p95/max/dropped/long/vsync/ms', a.msg && a.msg.stats && ['p50', 'p95', 'max', 'dropped', 'long', 'vsync', 'ms'].every((k) => typeof a.msg.stats[k] === 'number'), JSON.stringify(a.msg && a.msg.stats));
     check('play: prepMs a number', a.msg && typeof a.msg.prepMs === 'number', a.msg && a.msg.prepMs);
@@ -340,11 +340,12 @@ async function main() {
       const q = await held(0.25), h2 = await held(0.5), h3 = await held(0.75), h4 = await held(0.97);
       for (const [n, x] of [['25', q], ['50', h2], ['75', h3], ['97', h4]]) console.log(`  look at ${n} %: open ${x.f.open.toFixed(3)}, blur ${x.f.strength.toFixed(3)}, dimming ${x.f.dark.toFixed(3)}; ` + JSON.stringify(x.R));
       const R = q.R;
+      const NOISE = 4;   // stripes blurred all the way keep a contrast of a few levels (the dither): no order among those
       const neutral = (m) => m && Math.abs(m[2] - m[0]) <= 3 && Math.abs(m[2] - m[1]) <= 3 && Math.abs(m[1] - m[0]) <= 3;
       check('look 25 %: part way open (the moving half between a fifth and nine tenths open)', q.f.open > 0.2 && q.f.open < 0.9, q.f.open);
       check('look 25 %: the fixed half is sharp and at full brightness (Apple\'s clips)', R.fixed && R.fixed.c > 120 && R.fixed.top >= 250, JSON.stringify(R.fixed));
       check('look 25 %: sharp at the hinge on the moving half too', R.nearHinge && R.nearHinge.c > 120, JSON.stringify(R.nearHinge));
-      check('look 25 %: the blur grows from the hinge toward the moving free edge', R.d1 && R.d2 && R.d9 && R.nearHinge.c > R.d1.c && R.d1.c > R.d2.c && R.d2.c >= R.d9.c && R.d9.c < 25,
+      check('look 25 %: the blur grows from the hinge toward the moving free edge', R.d1 && R.d2 && R.d9 && R.nearHinge.c > R.d1.c && R.d1.c > R.d2.c && R.d2.c + NOISE >= R.d9.c && R.d9.c < 25,
         JSON.stringify([R.nearHinge && R.nearHinge.c, R.d1 && R.d1.c, R.d2 && R.d2.c, R.d9 && R.d9.c]));
       // Owen 2026-10-23, live: "way too blue", "more transparent so you can see the outline of the
       // background"; Apple's clips: the dimming is a neutral black multiply and the free edge never black
@@ -353,7 +354,7 @@ async function main() {
         JSON.stringify([R.d9 && R.d9.mean, R.nearHinge && R.nearHinge.mean, R.fixed && R.fixed.mean]));
       check('look 25 %: past the free edge is the unlit display (black)', R.out && R.out.top <= 3, JSON.stringify(R.out));
       check('look 50 %: landed open with the blur and dimming still on (the Duo lands first, then releases)', h2.f.open > 0.95 && h2.R.d9 && h2.R.d9.c < 25 && h2.R.d9.mean[1] < 110, JSON.stringify([h2.f.open, h2.R.d9]));
-      check('look 75 %: releasing (the free edge lighter and no blurrier than at 50 %)', h3.R.d9 && h2.R.d9 && h3.R.d9.mean[1] > h2.R.d9.mean[1] && h3.R.d9.c >= h2.R.d9.c, JSON.stringify([h2.R.d9, h3.R.d9]));
+      check('look 75 %: releasing (the free edge lighter and no blurrier than at 50 %)', h3.R.d9 && h2.R.d9 && h3.R.d9.mean[1] > h2.R.d9.mean[1] && h3.R.d9.c + NOISE >= h2.R.d9.c, JSON.stringify([h2.R.d9, h3.R.d9]));
       check('look 97 %: released, sharp and at full brightness all the way to the edge', h4.f.open > 0.999 && h4.R.d9 && h4.R.d9.c > 120 && h4.R.d9.top >= 250 && h4.R.fixed && h4.R.fixed.top >= 250, JSON.stringify([h4.f.open, h4.R.d9, h4.R.fixed]));
       check('look: the content is fixed in space (the stripes keep their phase at 25, 50, 75 and 97 %)', [q, h2, h3, h4].every((x) => x.R.fixed && x.R.fixed.phase === R.fixed.phase),
         JSON.stringify([q, h2, h3, h4].map((x) => x.R.fixed && x.R.fixed.phase)));
@@ -380,7 +381,10 @@ async function main() {
       // the slope over the next 5 px never turns from the slope over the last 5 px by more than KINK
       // (a hand-over between levels shows as such a turn) and no neighbour jumps more than JUMP.
       {
-        const KINK = 3, JUMP = 12;
+        // measured on the shipped page (2026-10-24, 12 rows): kink 0.40-0.70, jump 1.9-3.8 levels. The
+        // limits are about twice that: a hand-over step between two levels turns the slope by several
+        // levels at once and fails, the dither's half-level noise does not
+        const KINK = 1.5, JUMP = 7;
         await op(page, { op: 'arm' });
         const es = await send(page, { op: 'play', still: pics.edge, size: 'full' });
         await page.waitForFunction(() => document.getElementById('stage').dataset.pose === 'opening' && window.__unfold.state().running > 0, null, { timeout: 8000 });
