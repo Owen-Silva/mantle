@@ -21,7 +21,7 @@
  *
  *  - THE ENTER is the unfold (ui/shared/unfold-live.js, the iPhone Duo hinge, size 'pop', wave
  *    unfold 2026-10-23): on visibilitychange → visible, the panel opens from a centre hinge, the
- *    opening half blurred toward its free edge and darkened in Mantle indigo, into focus. It rests FOLDED in the markup and again the moment the
+ *    opening half blurred toward its free edge and dimmed (neutral, no hue), into focus. It rests FOLDED in the markup and again the moment the
  *    window is hidden, so no frame ever shows an open pane before the unfold. The search box has the
  *    keyboard throughout: typing while it unfolds is kept. window.MantleLauncherFold() plays the
  *    fold shut and resolves when it has landed, for a main that waits for it before hiding (main

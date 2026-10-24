@@ -15,7 +15,7 @@
  * taskview.dismiss {why}. Every call can reject with plain words, which go in the toast.
  *
  * THE UNFOLD (wave unfold, 2026-10-23): the page arrives with the iPhone Duo unfold (ui/shared/unfold-live.js,
- * size 'pop': a centre hinge, the opening half blurred toward its free edge and darkened in Mantle indigo)
+ * size 'pop': a centre hinge, the opening half blurred toward its free edge and dimmed, neutral, no hue)
  * on #stage, the host that carries the whole page. It rests FOLDED in the markup and between
  * sessions. It opens when main says the window is on screen: taskview.shown if main sends it, else main's
  * answer to the first taskview.painted (main reveals the window inside that call), else 600 ms after
