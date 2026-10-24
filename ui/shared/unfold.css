@@ -32,8 +32,13 @@
 
   --unfold-fold-ms:    420ms;  /* open -> blurred (look-away) */
   --unfold-cover-blur: 28px;   /* how far out of focus the covered screen sits */
-  --unfold-sheen: rgba(255, 255, 255, .10);
+  --unfold-reveal-ms:  200ms;  /* blurred -> open, the look-back: it must feel instant */
+  /* the edge light at the opening: the glass's own edge highlight (light: white .62, dark: white .16),
+     faded by the motion; neutral in both themes, never a tint */
+  --unfold-sheen: var(--lg-edge-in, rgba(255, 255, 255, .62));
+  --unfold-sheen-w: 56px;
 }
+:root[data-theme="dark"] { --unfold-sheen: var(--lg-edge-strong, rgba(255, 255, 255, .16)); }
 
 .unfold {
   --u-ms: var(--unfold-pop-ms);
