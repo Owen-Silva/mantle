@@ -1,0 +1,73 @@
+/* unfold-live.css - the iPhone Duo unfold on LIVE DOM (the launcher, Task View), driven by unfold-live.js
+ * (wave unfold, 2026-10-23; Owen: "exactly like the iPhone Duo", tinted Mantle indigo, one version).
+ *
+ * WHAT IT DRAWS (reconstruction: empirical.health "why the iPhone Duo fold animation works", and the MIT
+ * recreation github.com/chuspeeism/iphone-duo):
+ *   - a HINGE down the centre of the pane. The left half is the cover side, already in place; the right
+ *     half swings open from the hinge (its visible width grows 0 -> half). The pane's content never moves:
+ *     the halves are windows onto it (a clip on the pane), so nothing jumps when it lands.
+ *   - PROGRESSIVE blur on the opening half: sharp at the hinge, cubic toward the moving free edge
+ *     (radius ~ d^3, d = distance from the hinge / the open width), strongest early, 0 when it lands.
+ *     Live DOM cannot take a per-pixel blur, so it is stacked strips of backdrop-filter, each at its own
+ *     radius, cross-faded into each other by mask gradients (the reconstruction's precomputed levels).
+ *   - DARKENING after the blur: the opening half darkens toward its free edge, the cover half starts dark
+ *     and brightens; both full brightness at the ends. The dark is Mantle indigo (--unfold-tint, #4436E8,
+ *     hard-coded: it does not follow the theme's accent) mixed down toward black. ONE version:
+ *     it is the content being folded, not a glass panel, so light and dark use the same tint.
+ *   - no stretch. The frame stays crisp: the strips stop --ul-bezel short of the top and bottom.
+ *   - Windows "Animation effects" off (prefers-reduced-motion): a 120 ms cross-fade, nothing else.
+ * At rest NOTHING of this is on the page: the effect layer is display: none, the pane has no clip, no
+ * filter: the pane looks exactly as it did before (its own --lg-* glass).
+ *
+ * Names: MantleUnfold's (data-unfold="folded|open", data-unfold-size="full|pop|quick"); its tokens in
+ * unfold.css (--unfold-<size>-ms) set the duration (the curve is --ul-ease-in/out below), so a retune there flows through. The
+ * class here is .unfold-live (NOT .unfold: unfold.css's single-filter transitions must not run on it). */
+
+:root {
+  /* the dark the folding content takes: Mantle indigo pressed toward black (a brightness, not a hue wash).
+     The indigo is the contract's --unfold-tint (unfold.css, lane unfold-unlock), hard-coded #4436E8 when
+     that token is absent: it never follows the theme's accent. */
+  --ul-tint: color-mix(in srgb, var(--unfold-tint, #4436E8) 38%, black);
+  --ul-dark-edge: .62;     /* the free edge's darkening at full strength (recreation: 2 x strength, capped) */
+  --ul-dark-cover: .45;    /* the cover half at the start, brightening to 0 */
+  --ul-blur-ratio: .018;   /* the free edge's radius early on, as a share of the pane's width (48 px / 2670) */
+  --ul-blur-cap: 72;       /* px: the recreation's cap */
+  /* also read once per play when set (unset = unfold-live.js's measured defaults):
+     --ul-bands / --ul-bands-big: the strip edges as d, e.g. "0.45 0.7 0.88 1" (a pane wider than 1000 px is big);
+     --ul-blur-ratio-big: the edge radius share on a big pane (else --ul-blur-ratio);
+     --ul-blur-min / --ul-blur-min-big: px; the strips go off together once the outermost one's radius is
+       below it (0.5 / 4: the measured frame cost on a full-screen pane) */
+  --ul-overlap: 14px;      /* how far two strips cross-fade into each other */
+  --ul-bezel: 1px;         /* the frame's hairline, left out of the blur */
+  /* The hinge's curve. Not --unfold-in (= --m-spring, the bar's spring): that spring is 70 % open a
+     quarter of the way in and overshoots by half-time, so the half swings shut-to-open in ~120 ms and the
+     blur is gone before it can be seen (measured in the 0/25/50/75/100 % frames, 2026-10-23). A hinge
+     opens like a lid: a soft start, a long settle. The fold accelerates shut. */
+  --ul-ease-in:  cubic-bezier(.42, 0, .2, 1);
+  --ul-ease-out: cubic-bezier(.5, 0, .85, .45);
+}
+
+.unfold-live[data-unfold="folded"] { opacity: 0; pointer-events: none; }
+
+.unfold-live > .ul-fx {
+  display: none;
+  position: absolute; inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  contain: strict;
+}
+.unfold-live[data-unfold-anim] > .ul-fx { display: block; }
+
+.ul-fx > .ul-strip, .ul-fx > .ul-shade, .ul-fx > .ul-cover {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 0;
+}
+.ul-fx > .ul-strip {
+  top: var(--ul-bezel); bottom: var(--ul-bezel);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--ul-overlap), #000 calc(100% - var(--ul-overlap)), transparent);
+          mask-image: linear-gradient(to right, transparent, #000 var(--ul-overlap), #000 calc(100% - var(--ul-overlap)), transparent);
+}
+/* the opening half: clear at the hinge, the tint at the free edge (its opacity is the strength) */
+.ul-fx > .ul-shade, .ul-fx > .ul-cover { transform-origin: 0 50%; will-change: transform, opacity; }
+.ul-fx > .ul-shade { background: linear-gradient(to right, transparent, var(--ul-tint)); opacity: 0; }
+/* the cover half: one even dark that lifts as it opens (it runs on under the opening half: no seam) */
+.ul-fx > .ul-cover { background: var(--ul-tint); opacity: 0; }

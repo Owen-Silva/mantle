@@ -19,9 +19,13 @@
  *    with no data: URL, or a State piece backdrop.launcher.ok === false, says so in the footer —
  *    "no blur: <reason>" — rather than quietly falling back to a flat pane.
  *
- *  - THE ENTER. Main shows this window and hides it instantly, so there is exactly one animation:
- *    on visibilitychange → visible, body.up lets launcher.css run the panel in over 320ms. The
- *    class comes off on hidden so the next open animates again. Nothing runs at rest.
+ *  - THE ENTER is the unfold (ui/shared/unfold-live.js, the iPhone Duo hinge, size 'pop', wave
+ *    unfold 2026-10-23): on visibilitychange → visible, the panel opens from a centre hinge, the
+ *    opening half blurred toward its free edge and darkened in Mantle indigo, into focus. It rests FOLDED in the markup and again the moment the
+ *    window is hidden, so no frame ever shows an open pane before the unfold. The search box has the
+ *    keyboard throughout: typing while it unfolds is kept. window.MantleLauncherFold() plays the
+ *    fold shut and resolves when it has landed, for a main that waits for it before hiding (main
+ *    today hides at once, so the close is a snap). Nothing runs at rest.
  *
  * The standing rule behind most of the code below: nothing fails silently.
  * If the bridge is missing, if a source did not index, if a launch did not
@@ -126,16 +130,36 @@
      needs: main never animates the window itself. Defined above the bridge check on purpose —
      the panel boots at opacity 0, so a page that cannot reach the bridge must still be able to
      put itself on screen to say so. */
+  var foldEl = document.getElementById('panel');
+  var UNFOLD = window.MantleUnfoldLive && foldEl ? window.MantleUnfoldLive : null;
+  var UNFOLD_OPTS = { size: 'pop', bleed: 10 };   // bleed: the light drop shadow, 10px round the panel (index.html)
+  if (!UNFOLD && foldEl) {
+    /* unfold-live.js did not load: the pane must still come on screen, unanimated, and say why in the log */
+    foldEl.classList.remove('unfold-live');
+    foldEl.removeAttribute('data-unfold');
+    try { console.warn('launcher: no unfold (ui/shared/unfold-live.js did not load), so the pane opens without it'); } catch (_) { /* no console */ }
+  }
   function panelUp() {
-    /* on the NEXT frame: the first paint has to happen in the down state or there is nothing for
-       the transition to run from (a class added in the same frame as the first paint just snaps). */
-    requestAnimationFrame(function () { document.body.classList.add('up'); });
+    /* on the NEXT frame, so the unfold starts on the first frame the shown window paints (the
+       folded pose is in the markup, and rest() puts it back on every hide) */
+    requestAnimationFrame(function () {
+      document.body.classList.add('up');
+      if (UNFOLD && document.visibilityState !== 'hidden') UNFOLD.open(foldEl, UNFOLD_OPTS);   // a no-op when open or opening
+    });
   }
   function panelDown() {
     document.body.classList.remove('up');
+    if (UNFOLD) UNFOLD.rest(foldEl, { state: 'folded', size: 'pop' });   // hidden: snap shut, ready for the next open
     clearBackdrop();
     disarm();       // an armed Shut down must not still be armed the next time the launcher opens
   }
+  /* The close, played: folds the pane shut and resolves { ok, state, timedOut } when the whole fold has
+     landed. For main to call (webContents.executeJavaScript) before it hides the window; it changes
+     nothing else, and the hide that follows still runs panelDown. */
+  window.MantleLauncherFold = function () {
+    if (!UNFOLD) return Promise.resolve({ ok: false, state: 'open', reason: 'there is no unfold (ui/shared/unfold-live.js did not load)' });
+    return UNFOLD.fold(foldEl, UNFOLD_OPTS);
+  };
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'hidden') panelDown();
     else panelUp();

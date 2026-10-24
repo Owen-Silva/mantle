@@ -12,12 +12,20 @@
 <!-- glass-light.css ONLY: the taskbar island's --lg-* tokens are the whole palette (one theme for
      every Mantle surface, the user, 2026-09-21). -->
 <link rel="stylesheet" href="../shared/glass-light.css">
+<!-- the unfold (wave unfold, 2026-10-23): how Task View arrives and leaves. unfold.css for its timing
+     tokens (size 'pop'), unfold-live.css for the iPhone Duo look on a live page -->
+<link rel="stylesheet" href="../shared/unfold.css">
+<link rel="stylesheet" href="../shared/unfold-live.css">
 <link rel="stylesheet" href="../shared/empty-state.css">
 <link rel="stylesheet" href="taskview.css">
 <link rel="stylesheet" href="../shared/wall-bdrop.css">
 </head>
 <!-- no-glass until main says the blur-behind took: the thicker fallback fill carries the page alone -->
 <body class="no-glass is-idle">
+<!-- THE UNFOLD HOST (ui/shared/unfold-live.js, size 'pop'): the whole page, its sheet included (the frost
+     fill and, in dark, the wallpaper picture are drawn on it, not on body, so the unfold folds them too).
+     FOLDED in the markup and between sessions, so no frame of an open page shows before the unfold. -->
+<div class="stage unfold-live" id="stage" data-unfold="folded" data-unfold-size="pop">
   <!-- The desktops, across the top. Each card: its name, how many windows are on it, the current
        one ringed; click to switch, double-click the name (or F2) to rename, x to remove, + to add,
        and drop a dragged window on one to move it there. -->
@@ -55,10 +63,12 @@
 
   <!-- the window being dragged towards a desktop -->
   <div class="chip-drag" id="dragChip" aria-hidden="true"></div>
+</div>
 <script src="mock-mantle.js"></script>
 <!-- dark: the wallpaper under the tint, as Helm does (lane helm-wall-apps) -->
 <script src="../shared/wall-bdrop.js" data-event="taskview.wall"></script>
 <script src="layout.js"></script>
+<script src="../shared/unfold-live.js"></script>
 <script src="taskview.js"></script>
 </body>
 </html>

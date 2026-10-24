@@ -25,6 +25,8 @@ const { chromium } = require('../../tools/dev-env.js').playwright();
 /* MANTLE_THEME=dark|light forces <html data-theme> before first paint and fires 'mantle-theme',
    the harness stand-in for the CLI's --theme= (lane dm-launcher, 2026-10-08) */
 const THEME = ['dark', 'light'].includes(process.env.MANTLE_THEME) ? process.env.MANTLE_THEME : null;
+/* SHOOT_MID=1: also two shots of the unfold mid-way (<name>-unfold-a/-b.png) */
+const MID = process.env.SHOOT_MID === '1';
 const PAGE = require('url').pathToFileURL(path.join(__dirname, 'index.html')).href;
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   path.join(require('os').tmpdir(), 'mantle-shots', 'launcher');
@@ -71,7 +73,15 @@ const SAMPLE = {
     page.on('pageerror', e => problems.push('pageerror: ' + e.message));
     page.on('console', m => { if (m.type() === 'error') problems.push('console: ' + m.text()); });
     await page.goto(url, { waitUntil: 'load' });
-    await page.waitForTimeout(150);              // the mock resolves on a microtask
+    if (MID) {
+      // the unfold, mid-way (wave unfold 2026-10-23): ~1/4 and ~1/2 through the 'pop' open
+      await page.waitForTimeout(60);
+      await page.screenshot({ path: path.join(OUT, name + '-unfold-a.png') });
+      await page.waitForTimeout(80);
+      await page.screenshot({ path: path.join(OUT, name + '-unfold-b.png') });
+    }
+    // the shot is of the LANDED pane: the unfold ('pop', ~340 ms) has opened; the mock resolves on a microtask
+    await page.waitForTimeout(MID ? 260 : 400);
     if (prep) await prep(page);
 
     const file = path.join(OUT, name + '.png');

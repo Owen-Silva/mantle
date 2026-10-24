@@ -10,8 +10,19 @@
  *   taskview.update  {seq, list?, desktops?, others?}       after a close / move / desktop change
  *   taskview.notice  {seq, text}                            an action failed: the reason, on screen
  *   taskview.end     {seq, why}                             the window is parked: empty the page
+ *   taskview.shown   {seq}           (optional, see THE UNFOLD) the window is on screen now
  * The page asks: taskview.activate {hwnd}, taskview.close {hwnd}, taskview.desk {op, ...},
  * taskview.dismiss {why}. Every call can reject with plain words, which go in the toast.
+ *
+ * THE UNFOLD (wave unfold, 2026-10-23): the page arrives with the iPhone Duo unfold (ui/shared/unfold-live.js,
+ * size 'pop': a centre hinge, the opening half blurred toward its free edge and darkened in Mantle indigo)
+ * on #stage, the host that carries the whole page. It rests FOLDED in the markup and between
+ * sessions. It opens when main says the window is on screen: taskview.shown if main sends it, else main's
+ * answer to the first taskview.painted (main reveals the window inside that call), else 600 ms after
+ * taskview.open, so the page can never stay folded. DWM draws the window pictures OVER the page, where no
+ * clip or blur reaches them, so while it unfolds taskview.painted carries NO boxes (nothing registered):
+ * the boxes go when the unfold has landed and the pictures appear on a page that is already sharp.
+ * window.MantleTaskViewFold() plays the fold shut, for a main that waits for it before parking.
  *
  * KEYS: arrows / Home / End move; Enter switches; Esc closes (or cancels a rename); typing filters
  * (Backspace, Ctrl+Backspace); Tab moves between the windows and the desktop strip; in the strip
@@ -43,6 +54,49 @@
     var sp = document.createElement('span'); sp.textContent = text; el.appendChild(sp);
   }
   var PLUS_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11"/></svg>';
+
+  /* ---- THE UNFOLD (see the header) ---- */
+  var stage = $('stage');
+  var UNFOLD = window.MantleUnfoldLive && stage ? window.MantleUnfoldLive : null;
+  if (!UNFOLD && stage) {
+    // unfold-live.js did not load: the page must still show, unanimated, and say why in the log
+    stage.classList.remove('unfold-live');
+    stage.removeAttribute('data-unfold');
+    try { console.warn('taskview: no unfold (ui/shared/unfold-live.js did not load), so Task View opens without it'); } catch (_) { /* no console */ }
+  }
+  var U = { seq: 0, landed: !UNFOLD, landTimer: null, safety: null };
+  function restFolded() {
+    if (!UNFOLD) return;
+    clearTimeout(U.landTimer); clearTimeout(U.safety);
+    U.seq = 0; U.landed = false;
+    UNFOLD.rest(stage, { state: 'folded', size: 'pop' });
+  }
+  function unfoldNow(seq) {
+    if (!UNFOLD || !seq || seq === WARM_SEQ || seq !== S.seq || U.seq === seq) return;
+    U.seq = seq;
+    clearTimeout(U.safety);
+    // the boxes go when it has landed (the promise also resolves on a timer if no frame comes)
+    UNFOLD.open(stage, { size: 'pop' }).then(function (r) {
+      if (S.seq !== seq || U.seq !== seq || !r || r.state !== 'open' || r.cancelled) return;
+      U.landed = true;
+      report();                                   // the real boxes: DWM's pictures on a sharp page
+    });
+  }
+  window.MantleTaskViewFold = function () {
+    if (!UNFOLD) return Promise.resolve({ ok: false, state: 'open', reason: 'there is no unfold (ui/shared/unfold.js did not load)' });
+    U.landed = false;
+    return UNFOLD.fold(stage, { size: 'pop' });
+  };
+  /* dark's wallpaper picture (ui/shared/wall-bdrop.js) puts itself first in body; it belongs on the
+     stage so it folds with the page. position: fixed inside the full-viewport stage is the same box. */
+  if (stage && window.MutationObserver) {
+    var adoptWall = function () {
+      var w = document.getElementById('wall-bdrop');
+      if (w && w.parentNode !== stage) stage.insertBefore(w, stage.firstChild);
+    };
+    adoptWall();
+    new MutationObserver(adoptWall).observe(document.body, { childList: true });
+  }
 
   function call(name, args) {
     try { return Promise.resolve(window.mantle.call(name, args || {})); } catch (err) { return Promise.reject(err); }
@@ -254,14 +308,19 @@
   function report() {
     if (!S.seq) return;
     var boxes = [];
-    var tiles = grid.querySelectorAll('.tile');
+    // while it unfolds: no boxes, so DWM draws no picture over a page that is still folded or blurred
+    var tiles = U.landed ? grid.querySelectorAll('.tile') : [];
     for (var i = 0; i < tiles.length; i++) {
       var r = tiles[i].querySelector('.pv').getBoundingClientRect();
       boxes.push({ hwnd: tiles[i].dataset.hwnd, x: r.left, y: r.top, w: r.width, h: r.height });
     }
     var seq = S.seq;
-    call('taskview.painted', { seq: seq, boxes: boxes, t: performance.now(), dpr: window.devicePixelRatio, vw: window.innerWidth, vh: window.innerHeight }).catch(function (err) {
+    call('taskview.painted', { seq: seq, boxes: boxes, t: performance.now(), dpr: window.devicePixelRatio, vw: window.innerWidth, vh: window.innerHeight }).then(function (r) {
+      // main reveals the window inside this call: on screen now, unless it is still waiting for the size
+      if (!(r && (r.waiting || r.stale))) unfoldNow(seq);
+    }, function (err) {
       if (S.seq === seq) { S.thumbsWhy = words(err); renderFoot(); }
+      unfoldNow(seq);                             // the page shows its reason; it never stays folded
     });
   }
   function renderAll(keepHwnd) {
@@ -522,8 +581,12 @@
     wallFace();
     document.body.classList.remove('is-idle');
     toast.classList.remove('on');
+    restFolded();
+    var openSeq = S.seq;
+    U.safety = setTimeout(function () { unfoldNow(openSeq); }, 600);   // never left folded
     renderAll(S.items[S.sel] ? S.items[S.sel].hwnd : null);
   });
+  window.mantle.on('taskview.shown', function (m) { if (m && m.seq === S.seq) unfoldNow(m.seq); });
   window.mantle.on('taskview.update', function (m) { if (m && m.seq === S.seq) applyUpdate(m); });
 
   /* THE WARM-UP (main, once at start-up when idle): the real list drawn ONCE in the parked, off-screen
@@ -572,6 +635,7 @@
     S.seq = 0; S.items = []; S.shown = []; S.drag = null; S.renaming = null;
     grid.textContent = ''; desksEl.textContent = ''; dragChip.classList.remove('on');
     document.body.classList.add('is-idle');
+    restFolded();
   }
   function warmDone() {
     var ms = Math.round((performance.now() - S.warmT0) * 10) / 10;

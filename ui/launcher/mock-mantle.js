@@ -433,5 +433,11 @@
     emit('launcher.open', { mode: mode || 'search', query: query || '', from: 'mock' });
     emit('launcher:visible', true);
   };
-  if (OPEN_MODE || OPEN_Q) setTimeout(function () { window.__mockOpen(OPEN_MODE || 'search', OPEN_Q || ''); }, 50);
+  /* 50 ms after the page's scripts have all run (DOMContentLoaded), as main only sends once the page has
+     loaded: a bare 50 ms timer from here could fire between two script loads, before launcher.js had
+     subscribed, and the open was lost (seen once unfold.js joined the page, 2026-10-23) */
+  if (OPEN_MODE || OPEN_Q) {
+    var mockOpenSoon = function () { setTimeout(function () { window.__mockOpen(OPEN_MODE || 'search', OPEN_Q || ''); }, 50); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mockOpenSoon); else mockOpenSoon();
+  }
 })();

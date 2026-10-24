@@ -1,7 +1,8 @@
 require('../../tools/dev-env.js').lowcpu();
 /* shoot.js - headless screenshots of Task View on the mock bridge, plus what can be measured there.
  *
- *   node ui/taskview/shoot.js            (ONLY=1536x864-n7,... for a subset; MANTLE_SHOOT_OUT=dir)
+ *   node ui/taskview/shoot.js            (ONLY=1536x864-n7,... for a subset; MANTLE_SHOOT_OUT=dir; SHOOT_MID=1
+ *                                         adds two shots of the unfold mid-way; MANTLE_THEME=dark|light)
  *
  * No Electron, no sidecar, no DWM: mock-mantle.js plays main and paints fake window pictures into
  * the boxes the page reports. Per shot it checks: no page errors; every visible tile inside the
@@ -18,6 +19,8 @@ const PAGE = require('url').pathToFileURL(path.join(__dirname, 'index.html')).hr
 const OUT = process.env.MANTLE_SHOOT_OUT ||
   path.join(require('os').tmpdir(), 'mantle-shots', 'taskview');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
+// SHOOT_MID=1: also two shots of the unfold mid-way (<name>-unfold-a/-b.png)
+const MID = process.env.SHOOT_MID === '1';
 
 // 1536x864 is the user's 1920x1080 screen at 125%, in DIP: the size Task View really is.
 const SHOTS = [
@@ -90,6 +93,16 @@ function themeEvery(browser) {
       page.on('pageerror', (e) => problems.push('pageerror: ' + e.message));
       page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') problems.push(`console ${m.type()}: ${m.text()}`); });
       await page.goto(`${PAGE}?${q}`, { waitUntil: 'load' });
+      if (MID) {
+        // the unfold, mid-way (wave unfold 2026-10-23): ~1/4 and ~1/2 through the 'pop' open
+        await page.waitForTimeout(70);
+        await page.screenshot({ path: path.join(OUT, name + '-unfold-a.png') });
+        await page.waitForTimeout(80);
+        await page.screenshot({ path: path.join(OUT, name + '-unfold-b.png') });
+      }
+      // the shot is of the LANDED page: the unfold has opened and the boxes (sent only once it has) are in
+      await page.waitForFunction(() => { const st = document.getElementById('stage'); const m = window.__mock;
+        return st && st.dataset.unfold === 'open' && m && m.boxes && (m.boxes.length > 0 || !document.querySelector('.tile')); }, null, { timeout: 3000, polling: 30 }).catch(() => problems.push('the unfold never landed with its boxes'));
       await page.waitForTimeout(q.includes('drag') ? 420 : 260);
       await page.screenshot({ path: path.join(OUT, name + '.png') });
       const probe = await page.evaluate(() => {

@@ -160,6 +160,9 @@
   }
 
   window.__mock = { calls: [], get items() { return items; }, get desks() { return desks; }, get current() { return current; }, open: open };
+  // a test can send any event main sends (taskview.end, taskview.shown, taskview.wall, ...)
+  window.__mockEmit = function (name, payload) { emit(name, payload); };
+  window.__mockSeq = function () { return seq; };
 
   window.mantle = {
     on: function (name, cb) { (listeners[name] = listeners[name] || []).push(cb); return function () {}; },

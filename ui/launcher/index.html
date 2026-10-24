@@ -20,16 +20,22 @@
      exact same theme as the taskbar", 2026-09-21), typeface included. -->
 <link rel="stylesheet" href="../shared/tokens.css">
 <link rel="stylesheet" href="../shared/glass-light.css">
+<!-- the unfold (wave unfold, 2026-10-23): how the pane arrives and leaves. unfold.css for its timing tokens
+     (size 'pop'), unfold-live.css for the iPhone Duo look on a live pane -->
+<link rel="stylesheet" href="../shared/unfold.css">
+<link rel="stylesheet" href="../shared/unfold-live.css">
 <link rel="stylesheet" href="launcher.css">
 </head>
 <!-- no-backdrop is the honest boot state: nothing has been photographed behind this window yet,
      so the tint carries the pane alone (the thicker --lg-fill-fb). launcher.js drops it on the
      first 'launcher.backdrop' frame and puts it back when the window is hidden. `up` is the shown
-     state and the whole of the enter animation; it is added on visibilitychange. -->
+     state, added on visibilitychange; the enter itself is the unfold on #panel below. -->
 <body class="no-backdrop">
   <!-- One pane. The window itself is transparent and sized 680x460 by the main
-       process; this panel is the only thing that paints. -->
-  <main class="panel" id="panel">
+       process; this panel is the only thing that paints. It is FOLDED in the markup (the unfold,
+       ui/shared/unfold-live.js), so the very first paint is folded: no frame of an open pane before
+       the unfold. -->
+  <main class="panel unfold-live" id="panel" data-unfold="folded" data-unfold-size="pop">
 
     <!-- THE BACKDROP, and it must be the FIRST child so it paints under everything. Main sends a
          PNG of the screen behind this window once before it is shown and ~4x a second while it is
@@ -75,6 +81,8 @@
   <script src="../../lib/plain-error.js"></script>
   <!-- Win+X: Quick links, the table main also reads (lane keysrun) -->
   <script src="../../lib/quick-links.js"></script>
+  <!-- window.MantleUnfoldLive: rest / open / fold on #panel -->
+  <script src="../shared/unfold-live.js"></script>
   <script src="launcher.js"></script>
 </body>
 </html>
