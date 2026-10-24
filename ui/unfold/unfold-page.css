@@ -1,0 +1,68 @@
+/* unfold-page.css - the full-screen unfold overlay (lib/features/unfold.js; wave unfold, 2026-10-23).
+ *
+ * One page per display. It is a STAGE of still layers that never repaint while they move: the
+ * desktop's picture (sharp, at the screen's own pixels), a blurred quarter-size copy, a smeared
+ * eighth-size copy and a deep-frosted sixteenth-size copy. The page animates only transform and
+ * opacity (the compositor's two cheap properties), so a full-screen unfold costs this iGPU a few
+ * texture draws a frame instead of a 1920x1080 Gaussian blur a frame (the numbers are in
+ * lib/features/unfold.js "MEASURED").
+ *
+ * The opening is a LEAF: a box scaled from a hairline seam to the full width while the picture
+ * inside it is scaled back by the inverse, so the picture holds still in space while the screen
+ * opens around it. Outside the leaf, the same picture as Mantle's frosted glass (the deep blur
+ * under --lg-scrim), so the screen reads as Mantle's glass parting at the seam.
+ *
+ * Colours: --lg-* and the --unfold-* values only. The one exception is #stage's black: the display
+ * before it lights, which is the absence of a colour (the same in light and dark), not a UI colour. */
+
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  cursor: default;
+  user-select: none;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  opacity: 0;
+  background: #000;   /* see the header: the unlit display */
+  contain: strict;
+  pointer-events: none;
+}
+#stage[data-pose="parked"] { visibility: hidden; }
+
+.layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+img.layer, canvas.layer { object-fit: fill; }
+
+#ground, #tint, #soft, #smear, .sheen { opacity: 0; }
+#tint { background: var(--lg-scrim); }
+
+/* the leaf: its box opens from the seam; #leaf-in (the inverse scale) keeps the picture still */
+#leaf { overflow: hidden; transform: scaleX(1); }
+#leaf-in { transform: scaleX(1); }
+
+/* the edge light: a soft neutral line riding each edge of the opening, built from the glass's own
+ * edge highlight (--unfold-sheen = --lg-edge-in light, --lg-edge-strong dark: unfold.css) */
+.sheen {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--unfold-sheen-w, 56px);
+  margin-left: calc(var(--unfold-sheen-w, 56px) / -2);
+  background: linear-gradient(90deg, var(--lg-edge-0), var(--unfold-sheen) 50%, var(--lg-edge-0));
+  will-change: transform, opacity;
+}

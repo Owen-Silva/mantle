@@ -19,6 +19,8 @@
     return /ms$/.test(v) ? n : n * 1000;
   }
 
+  function reduced() { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+
   function prep(el, size) {
     el.classList.add('unfold');
     if (size) el.setAttribute('data-unfold-size', size);
@@ -36,8 +38,13 @@
         if (timer) clearTimeout(timer);
         resolve({ ok: true, state: state, timedOut: !!timedOut });
       }
+      // Only a full-length property ends it: opacity runs for 40 % of the time, so its transitionend
+      // came at 40 % and open() resolved long before the opening landed (measured, ui/unfold/pace.js).
+      // With reduced motion opacity is the only transition, so then it counts.
       function onEnd(e) {
-        if (e.target === el && (e.propertyName === 'clip-path' || e.propertyName === 'filter' || e.propertyName === 'opacity')) finish(false);
+        if (e.target !== el) return;
+        var p = e.propertyName;
+        if (p === 'clip-path' || p === 'filter' || p === 'transform' || (p === 'opacity' && reduced())) finish(false);
       }
       if (el.getAttribute('data-unfold') === state) { finish(false); return; }
       el.addEventListener('transitionend', onEnd);
