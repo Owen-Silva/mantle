@@ -52,7 +52,7 @@ img.layer, canvas.layer { object-fit: fill; }
 #ground, #tint, #soft, #smear, .sheen { opacity: 0; }
 /* the WebGL surface: shown only while it holds a frame of this play or cover (unfold-page.js) */
 #gl { visibility: hidden; }
-#tint { background: var(--lg-scrim); }
+#tint { background: var(--unfold-shade); }   /* the gl look's shade: one version, light and dark alike */
 
 /* the leaf: its box opens from the seam; #leaf-in (the inverse scale) keeps the picture still */
 #leaf { overflow: hidden; transform: scaleX(1); }

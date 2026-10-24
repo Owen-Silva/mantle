@@ -1,7 +1,7 @@
 require('../../tools/dev-env.js').lowcpu();
 /* shoot.js - headless screenshots of the full-screen unfold (the iPhone Duo look, WebGL), held at chosen
  * moments, and a labelled strip of them (lane unfold-unlock, 2026-10-23). ONE version: the effect is
- * the screen content itself, tinted Mantle indigo, with no light/dark variant.
+ * the screen content itself, lightly darkened with a faint trace of Mantle indigo, no light/dark variant.
  *
  * Line 1 is the machine-wide CPU cap and browser lock (one headless browser at a time). It is
  * required, not optional.
@@ -32,7 +32,7 @@ const LAUNCHER = pathToFileURL(path.join(__dirname, '..', 'launcher', 'index.htm
 const MOCK = path.join(__dirname, 'mock-mantle.js');
 const OUT = process.env.MANTLE_SHOOT_OUT || path.join(require('os').tmpdir(), 'mantle-shots', 'unfold');
 const VIEW = { width: 1536, height: 864 }, DPR = 1.25;     // 1920 x 1080 pixels, as on Owen's screen
-const PLAY_AT = [0, 0.1, 0.25, 0.5, 0.75, 1.0];
+const PLAY_AT = [0, 0.1, 0.25, 0.5, 0.62, 0.75, 0.9, 1.0];   // 0.62: the leaf lands (blur and dimming still on); 0.75: releasing
 const LAUNCHER_RECT = { x: 620, y: 310, w: 680, h: 460 };  // where mock-mantle.js (launcher) puts the panel over a 1920x1080 scene
 
 /* ---- the drawn desktop (runs in a page; returns a PNG data URL at W x H pixels) ------------------- */

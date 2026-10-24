@@ -20,24 +20,34 @@
  * Every animated op ends on a timer too (its duration + 400 ms), so a page that gets no frames (hidden
  * window, GPU stall) can never leave the screen covered: the end pose is set by hand.
  *
- * THE LOOK (Owen, 2026-10-23: exactly the iPhone Duo, tinted Mantle indigo, one version; the shared
- * description is in ui/shared/unfold.css). A vertical hinge in the centre. The RIGHT half is the fixed
- * half: in place from the first frame, sharp, lit up out of the black and darker at first, brightening
- * as the screen opens. The LEFT half swings open around the hinge: its visible width is the front view
- * of a panel turning flat (sin of the swing). The picture is ONE image fixed in space; the halves are
- * windows onto it. On the moving half the blur is per pixel: radius = cap x strength x d^3, d = 0 at
- * the hinge and 1 at the moving free edge (the panel's own coordinate, so the free edge always carries
- * the most), cap --unfold-edge-blur (72 px of the picture), strength = smoothstep(1 - swing) (the Duo
- * recreation: full at the start of the swing, 0 as it lands). AFTER the blur, the same pixel darkens
- * toward the indigo shade by min(1, 2 x strength x d^3) on top of the whole inner screen's darkening
- * (--unfold-dark-cover x strength, both halves, so the hinge has no seam). Endpoints are sharp at full brightness.
- * The cover (look-away) folds the whole screen into blur the same way, the outer edges first, the
- * hinge last, ending evenly out of focus and shaded.
+ * THE LOOK (Owen, 2026-10-23: LITERALLY the iPhone Duo, premium; after seeing it live: "way too blue",
+ * "the blur showed steps", "more transparent so you can see the outline of the background"; the shared
+ * description is in ui/shared/unfold.css; the numbers come from Apple's own clips, measured in
+ * the wave's duo-ref notes, SPEC.md). A vertical hinge in the centre. The RIGHT half is the
+ * fixed half: in place from the first frame, sharp, lit up out of the black and then at full
+ * brightness throughout, as in Apple's clips. The LEFT half (the leaf) swings open around the hinge:
+ * its visible width is the front view of a panel turning flat (sin of the swing, --unfold-hinge fitted
+ * to the footage's widths: a slow first frames, fastest early, a long soft landing). The picture is ONE
+ * image fixed in space; the halves are windows onto it. On the leaf the blur is per pixel: radius =
+ * cap x strength x d, d = 0 at the hinge and 1 at the free edge (the panel's own coordinate; the
+ * footage's profile is close to linear), cap --unfold-edge-blur (3.3 % of the width). AFTER the blur
+ * the leaf dims by distance from the hinge as measured (a gentle slope, steep in the outer quarter, its
+ * free edge at --unfold-dark, never black), a NEUTRAL multiply toward black: the real Duo has no tint
+ * (--unfold-shade is black). Outlines read through it at every moment. The leaf LANDS with its blur
+ * (LAND_BLUR of it) and dimming still on, and they release together over about 0.35 s after the
+ * landing, as the footage shows; then the stage dissolves into the live screen. Endpoints are sharp at
+ * full brightness. The cover (look-away) folds the whole screen into blur, the outer edges first, the
+ * hinge last, ending evenly out of focus and lightly dimmed (--unfold-dark-blur), neutral too.
  *
  * TECHNIQUE 'gl' (shipped): WebGL. The picture is uploaded once and blurred ONCE, on the GPU, into 12
- * levels (2 px to 72 px, each a factor of about 1.4, each at the smallest size that keeps it smooth)
- * packed into one atlas texture; every frame is then one full-screen draw that picks the two levels
- * around its pixel's radius and blends them (3 texture reads a pixel). No blur is computed per frame.
+ * levels (1.4 px to 150 px, each a factor of about 1.4, each at the smallest size that keeps 2.5 texels
+ * per sigma, so reading it back between texels stays under one 8-bit step); every frame is then one
+ * full-screen draw. Each pixel blends THREE neighbouring levels with quadratic B-spline weights over a
+ * smooth level index (u = log_1.41(1 + r/2) - 1/2; u = -1/2, the sharp picture alone, at r = 0): the
+ * weights and their slopes are continuous, so the blur grows as one smooth gradient with no band where
+ * one level hands over to the next (a straight blend of two levels showed one at every level), and the
+ * dimmed picture is dithered by under half an 8-bit step so a slow ramp shows no contour lines. The
+ * sharp half reads one texel, the moving half three. No blur is computed per frame.
  * The programs are built and run once at page load (and again after the graphics card resets, which
  * waking from sleep can do), so the first unlock pays no shader compile; each play draws its first
  * frame and waits for the GPU before the clock starts.
@@ -60,10 +70,17 @@
   var LAYERS = [stage, ground, tint, leaf, leafIn, sharp, soft, smear, sheenL, sheenR];
 
   var SEAM = 0.006;        // layers: the opening starts as a hairline (0.6 % of the width)
-  var OPEN_END = 0.80;     // the opening lands at 80 % of the time; the rest is focus and the hand-over
-  var HANDOVER = 0.74;     // from here the stage dissolves into the live screen
-  var APPEAR = 0.12;       // gl: the fixed half lights up out of the black over the first 12 %
-  var COVER_TINT = 0.55;   // layers: how much of the glass tint the covered screen wears
+  // the timeline, as the real Duo (duo-ref SPEC: Apple's own clips): the leaf swings open and LANDS at
+  // OPEN_END with its blur and dimming still on; they release together after the landing, over about
+  // 0.35 s, ending at RELEASE_END; the stage dissolves into the live screen from HANDOVER
+  var OPEN_END = 0.62;     // gl: the leaf lands at 62 % of --unfold-full-ms (layers: the opening's end)
+  var RELEASE_END = 0.93;  // gl: blur and dimming fully released (sharp, full brightness)
+  var HANDOVER = 0.86;     // from here the stage dissolves into the live screen
+  var APPEAR = 0.065;      // gl: the screen lights up out of the black over the first 6.5 % (about 70 ms)
+  var LAND_BLUR = 0.7;     // gl: the blur still on the landed leaf, of its start (the footage: 1.3-3.3 % of the width)
+  // layers: how much of the shade the covered screen and the not-yet-open screen wear (the gl look's values)
+  function coverTint() { return num('--unfold-dark-blur', 0.24); }
+  function playTint() { return num('--unfold-dark', 0.45); }
   var HARD_PAD = 400;      // every animated op ends by its duration + this, frames or not
   var BLACK_MAX = 8;       // a picture whose small copy is darker than this everywhere is a black capture
   var VSYNC = 1000 / 60;   // this laptop's panel; a median of the deltas lies when many frames drop
@@ -174,8 +191,12 @@
 
   /* ---- gl: the Duo, per pixel ----------------------------------------------------------------- */
 
-  var LEVELS = [2, 2.83, 4, 5.66, 8, 11.31, 16, 22.63, 32, 45.25, 64, 72];   // blur sigma, px of the picture
-  var NL = LEVELS.length;
+  // the blur levels: index 0 is the sharp picture, index k >= 1 the picture blurred by SIG(k) px (of the
+  // picture): 1.36, 2.76, 4.73, 7.51, 11.5, 17.0, 24.9, 36.1, 51.8, 74.1. Level 1 has its own full-size
+  // texture; levels 2..NLV are packed into the atlas, each at LV_K texels per sigma.
+  var LV_A = 2, LV_Q = Math.SQRT2, NLV = 12, LV_K = 2.5;   // 11, 12: 105, 150 px (a 4K screen's scaled cap)
+  function SIG(k) { return LV_A * (Math.pow(LV_Q, k + 0.5) - 1); }
+  var NA = NLV - 1;
   var GUT = 2;             // atlas texels between levels
   var VS = 'attribute vec2 aP; varying vec2 v; void main() { v = aP * 0.5 + 0.5; gl_Position = vec4(aP, 0.0, 1.0); }';
   // one pass of a separable Gaussian: a region of the source (uFrom, uv) onto the whole viewport;
@@ -193,7 +214,7 @@
     '  float n = ceil(uSigma * 3.0);',
     '  vec3 acc = vec3(0.0);',
     '  float ws = 0.0;',
-    '  for (int i = -8; i <= 8; i++) {',
+    '  for (int i = -12; i <= 12; i++) {',
     '    float fi = float(i);',
     '    float w = abs(fi) <= n ? exp(-0.5 * fi * fi / (uSigma * uSigma)) : 0.0;',
     '    acc += texture2D(uSrc, clamp(c + uStep * fi, uFrom.xy + uHalfT, uFrom.zw - uHalfT)).rgb * w;',
@@ -201,67 +222,81 @@
     '  }',
     '  gl_FragColor = vec4(acc / ws, 1.0);',
     '}'].join('\n');
-  // the frame: the radius and the darkening of this pixel, the two levels around the radius blended,
-  // then the darkening toward the shade (after the blur), then the moving half's free edge
+  // the frame: this pixel's radius and darkening, three neighbouring levels blended (quadratic B-spline
+  // over the smooth level index), then the darkening (after the blur), the free edge, and a dither
   var FS_FRAME = [
     'precision highp float;',
     'varying vec2 v;',
     'uniform sampler2D uSharp;',
     'uniform sampler2D uAtlas;',
-    'uniform float uSig[' + NL + '];',
-    'uniform vec4 uBox[' + NL + '];',
+    'uniform sampler2D uLv1;',
+    'uniform vec4 uBox[' + NA + '];',
     'uniform vec2 uHalfA;',
     'uniform vec2 uSize;',
     'uniform vec4 uPlay;',     // open (0..1 of the half), strength, the inner screen's darkening (both halves), its light
     'uniform vec4 uCover;',    // mode (0 play, 1 cover), fold 0..1, blur at full fold (px), darkening at full fold
-    'uniform vec2 uEdge;',     // blur cap (px), darkening gain
+    'uniform vec4 uEdge;',     // blur cap (px), dimming gain, dimming cap at the free edge, the dimming left (release)
+    'uniform vec2 uMap;',      // 1 / LV_A, 1 / log2(LV_Q): radius -> level index
     'uniform vec3 uShade;',
-    'vec3 lvl(vec4 b) { return texture2D(uAtlas, clamp(mix(b.xy, b.zw, v), b.xy + uHalfA, b.zw - uHalfA)).rgb; }',
+    // level i (0 the sharp picture, 1 its own texture, 2..NLV in the atlas), edges extended
+    'vec3 lev(float i) {',
+    '  if (i < 0.5) return texture2D(uSharp, v).rgb;',
+    '  if (i < 1.5) return texture2D(uLv1, v).rgb;',
+    '  vec4 b = uBox[0];',
+    '  for (int k = 1; k < ' + NA + '; k++) { if (abs(float(k + 2) - i) < 0.5) b = uBox[k]; }',
+    '  return texture2D(uAtlas, clamp(mix(b.xy, b.zw, v), b.xy + uHalfA, b.zw - uHalfA)).rgb;',
+    '}',
+    // 1 - (1 - x)^2: rises like x, eases into 1 with no corner (a min() corner reads as a band)
+    'float sat(float x) { x = clamp(x, 0.0, 1.0); return x * (2.0 - x); }',
     'void main() {',
     '  float hw = uSize.x * 0.5;',
     '  float x = v.x * uSize.x;',
     '  float r = 0.0;',
-    '  float k = 0.0;',
+    '  float kb = 0.0;',          // neutral darkening (toward black)
+    '  float ke = 0.0;',          // the edge darkening (toward the shade: the faint indigo)
     '  float a = 1.0;',
+    '  vec3 shade = uShade;',
     '  if (uCover.x < 0.5) {',
-    '    k = uPlay.z;',
+    '    kb = uPlay.z;',
     '    a = uPlay.w;',
     '    if (x < hw) {',
     '      float w = uPlay.x * hw;',
     '      float dpx = hw - x;',
     '      a *= clamp(w - dpx + 0.5, 0.0, 1.0);',
     '      float d = clamp(dpx / max(w, 1.0), 0.0, 1.0);',
-    '      float g = uPlay.y * d * d * d;',
-    '      r = min(uEdge.x, uEdge.x * g);',
-    '      k = 1.0 - (1.0 - k) * (1.0 - min(1.0, uEdge.y * g));',   // the moving half: the inner screen's darkening, deepening toward its free edge
+    '      r = uEdge.x * uPlay.y * d;',   // the footage: closer to linear than cubic, sharp at the hinge
+    // the leaf's dimming by distance from the hinge, measured on Apple's clip at the landing (gain 0.92
+    // 0.88 0.85 0.82 0.80 0.68 0.43 at d 0.07 .. 0.89): a gentle slope, steep in the outer quarter
+    '      float e = 0.45 * d + 0.55 * d * d * d * d;',
+    '      ke = uEdge.z * uEdge.w * clamp(uEdge.y * e, 0.0, 1.0);',
     '    }',
     '  } else {',
     '    float d = min(1.0, abs(x - hw) / hw);',
     '    float u = uCover.y;',
-    '    float g = min(1.0, 2.0 * u * mix(d * d * d, 1.0, u));',
+    '    float g = sat(2.0 * u * mix(d * d * d, 1.0, u));',
     '    r = uCover.z * g;',
-    '    k = uCover.w * g;',
+    '    ke = uCover.w * g;',
     '  }',
-    '  vec4 bl = uBox[' + (NL - 1) + '];',
-    '  vec4 bh = uBox[' + (NL - 1) + '];',
-    '  float f = 0.0;',
-    '  float fromSharp = 0.0;',
-    '  if (r < uSig[0]) { bl = uBox[0]; bh = uBox[0]; f = r / uSig[0]; fromSharp = 1.0; }',
+    '  vec3 c;',
+    '  if (r <= 0.0) c = texture2D(uSharp, v).rgb;',
     '  else {',
-    '    for (int i = 0; i < ' + (NL - 1) + '; i++) {',
-    '      if (r >= uSig[i] && r < uSig[i + 1]) { bl = uBox[i]; bh = uBox[i + 1]; f = (r - uSig[i]) / (uSig[i + 1] - uSig[i]); }',
-    '    }',
+    '    float u = clamp(log2(1.0 + r * uMap.x) * uMap.y - 0.5, -0.5, ' + NLV + '.0);',
+    '    float i0 = floor(u + 0.5);',
+    '    float t = u - i0;',
+    '    float wa = 0.5 * (0.5 - t) * (0.5 - t);',
+    '    float wb = 0.75 - t * t;',
+    '    c = lev(max(i0 - 1.0, 0.0)) * wa + lev(i0) * wb + lev(min(i0 + 1.0, ' + NLV + '.0)) * (1.0 - wa - wb);',
     '  }',
-    '  vec3 s = texture2D(uSharp, v).rgb;',
-    '  vec3 lo = lvl(bl);',
-    '  vec3 hi = lvl(bh);',
-    '  vec3 c = mix(mix(lo, s, fromSharp), mix(hi, lo, fromSharp), f);',
-    '  c = mix(c, uShade, k);',
-    '  gl_FragColor = vec4(c * a, 1.0);',
+    '  c = mix(c * (1.0 - kb), shade, ke) * a;',
+    // under half an 8-bit step of fixed noise wherever the picture is changed (a sharp, unshaded
+    // pixel is left exact, so the hand-over to the live screen cannot shift by a step)
+    '  float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));',
+    '  float touched = step(1e-4, r + kb + ke + (1.0 - a));',
+    '  gl_FragColor = vec4(c + touched * (n - 0.5) * 0.98 / 255.0, 1.0);',
     '}'].join('\n');
 
   var G = { gl: null, ok: false, why: null, lost: false, ready: false, P: null, L: null, buf: null,
-    sharp: null, atlas: null, atlasF: null, scratch: null, scratchF: null, warmMs: null, builds: 0, last: null };
+    sharp: null, lv1: null, lv1F: null, atlas: null, atlasF: null, scratch: null, scratchF: null, warmMs: null, builds: 0, last: null };
   var NO_GL = 'the graphics card did not offer the drawing the full unfold needs, so the simpler unfold plays';
 
   function glInit() {
@@ -290,7 +325,7 @@
       };
       G.P = {
         blur: prog(FS_BLUR, ['uSrc', 'uFrom', 'uHalfT', 'uStep', 'uSigma']),
-        frame: prog(FS_FRAME, ['uSharp', 'uAtlas', 'uSig', 'uBox', 'uHalfA', 'uSize', 'uPlay', 'uCover', 'uEdge', 'uShade']),
+        frame: prog(FS_FRAME, ['uSharp', 'uAtlas', 'uLv1', 'uBox', 'uHalfA', 'uSize', 'uPlay', 'uCover', 'uEdge', 'uMap', 'uShade']),
       };
       G.buf = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, G.buf);
@@ -315,29 +350,28 @@
   });
   glCanvas.addEventListener('webglcontextrestored', function () {
     G.lost = false;
-    G.sharp = G.atlas = G.atlasF = G.scratch = G.scratchF = null;   // everything died with the old context
+    G.sharp = G.lv1 = G.lv1F = G.atlas = G.atlasF = G.scratch = G.scratchF = null;   // everything died with the old context
     if (glInit()) glWarm();
   });
 
-  /** where each level sits in the atlas: smallest smooth size (a sigma of about 2 texels, at most half
-   * size), packed top-down in columns as tall as the first three */
+  /** each level's size (the smallest that keeps LV_K texels per sigma, at most full size) and, for
+   * levels 2..NLV, its place in the atlas: packed top-down in columns as tall as level 2 */
   function layout(W, H) {
     var f = 1;
     for (var tries = 0; tries < 6; tries++) {
-      var lv = [], colH = 0;
-      LEVELS.forEach(function (s, i) {
-        var sc = Math.min(0.5, 2 / s) * f;
-        lv.push({ sig: s, sc: sc, w: Math.max(1, Math.round(W * sc)), h: Math.max(1, Math.round(H * sc)) });
-        if (i < 3) colH += lv[i].h + GUT;
-      });
-      var x = 0, y = 0, colW = 0, AH = 0;
-      lv.forEach(function (l) {
+      var lv = [];
+      for (var k = 1; k <= NLV; k++) {
+        var sg = SIG(k), sc = Math.min(1, LV_K / sg) * f;
+        lv.push({ sig: sg, sc: sc, w: Math.max(1, Math.round(W * sc)), h: Math.max(1, Math.round(H * sc)) });
+      }
+      var colH = lv[1].h, x = 0, y = 0, colW = 0, AH = 0;
+      lv.slice(1).forEach(function (l) {
         if (y > 0 && y + l.h > colH) { x += colW + GUT; y = 0; colW = 0; }
         l.x = x; l.y = y; y += l.h + GUT; colW = Math.max(colW, l.w); AH = Math.max(AH, l.y + l.h);
       });
       var AW = x + colW;
-      if (AW <= G.max && AH <= G.max) return { lv: lv, AW: AW, AH: AH, W: W, H: H, f: f };
-      f *= Math.min(G.max / AW, G.max / AH) * 0.98;
+      if (AW <= G.max && AH <= G.max && lv[0].w <= G.max && lv[0].h <= G.max) return { lv: lv, AW: AW, AH: AH, W: W, H: H, f: f };
+      f *= Math.min(G.max / AW, G.max / AH, G.max / lv[0].w, G.max / lv[0].h) * 0.98;
     }
     throw new Error('the screen is too large for the graphics card');
   }
@@ -373,13 +407,15 @@
   }
 
   /** the picture (an image, or null for the load-time warm-up at the screen's size) onto the GPU and
-   * blurred into the atlas; ends with a 1-pixel read so the GPU has really done it */
+   * blurred into level 1 and the atlas; ends with a 1-pixel read so the GPU has really done it. The
+   * scratch (the across pass's target) is freed again at the end: only the levels stay. */
   function glBuild(src, W, H) {
     var gl = G.gl, P = G.P;
     glFree();
     var L = layout(W, H);
     G.L = L;
     G.sharp = texture(W, H, src);
+    G.lv1 = texture(L.lv[0].w, L.lv[0].h, null); G.lv1F = target(G.lv1);
     G.atlas = texture(L.AW, L.AH, null); G.atlasF = target(G.atlas);
     var SW = L.lv[0].w, SH = H;
     G.scratch = texture(SW, SH, null); G.scratchF = target(G.scratch);
@@ -397,32 +433,38 @@
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     };
     var prev = null;   // the level the next one is blurred from (null: the sharp picture)
-    L.lv.forEach(function (l) {
+    L.lv.forEach(function (l, i) {
       var sIn = prev ? prev.sc : 1, sigPrev = prev ? prev.sig : 0;
       var add = Math.sqrt(Math.max(0.01, l.sig * l.sig - sigPrev * sigPrev)) * sIn;   // in the source's texels
-      var srcTex = prev ? G.atlas : G.sharp, tw = prev ? L.AW : W, th = prev ? L.AH : H;
-      var from = prev ? [prev.x / L.AW, prev.y / L.AH, (prev.x + prev.w) / L.AW, (prev.y + prev.h) / L.AH] : [0, 0, 1, 1];
-      var hIn = prev ? prev.h : H;
+      var srcTex = G.sharp, tw = W, th = H, from = [0, 0, 1, 1], hIn = H;
+      if (i === 1) { srcTex = G.lv1; tw = prev.w; th = prev.h; hIn = prev.h; }
+      else if (i > 1) {
+        srcTex = G.atlas; tw = L.AW; th = L.AH; hIn = prev.h;
+        from = [prev.x / L.AW, prev.y / L.AH, (prev.x + prev.w) / L.AW, (prev.y + prev.h) / L.AH];
+      }
       // across: the source region onto the scratch at the level's width and the source's height
       pass(srcTex, tw, th, from, [1, 0], add, G.scratchF, 0, 0, l.w, hIn);
-      // down: the scratch onto the level's place in the atlas
-      pass(G.scratch, SW, SH, [0, 0, l.w / SW, hIn / SH], [0, 1], add, G.atlasF, l.x, l.y, l.w, l.h);
+      // down: the scratch onto level 1's own texture, or the level's place in the atlas
+      if (i === 0) pass(G.scratch, SW, SH, [0, 0, l.w / SW, hIn / SH], [0, 1], add, G.lv1F, 0, 0, l.w, l.h);
+      else pass(G.scratch, SW, SH, [0, 0, l.w / SW, hIn / SH], [0, 1], add, G.atlasF, l.x, l.y, l.w, l.h);
       prev = l;
     });
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(G.scratchF); gl.deleteTexture(G.scratch); G.scratch = G.scratchF = null;
     gl.useProgram(P.frame.p);
-    gl.uniform1i(P.frame.uSharp, 0); gl.uniform1i(P.frame.uAtlas, 1);
-    gl.uniform1fv(P.frame.uSig, new Float32Array(LEVELS));
-    var box = new Float32Array(NL * 4);
-    L.lv.forEach(function (l, i) { box.set([l.x / L.AW, l.y / L.AH, (l.x + l.w) / L.AW, (l.y + l.h) / L.AH], i * 4); });
+    gl.uniform1i(P.frame.uSharp, 0); gl.uniform1i(P.frame.uAtlas, 1); gl.uniform1i(P.frame.uLv1, 2);
+    var box = new Float32Array(NA * 4);
+    L.lv.slice(1).forEach(function (l, i) { box.set([l.x / L.AW, l.y / L.AH, (l.x + l.w) / L.AW, (l.y + l.h) / L.AH], i * 4); });
     gl.uniform4fv(P.frame.uBox, box);
     gl.uniform2f(P.frame.uHalfA, 0.5 / L.AW, 0.5 / L.AH);
-    var shade = hexRgb(cssVar('--unfold-shade'), [0x14 / 255, 0x10 / 255, 0x46 / 255]);
+    gl.uniform2f(P.frame.uMap, 1 / LV_A, 1 / Math.log2(LV_Q));
+    var shade = hexRgb(cssVar('--unfold-shade'), [0, 0, 0]);
     gl.uniform3f(P.frame.uShade, shade[0], shade[1], shade[2]);
     var dpr = W / Math.max(1, innerWidth);
-    G.cover = { blur: num('--unfold-cover-blur', 30) * dpr, dark: num('--unfold-dark-blur', 0.5) };
-    G.edge = { blur: Math.min(72, num('--unfold-edge-blur', 72)), dark: num('--unfold-edge-dark', 2) };
-    G.darkFixed = num('--unfold-dark-cover', 0.34);
+    G.cover = { blur: num('--unfold-cover-blur', 30) * dpr, dark: num('--unfold-dark-blur', 0.24) };
+    // the cap is px of a 1920-wide picture (3.3 % of the width, the footage's most), scaled to this one
+    G.edge = { blur: Math.min(SIG(NLV) * 0.95, num('--unfold-edge-blur', 64) * W / 1920), gain: num('--unfold-edge-dark', 1), cap: num('--unfold-dark', 0.6) };
+    G.darkFixed = num('--unfold-dark-cover', 0.12);
     G.ready = true; G.builds++;
     glSync();
   }
@@ -439,9 +481,10 @@
     gl.useProgram(P.frame.p);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, G.sharp);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, G.atlas);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, G.lv1);
     gl.activeTexture(gl.TEXTURE0);
     gl.uniform2f(P.frame.uSize, glCanvas.width, glCanvas.height);
-    gl.uniform2f(P.frame.uEdge, G.edge.blur, G.edge.dark);
+    gl.uniform4f(P.frame.uEdge, G.edge.blur, G.edge.gain, G.edge.cap, f.dark == null ? (f.strength || 0) : f.dark);
     gl.uniform4f(P.frame.uPlay, f.open || 0, f.strength || 0, f.fixedDark || 0, f.fixedLight == null ? 1 : f.fixedLight);
     gl.uniform4f(P.frame.uCover, f.cover ? 1 : 0, f.fold || 0, G.cover.blur, G.cover.dark);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -452,9 +495,9 @@
   function glFree() {
     var gl = G.gl;
     if (!gl) return;
-    [G.atlasF, G.scratchF].forEach(function (f) { if (f) gl.deleteFramebuffer(f); });
-    [G.sharp, G.atlas, G.scratch].forEach(function (t) { if (t) gl.deleteTexture(t); });
-    G.sharp = G.atlas = G.atlasF = G.scratch = G.scratchF = null;
+    [G.lv1F, G.atlasF, G.scratchF].forEach(function (f) { if (f) gl.deleteFramebuffer(f); });
+    [G.sharp, G.lv1, G.atlas, G.scratch].forEach(function (t) { if (t) gl.deleteTexture(t); });
+    G.sharp = G.lv1 = G.lv1F = G.atlas = G.atlasF = G.scratch = G.scratchF = null;
     G.ready = false;
   }
 
@@ -498,11 +541,16 @@
     });
   }
 
-  /** the unfold at time t (0..1 of its duration) */
+  /** what is left of the blur and dimming x (0..1) of the way through the release: flat at the landing
+   * (no corner), then falling a little faster toward the end, as the footage (0.43 -> 0.57 -> 0.72 -> 1
+   * at the free edge in thirds of the release) */
+  function release(x) { x = clamp(x); return 1 - x * x * (1.6 - 0.6 * x); }
+  /** the unfold at time t (0..1 of its duration): open (the leaf's visible width, 0..1 of the half),
+   * strength (the blur, 0..1 of the cap), dark (the leaf's dimming, 0..1 of its profile) */
   function playFrame(t) {
-    var swing = E.hinge(clamp(t / OPEN_END)), str = smooth(1 - swing);
-    return { cover: false, t: t, open: Math.sin(swing * Math.PI / 2), strength: str,
-      fixedDark: (G.darkFixed == null ? 0.34 : G.darkFixed) * str, fixedLight: E.fadeIn(span(t, 0, APPEAR)),
+    var swing = E.hinge(clamp(t / OPEN_END)), R = release(span(t, OPEN_END, RELEASE_END));
+    return { cover: false, t: t, open: Math.sin(swing * Math.PI / 2), strength: (1 - (1 - LAND_BLUR) * swing) * R, dark: R,
+      fixedDark: (G.darkFixed == null ? 0 : G.darkFixed) * R, fixedLight: E.fadeIn(span(t, 0, APPEAR)),
       stage: 1 - E.fadeOut(span(t, HANDOVER, 1)) };
   }
   function coverFrame(u, stageOp) { return { cover: true, fold: clamp(u), stage: stageOp == null ? 1 : stageOp }; }
@@ -693,14 +741,14 @@
 
   function unfoldTracks(D) {
     var W = innerWidth;
-    var stretch = num('--unfold-full-stretch', 1.06);
+    var stretch = num('--unfold-full-stretch', 1.06), tintMax = playTint();
     var open = function (t) { return E.spring(clamp(t / OPEN_END)); };
     var p = function (t) { return SEAM + (1 - SEAM) * open(t); };
     var sheenOp = function (t) { return E.fadeIn(span(t, 0, 0.1)) * (1 - E.fadeIn(span(t, 0.42, 0.84))); };
     return [
       [stage, function (t) { return { opacity: 1 - E.fadeOut(span(t, HANDOVER, 1)) }; }],
       [ground, function (t) { return { opacity: E.fadeIn(span(t, 0, 0.22)) }; }],
-      [tint, function (t) { return { opacity: E.fadeIn(span(t, 0, 0.22)) }; }],
+      [tint, function (t) { return { opacity: tintMax * E.fadeIn(span(t, 0, 0.22)) }; }],
       [leaf, function (t) { return { transform: 'scaleX(' + p(t).toFixed(5) + ')' }; }],
       [leafIn, function (t) { return { transform: 'scaleX(' + (1 / p(t)).toFixed(5) + ')' }; }],
       [smear, function (t) { return { opacity: 0.85 * (1 - E.fadeIn(span(t, 0, 0.5))), transform: 'scaleX(' + (1 + (stretch - 1) * (1 - open(t))).toFixed(5) + ')' }; }],
@@ -711,11 +759,11 @@
   }
 
   function coverTracks() {
-    var stretch = 1 + (num('--unfold-full-stretch', 1.06) - 1) * 0.5;
+    var stretch = 1 + (num('--unfold-full-stretch', 1.06) - 1) * 0.5, ct = coverTint();
     return [
       [soft, function (t) { return { opacity: E.fadeIn(span(t, 0, 0.7)), transform: 'scaleX(' + (1 + (stretch - 1) * E.fadeIn(t)).toFixed(5) + ')' }; }],
       [ground, function (t) { return { opacity: E.fadeIn(span(t, 0.25, 1)), transform: 'scaleX(' + (1 + (stretch - 1) * E.fadeIn(t)).toFixed(5) + ')' }; }],
-      [tint, function (t) { return { opacity: COVER_TINT * E.fadeIn(span(t, 0.25, 1)) }; }],
+      [tint, function (t) { return { opacity: ct * E.fadeIn(span(t, 0.25, 1)) }; }],
     ];
   }
 
@@ -833,13 +881,13 @@
           pose('covering', [[stage, { opacity: 1 }]]);
           return glFirst(coverFrame(0)).then(function () {
             if (S.op !== c) return null;
-            var curve = reduced() ? function (t) { return t; } : E.hinge;
+            var curve = reduced() ? function (t) { return t; } : E.fadeIn;   // eases into the covered state
             return run('covering', reduced() ? 120 : F, [], null, false, function (t) { show(coverFrame(curve(t))); });
           });
         }
         hideGl();
         pose('covering', [[stage, { opacity: 1 }]].concat(OPEN_SHARP));
-        if (reduced()) return run('covering', 120, [[ground, function (t) { return { opacity: t }; }], [tint, function (t) { return { opacity: COVER_TINT * t }; }]], null);
+        if (reduced()) return run('covering', 120, [[ground, function (t) { return { opacity: t }; }], [tint, function (t) { return { opacity: coverTint() * t }; }]], null);
         return run('covering', F, coverTracks(), null);
       }).then(function (r) {
         if (!r) return null;
