@@ -366,9 +366,17 @@ async function main() {
       await page.waitForFunction(() => document.getElementById('stage').dataset.pose === 'covering' && window.__unfold.state().running > 0, null, { timeout: 8000 });
       const cf = await page.evaluate(() => window.__unfold.freeze(0.05, true));   // the fold eases in fast: 5 % is early in it
       const cHinge = await look(hx + 4), cEdge = await look(12);
+      // half way through its duration the fold is still moving (it used to reach the end at ~30 % and stand still)
+      const rowAll = () => page.evaluate((v) => window.__unfold.probe(v[0], v[1], v[2]), [y, 0, W]);
+      const mf = await page.evaluate(() => window.__unfold.freeze(0.5, true));
+      const midRow = await rowAll();
       await page.evaluate(() => window.__unfold.freeze(null));
       a = await answer(page, cs, 4000);
       const eHinge = await look(hx + 4), eEdge = await look(12);
+      const endRow = await rowAll();
+      const rowDiff = midRow && endRow && midRow.length === endRow.length ? midRow.reduce((t, p, i) => t + Math.abs(p[1] - endRow[i][1]), 0) / midRow.length : null;
+      console.log(`  cover at 50 % (fold ${mf.frame.fold.toFixed(3)}): mean |difference| from the covered frame ${rowDiff == null ? 'n/a' : rowDiff.toFixed(2)} levels`);
+      check('cover at 50 %: still moving (the frame is not yet the covered one)', mf.frame.fold < 1 && rowDiff != null && rowDiff >= 0.5, JSON.stringify([mf.frame.fold, rowDiff]));
       console.log(`  cover at 5 % (fold ${cf.frame.fold.toFixed(3)}): hinge ${JSON.stringify(cHinge)}, edge ${JSON.stringify(cEdge)}; covered: hinge ${JSON.stringify(eHinge)}, edge ${JSON.stringify(eEdge)}`);
       check('cover mid-fold: the edges blur first (flatter at the edge than at the hinge)', cHinge && cEdge && cEdge.c < cHinge.c, JSON.stringify([cHinge && cHinge.c, cEdge && cEdge.c]));
       check('covered: evenly out of focus (no stripes at the hinge or the edge)', a.msg && a.msg.ok === true && eHinge && eEdge && eHinge.c < 8 && eEdge.c < 8, JSON.stringify([eHinge, eEdge]));

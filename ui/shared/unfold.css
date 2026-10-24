@@ -49,11 +49,11 @@
 
   /* the full-screen page only (ui/unfold/, WebGL), from Apple's own clips (duo-ref SPEC.md): the swing
      of the leaf (fitted to the footage's leaf widths: slow first frames, fastest early, a long soft
-     landing), the blur at its free edge in px of a 1920-wide picture (3.3 % of the width, the most the
+     landing), the blur at its free edge in px of a 1920-wide picture (2.5 % of the width, under the most the
      footage shows; scaled to the screen's width; sharp at the hinge, rising a little faster than linear),
      and the dimming profile's gain (1 = as measured on the landed leaf) */
   --unfold-hinge: cubic-bezier(.2, .1, .05, .4);
-  --unfold-edge-blur: 64px;
+  --unfold-edge-blur: 48px;
   --unfold-edge-dark: 1;
 
   --unfold-fold-ms:    420ms;  /* open -> blurred (look-away): the same motion folding shut */
