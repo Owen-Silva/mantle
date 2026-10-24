@@ -3,8 +3,6 @@
  * pose.js - which way a head points, from what MediaPipe hands back (lane lookaway, 2026-10-23).
  * Pure: no DOM, no camera. Loaded by the hidden detector page AND required by node tests.
  *
- *   fromMatrix(data16)   the face landmarker's facial transformation matrix (4x4, column-major,
- *                        the canonical face model -> camera) -> { yaw, pitch, roll } in degrees
  *   fromKeypoints(kp)    the face detector's six keypoints (normalised x/y: right eye, left eye,
  *                        nose tip, mouth, right ear, left ear) -> { yaw, pitch } in rough degrees
  *
@@ -17,17 +15,6 @@
   else root.LookawayPose = api;
 }(typeof self !== 'undefined' ? self : this, () => {
   const DEG = 180 / Math.PI;
-
-  function fromMatrix(m) {
-    if (!m || m.length < 16) return null;
-    // column-major: R[row][col] = m[col * 4 + row]
-    const r00 = m[0], r10 = m[1], r20 = m[2], r21 = m[6], r22 = m[10];
-    const yaw = Math.atan2(-r20, Math.hypot(r21, r22)) * DEG;
-    const pitch = Math.atan2(r21, r22) * DEG;
-    const roll = Math.atan2(r10, r00) * DEG;
-    if (![yaw, pitch, roll].every(Number.isFinite)) return null;
-    return { yaw, pitch, roll };
-  }
 
   /*
    * Six points are not a head model, so this is a proxy that is monotonic in the real angles over
@@ -56,5 +43,5 @@
     return { yaw, pitch };
   }
 
-  return { fromMatrix, fromKeypoints };
+  return { fromKeypoints };
 }));
