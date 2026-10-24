@@ -7,29 +7,51 @@
  *   MantleUnfoldLive.ms(el, { size })           the duration it plays for (reduced motion: the fade)
  *
  * size: 'full' | 'pop' | 'quick' -> unfold.css's --unfold-<size>-ms; the curve is unfold-live.css's
- * --ul-ease-in (open) / --ul-ease-out (fold), else unfold.css's --unfold-in / --unfold-out. bleed: px the pane paints OUTSIDE its box (a drop shadow), kept unclipped above,
- * below and on the cover side. The promise resolves when the WHOLE motion has landed, and on a timer
+ * --ul-ease-in (open) / --ul-ease-out (fold), else unfold.css's --unfold-in / --unfold-out. bleed: px the
+ * pane paints OUTSIDE its box (a drop shadow), kept unclipped above, below and on the cover side. The
+ * promise resolves when the WHOLE motion has landed (the effect's release included), and on a timer
  * (duration + 150 ms) if no frame comes (a hidden window), so a caller never waits forever.
  *
- * HOW: the pane is clipped to its left half + the open width (a Web Animation of clip-path on the
- * curve), and while it plays a layer on top (.ul-fx) carries the stepped backdrop-filter strips and the
- * two darks; each frame reads the animation's own eased progress and places them. When it lands the
- * layer goes (display: none) and the pane has no clip or filter left: zero cost at rest. Prefers-reduced-
- * motion: opacity only, 120 ms linear. A pane whose data-unfold is "folded" is invisible (unfold-live.css). */
+ * MEASURED DUO (real Apple footage, mantle-night/duo-ref/SPEC.md, 2026-10-23), which this follows:
+ *   - the leaf swings open with a slow start, peak speed mid-way and a strong ease-out, and LANDS at about
+ *     85 % of the time; the blur and the dim stay on the landed pane and fade out over the last ~15 %;
+ *   - blur only on the moving leaf: sharp at the hinge, growing fast and flattening toward the free edge
+ *     (closer to linear/sqrt than cubic), at most ~3.3 % of the open width; weaker by the landing;
+ *   - the dim is a NEUTRAL black multiply, no hue: gain ~0.9 near the hinge, ~0.8 mid-leaf, ~0.43 at the
+ *     free edge (never black); the stationary half stays at full brightness throughout.
+ *
+ * HOW: the pane is clipped to its left half + the open width (a Web Animation of clip-path on the curve,
+ * over the geometry's share of the time), and while it plays a layer on top (.ul-fx) carries the
+ * backdrop-filter strips (tent masks: one smooth ramp) and the dim; each frame reads the time and the
+ * clip's own eased progress and places them. When it lands the layer goes (display: none) and the pane has
+ * no clip or filter left: zero cost at rest. Prefers-reduced-motion: opacity only, 120 ms linear. A pane
+ * whose data-unfold is "folded" is invisible (unfold-live.css). */
 (function () {
   'use strict';
 
-  /* the strips: band edges as d = distance from the hinge / open width. Below .35 the cubic blur is
-     under 5 % of the edge's: sharp, so no strip (that is the cost saved). */
-  var BANDS = [0.35, 0.55, 0.7, 0.82, 0.92, 1.0];
-  /* a big pane (Task View, full screen) pays per pixel for every strip: three coarser levels there
-     (measured on this iGPU, 2026-10-23: five strips over a 768x864 half dropped about a frame in four) */
-  var BANDS_BIG = [0.45, 0.7, 0.88, 1.0];
+  /* the strips, as d = distance from the hinge / open width: [start, centre 1, ..., centre N]. Strip k has
+     its own radius (BLUR(d) at its centre) AT its centre and fades linearly to nothing at the next
+     centres on both sides (a tent mask), so two neighbours always add up to one: the blur is ONE smooth
+     ramp, no steps. The first fades in from the start (the hinge stays sharp); the last stays full from
+     its centre out past the free edge (the blur has flattened there). */
+  var BANDS = [0.04, 0.15, 0.3, 0.45, 0.62];
+  var BANDS_BIG = BANDS;
   var BIG_W = 1000;
-  /* the strips go off (together) once the outermost one's radius is under this, px. The late half of an
-     open is wide strips at a pixel or two of blur: on a big pane they cost the most and show the least
-     (measured 2026-10-23, Task View 1536x864, 3 x 15 opens interleaved, dropped frames: off under 0.5 px
-     92, under 2 px 50, under 4 px 20, no blur at all 20). The launcher drops none at 0.5 px. */
+  /* the blur's shape over d, 0..1 of the edge's: rises from the hinge and flattens by d = KNEE (the Duo's
+     measured sigma over d: 4, 8, 10, 13, 13 at d .08, .25, .42, .58, .75) */
+  var KNEE = 0.6;
+  var EXP = 0.7;
+  function shape(d) { var x = (d - 0.04) / (KNEE - 0.04); return x <= 0 ? 0 : x >= 1 ? 1 : Math.pow(x, EXP); }
+  /* the share of the time the effect lingers on the landed pane and fades (the Duo: ~0.4 s of ~2.7 s) */
+  var RELEASE = 0.15;
+  /* the blur's strength at the landing, as a share of mid-motion's (the Duo: ~1.3 % of the width at the
+     landing, ~3.3 % before it) */
+  var LAND = 0.55;
+  /* the strips go off (together) once the outermost one's radius is under this, px, after fading out over
+     the radius' last stretch above it (so the hand-off to sharp is a fade, never a snap). Wide strips at a
+     pixel or two of blur cost the most and show the least on a big pane (measured 2026-10-23, Task View
+     1536x864, 3 x 15 opens interleaved, dropped frames: off under 0.5 px 92, under 2 px 50, under 4 px 20,
+     no blur at all 20). The launcher drops none at 0.5 px. */
   var RMIN = 0.5;
   var RMIN_BIG = 4;
   var RM = '(prefers-reduced-motion: reduce)';
@@ -82,65 +104,98 @@
     if (st.resolve) st.resolve({ ok: false, state: el.getAttribute('data-unfold'), timedOut: false, frames: st.frames, cancelled: true });
   }
 
-  /* one frame of the look, at eased progress e (0 = folded at the hinge, 1 = open) */
   /* the look's numbers, read ONCE per play (a getComputedStyle per frame would cost a style pass) */
   function num(el, name, dflt) { var v = parseFloat(cssVar(el, name)); return isFinite(v) ? v : dflt; }
-  /* --ul-bands / --ul-bands-big (unfold-live.css) override the strip edges: "0.5 0.8 1", ascending, last 1 */
+  /* --ul-bands / --ul-bands-big (unfold-live.css) override the strips: "0.04 0.15 0.3 0.45 0.62", ascending */
   function bandsVar(el, name, dflt) {
     var v = cssVar(el, name);
     if (!v) return dflt;
     var a = v.split(/[\s,]+/).map(parseFloat);
-    for (var i = 0; i < a.length; i++) if (!(a[i] > 0 && a[i] <= 1) || (i && a[i] <= a[i - 1])) return dflt;
-    return a.length >= 2 && a.length <= BANDS.length && a[a.length - 1] === 1 ? a : dflt;
+    for (var i = 0; i < a.length; i++) if (!(a[i] >= 0 && a[i] <= 1) || (i && a[i] <= a[i - 1])) return dflt;
+    return a.length >= 2 && a.length <= BANDS.length ? a : dflt;
   }
   function config(el) {
     var W = el.offsetWidth || 1;
+    var rel = num(el, '--ul-release', RELEASE);
     return { W: W, bands: W > BIG_W ? bandsVar(el, '--ul-bands-big', BANDS_BIG) : bandsVar(el, '--ul-bands', BANDS),
-      bEdge: Math.min(num(el, '--ul-blur-cap', 72), num(el, W > BIG_W ? '--ul-blur-ratio-big' : '--ul-blur-ratio', num(el, '--ul-blur-ratio', 0.018)) * W),
+      bEdge: Math.min(num(el, '--ul-blur-cap', 72), num(el, W > BIG_W ? '--ul-blur-ratio-big' : '--ul-blur-ratio', num(el, '--ul-blur-ratio', 0.033)) * W),
       rMin: W > BIG_W ? num(el, '--ul-blur-min-big', RMIN_BIG) : num(el, '--ul-blur-min', RMIN),
-      ov: num(el, '--ul-overlap', 14), darkEdge: num(el, '--ul-dark-edge', 0.62), darkCover: num(el, '--ul-dark-cover', 0.45) };
+      rel: rel > 0 && rel < 0.5 ? rel : RELEASE, land: num(el, '--ul-blur-land', LAND),
+      dim: num(el, '--ul-dim', 1), dimCover: num(el, '--ul-dim-cover', 0) };
   }
-  function place(el, f, e, c) {
-    var half = c.W / 2, ov = c.ov, darkEdge = c.darkEdge, darkCover = c.darkCover;
+  /* strip k's span as d: from the centre before it to the centre after it (the last: from the centre
+     before it to beyond the free edge, where the pane's clip hides it) */
+  function span(bands, k) {
+    var n = bands.length - 1;
+    return [bands[k - 1], bands[k], k < n ? bands[k + 1] : 1.1];
+  }
+  /* once per play: each strip's tent mask (its peak sits at its centre's share of its span, which stays
+     the same as the pane opens, so the mask never changes while it plays) */
+  function masks(f, c) {
+    var kids = f.children, n = c.bands.length - 1;
+    for (var k = 1; k < BANDS.length; k++) {
+      var strip = kids[k];
+      if (k > n) continue;
+      var sp = span(c.bands, k), pk = Math.round(((sp[1] - sp[0]) / (sp[2] - sp[0])) * 1000) / 10;
+      var m = k < n ? 'linear-gradient(to right, transparent, #000 ' + pk + '%, transparent)'
+        : 'linear-gradient(to right, transparent, #000 ' + pk + '%)';
+      if (strip.__m !== m) { strip.style.webkitMaskImage = m; strip.style.maskImage = m; strip.__m = m; }
+    }
+  }
+  function set(node, key, prop, v) { if (node[key] !== v) { node.style[prop] = v; node[key] = v; } }
+  /* one frame: e = the leaf's eased openness (0 = at the hinge, 1 = landed), blur / dim = the effect's
+     strengths now (1 = mid-motion) */
+  function place(el, f, e, blur, dim, c) {
+    var half = c.W / 2;
     var p = e < 0 ? 0 : e > 1 ? 1 : e;
-    var s = 1 - p;                                   // the transition's strength: 1 at the hinge, 0 open
     var w = half * p;                                // the opening half's visible width
-    var bMax = c.bEdge * s;
+    var bMax = c.bEdge * blur;
     var kids = f.children;
     var cover = kids[0], shade = kids[kids.length - 1];
-    // the cover half's dark runs on under the opening half too, so the two meet at the hinge without a
-    // seam; the opening half's own dark (the shade) adds to it toward the free edge
-    // the darks are sized once and scaled (a transform: no repaint per frame, only the compositor)
-    cover.style.width = c.W + 'px';
-    cover.style.transform = 'scaleX(' + ((half + w) / c.W) + ')';
-    cover.style.opacity = String(darkCover * s);
-    var bands = c.bands;
+    // the stationary half stays at full brightness (the Duo, measured); --ul-dim-cover can dip it
+    if (c.dimCover > 0) {
+      set(cover, '__w', 'width', c.W + 'px');
+      set(cover, '__t', 'transform', 'scaleX(' + ((half + w) / c.W) + ')');
+      set(cover, '__o', 'opacity', String(Math.round(c.dimCover * dim * 1000) / 1000));
+      set(cover, '__d', 'display', '');
+    } else set(cover, '__d', 'display', 'none');
+    var bands = c.bands, n = bands.length - 1;
     // the strips go on and off TOGETHER, once each way, on the outermost strip's radius: switching them off
-    // one by one near the landing changed the layer tree several frames running, and those were the late
-    // frames (measured 2026-10-23, Task View 1536x864, 3 x 15 opens interleaved: 25 dropped one by one,
-    // 13 together, 6 with no blur at all). An inner strip below half a pixel stays at half a pixel.
-    var outer = bands[bands.length - 2], om = (outer + 1) / 2;
-    var allOn = Math.round(bMax * om * om * om * 2) / 2 >= c.rMin && w * (1 - outer) + 2 * ov >= 2;
-    for (var i = 1; i < BANDS.length; i++) {        // strip i-1 spans bands[i-1]..bands[i]; the first edge is where blur starts
-      var strip = kids[i];
-      if (i >= bands.length) { if (strip.__on !== 0) { strip.style.display = 'none'; strip.__on = 0; } continue; }
-      var lo = bands[i - 1], d1 = bands[i];
-      var mid = (lo + d1) / 2, r = Math.round(bMax * mid * mid * mid * 2) / 2;
-      // the last strip runs ov past the free edge: its mask fade lands outside the pane's clip, so the
-      // free edge (the softest part) is never left sharp by the cross-fade
-      var x0 = half + w * lo - ov, x1 = half + w * d1 + ov;
-      if (!allOn) { if (strip.__on !== 0) { strip.style.display = 'none'; strip.__on = 0; } continue; }
-      if (r < 0.5) r = 0.5;
-      if (strip.__on !== 1) { strip.style.display = ''; strip.__on = 1; }
-      strip.style.left = x0 + 'px';
-      strip.style.width = (x1 - x0) + 'px';
+    // one by one changed the layer tree several frames running, and those were late frames (measured
+    // 2026-10-23, Task View 1536x864, 3 x 15 opens interleaved: 25 dropped one by one, 13 together). Over
+    // the last stretch above rMin they fade (opacity on a backdrop-filter = a cross-fade to the sharp
+    // pane), so going off is never a snap.
+    var rOuter = bMax * shape(bands[n]);
+    var allOn = rOuter >= c.rMin && w * (1.1 - bands[n - 1]) >= 1;
+    var fade = Math.max(c.rMin, 0.5);
+    var a = String(allOn ? Math.round(Math.min(1, (rOuter - c.rMin) / fade) * 100) / 100 : 0);
+    for (var k = 1; k < BANDS.length; k++) {
+      var strip = kids[k];
+      if (k > n || !allOn) { set(strip, '__d', 'display', 'none'); continue; }
+      var sp = span(bands, k);
+      var r = Math.max(0.25, Math.round(bMax * shape(sp[1]) * 4) / 4);
+      set(strip, '__d', 'display', '');
+      strip.style.left = (half + w * sp[0]) + 'px';
+      strip.style.width = Math.max(1, w * (sp[2] - sp[0])) + 'px';
+      set(strip, '__a', 'opacity', a);
       var b = 'blur(' + r + 'px)';
       if (strip.__b !== b) { strip.style.backdropFilter = b; strip.style.webkitBackdropFilter = b; strip.__b = b; }
     }
-    shade.style.left = half + 'px';
-    shade.style.width = half + 'px';
+    // the dim: the leaf's measured gain over d is in the shade's gradient (unfold-live.css); it is sized once
+    // and scaled from the hinge (a transform: the compositor only), its opacity is the strength
+    set(shade, '__l', 'left', half + 'px');
+    set(shade, '__w', 'width', half + 'px');
     shade.style.transform = 'scaleX(' + p + ')';
-    shade.style.opacity = String(Math.min(darkEdge, 2 * s * darkEdge));
+    set(shade, '__o', 'opacity', String(Math.round(Math.max(0, Math.min(1, c.dim * dim)) * 1000) / 1000));
+  }
+  /* the effect's strengths at u = the time as openness (0 = folded, 1 = open; a fold runs it backwards) and
+     e = the leaf's eased openness: full while the leaf moves (the blur easing to LAND by the landing), then
+     the release fades both out over the last rel of the time */
+  function strengths(u, e, c) {
+    var g = 1 - c.rel;
+    if (u <= g) return { blur: 1 - (1 - c.land) * e, dim: 1 };
+    var k = Math.max(0, (1 - u) / c.rel);
+    return { blur: c.land * k, dim: k };
   }
 
   function go(el, target, opts) {
@@ -176,34 +231,51 @@
         return;
       }
 
+      var f = fx(el);
+      var cfg = config(el);
+      masks(f, cfg);
+      var G = Math.round(D * (1 - cfg.rel));                // the leaf's own share of the time
       var bleed = Math.max(0, Number(opts && opts.bleed) || 0);
       var B = -bleed + 'px';
       var shut = 'inset(' + B + ' 50% ' + B + ' ' + B + ')', full = 'inset(' + B + ' ' + B + ' ' + B + ' ' + B + ')';
-      var curve = opening ? easing(el, '--ul-ease-in', easing(el, '--unfold-in', 'cubic-bezier(.42, 0, .2, 1)'))
-        : easing(el, '--ul-ease-out', easing(el, '--unfold-out', 'cubic-bezier(.5, 0, .85, .45)'));
+      var curve = opening ? easing(el, '--ul-ease-in', easing(el, '--unfold-in', 'cubic-bezier(.4, 0, .1, 1)'))
+        : easing(el, '--ul-ease-out', easing(el, '--unfold-out', 'cubic-bezier(.9, 0, .6, 1)'));
+      // opening: the leaf moves first, then the effect releases on the landed pane; folding: the effect
+      // gathers on the still pane first (delay), then the leaf folds shut
+      var timing = { duration: G, delay: opening ? 0 : D - G, fill: 'both' };
+      var kf = [{ clipPath: opening ? shut : full }, { clipPath: opening ? full : shut }];
       var clip;
-      try { clip = el.animate([{ clipPath: opening ? shut : full }, { clipPath: opening ? full : shut }], { duration: D, easing: curve, fill: 'forwards' }); }
-      catch (_) { clip = el.animate([{ clipPath: opening ? shut : full }, { clipPath: opening ? full : shut }], { duration: D, easing: 'ease-out', fill: 'forwards' }); }
+      try { timing.easing = curve; clip = el.animate(kf, timing); }
+      catch (_) { timing.easing = 'ease-out'; clip = el.animate(kf, timing); }
       st.anims.push(clip);
+      /* the clock: a no-op animation over the whole time (its currentTime is the elapsed time, on the
+         same timeline as the clip) */
+      var clock = el.animate([{ '--ul-clock': '0' }, { '--ul-clock': '1' }], { duration: D });
+      st.anims.push(clock);
       /* the pane comes on (and goes off) over the first (last) eighth, so the cover half does not pop */
       var fadeMs = Math.round(D * 0.125);
       st.anims.push(el.animate(opening ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 1, offset: 0.875 }, { opacity: 0 }],
         { duration: opening ? fadeMs : D, easing: 'linear', fill: 'forwards' }));
-      var f = fx(el);
       el.setAttribute('data-unfold-anim', opening ? 'opening' : 'folding');
-      var cfg = config(el);
-      function frame() {
-        if (st.dead) return;
+      function at() {
+        var ct = clock.currentTime, tt = ct === null ? 1 : Math.max(0, Math.min(1, ct / D));
         var t = clip.effect.getComputedTiming();
         var e = t.progress === null ? (opening ? 1 : 0) : (opening ? t.progress : 1 - t.progress);
-        place(el, f, e, cfg);
+        var u = opening ? tt : 1 - tt;
+        var s = strengths(u, e, cfg);
+        place(el, f, e, s.blur, s.dim, cfg);
+      }
+      function frame() {
+        if (st.dead) return;
+        at();
         st.frames++;
-        if (clip.playState === 'finished') { finish(false); return; }
+        if (clock.playState === 'finished') { finish(false); return; }
         st.raf = requestAnimationFrame(frame);
       }
-      place(el, f, opening ? 0 : 1, cfg);           // the first painted frame is the start pose
+      var s0 = strengths(opening ? 0 : 1, opening ? 0 : 1, cfg);
+      place(el, f, opening ? 0 : 1, s0.blur, s0.dim, cfg);   // the first painted frame is the start pose
       st.raf = requestAnimationFrame(frame);
-      clip.finished.then(function () { finish(false); }, function () { /* cancelled */ });
+      clock.finished.then(function () { finish(false); }, function () { /* cancelled */ });
       st.timer = setTimeout(function () { finish(true); }, D + 150);
     });
     return st.promise;

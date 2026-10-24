@@ -439,7 +439,7 @@ async function main() {
 
     /* U. THE UNFOLD (wave unfold, 2026-10-23; ui/shared/unfold-live.js, the iPhone Duo hinge, size 'pop',
        on the panel): it rests folded before the first paint and on every hide; mid-open the opening half
-       carries the stepped blur strips (sharp at the hinge, strongest at the free edge) and the indigo
+       carries the blur strips (one smooth ramp: sharp at the hinge, strongest at the free edge) and the neutral
        dark; the open lands with nothing left on the pane (no clip, no effect layer); MantleLauncherFold()
        folds it shut; reduced motion is a cross-fade; typing while it unfolds is kept. Visibility is driven
        the way Electron drives it: visibilityState + visibilitychange, then main's launcher:visible. */
@@ -486,9 +486,9 @@ async function main() {
     const half = u.w / 2;
     check('unfold mid-open: opening from the centre hinge (clipped, effect layer up)', u.anim === 'opening' && u.clip !== 'none' && u.fx === 'block', JSON.stringify(u));
     check('unfold mid-open: blur strips on the opening half only, right of the hinge', u.strips.length > 0 && u.strips.every((s) => s.x >= half - 20), JSON.stringify(u.strips));
-    check('unfold mid-open: the blur grows toward the free edge (cubic: the outer strip is the strongest)',
+    check('unfold mid-open: the blur grows toward the free edge (the outer strip is the strongest)',
       u.strips.length > 0 && u.strips.every((s, i) => i === 0 || s.r >= u.strips[i - 1].r) && u.strips[u.strips.length - 1].r > 0, JSON.stringify(u.strips));
-    check('unfold mid-open: the indigo dark is on (the free edge, and the cover half lifting)', u.shade > 0 && u.cover > 0 && u.cover < 0.46, JSON.stringify({ shade: u.shade, cover: u.cover }));
+    check('unfold mid-open: the neutral dim is on the opening half, the stationary half stays bright (the Duo, measured)', u.shade > 0 && !(u.cover > 0), JSON.stringify({ shade: u.shade, cover: u.cover }));
     await page.waitForTimeout(600);
     check('unfold: a reopen lands at rest again', atRest(await pose(page)), JSON.stringify(await pose(page)));
     /* the close, played (for a main that waits for it before hiding) */
