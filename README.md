@@ -298,6 +298,36 @@ run died without putting Windows back — it runs the recovery script first,
 synchronously, before it touches anything, and every reason in the state says
 that it happened.
 
+## Privacy: the camera
+
+Mantle uses the camera for one feature only, **Blur the screen when I look away**. It is off until
+you switch it on (the tray, or Mantle Settings > Mantle). No other part of Mantle asks for the camera.
+
+- **When the camera is on.** Only while that switch is on and the feature is watching, and Windows'
+  camera light is on the whole time. Mantle stops every camera track, so the light goes off, while
+  the screen is locked or the PC sleeps, while a game runs, while another app is using the camera,
+  while a full-screen app is in front, while the screen cover it needs is not running, and as soon
+  as you switch it off. The feature's status line says which.
+- **What it looks at.** It asks the camera for small frames (320x240, about 10 a second) and looks
+  at 1 to 4 of them a second (every frame, about 10 a second, while the screen is blurred, so looking
+  back clears it at once) with a face detector that runs on your PC: MediaPipe's BlazeFace model,
+  shipped inside Mantle (`ui/lookaway/models/`). Each frame is closed as soon as the detector is
+  done with it. The only thing that leaves the hidden page is a few numbers: whether a face was
+  found, which way the head points, how big the face is, the detector's confidence and how long it
+  took.
+- **What is never done.** No frame is saved, shown, logged or sent anywhere. Nothing about the
+  camera goes over the network: the page's Content-Security-Policy allows no network request, its
+  own browser session is kept in memory only and cancels every web request, and the model and its
+  runtime load from Mantle's own files. In that session the camera permission is given to that one
+  page only, for video only; the microphone is never asked for. Mantle's log records decisions and
+  timings ("cover: away for 1600 ms (no face)"), never pictures.
+- **Noticing a video call.** To pause while another app uses the camera, Mantle reads Windows' own
+  camera-usage record (what Settings > Privacy & security > Camera shows as in use). It only counts
+  the entries that are in use right now; it keeps and logs no app names and writes nothing.
+- **Turning it off.** Switch it off and the camera stops at once and the hidden page is closed.
+  Windows can also block it: Settings > Privacy & security > Camera > "Let desktop apps access your
+  camera". The feature then says the camera was not allowed or would not start.
+
 ## Nothing fails silently
 
 Every helper, poller and fallback carries a **reason in plain words**, and the

@@ -8,6 +8,9 @@ Mantle's own code is under the GNU General Public License v3.0 (see `LICENSE`). 
 | Emoji names and keywords (built from Unicode emoji-test.txt and the CLDR annotations) | `ui/emoji/emoji-data.js` | Unicode License v3, `ui/emoji/DATA-LICENSE.txt` |
 | Electron | npm dependency, not in the repo | MIT |
 | koffi | npm dependency, not in the repo | MIT |
+| MediaPipe Tasks Vision (the look-away blur's face detector runtime, WASM) | npm dependency `@mediapipe/tasks-vision`, not in the repo | Apache License 2.0 |
+| BlazeFace short-range face detection model | `ui/lookaway/models/blaze_face_short_range.tflite` | Apache License 2.0, Google. Source and checksum: `ui/lookaway/models/LICENCE.md` |
+| Face photos used only by the look-away tests | `lib/features/_lookaway-fixtures/` | CC BY-SA 4.0 and public domain, per photo: `lib/features/_lookaway-fixtures/LICENCE.md` |
 
 No fonts, icons or images from Windows are included: Segoe UI, Segoe Fluent Icons and Segoe UI
 Emoji are used by name from the fonts installed with Windows. Mantle's own icons (`assets/icons/`)
