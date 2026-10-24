@@ -8,9 +8,10 @@
  *     halves are windows onto it (a clip on the pane), so nothing jumps when it lands.
  *   - PROGRESSIVE blur on the opening half only: sharp at the hinge, rising fast and flattening toward the
  *     free edge (measured: closer to linear/sqrt than cubic), at most ~3.3 % of the pane's width, easing
- *     off by the landing. Live DOM cannot take a per-pixel blur, so it is strips of backdrop-filter, each
- *     at its own radius, each a tent (full at its centre, nothing at its neighbours' centres) so the
- *     levels blend into ONE smooth ramp (no steps).
+ *     off by the landing. Live DOM cannot take a per-pixel blur, so it is stacked layers of backdrop-filter:
+ *     layer k fades in from level k-1's place to level k's and stays on to the free edge, blurring what
+ *     the layers before it built up by just the radius that takes it to level k (unfold-live.js says why
+ *     tents seamed), so the levels blend into ONE smooth ramp (no steps, no seams).
  *   - DIM after the blur: a NEUTRAL black multiply, no hue at all (measured per channel), on the opening
  *     half only: gain ~0.92 by the hinge, ~0.8 mid-leaf, ~0.43 at the free edge (never black). The
  *     stationary half stays at full brightness throughout.
@@ -37,8 +38,9 @@
      --ul-dim: the dim's strength (1 = the measured gains in .ul-shade); --ul-dim-cover: a dip of the
        stationary half (0: the Duo keeps it at full brightness);
      --ul-blur-min / --ul-blur-min-big: px; the strips fade and go off together once the outermost one's
-       radius is below it (0.5 / 4: the measured frame cost on a full-screen pane) */
-  --ul-bezel: 1px;         /* the frame's hairline, left out of the blur */
+       radius is below it (0.5 / 4: the measured frame cost on a full-screen pane);
+     --ul-pad: how many of its radii a layer's box reaches left of its mask (2.5: its mirrored edge unseen) */
+  --ul-bezel: 1px;         /* the frame's hairline, left out of the blur (top, bottom and the free edge) */
   /* The leaf's curve (the Duo, measured): a slow start, the peak speed mid-way, a strong ease-out into the
      landing. Not --unfold-in (= --m-spring, the bar's spring: 70 % open a quarter of the way in, it
      overshoots, and the blur is gone before it can be seen). The fold is the opening run backwards (the
@@ -63,7 +65,7 @@
 }
 .ul-fx > .ul-strip {
   top: var(--ul-bezel); bottom: var(--ul-bezel);
-  /* the mask is a tent per strip, set by unfold-live.js once per play: neighbours add up to one (no steps) */
+  /* the mask (a ramp that stays on) and the box are set by unfold-live.js every frame */
 }
 /* the opening half's dim: neutral black, the Duo's measured leaf gain over d (1 - alpha: 1.0 at the hinge,
    0.92 at d .07, 0.88 at .2, 0.85 at .34, 0.82 at .48, 0.8 at .62, 0.68 at .76, 0.43 at .89); its opacity

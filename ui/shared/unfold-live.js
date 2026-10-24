@@ -22,20 +22,39 @@
  *
  * HOW: the pane is clipped to its left half + the open width (a Web Animation of clip-path on the curve,
  * over the geometry's share of the time), and while it plays a layer on top (.ul-fx) carries the
- * backdrop-filter strips (tent masks: one smooth ramp) and the dim; each frame reads the time and the
+ * backdrop-filter layers (stacked: one smooth ramp, below) and the dim; each frame reads the time and the
  * clip's own eased progress and places them. When it lands the layer goes (display: none) and the pane has
  * no clip or filter left: zero cost at rest. Prefers-reduced-motion: opacity only, 120 ms linear. A pane
- * whose data-unfold is "folded" is invisible (unfold-live.css). */
+ * whose data-unfold is "folded" is invisible (unfold-live.css).
+ *
+ * THE BLUR LAYERS, and why they are stacked (lane unfold-seams, 2026-10-24: Owen saw steps and bands; the
+ * frames showed vertical seams). Two facts of backdrop-filter decide the shape:
+ *   1. a layer is drawn OVER what is under it (mask = its alpha): out = m * blur(under) + (1 - m) * under.
+ *      Crossfading levels with tents (each full at its centre, nothing at its neighbours') therefore does
+ *      not add up to one: between two centres (1 - m1)(1 - m2) of the SHARP pane showed through, 25 % at
+ *      every midpoint, and the next layer blurred the previous one's output as well. That was the seams.
+ *   2. a layer only sees the backdrop inside its own box (the edges are mirrored), so its blur is wrong
+ *      within ~2 radii of its box edges.
+ * So: layer k's mask ramps from nothing at band k-1 to full at band k and STAYS full out to the free edge.
+ * Each layer then blurs everything under it, all of it already blurred by the layers before, and Gaussians
+ * compound (radii add in squares), so layer k's own radius is the increment sqrt(T(k)^2 - T(k-1)^2) that
+ * takes the blur from level k-1's target to level k's. Between two centres the result is a crossfade of
+ * level k-1 and level k of the SAME image: no sharp leak, no seam, one smooth ramp. Each box starts PAD
+ * radii left of where its mask starts (the mirrored edge falls where the mask is nothing) and reaches PAD
+ * radii past the free edge (the clip hides that part; the blur at the edge reads the content that is
+ * really there, as the Duo's one shared image does), but stops --ul-bezel short of the pane's own edge,
+ * so its hairline is never pulled into the blur. */
 (function () {
   'use strict';
 
-  /* the strips, as d = distance from the hinge / open width: [start, centre 1, ..., centre N]. Strip k has
-     its own radius (BLUR(d) at its centre) AT its centre and fades linearly to nothing at the next
-     centres on both sides (a tent mask), so two neighbours always add up to one: the blur is ONE smooth
-     ramp, no steps. The first fades in from the start (the hinge stays sharp); the last stays full from
-     its centre out past the free edge (the blur has flattened there). */
+  /* the blur levels, as d = distance from the hinge / open width: [start, centre 1, ..., centre N]. Layer k
+     ramps in from band k-1 to band k (the first from the start: the hinge stays sharp) and stays on to the
+     free edge (the blur has flattened there). */
   var BANDS = [0.04, 0.15, 0.3, 0.45, 0.62];
-  var BANDS_BIG = BANDS;
+  /* a pane wider than BIG_W (Task View, full screen): TWO levels. The stacked layers each reach the free edge, so
+     four of them on 1536x864 cost frames at the landing (2026-10-24, 15 opens x 2, dropped: HEAD tents 4 and 0,
+     four stacked 24 and 13, three + cut at 8 px 13 and 4, two + cut at 6 px 6 and 0) */
+  var BANDS_BIG = [0.04, 0.25, 0.62];
   var BIG_W = 1000;
   /* the blur's shape over d, 0..1 of the edge's: rises from the hinge and flattens by d = KNEE (the Duo's
      measured sigma over d: 4, 8, 10, 13, 13 at d .08, .25, .42, .58, .75) */
@@ -53,7 +72,10 @@
      1536x864, 3 x 15 opens interleaved, dropped frames: off under 0.5 px 92, under 2 px 50, under 4 px 20,
      no blur at all 20). The launcher drops none at 0.5 px. */
   var RMIN = 0.5;
-  var RMIN_BIG = 4;
+  var RMIN_BIG = 6;
+  /* a layer's box reaches this many of its radii left of where its mask starts (2.5 radii: the mirrored
+     edge's error is under 1 % of the content's contrast where the mask begins) */
+  var PAD = 2.5;
   var RM = '(prefers-reduced-motion: reduce)';
   var RM_MS = 120;
 
@@ -114,77 +136,79 @@
     for (var i = 0; i < a.length; i++) if (!(a[i] >= 0 && a[i] <= 1) || (i && a[i] <= a[i - 1])) return dflt;
     return a.length >= 2 && a.length <= BANDS.length ? a : dflt;
   }
-  function config(el) {
+  function config(el, opts) {
     var W = el.offsetWidth || 1;
     var rel = num(el, '--ul-release', RELEASE);
+    var pad = num(el, '--ul-pad', PAD);
     return { W: W, bands: W > BIG_W ? bandsVar(el, '--ul-bands-big', BANDS_BIG) : bandsVar(el, '--ul-bands', BANDS),
       bEdge: Math.min(num(el, '--ul-blur-cap', 72), num(el, W > BIG_W ? '--ul-blur-ratio-big' : '--ul-blur-ratio', num(el, '--ul-blur-ratio', 0.033)) * W),
       rMin: W > BIG_W ? num(el, '--ul-blur-min-big', RMIN_BIG) : num(el, '--ul-blur-min', RMIN),
       rel: rel > 0 && rel < 0.5 ? rel : RELEASE, land: num(el, '--ul-blur-land', LAND),
-      dim: num(el, '--ul-dim', 1), dimCover: num(el, '--ul-dim-cover', 0) };
-  }
-  /* strip k's span as d: from the centre before it to the centre after it (the last: from the centre
-     before it to beyond the free edge, where the pane's clip hides it) */
-  function span(bands, k) {
-    var n = bands.length - 1;
-    return [bands[k - 1], bands[k], k < n ? bands[k + 1] : 1.1];
-  }
-  /* once per play: each strip's tent mask (its peak sits at its centre's share of its span, which stays
-     the same as the pane opens, so the mask never changes while it plays) */
-  function masks(f, c) {
-    var kids = f.children, n = c.bands.length - 1;
-    for (var k = 1; k < BANDS.length; k++) {
-      var strip = kids[k];
-      if (k > n) continue;
-      var sp = span(c.bands, k), pk = Math.round(((sp[1] - sp[0]) / (sp[2] - sp[0])) * 1000) / 10;
-      var m = k < n ? 'linear-gradient(to right, transparent, #000 ' + pk + '%, transparent)'
-        : 'linear-gradient(to right, transparent, #000 ' + pk + '%)';
-      if (strip.__m !== m) { strip.style.webkitMaskImage = m; strip.style.maskImage = m; strip.__m = m; }
-    }
+      dim: num(el, '--ul-dim', 1), dimCover: num(el, '--ul-dim-cover', 0),
+      pad: pad >= 0 && pad <= 6 ? pad : PAD, bezel: Math.max(0, num(el, '--ul-bezel', 1)),
+      // the clip's right inset runs from 50 % to -bleed, so the visible leaf reaches past the pane's box by
+      // the bleed (the drop shadow) as it lands: the dim and the blur follow the CLIP's edge, not half * e
+      // (that left an undimmed, unblurred sliver at the free edge: the pale band of the dark frames)
+      bleed: Math.max(0, Number(opts && opts.bleed) || 0) };
   }
   function set(node, key, prop, v) { if (node[key] !== v) { node.style[prop] = v; node[key] = v; } }
+  function px(v) { return Math.round(v * 10) / 10; }
   /* one frame: e = the leaf's eased openness (0 = at the hinge, 1 = landed), blur / dim = the effect's
      strengths now (1 = mid-motion) */
   function place(el, f, e, blur, dim, c) {
     var half = c.W / 2;
     var p = e < 0 ? 0 : e > 1 ? 1 : e;
-    var w = half * p;                                // the opening half's visible width
+    var reach = half + c.bleed;                      // the leaf's full visible width (its bleed included)
+    var w = reach * p;                               // the opening half's visible width now
+    var edge = half + w;                             // the visible free edge, px from the pane's left
     var bMax = c.bEdge * blur;
     var kids = f.children;
     var cover = kids[0], shade = kids[kids.length - 1];
     // the stationary half stays at full brightness (the Duo, measured); --ul-dim-cover can dip it
     if (c.dimCover > 0) {
       set(cover, '__w', 'width', c.W + 'px');
-      set(cover, '__t', 'transform', 'scaleX(' + ((half + w) / c.W) + ')');
+      set(cover, '__t', 'transform', 'scaleX(' + (Math.min(c.W, edge) / c.W) + ')');
       set(cover, '__o', 'opacity', String(Math.round(c.dimCover * dim * 1000) / 1000));
       set(cover, '__d', 'display', '');
     } else set(cover, '__d', 'display', 'none');
     var bands = c.bands, n = bands.length - 1;
-    // the strips go on and off TOGETHER, once each way, on the outermost strip's radius: switching them off
+    // the layers go on and off TOGETHER, once each way, on the outermost level's radius: switching them off
     // one by one changed the layer tree several frames running, and those were late frames (measured
     // 2026-10-23, Task View 1536x864, 3 x 15 opens interleaved: 25 dropped one by one, 13 together). Over
     // the last stretch above rMin they fade (opacity on a backdrop-filter = a cross-fade to the sharp
     // pane), so going off is never a snap.
     var rOuter = bMax * shape(bands[n]);
-    var allOn = rOuter >= c.rMin && w * (1.1 - bands[n - 1]) >= 1;
+    var allOn = rOuter >= c.rMin && Math.min(edge, c.W - c.bezel) - (half + w * bands[n - 1]) >= 1;
     var fade = Math.max(c.rMin, 0.5);
     var a = String(allOn ? Math.round(Math.min(1, (rOuter - c.rMin) / fade) * 100) / 100 : 0);
+    var prev = 0;                                    // the blur the layers below have built up (its square)
     for (var k = 1; k < BANDS.length; k++) {
       var strip = kids[k];
       if (k > n || !allOn) { set(strip, '__d', 'display', 'none'); continue; }
-      var sp = span(bands, k);
-      var r = Math.max(0.25, Math.round(bMax * shape(sp[1]) * 4) / 4);
+      var T = bMax * shape(bands[k]);                // level k's target radius
+      var inc = Math.sqrt(Math.max(0, T * T - prev)); // this layer's own: Gaussians compound in squares
+      prev = Math.max(prev, T * T);
+      var r = Math.max(0.25, Math.round(inc * 4) / 4);
+      var x0 = half + w * bands[k - 1], x1 = half + w * bands[k];   // its mask: nothing at x0, full from x1 on
+      var left = Math.max(0, Math.floor(x0 - c.pad * r));
+      // past the free edge too: the content there is hidden by the clip but is still the content (the Duo
+      // blurs ONE image of the whole screen), so the blur at the edge reads it, not a mirror of the edge
+      var width = Math.max(1, Math.min(c.W - c.bezel, Math.ceil(edge + c.pad * r)) - left);
       set(strip, '__d', 'display', '');
-      strip.style.left = (half + w * sp[0]) + 'px';
-      strip.style.width = Math.max(1, w * (sp[2] - sp[0])) + 'px';
+      strip.style.left = left + 'px';
+      strip.style.width = px(width) + 'px';
+      var a0 = px(x0 - left), a1 = Math.max(a0 + 0.1, px(x1 - left));
+      var m = 'linear-gradient(to right, transparent ' + a0 + 'px, #000 ' + a1 + 'px)';
+      if (strip.__m !== m) { strip.style.webkitMaskImage = m; strip.style.maskImage = m; strip.__m = m; }
       set(strip, '__a', 'opacity', a);
       var b = 'blur(' + r + 'px)';
       if (strip.__b !== b) { strip.style.backdropFilter = b; strip.style.webkitBackdropFilter = b; strip.__b = b; }
     }
     // the dim: the leaf's measured gain over d is in the shade's gradient (unfold-live.css); it is sized once
-    // and scaled from the hinge (a transform: the compositor only), its opacity is the strength
+    // and scaled from the hinge (a transform: the compositor only), its opacity is the strength. It spans the
+    // visible leaf, bleed included (.ul-fx's paint containment clips it at the pane's box)
     set(shade, '__l', 'left', half + 'px');
-    set(shade, '__w', 'width', half + 'px');
+    set(shade, '__w', 'width', reach + 'px');
     shade.style.transform = 'scaleX(' + p + ')';
     set(shade, '__o', 'opacity', String(Math.round(Math.max(0, Math.min(1, c.dim * dim)) * 1000) / 1000));
   }
@@ -232,8 +256,7 @@
       }
 
       var f = fx(el);
-      var cfg = config(el);
-      masks(f, cfg);
+      var cfg = config(el, opts);
       var G = Math.round(D * (1 - cfg.rel));                // the leaf's own share of the time
       var bleed = Math.max(0, Number(opts && opts.bleed) || 0);
       var B = -bleed + 'px';

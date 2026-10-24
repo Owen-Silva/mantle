@@ -26,6 +26,56 @@ const PAGE = 'file:///' + path.join(__dirname, 'index.html').replace(/\\/g, '/')
 let passed = 0;
 const failures = [];
 const check = (name, ok, detail) => { if (ok) passed++; else failures.push(detail !== undefined ? `${name} (${String(detail).slice(0, 300)})` : name); return ok; };
+/* the unfold's no-frame fallback (finish on a timer at duration + 150 ms) would land a frozen frame
+   mid-shot: while window.__freezeMs is set, that one timer is held (the seam checks only) */
+const HOLD_TIMER = () => {
+  const st = window.setTimeout;
+  window.setTimeout = function (fn, ms) { if (window.__freezeMs && Number(ms) === window.__freezeMs) return 0; return st.apply(this, arguments); };
+};
+/* the seam limits (measured 2026-10-24, lane unfold-seams; the numbers are in the commit) */
+const SEAM_D2 = 2.5, SEAM_LEAK = 0.05, SEAM_BAND = 3;
+/* the seam numbers of a FROZEN unfold (lane unfold-seams; see 5b): the blurred part of the leaf, from 0.15
+   of its width (the blur fully on) to the free edge, shot with the effect and with the effect layer hidden
+   (the sharp page, the same clip). Over the column-mean luma p(x): max |p(x-1) - 2 p(x) + p(x+1)| of each,
+   their ratio, the share of the sharp page's edges that shows through (the projection of the one's second
+   differences on the other's), and the free edge's last 5 columns against 21-30 px before */
+const seamsOf = async (page, sel, bleed) => {
+  await page.waitForTimeout(150);                             // a few frames for the layers to be placed
+  const g = await page.evaluate(([sel, bleed]) => {
+    const el = document.querySelector(sel), r = el.getBoundingClientRect();
+    const clip = el.getAnimations().find((a) => 'clipPath' in a.effect.getKeyframes()[0]);
+    const t = clip && clip.effect.getComputedTiming(), e = t && t.progress !== null ? t.progress : 1, half = el.offsetWidth / 2;
+    const s1 = el.querySelector(':scope > .ul-fx > .ul-strip'), m1 = s1 && /([\d.]+)px\)$/.exec(s1.style.maskImage || '');   // where the first layer is fully on
+      const x0 = Math.ceil(m1 ? r.left + s1.offsetLeft + Number(m1[1]) : r.left + half + 0.15 * e * half), xe = Math.floor(Math.min(r.left + half + e * (half + bleed), r.right - 1)) - 1;   // the pane's own edge is not the blur
+    const y0 = Math.max(0, Math.ceil(r.top) + 2), y1 = Math.min(innerHeight, Math.floor(r.bottom) - 2);
+    return { x: x0, y: y0, width: Math.max(1, xe - x0), height: Math.max(1, y1 - y0), anim: el.dataset.unfoldAnim || '' };
+  }, [sel, bleed]);
+  const clip = { x: g.x, y: g.y, width: g.width, height: g.height };
+  const fxShot = await page.screenshot({ clip });
+  await page.evaluate((sel) => { const f = document.querySelector(sel).querySelector(':scope > .ul-fx'); if (f) f.style.visibility = 'hidden'; }, sel);
+  await page.waitForTimeout(60);
+  const refShot = await page.screenshot({ clip });
+  await page.evaluate((sel) => { const f = document.querySelector(sel).querySelector(':scope > .ul-fx'); if (f) f.style.visibility = ''; window.__freezeMs = 0; }, sel);
+  return page.evaluate(async ([a, b, anim]) => {
+    const prof = async (b64) => {
+      const im = new Image(); im.src = 'data:image/png;base64,' + b64; await im.decode();
+      const c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
+      const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0);
+      const d = x.getImageData(0, 0, c.width, c.height).data, p = [];
+      for (let i = 0; i < c.width; i++) { let s = 0; for (let j = 0; j < c.height; j++) { const o = (j * c.width + i) * 4; s += 0.2126 * d[o] + 0.7152 * d[o + 1] + 0.0722 * d[o + 2]; } p.push(s / c.height); }
+      return p;
+    };
+    const pf = await prof(a), pr = await prof(b), n = pf.length;
+    let mf = 0, mr = 0, fr = 0, rr = 0;
+    for (let i = 1; i < n - 3; i++) {
+      const f = pf[i - 1] - 2 * pf[i] + pf[i + 1], r = pr[i - 1] - 2 * pr[i] + pr[i + 1];
+      mf = Math.max(mf, Math.abs(f)); mr = Math.max(mr, Math.abs(r)); fr += f * r; rr += r * r;
+    }
+    const mean = (i, j) => { let t = 0; for (let k = Math.max(0, i); k < j; k++) t += pf[k]; return t / Math.max(1, j - Math.max(0, i)); };
+    const r3 = (v) => Math.round(v * 1000) / 1000;
+    return { anim, cols: n, fx: r3(mf), ref: r3(mr), ratio: r3(mf / Math.max(1e-6, mr)), leak: r3(fr / Math.max(1e-6, rr)), band: r3(mean(n - 5, n) - mean(n - 31, n - 21)) };
+  }, [fxShot.toString('base64'), refShot.toString('base64'), g.anim]);
+};
 
 const FIRST_FRAME = () => {
   // registered before any page script: the FIRST rAF callback, i.e. the frame before the first paint
@@ -152,6 +202,27 @@ async function main() {
     await page.waitForTimeout(150);
     const q = await page.evaluate(() => ({ q: document.getElementById('q').textContent, tiles: document.querySelectorAll('.tile').length }));
     check('typing: every key typed during the unfold is in the filter', q.q === 'code' && q.tiles > 0 && q.tiles < 9, JSON.stringify(q));
+    await page.context().close();
+
+    /* 5b. NO SEAMS (lane unfold-seams, 2026-10-24: Owen saw steps and bands in the blur; the frames had vertical
+       seams). Frozen at half its time (seamsOf above). The old tent strips let up to 25 % of the SHARP page
+       through between their centres and seamed; stacked layers blur one image: no sharp edge shows through. */
+    page = await open('?n=7', HOLD_TIMER);
+    await landed(page);
+    await page.evaluate(async () => {
+      const el = document.getElementById('stage'), D = window.MantleUnfoldLive.ms(el, { size: 'pop' });
+      window.__freezeMs = D + 150;
+      window.__mockEmit('taskview.end', { seq: window.__mockSeq(), why: 'seams' });
+      window.__mock.open();
+      for (let i = 0; i < 200 && el.dataset.unfoldAnim !== 'opening'; i++) await new Promise((r) => setTimeout(r, 2));
+      for (const a of el.getAnimations()) { a.pause(); a.currentTime = D / 2; }
+    });
+    const sm = await seamsOf(page, '#stage', 0);
+    console.log('seams taskview ' + JSON.stringify(sm));
+    check(`mid-open: the blur has no seams (max 2nd difference of the column means under ${SEAM_D2} levels: the 8-bit floor, HEAD 6a73958 had 2.96)`,
+      sm.anim === 'opening' && sm.cols > 200 && sm.fx < SEAM_D2, JSON.stringify(sm));
+    check(`mid-open: none of the sharp page shows through the blur (its share under ${SEAM_LEAK})`, sm.cols > 200 && Math.abs(sm.leak) < SEAM_LEAK, JSON.stringify(sm));
+    check('mid-open: the free edge is dimmed like the leaf before it (no pale band)', sm.cols > 200 && sm.band < SEAM_BAND, JSON.stringify(sm));
     await page.context().close();
 
     /* 6. reduced motion: a cross-fade */
