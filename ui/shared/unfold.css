@@ -42,6 +42,14 @@
   --unfold-pop-ms:   340ms;  --unfold-pop-blur:    8px;  --unfold-pop-stretch:   1;
   --unfold-quick-ms: 240ms;  --unfold-quick-blur:  6px;  --unfold-quick-stretch: 1;
 
+  /* the full-screen page only (ui/unfold/, WebGL): the swing of the moving half (an even ease in and
+     out, like a hand opening the phone), the blur at its free edge at the start of the swing in the
+     picture's own pixels (the Duo recreation's cap: 72; it falls to 0 as it lands, sharp at the hinge,
+     cubic toward the edge), and the darkening's gain (2x the transition strength, capped at the shade) */
+  --unfold-hinge: cubic-bezier(.45, 0, .4, 1);
+  --unfold-edge-blur: 72px;
+  --unfold-edge-dark: 2;
+
   --unfold-fold-ms:    420ms;  /* open -> blurred (look-away): the same motion folding shut */
   --unfold-cover-blur: 30px;   /* how far out of focus the covered screen sits: unreadable */
   --unfold-reveal-ms:  200ms;  /* blurred -> open, the look-back: it must feel instant */

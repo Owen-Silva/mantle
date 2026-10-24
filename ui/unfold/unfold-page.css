@@ -1,6 +1,8 @@
 /* unfold-page.css - the full-screen unfold overlay (lib/features/unfold.js; wave unfold, 2026-10-23).
  *
- * One page per display. It is a STAGE of still layers that never repaint while they move: the
+ * One page per display. The shipped look is #gl: the iPhone Duo unfold drawn per pixel in WebGL
+ * (unfold-page.js says how). Under it, the FALLBACK for a graphics card without WebGL, a STAGE of
+ * still layers that never repaint while they move: the
  * desktop's picture (sharp, at the screen's own pixels), a blurred quarter-size copy, a smeared
  * eighth-size copy and a deep-frosted sixteenth-size copy. The page animates only transform and
  * opacity (the compositor's two cheap properties), so a full-screen unfold costs this iGPU a few
@@ -48,6 +50,8 @@ html, body {
 img.layer, canvas.layer { object-fit: fill; }
 
 #ground, #tint, #soft, #smear, .sheen { opacity: 0; }
+/* the WebGL surface: shown only while it holds a frame of this play or cover (unfold-page.js) */
+#gl { visibility: hidden; }
 #tint { background: var(--lg-scrim); }
 
 /* the leaf: its box opens from the seam; #leaf-in (the inverse scale) keeps the picture still */

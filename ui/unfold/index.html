@@ -13,8 +13,9 @@
 </head>
 <body>
 <!-- The full-screen unfold (lib/features/unfold.js). Click-through, never focused, excluded from
-     capture; nothing here takes input. Layers, bottom to top: the deep-frosted picture with the
-     glass tint (outside the opening), the leaf (the opening, holding the sharp picture, its blurred
+     capture; nothing here takes input. On top, #gl: the iPhone Duo unfold drawn per pixel in WebGL
+     (the shipped technique). Under it, the fallback for a graphics card without WebGL: the
+     deep-frosted picture with the tint, the leaf (the opening, holding the sharp picture, its blurred
      copy and its smeared copy), and the two edge lights. -->
 <div id="stage" data-pose="parked" aria-hidden="true">
   <canvas id="ground" class="layer"></canvas>
@@ -28,6 +29,7 @@
   </div>
   <div id="sheen-l" class="sheen"></div>
   <div id="sheen-r" class="sheen"></div>
+  <canvas id="gl" class="layer"></canvas>
 </div>
 <script src="../shared/unfold.js"></script>
 <script src="unfold-page.js"></script>
