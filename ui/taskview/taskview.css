@@ -53,6 +53,10 @@ body.no-glass .stage { background: var(--lg-ground); }
 /* lane helm-wall-apps (2026-10-09): in dark the window is opaque and the page paints the desktop wallpaper
    (ui/shared/wall-bdrop.js/.css); --wall-tint is its ONE tint layer = the same tint body carries above. */
 :root[data-theme="dark"] { --wall-tint: var(--lg-fill); }
+/* (wave unfold) wall-bdrop.css clears body in wall mode and each page clears its own full-window containers:
+   here that is .stage, which now carries the sheet. The picture (adopted into the stage) covers it anyway;
+   where it does not reach (the window partly off its display) the ground shows under the ONE tint, as before. */
+html.wall-on[data-theme="dark"] .stage { background: transparent !important; }
 /* DARK, ONE SHEET (lane same-shell, 2026-10-09; the user: "can you make sure everything is the same").
    Then HELM IS THE REFERENCE (HELM-SPEC.md rows 3, 10-12, 14, 16-19, 24). The page's one --lg-fill
    is the glass. The desktop cards are Helm cards (--lg-card, hover --lg-press); the window tiles are a

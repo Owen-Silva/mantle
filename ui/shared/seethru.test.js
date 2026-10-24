@@ -150,7 +150,10 @@ const SURF = [
   HUD('screenshot card', 'screenshot/card.html', 'screenshot.card', '#card', [1100, 700, 396, 121], ['screenshot.card', { path: 'C:/x.png', w: 100, h: 60 }]),
   { name: 'launcher', page: 'launcher/index.html', kind: 'launcher', sel: '.panel', win: [428, 160, 680, 460] },
   { name: 'switcher', page: 'switcher/index.html?n=3&blur=0&bg=0', kind: 'switcher', sel: '.panel', win: [300, 300, 900, 300] },
-  { name: 'task view', page: 'taskview/index.html', kind: 'taskview', sel: 'body', win: [0, 0, 1536, 864] },
+  // the task view's sheet is #stage, the page's unfold host (wave unfold, 2026-10-23): it carries the fill and,
+  // in dark, the wallpaper picture (#wall-bdrop is adopted into it). isolate() hides every element that is not
+  // the surface, so isolating body hid the stage and, by inheritance, the picture under it.
+  { name: 'task view', page: 'taskview/index.html', kind: 'taskview', sel: '#stage', win: [0, 0, 1536, 864] },
   { name: 'top bar dropdown', page: 'topbar/index.html', kind: 'topbar', sel: '.dd', win: [0, 0, 1536, 400] },
 ];
 
@@ -187,10 +190,6 @@ async function surface(browser, G, s) {
       await page.evaluate((p) => window.__emit('launcher.backdrop', p), { png: c.png, w: c.w, h: c.h, rect: c.rect, ms: 1, source: 'mantle' });
     } else if (s.kind === 'taskview') {
       await page.evaluate((p) => window.__emit('taskview.wall', p), { ok: true, png: STILL_PNG, w: SW, h: SH, display: { x: 0, y: 0, width: 1536, height: 864 }, key: 'k1', source: 'mantle' });
-      // the task view's stage rests FOLDED until main's taskview.open plays the unfold (ui/taskview/taskview.js,
-      // the iPhone Duo unfold); this test sends no open, so it puts the stage in its landed pose: the
-      // see-through is measured on the open page, as it sits once the unfold has landed
-      await page.evaluate(() => { const st = document.getElementById('stage'); if (st && window.MantleUnfoldLive) window.MantleUnfoldLive.rest(st, { state: 'open' }); });
       await page.waitForTimeout(250);
       await page.evaluate(([x, y]) => window.MantleWallBdrop && window.MantleWallBdrop.at(x, y), [wx, wy]);
     } else if (s.kind === 'switcher') {
