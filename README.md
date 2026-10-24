@@ -309,7 +309,8 @@ you switch it on (the tray, or Mantle Settings > Mantle). No other part of Mantl
   while a full-screen app is in front, while the screen cover it needs is not running, and as soon
   as you switch it off. The feature's status line says which.
 - **What it looks at.** It asks the camera for small frames (320x240, about 10 a second) and looks
-  at 1 to 5 of them a second with a face detector that runs on your PC: MediaPipe's BlazeFace model,
+  at 1 to 4 of them a second (every frame, about 10 a second, while the screen is blurred, so looking
+  back clears it at once) with a face detector that runs on your PC: MediaPipe's BlazeFace model,
   shipped inside Mantle (`ui/lookaway/models/`). Each frame is closed as soon as the detector is
   done with it. The only thing that leaves the hidden page is a few numbers: whether a face was
   found, which way the head points, how big the face is, the detector's confidence and how long it
