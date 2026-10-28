@@ -17,10 +17,15 @@
 // Realtime silently became High), dryRun, ...command fields}.
 //
 // THE RULES (mantle-wt/tm-data-bin/LANE-RULES.md, "Safety"):
-//   - A process is named by pid AND creation time. TaskMgr.Take checks both against one process-table read,
-//     applies the guard (TaskMgr.Refuse: Windows' own processes, session 0, games and anti-cheat, Lively,
-//     Mantle itself) and holds a handle for the whole action, so the number cannot be reused under us. The
-//     guard applies to EVERY command here, read-only ones too, and is unchanged in an elevated host.
+//   - A process is named by pid AND creation time. TaskMgr.TakeAs checks both against one process-table read
+//     and holds a handle for the whole action, so the number cannot be reused under us. Guard policy, like
+//     Windows' Task Manager (coordinator, 10-28; TaskMgr.cs "the three guard policies"):
+//       writes (efficiency, priority, affinity, uacvirt, dump): GUARD_USER. Any process, but a critical,
+//         Windows or Mantle process needs confirmed:true; without it the reply is ok:false, needsConfirm:true,
+//         kind, confirm (Windows' own warning, TaskMgr.ConfirmText) and nothing is touched. Efficiency mode
+//         on a CRITICAL process is refused outright (Windows greys the item out for those).
+//       reads (waitchain, affinityget): GUARD_READ, no guard (Windows analyses any process).
+//     The same policy holds in an elevated host.
 //   - The action's own handle is then opened with exactly the rights the action needs, ALSO in a dry run, so
 //     "would be denied" is an honest answer; it is checked against the same creation time.
 //   - dryRun answers what would be done and touches nothing. A passive (test) host refuses every real write
@@ -37,8 +42,9 @@
 //     host seam below (Passive / OwnPid / ParentPid / Refusal). Register() hands Program's over; a second
 //     host calls ProcOps.UseHost(...) itself. Until a host is set, Passive is TRUE (fails closed).
 //   FeatureTable.Add, Lanes.Slow, [MantleFeature], FeatureCommand (Features.cs, Lanes.cs): Register only.
-//   TaskMgr.Take / Release / Refuse / ReadProcs / Proc / Held / Str / DryRun / QUERY_LIMITED / SYNCHRONIZE /
-//     STILL_ACTIVE (TaskMgr.cs). TaskMgr.Refuse reads Program.OwnPid / ParentPid itself (TaskMgr.cs's own
+//   TaskMgr.TakeAs / GUARD_USER / GUARD_READ / SensitiveKind / Release / ReadProcs / PathOf / Proc / Held / Str /
+//     DryRun / QUERY_LIMITED / SYNCHRONIZE / STILL_ACTIVE (TaskMgr.cs). TaskMgr.SensitiveKind and Refuse read
+//     Program.OwnPid / ParentPid themselves (TaskMgr.cs's own
 //     dependency: an elevated host must set those to Mantle's pids for "Mantle itself" to hold).
 //   Json.GetInt / GetString / GetBool / HasKey / TryGet (Json.cs).
 //   Win32 (declared here, class N): kernel32, advapi32 (tokens, WCT), dbghelp (MiniDumpWriteDump), shell32
@@ -156,7 +162,6 @@ namespace Mantle {
     const int ProcessPowerThrottling = 4, TokenPrivileges = 3, TokenVirtualizationAllowed = 23, TokenVirtualizationEnabled = 24;
     const uint MiniDumpWithFullMemory = 0x2;
     const long MinFreeAfterDump = 2L * 1024 * 1024 * 1024;
-    const string GuardNote = "Windows' own Task Manager lets an administrator do this to some of these; Mantle never does it to Windows' own processes, games and their anti-cheat, Lively, or Mantle itself";
 
     // ------------------------------------------------------------------ shared: reply, verify, open
 
@@ -182,28 +187,38 @@ namespace Mantle {
       TaskMgr.Release(t.Held);
     }
 
-    /// {pid, created} -> TaskMgr.Take (table + creation time + guard + a held QUERY_LIMITED|SYNCHRONIZE
-    /// handle), then the action's own handle with exactly `access` (always includes QUERY_LIMITED), checked
-    /// against the same creation time. Null + a filled reply when refused or denied.
-    static Target Open(Dictionary<string, object> req, uint access, Dictionary<string, object> r, string doing) {
+    const string GreyedEfficiency = "refused: a critical Windows process; Windows' Task Manager greys Efficiency mode out for it, and so does Mantle";
+
+    /// {pid, created} -> TaskMgr.TakeAs with `guard` (GUARD_USER for writes, op = the ConfirmText op;
+    /// GUARD_READ for reads): table + creation time + a held QUERY_LIMITED|SYNCHRONIZE handle, then the
+    /// action's own handle with exactly `access` (always includes QUERY_LIMITED), checked against the same
+    /// creation time. req.confirmed is passed through to the GUARD_USER gate. Null + a filled reply when
+    /// refused, unconfirmed (needsConfirm, kind, confirm) or denied (needsAdmin).
+    static Target Open(Dictionary<string, object> req, uint access, Dictionary<string, object> r, string doing, int guard, string op) {
       int pid = Json.GetInt(req, "pid", 0);
       string created = Json.GetString(req, "created");
       if (pid <= 0 || string.IsNullOrEmpty(created)) { Fail(r, "needs pid and created (the creation time taskmgr.snapshot gave)"); return null; }
       r["pid"] = pid;
       var one = new Dictionary<string, object>(); one["pid"] = (double)pid; one["created"] = created;
-      var synth = new Dictionary<string, object>(); synth["procs"] = new List<object> { one };
+      var synth = new Dictionary<string, object>();
+      synth["procs"] = new List<object> { one };
+      synth["confirmed"] = Json.GetBool(req, "confirmed", false);
       var refused = new List<object>();
       Dictionary<uint, TaskMgr.Proc> byPid;
       string err;
-      List<TaskMgr.Held> held = TaskMgr.Take(synth, TaskMgr.QUERY_LIMITED | TaskMgr.SYNCHRONIZE, refused, out byPid, out err);
+      List<TaskMgr.Held> held = TaskMgr.TakeAs(synth, TaskMgr.QUERY_LIMITED | TaskMgr.SYNCHRONIZE, refused, out byPid, out err, guard, op);
       if (held == null) { Fail(r, err ?? "the process table could not be read"); return null; }
       if (held.Count == 0) {
-        string why = null;
-        if (refused.Count > 0) { var d = refused[0] as IDictionary; if (d != null) why = d["why"] as string; }
-        TaskMgr.Proc p;
-        if (byPid != null && byPid.TryGetValue((uint)pid, out p) && created == TaskMgr.Str(p.Created)) {
-          string no = TaskMgr.Refuse(p, byPid);
-          if (no != null) { r["guard"] = true; Fail(r, "refused: " + no + ". " + GuardNote); return null; }
+        var d = refused.Count > 0 ? refused[0] as IDictionary : null;
+        string why = d == null ? null : d["why"] as string;
+        TaskMgr.Proc tp;
+        if (op == "efficiency" && byPid != null && byPid.TryGetValue((uint)pid, out tp) && created == TaskMgr.Str(tp.Created) &&
+            TaskMgr.SensitiveKind(tp, byPid) == "critical") { r["unavailable"] = true; Fail(r, GreyedEfficiency); return null; }
+        if (d != null && d.Contains("needsConfirm") && d["needsConfirm"] is bool && (bool)d["needsConfirm"]) {
+          if (op == "efficiency" && (d["kind"] as string) == "critical") { r["unavailable"] = true; Fail(r, GreyedEfficiency); return null; }
+          r["needsConfirm"] = true; r["kind"] = d["kind"]; r["confirm"] = d["confirm"];
+          Fail(r, why ?? "needs confirmation");
+          return null;
         }
         if (why != null && why.StartsWith("access denied", StringComparison.Ordinal)) {
           r["needsAdmin"] = true;
@@ -214,6 +229,8 @@ namespace Mantle {
         return null;
       }
       var t = new Target(); t.Held = held; t.Pid = held[0].Pid; t.P = held[0].P;
+      // Confirmed or not sensitive: Efficiency mode is still unavailable on a critical process (Windows greys it).
+      if (op == "efficiency" && TaskMgr.SensitiveKind(t.P, byPid) == "critical") { Close(t); r["unavailable"] = true; Fail(r, GreyedEfficiency); return null; }
       IntPtr h = N.OpenProcess(access | TaskMgr.QUERY_LIMITED, false, t.Pid);
       if (h == IntPtr.Zero) { int e = Marshal.GetLastWin32Error(); Close(t); ApiFail(r, e, doing); return null; }
       t.H = h;
@@ -284,11 +301,9 @@ namespace Mantle {
       if (!Json.HasKey(req, "on")) { Fail(r, "needs on: true or false"); return null; }
       bool on = Json.GetBool(req, "on", false);
       r["on"] = on;
-      Target t = Open(req, PROCESS_SET_INFORMATION, r, "change Efficiency mode for this process");
+      Target t = Open(req, PROCESS_SET_INFORMATION, r, "change Efficiency mode for this process", TaskMgr.GUARD_USER, "efficiency");
       if (t == null) return null;
       try {
-        bool crit;
-        if (N.IsProcessCritical(t.H, out crit) && crit) { r["guard"] = true; Fail(r, "refused: a critical Windows process (Windows greys Efficiency mode out for it too)"); return null; }
         r["before"] = EffState(t.H);
         if (dry) {
           r["ok"] = true;
@@ -322,7 +337,7 @@ namespace Mantle {
       if (idx < 0) { Fail(r, "cls must be one of realtime, high, abovenormal, normal, belownormal, low"); return null; }
       uint want = ClsValues[idx];
       r["cls"] = cls;
-      Target t = Open(req, PROCESS_SET_INFORMATION, r, "change this process's priority");
+      Target t = Open(req, PROCESS_SET_INFORMATION, r, "change this process's priority", TaskMgr.GUARD_USER, "priority");
       if (t == null) return null;
       try {
         uint before = N.GetPriorityClass(t.H);
@@ -388,7 +403,7 @@ namespace Mantle {
     static string AffinityGet(Dictionary<string, object> req, ref object result) {
       var r = NewReply(false); result = r;
       r.Remove("dryRun");
-      Target t = Open(req, 0, r, "read this process's affinity");
+      Target t = Open(req, 0, r, "read this process's affinity", TaskMgr.GUARD_READ, null);
       if (t == null) return null;
       try { if (ReadMasks(t.H, r, "mask")) r["ok"] = true; return null; }
       finally { Close(t); }
@@ -401,7 +416,7 @@ namespace Mantle {
       ulong mask;
       if (!ParseMask(req, out mask)) { Fail(r, "needs mask: the logical processors as a decimal string, a 0x hex string or a number"); return null; }
       if (mask == 0) { Fail(r, "the mask has no processor in it; a process needs at least one (Windows says the same)"); return null; }
-      Target t = Open(req, PROCESS_SET_INFORMATION, r, "change this process's affinity");
+      Target t = Open(req, PROCESS_SET_INFORMATION, r, "change this process's affinity", TaskMgr.GUARD_USER, "affinity");
       if (t == null) return null;
       try {
         if (!ReadMasks(t.H, r, "before")) return null;
@@ -423,7 +438,7 @@ namespace Mantle {
       bool dry = TaskMgr.DryRun(req);
       if (!dry && Passive) return Refusal;
       var r = NewReply(dry); result = r;
-      Target t = Open(req, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, r, "read this process's memory for a dump");
+      Target t = Open(req, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, r, "read this process's memory for a dump", TaskMgr.GUARD_USER, "dump");
       if (t == null) return null;
       try {
         // Windows: %LOCALAPPDATA%\Temp\<exe name>.DMP. Here %TEMP% (the same folder for a normal account); a
@@ -491,7 +506,7 @@ namespace Mantle {
     static string WaitChain(Dictionary<string, object> req, ref object result) {
       var r = NewReply(false); result = r;
       r.Remove("dryRun");
-      Target t = Open(req, 0, r, "analyze this process's wait chain");
+      Target t = Open(req, 0, r, "analyze this process's wait chain", TaskMgr.GUARD_READ, null);
       if (t == null) return null;
       IntPtr wct = IntPtr.Zero, buf = IntPtr.Zero;
       try {
@@ -567,7 +582,7 @@ namespace Mantle {
       if (!Json.HasKey(req, "on")) { Fail(r, "needs on: true or false"); return null; }
       bool on = Json.GetBool(req, "on", false);
       r["on"] = on;
-      Target t = Open(req, 0, r, "change UAC virtualization for this process");
+      Target t = Open(req, 0, r, "change UAC virtualization for this process", TaskMgr.GUARD_USER, "uacvirt");
       if (t == null) return null;
       IntPtr tok = IntPtr.Zero;
       try {

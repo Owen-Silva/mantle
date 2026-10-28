@@ -3,11 +3,12 @@
 //   node sidecar/test-taskmgr-ops.js [--exe=<Mantle.Sidecar.exe>]     (or MANTLE_SIDECAR_EXE)
 //
 // NOTHING IS CHANGED, DUMPED, STARTED OR RESTARTED. Every write here is either a dryRun or a real request
-// to a PASSIVE sidecar, which must refuse it with the passive words before reading anything. Dry runs aim
-// only at this test's OWN idle node children (one orphan, one under this test = "Mantle itself" to the
-// guard) or, for the guard checks, at a Windows system process (refused before any handle that could
-// write). Restart (Windows Explorer) is ONLY ever a dryRun or a passive refusal. The two children end by
-// themselves (45 s timers); this test ends nothing.
+// to a PASSIVE sidecar, which must refuse it with the passive words before reading anything; real
+// requests name only this test's own orphan child. Dry runs aim at this test's OWN idle node children
+// (one orphan, one under this test = part of Mantle to the guard) or, for the confirm-gate checks, at
+// csrss/wininit (DRY writes only: a dry run opens handles and reads, never writes). Restart (Windows
+// Explorer) is ONLY ever a dryRun or a passive refusal. The two children end by themselves (45 s
+// timers); this test ends nothing.
 // Prints counts and milliseconds only (no names, paths or command lines), then
 // "TASKMGR OPS TEST: n passed, m failed".
 'use strict';
@@ -43,7 +44,7 @@ const short = (o) => JSON.stringify(o).slice(0, 260);
     const snap = await s.call('taskmgr.snapshot', {}, 8000);
     const kid = pick(snap, mine.pid);
     const orphan = snap.procs.find((p) => p.ppid === starterPid && /node/i.test(p.file));
-    const sys = snap.procs.find((p) => /^(csrss|wininit|services|lsass)\.exe$/i.test(p.file));
+    const sys = snap.procs.find((p) => /^(csrss|wininit)\.exe$/i.test(p.file));
     t.check('setup: the child under the test is in the table', !!kid);
     t.check('setup: the orphan test child is in the table', !!orphan, 'none with ppid ' + starterPid);
     t.check('setup: a Windows system process is in the table', !!sys);
@@ -63,22 +64,42 @@ const short = (o) => JSON.stringify(o).slice(0, 260);
       ['waitchain', 'taskmgr.waitchain', {}, false],
       ['uacvirt', 'taskmgr.uacvirt', { on: true }, true],
     ];
+    // Guard policy (coordinator 10-28, like Windows): writes = GUARD_USER (a critical/Windows/Mantle process
+    // needs confirmed:true; without it needsConfirm + Windows' warning text), reads = GUARD_READ (no guard).
+    // Writes to the system process are ONLY ever dry runs here; real calls go to the orphan only.
+    const isConfirm = (x, kind) => x.ok === false && x.needsConfirm === true && x.kind === kind && x.confirm && typeof x.confirm.title === 'string' && x.confirm.title.length > 0 && typeof x.confirm.button === 'string' && x.needsAdmin === false;
+    const passedGate = (x) => x.needsConfirm !== true && x.unavailable !== true && (x.ok === true || x.needsAdmin === true || /less than 2 GB/.test(x.reason || ''));
     for (const [name, cmd, extra, writes] of procCmds) {
       const dry = writes ? { dryRun: true } : {};
       const w = res(await s.send(cmd, Object.assign({}, extra, W, dry), 8000));
       t.check(name + ': a wrong creation time (reused pid) is refused', w.ok === false && /different process/.test(w.reason || ''), short(w));
-      const g = res(await s.send(cmd, Object.assign({}, extra, S, dry), 8000));
-      t.check(name + ': a Windows system process is refused by the guard, saying Windows would allow an admin', g.ok === false && g.guard === true && /^refused: /.test(g.reason || '') && /administrator/.test(g.reason || '') && g.needsAdmin === false, short(g));
-      const m = res(await s.send(cmd, Object.assign({}, extra, K, dry), 8000));
-      t.check(name + ': a process under the test is refused as Mantle itself', m.ok === false && /Mantle itself/.test(m.reason || ''), short(m));
+      const w2 = res(await s.send(cmd, Object.assign({}, extra, W, dry, { confirmed: true }), 8000));
+      t.check(name + ': a wrong creation time is refused even when confirmed', w2.ok === false && /different process/.test(w2.reason || ''), short(w2));
       const n = res(await s.send(cmd, Object.assign({}, extra, dry), 8000));
       t.check(name + ': no pid/created is a plain-words refusal', n.ok === false && /needs pid and created/.test(n.reason || ''), short(n));
-      if (writes) {
-        const p = await s.send(cmd, Object.assign({}, extra, O), 8000);
-        t.check(name + ': a real call is refused by the passive sidecar before anything', p.ok === false && p.error === T.PASSIVE_REFUSAL, short(p));
-        const p2 = await s.send(cmd, Object.assign({}, extra, S), 8000);
-        t.check(name + ': a real call on a system process is refused by passive first', p2.ok === false && p2.error === T.PASSIVE_REFUSAL, short(p2));
+      const g = res(await s.send(cmd, Object.assign({}, extra, S, dry), 8000));
+      const m = res(await s.send(cmd, Object.assign({}, extra, K, dry), 8000));
+      if (!writes) {
+        t.check(name + ': a critical system process is answered (or needsAdmin from Windows), never refused by a guard', g.needsConfirm === undefined && g.guard === undefined && (g.ok === true || (g.ok === false && g.needsAdmin === true)), short(g));
+        t.check(name + ': the process under the test (Mantle\'s own tree) is answered', m.ok === true && m.needsConfirm === undefined, short(m));
+        continue;
       }
+      if (name === 'efficiency') {
+        t.check('efficiency: a critical system process is unavailable (Windows greys the item out), not a confirm', g.ok === false && g.unavailable === true && /greys Efficiency mode out/.test(g.reason || '') && g.needsConfirm === undefined, short(g));
+        const gc = res(await s.send(cmd, Object.assign({}, extra, S, dry, { confirmed: true }), 8000));
+        t.check('efficiency: still unavailable on a critical process when confirmed', gc.ok === false && gc.unavailable === true, short(gc));
+      } else {
+        t.check(name + ': unconfirmed dry write on a critical system process -> needsConfirm + Windows\' warning, nothing touched', isConfirm(g, 'critical') && g.dryRun === true, short(g));
+        const gc = res(await s.send(cmd, Object.assign({}, extra, S, dry, { confirmed: true }), 8000));
+        t.check(name + ': confirmed DRY write on it passes the gate (then ok or needsAdmin)', passedGate(gc) && gc.dryRun === true, short(gc));
+      }
+      t.check(name + ': unconfirmed dry write on the process under the test -> needsConfirm kind mantle', isConfirm(m, 'mantle'), short(m));
+      const mc = res(await s.send(cmd, Object.assign({}, extra, K, dry, { confirmed: true }), 8000));
+      t.check(name + ': confirmed dry write on the process under the test passes the gate', passedGate(mc) && mc.dryRun === true, short(mc));
+      const p = await s.send(cmd, Object.assign({}, extra, O), 8000);
+      t.check(name + ': a real call (on the test\'s own orphan) is refused by the passive sidecar before anything', p.ok === false && p.error === T.PASSIVE_REFUSAL, short(p));
+      const p2 = await s.send(cmd, Object.assign({}, extra, O, { confirmed: true }), 8000);
+      t.check(name + ': a confirmed real call is refused by the passive sidecar too', p2.ok === false && p2.error === T.PASSIVE_REFUSAL, short(p2));
     }
 
     // ---- efficiency
