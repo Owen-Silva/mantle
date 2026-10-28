@@ -73,9 +73,10 @@ namespace Mantle {
       [DllImport("psapi.dll", SetLastError = true)] public static extern bool GetProcessMemoryInfo(IntPtr h, ref PMC_EX2 c, uint size);
       [DllImport("psapi.dll", SetLastError = true)] public static extern bool EmptyWorkingSet(IntPtr h);
       [DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr hwnd);
+      [DllImport("kernel32.dll")] public static extern ulong GetTickCount64();
     }
 
-    const uint QUERY_LIMITED = 0x1000, SET_QUOTA = 0x0100, SYNCHRONIZE = 0x00100000, STILL_ACTIVE = 259;
+    internal const uint QUERY_LIMITED = 0x1000, SET_QUOTA = 0x0100, SYNCHRONIZE = 0x00100000, STILL_ACTIVE = 259;
     const uint WM_CLOSE = 0x0010, GW_OWNER = 4;
     const int GWL_EXSTYLE = -20;
     const long WS_EX_TOOLWINDOW = 0x80;
@@ -138,8 +139,12 @@ namespace Mantle {
 
     // ------------------------------------------------------------------ the snapshot
 
-    sealed class Proc {
+    internal sealed class Proc {
       public uint Pid, Ppid, Session; public long Created, Cpu, Pws; public string File;
+      // lane tm-data: threads/handles (SYSTEM_PROCESS_INFORMATION 0x04 / 0x60), read+write transfer bytes
+      // (0xE8 + 0xF0, the counters GetProcessIoCounters returns), and Suspended = every thread is
+      // Waiting (state 5) for reason Suspended (5), Task Manager's "Suspended" status.
+      public int Threads, Handles; public long Io; public bool Suspended;
     }
 
     static IntPtr _buf = IntPtr.Zero;
@@ -153,7 +158,7 @@ namespace Mantle {
     /// SYSTEM_PROCESS_INFORMATION: NextEntryOffset 0x00, WorkingSetPrivateSize 0x08, CreateTime 0x20,
     /// UserTime 0x28, KernelTime 0x30, ImageName 0x38 (Length) / 0x40 (Buffer), UniqueProcessId 0x50,
     /// InheritedFromUniqueProcessId 0x58, SessionId 0x64. Null + why when the read failed.
-    static List<Proc> ReadProcs(out string why) {
+    internal static List<Proc> ReadProcs(out string why) {
       why = null;
       var list = new List<Proc>(400);
       if (IntPtr.Size != 8) { why = "the process table is read with x64 offsets and this sidecar is 32-bit"; return null; }
@@ -179,6 +184,19 @@ namespace Mantle {
           int len = Marshal.ReadInt16(p, 0x38) & 0xFFFF;
           IntPtr nb = Marshal.ReadIntPtr(p, 0x40);
           r.File = r.Pid == 0 ? "Idle" : nb == IntPtr.Zero ? "System" : Marshal.PtrToStringUni(nb, len / 2);
+          r.Threads = Marshal.ReadInt32(p, 0x04);
+          r.Handles = Marshal.ReadInt32(p, 0x60);
+          r.Io = Marshal.ReadInt64(p, 0xE8) + Marshal.ReadInt64(p, 0xF0);
+          if (r.Threads > 0 && r.Pid > 4) {
+            // SYSTEM_THREAD_INFORMATION[] follows the 0x100-byte process record; x64 stride 0x50,
+            // ThreadState 0x44, WaitReason 0x48.
+            bool all = true;
+            for (int ti = 0; ti < r.Threads && all; ti++) {
+              IntPtr th = new IntPtr(p.ToInt64() + 0x100 + ti * 0x50);
+              if (Marshal.ReadInt32(th, 0x44) != 5 || Marshal.ReadInt32(th, 0x48) != 5) all = false;
+            }
+            r.Suspended = all;
+          }
           list.Add(r);
           int next = Marshal.ReadInt32(p, 0);
           if (next == 0) break;
@@ -188,10 +206,10 @@ namespace Mantle {
       return list;
     }
 
-    static string Key(uint pid, long created) { return pid.ToString(CultureInfo.InvariantCulture) + "|" + created.ToString(CultureInfo.InvariantCulture); }
-    static string Str(long v) { return v.ToString(CultureInfo.InvariantCulture); }
+    internal static string Key(uint pid, long created) { return pid.ToString(CultureInfo.InvariantCulture) + "|" + created.ToString(CultureInfo.InvariantCulture); }
+    internal static string Str(long v) { return v.ToString(CultureInfo.InvariantCulture); }
 
-    static string PathOf(uint pid) {
+    internal static string PathOf(uint pid) {
       IntPtr h = N.OpenProcess(QUERY_LIMITED, false, pid);
       if (h == IntPtr.Zero) return "";
       try {
@@ -201,7 +219,7 @@ namespace Mantle {
       } finally { N.CloseHandle(h); }
     }
 
-    static string DescOf(string path) {
+    internal static string DescOf(string path) {
       if (string.IsNullOrEmpty(path)) return null;
       string d;
       if (_descs.TryGetValue(path, out d)) return d;
@@ -214,7 +232,7 @@ namespace Mantle {
     /// Visible, unowned, uncloaked, titled, non-tool top-level windows: the ones that make a
     /// process an "app" (Task Manager's Apps group), by pid. A Store app's frame
     /// (ApplicationFrameHost) is credited to the app inside it.
-    static Dictionary<uint, List<IntPtr>> AppWindowsByPid() {
+    internal static Dictionary<uint, List<IntPtr>> AppWindowsByPid() {
       var m = new Dictionary<uint, List<IntPtr>>();
       Win32.EnumWindowsProc cb = delegate (IntPtr hwnd, IntPtr lp) {
         try {
@@ -258,7 +276,7 @@ namespace Mantle {
       var live = new HashSet<string>(StringComparer.Ordinal);
       var rows = new List<object>(procs.Count);
       int noPath = 0;
-      long idle = -1;
+      long idle = -1, threads = 0, handles = 0;
       foreach (Proc p in procs) {
         if (p.Pid == 0) { idle = p.Cpu; continue; }   // the Idle process: its time is every core's idle time
         string k = Key(p.Pid, p.Created);
@@ -275,7 +293,9 @@ namespace Mantle {
         if (nwin > 0) foreach (IntPtr h in w) { try { if (N.IsHungAppWindow(h)) hung++; } catch (Exception) { } }
         rows.Add(Json.Obj("pid", (long)p.Pid, "ppid", (long)p.Ppid, "file", p.File, "created", Str(p.Created),
           "pws", p.Pws, "cpu", p.Cpu, "session", (long)p.Session, "path", path.Length > 0 ? path : null,
-          "desc", DescOf(path), "windows", nwin, "title", title, "hung", hung));
+          "desc", DescOf(path), "windows", nwin, "title", title, "hung", hung,
+          "io", p.Io, "threads", p.Threads, "handles", p.Handles, "suspended", p.Suspended));
+        threads += p.Threads; handles += p.Handles;
       }
       // Forget the processes that are gone (the cache is keyed pid|created, so a reused pid is new).
       var dead = new List<string>();
@@ -286,6 +306,7 @@ namespace Mantle {
       // 1 - its growth / (elapsed x cores), the number Windows' Task Manager shows as CPU.
       result = Json.Obj("t", DateTime.UtcNow.Ticks / 10000.0, "cpus", Environment.ProcessorCount, "mem", memo, "idle", idle,
         "procs", rows, "selfPid", (long)Program.OwnPid, "parentPid", (long)Program.ParentPid, "noPath", noPath,
+        "threads", threads, "handles", handles, "uptimeSec", (long)(N.GetTickCount64() / 1000),
         "method", "NtQuerySystemInformation(SystemProcessInformation).WorkingSetPrivateSize", "ms", sw.ElapsedMilliseconds);
       return null;
     }
@@ -293,7 +314,7 @@ namespace Mantle {
     // ------------------------------------------------------------------ the guard
 
     /// Null when `file` may be closed or trimmed, else the plain-words reason it may not.
-    static string Refuse(Proc p, Dictionary<uint, Proc> byPid) {
+    internal static string Refuse(Proc p, Dictionary<uint, Proc> byPid) {
       if (p == null) return "it is not running";
       if (p.Pid <= 4) return "a Windows system process";
       if (p.Session == 0) return "a Windows service (session 0)";
@@ -315,11 +336,11 @@ namespace Mantle {
       return null;
     }
 
-    sealed class Held { public uint Pid; public IntPtr H; public Proc P; }
+    internal sealed class Held { public uint Pid; public IntPtr H; public Proc P; }
 
     /// Parse procs:[{pid, created}], check each against the table, and hold a handle on the ones
     /// that pass. refused gets {pid, why} for the rest.
-    static List<Held> Take(Dictionary<string, object> req, uint access, List<object> refused, out Dictionary<uint, Proc> byPid, out string err) {
+    internal static List<Held> Take(Dictionary<string, object> req, uint access, List<object> refused, out Dictionary<uint, Proc> byPid, out string err) {
       err = null;
       byPid = new Dictionary<uint, Proc>();
       object raw;
@@ -359,9 +380,9 @@ namespace Mantle {
       return held;
     }
 
-    static void Release(List<Held> held) { if (held != null) foreach (Held h in held) N.CloseHandle(h.H); }
+    internal static void Release(List<Held> held) { if (held != null) foreach (Held h in held) N.CloseHandle(h.H); }
 
-    static bool DryRun(Dictionary<string, object> req) { return Json.GetBool(req, "dryRun", false); }
+    internal static bool DryRun(Dictionary<string, object> req) { return Json.GetBool(req, "dryRun", false); }
 
     // ------------------------------------------------------------------ close
 
@@ -421,7 +442,7 @@ namespace Mantle {
       } finally { Release(held); }
     }
 
-    static void RunTaskkill(string args, out int code, out string output) {
+    internal static void RunTaskkill(string args, out int code, out string output) {
       code = -1; output = "";
       try {
         var psi = new ProcessStartInfo(System.IO.Path.Combine(Environment.SystemDirectory, "taskkill.exe"), args);
@@ -437,7 +458,7 @@ namespace Mantle {
     }
 
     /// taskkill's own words, shortened to the reason (no process names: taskkill prints pids).
-    static string TaskkillWords(string output, int code, bool force) {
+    internal static string TaskkillWords(string output, int code, bool force) {
       string o = (output ?? "").Replace("\r", " ").Replace("\n", " ");
       if (o.IndexOf("forcefully", StringComparison.OrdinalIgnoreCase) >= 0)
         return "it has no window to close and would only end with Force close";
