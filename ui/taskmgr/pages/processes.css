@@ -1,0 +1,8 @@
+/* pages/processes.css - the Processes page. */
+.ptbl { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.recent { flex: 0 0 auto; margin: -4px 22px 6px; display: flex; flex-direction: column; gap: 2px; color: var(--lg-ink-2); }
+.trow .plock { display: grid; color: var(--lg-ink-3); margin-left: 6px; }
+.pst { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--lg-ink-2); }
+.pst svg { flex: 0 0 auto; width: 14px; height: 14px; }
+.pst span { overflow: hidden; text-overflow: ellipsis; }
+.pst.bad { color: var(--lg-warn); font-weight: 600; }
