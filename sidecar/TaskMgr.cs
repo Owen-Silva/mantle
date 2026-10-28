@@ -341,6 +341,71 @@ namespace Mantle {
     /// Parse procs:[{pid, created}], check each against the table, and hold a handle on the ones
     /// that pass. refused gets {pid, why} for the rest.
     internal static List<Held> Take(Dictionary<string, object> req, uint access, List<object> refused, out Dictionary<uint, Proc> byPid, out string err) {
+      return TakeAs(req, access, refused, out byPid, out err, GUARD_STRICT, null);
+    }
+
+    // ------------------------------------------------------------------ the three guard policies (lane tm-data, 10-28)
+    //
+    // Owen: Mantle's task manager works EXACTLY like Windows'. So:
+    //   GUARD_STRICT  automated and bulk paths (Get ready to game, auto-free at a game start, Trim, the
+    //                 Processes close): the Refuse list above, unchanged.
+    //   GUARD_USER    an explicit user write on ONE process (End task / End process tree / priority /
+    //                 affinity / efficiency / UAC virtualization / memory dump): allowed like Windows,
+    //                 but a Windows, critical or Mantle process needs confirmed:true in the request, sent
+    //                 by the page after it showed Windows' own warning (the `confirm` text below).
+    //                 Without it the entry is refused with needsConfirm:true and that text.
+    //   GUARD_READ    read-only analysis (wait chain, affinity read): no guard, like Windows.
+    // pid + creation-time verification and the held handle stay mandatory in all three.
+    internal const int GUARD_STRICT = 0, GUARD_USER = 1, GUARD_READ = 2;
+
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool IsProcessCritical(IntPtr h, out bool critical);
+    static readonly HashSet<string> CriticalNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+      "system", "registry", "secure system", "memory compression", "smss.exe", "csrss.exe", "wininit.exe", "winlogon.exe",
+      "services.exe", "lsass.exe", "lsaiso.exe"
+    };
+
+    /// null = no warning needed; else "critical" (ending it shuts Windows down), "system" or "mantle".
+    internal static string SensitiveKind(Proc p, Dictionary<uint, Proc> byPid) {
+      if (p.Pid <= 4 || CriticalNames.Contains(p.File)) return "critical";
+      if (string.Equals(p.File, "Mantle.Sidecar.exe", StringComparison.OrdinalIgnoreCase)) return "mantle";
+      IntPtr h = N.OpenProcess(QUERY_LIMITED, false, p.Pid);
+      if (h != IntPtr.Zero) {
+        try { bool crit; if (IsProcessCritical(h, out crit) && crit) return "critical"; } catch (Exception) { } finally { N.CloseHandle(h); }
+      }
+      if (p.Session == 0 || SystemNames.Contains(p.File)) return "system";
+      return Refuse(p, byPid) == "Mantle itself" ? "mantle" : null;
+    }
+
+    /// Windows' own warning for `op` on a sensitive process (the page shows it, then resends with confirmed:true).
+    internal static IDictionary ConfirmText(string op, string kind, string name) {
+      string q = "'" + name + "'";
+      bool crit = kind == "critical", mantle = kind == "mantle";
+      string mantleWords = "This is part of Mantle. Ending it closes Mantle's bar, panels and this window until Mantle starts again.";
+      switch (op) {
+        case "endtree":
+          return Json.Obj("title", "Do you want to end the process tree of " + q + "?",
+            "body", mantle ? mantleWords : crit ? "Ending this process will shut down the operating system immediately. You will lose all unsaved data. Are you sure you want to continue?"
+              : "If an open program is associated with this process tree, it will close and you will lose any unsaved data. If you end a system process, it might result in system instability. Are you sure you want to continue?",
+            "check", crit ? "Abandon unsaved data and shut down." : null, "button", crit ? "Shut down" : "End process tree");
+        case "priority":
+          return Json.Obj("title", "Do you want to change the priority of " + q + "?", "body", "Changing the priority of certain processes could cause system instability.", "check", null, "button", "Change priority");
+        case "affinity":
+          return Json.Obj("title", "Do you want to change the affinity of " + q + "?", "body", "Changing which processors a system process can run on could cause system instability.", "check", null, "button", "Change affinity");
+        case "efficiency":
+          return Json.Obj("title", "Turn on Efficiency mode for " + q + "?", "body", "Efficiency mode lowers the process priority and improves power efficiency. Turning it on for a system process could cause system instability.", "check", null, "button", "Turn on Efficiency mode");
+        case "uacvirt":
+          return Json.Obj("title", "Do you want to change the virtualization state of " + q + "?", "body", "Changing the virtualization state of a process could cause it to fail or work incorrectly.", "check", null, "button", "Change virtualization");
+        case "dump":
+          return Json.Obj("title", "Create a memory dump of " + q + "?", "body", "The dump file holds everything in this process's memory, which can include passwords and other secrets.", "check", null, "button", "Create dump file");
+        default:   // "end"
+          return crit
+            ? Json.Obj("title", "Do you want to end the system process " + q + "?", "body", "Ending this process will shut down the operating system immediately. You will lose all unsaved data. Are you sure you want to continue?", "check", "Abandon unsaved data and shut down.", "button", "Shut down")
+            : Json.Obj("title", "Do you want to end " + q + "?", "body", mantle ? mantleWords : "If an open program is associated with this process, it will close and you will lose any unsaved data. If you end a system process, it might result in system instability. Are you sure you want to continue?", "check", null, "button", "End process");
+      }
+    }
+
+    /// Take with a guard policy. GUARD_USER reads req.confirmed and req.op ("end", "priority", ...).
+    internal static List<Held> TakeAs(Dictionary<string, object> req, uint access, List<object> refused, out Dictionary<uint, Proc> byPid, out string err, int guard, string op) {
       err = null;
       byPid = new Dictionary<uint, Proc>();
       object raw;
@@ -359,8 +424,17 @@ namespace Mantle {
         Proc p;
         if (pid <= 0 || !byPid.TryGetValue((uint)pid, out p)) { refused.Add(Json.Obj("pid", pid, "why", "it is no longer running")); continue; }
         if (created != Str(p.Created)) { refused.Add(Json.Obj("pid", pid, "why", "refused: that pid is now a different process (Windows reused the number)")); continue; }
-        string no = Refuse(p, byPid);
-        if (no != null) { refused.Add(Json.Obj("pid", pid, "why", "refused: " + no)); continue; }
+        if (guard == GUARD_STRICT) {
+          string no = Refuse(p, byPid);
+          if (no != null) { refused.Add(Json.Obj("pid", pid, "why", "refused: " + no)); continue; }
+        } else if (guard == GUARD_USER && !Json.GetBool(req, "confirmed", false)) {
+          string kind = SensitiveKind(p, byPid);
+          if (kind != null) {
+            refused.Add(Json.Obj("pid", pid, "why", "needs confirmation: " + (kind == "critical" ? "a critical Windows process" : kind == "system" ? "a Windows process" : "part of Mantle"),
+              "needsConfirm", true, "kind", kind, "confirm", ConfirmText(op ?? "end", kind, p.File)));
+            continue;
+          }
+        }
         IntPtr h = N.OpenProcess(access, false, (uint)pid);
         if (h == IntPtr.Zero) {
           int e = Marshal.GetLastWin32Error();

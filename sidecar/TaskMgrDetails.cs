@@ -9,8 +9,11 @@
 //     parent is already in the set, is in that same read, and was created no later than the child
 //     (Windows never clears a dead parent's pid, so a new process that got an old number is not the
 //     parent of anything older than itself). More than 80 members: refused.
-//   - Every member goes through TaskMgr.Refuse (Windows' own processes, session 0, games and
-//     anti-cheat, Lively, Mantle itself). ONE refused member refuses the WHOLE request.
+//   - An explicit user End task, like Windows' (lane tm-data 10-28, Owen: "exactly the same as default
+//     windows task manager"): any process may be ended, but if ANY member is a critical Windows, Windows
+//     or Mantle process (TaskMgr.SensitiveKind) the request needs confirmed:true; without it the WHOLE
+//     request answers needsConfirm + Windows' warning text (TaskMgr.ConfirmText) and touches nothing.
+//     The strict TaskMgr.Refuse list still guards the automated paths (taskmgr.close / trim).
 //   - A handle is held on every member (TaskMgr.Take re-verifies pid + creation time) for the whole
 //     action, so no pid can be reused in between. One member that cannot be held refuses the whole
 //     request.
@@ -111,10 +114,25 @@ namespace Mantle {
         }
       }
 
-      // One protected member refuses the whole request.
-      foreach (uint m in set) {
-        string no = TaskMgr.Refuse(byPid[m], byPid);
-        if (no != null) refused.Add(Json.Obj("pid", m, "why", "refused: " + no));
+      // An explicit user End task, like Windows': any process may be ended, but a Windows, critical or
+      // Mantle member needs confirmed:true (the page showed Windows' own warning first). Without it the
+      // whole request answers needsConfirm with that warning's text (GUARD_USER in TaskMgr.cs).
+      bool confirmed = Json.GetBool(req, "confirmed", false);
+      if (!confirmed) {
+        string worst = null; TaskMgr.Proc worstP = null;
+        foreach (uint m in set) {
+          string kind = TaskMgr.SensitiveKind(byPid[m], byPid);
+          if (kind == null) continue;
+          refused.Add(Json.Obj("pid", m, "why", "needs confirmation", "needsConfirm", true, "kind", kind));
+          if (worst == null || kind == "critical" || (kind == "mantle" && worst == "system")) { worst = kind; worstP = byPid[m]; }
+        }
+        if (worst != null) {
+          TaskMgr.Proc shown = worst == "critical" || set.Count == 1 ? worstP : target;
+          var dc = Reply(false, "none", set, refused, dry, "needs confirmation: " + (worst == "critical" ? "a critical Windows process" : worst == "system" ? "a Windows process" : "part of Mantle"), false);
+          dc["needsConfirm"] = true; dc["kind"] = worst;
+          dc["confirm"] = TaskMgr.ConfirmText(tree ? "endtree" : "end", worst, shown.File);
+          result = dc; return null;
+        }
       }
       if (refused.Count > 0) {
         var first = (System.Collections.IDictionary)refused[0];
@@ -139,7 +157,7 @@ namespace Mantle {
       Dictionary<uint, TaskMgr.Proc> byPid2;
       string err;
       uint access = TaskMgr.QUERY_LIMITED | TaskMgr.SYNCHRONIZE | (force ? PROCESS_TERMINATE : 0u);
-      List<TaskMgr.Held> held = TaskMgr.Take(takeReq, access, refused, out byPid2, out err);
+      List<TaskMgr.Held> held = TaskMgr.TakeAs(takeReq, access, refused, out byPid2, out err, TaskMgr.GUARD_READ, null);   // verified + held; the user gate ran above
       if (held == null) return err;
       try {
         if (refused.Count > 0 || held.Count != set.Count) {

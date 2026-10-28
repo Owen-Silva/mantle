@@ -63,21 +63,25 @@ const pick = (snap, pid) => snap.procs.find((p) => p.pid === pid);
     }
     const sys = snap.procs.find((p) => /^(csrss|wininit)\.exe$/i.test(p.file));
     const d5 = await s.call('taskmgr.endpid', { pid: sys.pid, created: sys.created, force: true, dryRun: true }, 6000);
-    t.check('endpid: a Windows system process is refused', d5.done === false && d5.refused.length === 1 && /refused/.test(d5.why), JSON.stringify(d5));
-    // wininit's tree holds services, svchost, ...: refused whole (protected members or more than 80).
+    // lane tm-data 10-28: an explicit End task works like Windows': a critical / Windows / Mantle process
+    // needs confirmed:true; without it: needsConfirm + Windows' own warning, nothing touched. DRY RUNS ONLY.
+    t.check('endpid: a critical Windows process needs confirmation with the Windows shutdown warning', d5.done === false && d5.needsConfirm === true && d5.kind === 'critical' && /system process/.test(d5.confirm.title) && d5.confirm.check === 'Abandon unsaved data and shut down.' && d5.confirm.button === 'Shut down', JSON.stringify(d5).slice(0, 300));
+    const d5c = await s.call('taskmgr.endpid', { pid: sys.pid, created: sys.created, force: true, confirmed: true, dryRun: true }, 6000);
+    t.check('endpid: confirmed (dry) passes the gate; Windows then answers (done, or access denied as needsAdmin)', !d5c.needsConfirm && (d5c.done === true || d5c.needsAdmin === true), JSON.stringify(d5c).slice(0, 300));
+    // wininit's tree holds services, svchost, ...: more than 80 or needs confirmation; refused whole either way.
     const wi = snap.procs.find((p) => /^wininit\.exe$/i.test(p.file));
     if (wi) {
       const d5b = await s.call('taskmgr.endpid', { pid: wi.pid, created: wi.created, tree: true, force: true, dryRun: true }, 6000);
-      t.check('endpid: wininit\'s tree is refused whole', d5b.done === false && d5b.how === 'none' && /refused/.test(d5b.why), JSON.stringify(d5b).slice(0, 240));
+      t.check('endpid: the wininit tree is refused whole (too big or needs confirmation)', d5b.done === false && d5b.how === 'none' && (d5b.needsConfirm === true || /more than 80/.test(d5b.why)), JSON.stringify(d5b).slice(0, 240));
     }
     const d6 = await s.call('taskmgr.endpid', { pid: kid.pid, created: kid.created, dryRun: true }, 6000);
-    t.check('endpid: a process under Mantle is refused as Mantle itself', d6.done === false && d6.refused.length === 1 && /Mantle itself/.test(d6.refused[0].why), JSON.stringify(d6));
-    // This test's own tree from the test process's PARENT is not available; instead: a tree rooted at
-    // the sidecar's parent (this test) holds the sidecar and "mine": every member is Mantle -> refused whole.
+    t.check('endpid: a process under Mantle needs confirmation as part of Mantle', d6.done === false && d6.needsConfirm === true && d6.kind === 'mantle' && /Mantle/.test(d6.confirm.body), JSON.stringify(d6).slice(0, 300));
+    const d6b = await s.call('taskmgr.endpid', { pid: kid.pid, created: kid.created, confirmed: true, dryRun: true }, 6000);
+    t.check('endpid: the same, confirmed (dry): would end it', d6b.done === true && d6b.dryRun === true && !d6b.needsConfirm, JSON.stringify(d6b).slice(0, 300));
     const me = pick(snap, process.pid);
     if (me) {
       const d7 = await s.call('taskmgr.endpid', { pid: me.pid, created: me.created, tree: true, dryRun: true }, 6000);
-      t.check('endpid: a tree with protected members is refused whole, listing them', d7.done === false && d7.refused.length >= 2 && /whole tree or nothing/.test(d7.why), JSON.stringify(d7).slice(0, 240));
+      t.check('endpid: a tree holding Mantle members needs confirmation for the whole tree, listing them', d7.done === false && d7.needsConfirm === true && d7.refused.length >= 2 && /process tree/.test(d7.confirm.title), JSON.stringify(d7).slice(0, 240));
     } else t.check('endpid: this test is in the table', false);
     const d8 = await s.send('taskmgr.endpid', { pid: kid.pid, created: kid.created }, 4000);
     t.check('passive: a real endpid is refused before anything', d8.ok === false && d8.error === T.PASSIVE_REFUSAL, JSON.stringify(d8));
