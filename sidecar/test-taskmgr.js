@@ -38,6 +38,11 @@ const pick = (snap, pid) => snap.procs.find((p) => p.pid === pid);
     t.check('snapshot: some processes own app windows', withWin > 0, String(withWin));
     t.check('snapshot: paths read for most processes', a.procs.filter((p) => p.path).length > a.procs.length / 3, `${a.noPath} unread of ${a.procs.length}`);
     console.log(`  (read-only) ${a.procs.length} processes, ${withWin} with app windows, ${a.noPath} paths unreadable, ${a.ms} ms`);
+    // lane tm-data: threads/handles/io/suspended from the same table read, and machine totals
+    t.check('snapshot: every row has io, threads, handles and suspended', a.procs.every((p) => Number.isFinite(p.io) && p.io >= 0 && Number.isInteger(p.threads) && Number.isInteger(p.handles) && typeof p.suspended === 'boolean'));
+    t.check('snapshot: the sidecar has threads and handles of its own', self && self.threads > 0 && self.handles > 0, JSON.stringify(self && { th: self.threads, h: self.handles }));
+    t.check('snapshot: thread/handle totals and uptime', a.threads >= a.procs.length && a.handles > a.threads && a.uptimeSec > 0, `${a.threads} ${a.handles} ${a.uptimeSec}`);
+    t.check('snapshot: the System process is not suspended', a.procs.filter((p) => p.pid === 4).every((p) => p.suspended === false));
 
     const b = await s.call('taskmgr.snapshot', {}, 8000);
     console.log(`  (read-only) second snapshot ${b.ms} ms`);
