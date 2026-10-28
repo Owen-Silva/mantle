@@ -197,7 +197,7 @@
     const W = window.MantleWallBdrop;
     const wallWhy = W && W.state === 'off' && document.documentElement.dataset.theme === 'dark' ? `No wallpaper picture: ${W.reason || 'no reason came back'}; the window stays solid.` : null;
     const s = m.settings || {};
-    const paused = s.updateSpeed === 'paused' ? 'Updates are paused (Settings > Real time update speed). F5 refreshes once.' : null;
+    const paused = s.updateSpeed === 'paused' || m.sampleMs === 0 ? 'Updates are paused (Settings > Real time update speed). F5 refreshes once.' : null;
     const notes = [P.note, look.iconWhy ? `This window's own icon: ${look.iconWhy}.` : null, look.lightWhy ? `Glass: ${look.lightWhy}; the window stays solid.` : null, wallWhy].filter(Boolean);
     const lines = notes.map((t) => (t && t.admin ? `<span class="nl adm">${t.head ? `<span>${esc(t.head)}:</span>` : ''}${adminHtml(t.admin)}</span>` : warnLine('nl', t)));
     if (paused) lines.push(`<span class="nl quiet">${ICON.pause}<span>${esc(paused)}</span></span>`);
@@ -315,7 +315,7 @@
     const back = refocus && (M.anchor && document.contains(M.anchor) ? M.anchor : M.refocus);
     const cb = M.onClose;
     M.anchor = null; M.onClose = null; M.refocus = null;
-    if (back && back.focus && !(P.dlg)) back.focus({ preventScroll: true });
+    if (back && back.focus && (!P.dlg || P.dlg.contains(back))) back.focus({ preventScroll: true });
     if (cb) cb();
   }
   const menuIsOpen = () => M.stack.length > 0;
@@ -338,12 +338,13 @@
       const back = document.activeElement;
       menuClose(false);
       const btns = (o.buttons || [{ id: 'ok', label: 'OK', primary: true }]);
-      dlgHost.innerHTML = `<div class="scrim"></div><div class="dlg${o.cls ? ' ' + o.cls : ''}" role="dialog" aria-modal="true" aria-labelledby="dlgt"${o.width ? ` style="width:${Number(o.width)}px"` : ''}>` +
+      dlgHost.innerHTML = `<div class="scrim"></div><div class="dlg${o.cls ? ' ' + o.cls : ''}" role="dialog" aria-modal="true" aria-labelledby="dlgt">` +
         `<div class="dhead"><h2 id="dlgt">${esc(o.title || '')}</h2><button type="button" class="dx" data-b="cancel" aria-label="Close" title="Close (Esc)"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.1"/></svg></button></div>` +
         `<div class="dbody">${o.body || ''}</div>` +
         `<div class="dfoot">${btns.map((b) => `<button type="button" class="btn${b.primary ? ' acc' : ''}${b.danger ? ' dng' : ''}" data-b="${esc(b.id)}"${b.disabled ? ' disabled' : ''}>${esc(b.label)}</button>`).join('')}</div></div>`;
       dlgHost.hidden = false;
       const el = dlgHost.querySelector('.dlg');
+      if (o.width) el.style.width = Number(o.width) + 'px';   // CSSOM: the page's CSP blocks style attributes
       P.dlg = el;
       const api = {
         el,
@@ -387,7 +388,7 @@
       });
       if (o.init) o.init(el, api);
       const auto = el.querySelector('[autofocus]') || el.querySelector('.dbody input:not([disabled]), .dbody select') || (btns.find((b) => b.primary) && api.button(btns.find((b) => b.primary).id)) || el.querySelector('.dfoot button');
-      if (auto) auto.focus();
+      if (auto && !el.contains(document.activeElement)) auto.focus();   // init may have chosen (a confirm focuses Cancel)
     });
     const p = dlgQueue.then(run1);
     dlgQueue = p.catch(() => {});
@@ -647,7 +648,7 @@
     }
     function buildRow(el, it, cs, sig) {
       const r = it.r;
-      if (it.loading) { if (el._s !== 'loading') { el.className = 'trow child loading'; el.innerHTML = `<div class="tr"><span class="c name" style="padding-left:${20 + it.depth * 22}px"><span class="spin" aria-hidden="true"></span>Loading...</span></div>`; el._s = 'loading'; } return; }
+      if (it.loading) { if (el._s !== 'loading') { el.className = 'trow child loading'; el.innerHTML = `<div class="tr"><span class="c name"><span class="ind d${Math.min(it.depth, 4)}"></span><span class="nochev"></span><span class="spin" aria-hidden="true"></span>Loading...</span></div>`; el._s = 'loading'; } return; }
       if (el._sig !== sig) {
         el.innerHTML = '<div class="tr" role="row">' + cs.map((c) => `<span class="c${c.num ? ' num' : ''}${c.flex ? ' name' : ''}" role="gridcell"></span>`).join('') + '</div><div class="tsub"></div>';
         el._sig = sig; el._cells = Array.from(el.firstChild.children); el._sub = el.lastChild;
@@ -661,12 +662,12 @@
         const c = cs[i], cell = el._cells[i];
         if (c.flex || c.html) {
           let h = c.html ? c.html(r, it) : esc(c.text ? c.text(r) : r[c.id]);
-          if (c.flex) h = `<span class="ind" style="width:${it.depth * 22}px"></span>` + (n > 0 ? `<button type="button" class="chev" data-act="expand" tabindex="-1" aria-expanded="${open}" aria-label="${open ? 'Collapse' : 'Expand'}" title="${open ? 'Collapse' : 'Expand'} (Enter)">${ICON.chev}</button>` : '<span class="nochev"></span>') + h;
+          if (c.flex) h = `<span class="ind d${Math.min(it.depth, 4)}"></span>` + (n > 0 ? `<button type="button" class="chev" data-act="expand" tabindex="-1" aria-expanded="${open}" aria-label="${open ? 'Collapse' : 'Expand'}" title="${open ? 'Collapse' : 'Expand'} (Enter)">${ICON.chev}</button>` : '<span class="nochev"></span>') + h;
           if (cell._h !== h) { cell.innerHTML = h; cell._h = h; }
         } else {
           let v = c.text ? c.text(r) : r[c.id];
           let why = null;
-          if (v == null || v === '') { if (v == null) { why = c.why ? c.why(r) : 'Not reported'; v = '—'; } }
+          if (v == null) { why = (r.why && r.why[c.whyKey || c.id]) || (c.why ? c.why(r) : 'Not reported'); v = '—'; }
           v = String(v);
           if (cell._t !== v) { cell.textContent = v; cell._t = v; }
           if (cell._w !== why) { if (why) cell.title = why; else cell.removeAttribute('title'); cell._w = why; cell.classList.toggle('nil', !!why); }
@@ -944,6 +945,7 @@
   function dataState(key, view) {
     const m = P.m || {};
     const d = m[key];
+    if (d && d.loading) return 'loading';
     if (d && d.error && !(d.rows && d.rows.length)) return 'error';
     if (d) return 'ok';
     if (P.unsupported.has(view || P.view)) return 'unsupported';
@@ -1010,7 +1012,7 @@
       focusPage();
       return;
     }
-    if (k === 'F5') { e.preventDefault(); run('sample', {}, { noDry: true }).then((r) => { if (r.ok === false) note(`Refresh did not run: ${r.reason}`); }); return; }
+    if (k === 'F5') { e.preventDefault(); run('refresh', {}, { noDry: true }).then((r) => (r.missing ? run('sample', {}, { noDry: true }) : r)).then((r) => { if (r.ok === false) note(`Refresh did not run: ${r.reason}`); }); return; }
     if (e.altKey && (k === 'e' || k === 'E')) { e.preventDefault(); const pg = P.pages.get(P.view); if (pg && pg.endTask) pg.endTask(); return; }
     if (k === 'Escape') {
       if (menuIsOpen()) { menuClose(true); return; }

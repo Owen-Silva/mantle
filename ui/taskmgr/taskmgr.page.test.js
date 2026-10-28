@@ -107,8 +107,10 @@ kit.run('TASKMGR PAGE TEST', async (t) => {
   await p.waitForSelector('.rt-why:not([hidden])');
   check('a command main does not have yet: said in plain words', /can't do that yet/.test(await p.textContent('.rt-why')), await p.textContent('.rt-why'));
   await t.close(p);
-  p = await t.open('view=details&old=1');
-  await p.waitForTimeout(200);
+  p = await t.open('old=1');
+  check('an old main opens on Processes (its view is apps)', await p.isVisible('#pg-processes'));
+  await p.click('.nav[data-view="details"]');
+  await p.waitForTimeout(250);
   check('an old main (no Details data): the page says so, with a way out', /doesn't read this page yet/.test(await p.textContent('#pg-details')) && await p.isVisible('#pg-details [data-tmact="wintm"]'), await p.textContent('#pg-details'));
   await p.click('#pg-details [data-tmact="wintm"]');
   check('...Open Windows Task Manager asks main', (await calls(p, 'taskmgr.windowsTaskManager')).length === 1);
@@ -161,7 +163,7 @@ kit.run('TASKMGR PAGE TEST', async (t) => {
   p = await t.open('mock=game&view=game');
   check('game: its page is on', await p.isVisible('#pg-game') && (await p.textContent('#ptitle')) === 'Get ready to game');
   check('game: Free up RAM is the page\'s command, with the ticked total beside the title', /Free up RAM/.test(await p.textContent('#cmdbar')) && /ticked/.test(await p.textContent('#pextra')));
-  await p.click('#prep [data-key$="steam.exe"] [data-act="tick"], #prep .prow:has(.n:text-is("Steam")) [data-act="tick"]');
+  await p.click('#prep .prow:has(.n:text-is("Steam")) [data-act="tick"]');
   await p.waitForTimeout(80);
   check('tick an app: saved by its identity', (await calls(p, 'taskmgr.tick')).some((c) => c.args.on === true && /steam/.test(c.args.identity)));
   await p.click('#prep .prow:has(.n:text-is("Discord")) [data-act="reopen"]');
@@ -200,7 +202,9 @@ kit.run('TASKMGR PAGE TEST', async (t) => {
   await p.waitForTimeout(150);
   check('settings: a refused change says why on its row and the switch goes back', /Made-up failure/.test(await p.textContent('[data-row="hideWhenMinimized"]')) && !(await p.isChecked('#set-hideWhenMinimized')));
   await t.close(p);
-  p = await t.open('view=settings&old=1');
+  p = await t.open('old=1');
+  await p.click('.nav[data-view="settings"]');
+  await p.waitForTimeout(150);
   check('settings: an old main says it keeps none yet (controls off)', /doesn't keep Task Manager settings yet/.test(await p.textContent('#pg-settings')) && await p.$eval('#set-theme', (e) => e.disabled));
   await t.close(p);
 

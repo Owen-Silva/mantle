@@ -40,7 +40,7 @@ function shots() {
     { name: 'shell-run-new-task', q: 'view=processes', run: async (p) => { await p.click('#cmdbar [data-ci="0"]'); await p.waitForSelector('.dlg'); } },
     { name: 'shell-rail-overlay', q: 'view=processes', w: 760, h: 560, run: async (p) => { await p.click('#ham'); } },
     { name: 'shell-needs-admin', q: 'view=processes&admin=runTask', run: async (p) => { await p.click('#cmdbar [data-ci="0"]'); await p.fill('#rt-cmd', 'regedit'); await p.click('.dfoot [data-b="ok"]'); await p.waitForSelector('.rt-why:not([hidden])'); } },
-    { name: 'shell-old-main', q: 'view=details&old=1' },
+    { name: 'shell-old-main', q: 'old=1', run: async (p) => { await p.click('.nav[data-view="details"]'); await p.waitForTimeout(200); } },
     { name: 'shell-glass-inactive', q: 'glass=inactive', themes: ['light'] },
     { name: 'shell-glass-dark-frame', q: 'glass=dark', themes: ['light'] },
   ];

@@ -156,7 +156,7 @@ html { background: var(--lg-fill-strong); }
 .thead .tv.hi { color: var(--lg-warn); font-weight: 600; }
 .thead .rz { position: absolute; right: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 1; }
 .tstate { flex: 0 0 auto; }
-.tlist { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; outline: 0; padding-bottom: 6px; }
+.tlist { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; outline: 0; padding-bottom: 6px; scrollbar-gutter: stable; }   /* the gutter always there = the header (padding-right 10px) lines up */
 .tlist:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
 .tlist::-webkit-scrollbar { width: 10px; height: 10px; }
 .tlist::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
@@ -169,7 +169,7 @@ html { background: var(--lg-fill-strong); }
 .tgroup .gx { font-weight: 400; color: var(--lg-ink-3); font-size: 11.5px; display: flex; align-items: center; gap: 5px; }
 /* off-screen rows skip style, layout and paint (a long list was ~40 ms of layout a tick) */
 .trow { position: relative; content-visibility: auto; contain-intrinsic-size: auto 32px; }
-.trow .tr { position: relative; display: grid; grid-template-columns: var(--cols); align-items: stretch; height: 32px; padding-right: 10px; }
+.trow .tr { position: relative; display: grid; grid-template-columns: var(--cols); align-items: stretch; height: 32px; border-radius: 4px; }
 .trow .c { min-width: 0; display: flex; align-items: center; padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .trow .c.num { justify-content: flex-end; text-align: right; }
 .trow .c.nil { color: var(--lg-ink-3); }
@@ -177,7 +177,8 @@ html { background: var(--lg-fill-strong); }
 .trow .c.name > * { flex: 0 0 auto; }
 .trow .c.name .n { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .trow .c.name .k { color: var(--lg-ink-3); margin-left: 4px; }
-.trow .ind { display: inline-block; height: 1px; }
+.trow .ind { display: inline-block; height: 1px; width: 0; }
+.trow .ind.d1 { width: 22px; } .trow .ind.d2 { width: 44px; } .trow .ind.d3 { width: 66px; } .trow .ind.d4 { width: 88px; }
 .trow .chev, .trow .nochev { width: 22px; height: 22px; margin: 0 0 0 0; }
 .trow .chev { border: 0; background: transparent; border-radius: 4px; color: var(--lg-ink-3); display: grid; place-items: center; padding: 0; }
 .trow .chev:hover { background: var(--lg-press); color: var(--lg-ink); }
@@ -185,11 +186,11 @@ html { background: var(--lg-fill-strong); }
 .trow.open > .tr .chev svg { transform: rotate(90deg); }
 .trow .ic { width: 16px; height: 16px; border-radius: 3px; margin-right: 10px; flex: 0 0 16px; }
 .trow .ic.tile { display: grid; place-items: center; color: var(--lg-ink-3); }
-/* hover and the chosen row: a wash OVER the heat cells (an overlay, so a shaded cell still shows it) */
-.trow > .tr::after { content: ''; position: absolute; inset: 0 0 0 0; pointer-events: none; border-radius: 4px; }
-.trow:hover > .tr::after { background: var(--lg-hover); }
-.trow.sel > .tr::after { background: var(--lg-acc-soft); box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
-.tlist:focus .trow.sel > .tr::after { box-shadow: inset 0 0 0 1px var(--lg-acc); }
+/* hover and the chosen row: a wash UNDER the cells (the heat tints are translucent, so it shows through them
+   and never dims the words) */
+.trow:hover > .tr { background: var(--lg-hover); }
+.trow.sel > .tr { background: var(--lg-acc-soft); box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
+.tlist:focus .trow.sel > .tr { box-shadow: inset 0 0 0 1px var(--lg-acc); }
 /* heat: Windows shades the numbers by how much; here the accent's own tint in five quiet steps */
 .trow .c.h1 { background: color-mix(in srgb, var(--lg-acc) 5%, transparent); }
 .trow .c.h2 { background: color-mix(in srgb, var(--lg-acc) 9%, transparent); }
@@ -211,7 +212,7 @@ html { background: var(--lg-fill-strong); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------------------------------------------------------------- menus (context, header, command bar) */
-.menus { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
+.menus { position: fixed; inset: 0; pointer-events: none; z-index: 40; }   /* above a dialog: a dialog can open a menu (Run new task's history) */
 .menu {
   position: fixed; pointer-events: auto; min-width: 200px; max-width: 360px; padding: 4px; display: flex; flex-direction: column;
   background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r);
@@ -298,9 +299,9 @@ html { background: var(--lg-fill-strong); }
 :where(:root[data-theme="dark"]) .nav.on { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); font-weight: 500; }
 :where(:root[data-theme="dark"]) .nav.on::before { background: var(--lg-acc); }
 :where(:root[data-theme="dark"]) :is(.ham, .nav, .cbtn, .qx, .dx, .thead .h):hover:not(:disabled) { background: var(--lg-press); }
-:where(:root[data-theme="dark"]) .trow:hover > .tr::after { background: var(--lg-hover); }
-:where(:root[data-theme="dark"]) .trow.sel > .tr::after { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-strong); }
-:where(:root[data-theme="dark"]) .tlist:focus .trow.sel > .tr::after { box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
+:where(:root[data-theme="dark"]) .trow:hover > .tr { background: var(--lg-hover); }
+:where(:root[data-theme="dark"]) .trow.sel > .tr { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-strong); }
+:where(:root[data-theme="dark"]) .tlist:focus .trow.sel > .tr { box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
 :where(:root[data-theme="dark"]) .trow .c.h1 { background: color-mix(in srgb, var(--lg-acc) 6%, transparent); }
 :where(:root[data-theme="dark"]) .trow .c.h2 { background: color-mix(in srgb, var(--lg-acc) 10%, transparent); }
 :where(:root[data-theme="dark"]) .trow .c.h3 { background: color-mix(in srgb, var(--lg-acc) 15%, transparent); }
