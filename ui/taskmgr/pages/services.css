@@ -1,1 +1,8 @@
-/* pages/services.css - the services page (its lane owns this file). */
+/* pages/services.css - Windows' Services page in Mantle's island skin (--lg-* tokens only, light and dark). */
+.svtbl { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+#pg-services .svd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+#pg-services .trow .st .spin { flex: 0 0 auto; }
+#pg-services .st.svadm { flex-wrap: wrap; row-gap: 4px; }
+#pg-services .st.svadm > span:first-child { color: var(--lg-ink-2); }
+/* the services Details sent us to: marked like Windows' multi-selection (the chosen one keeps .sel) */
+#pg-services .trow.svhit:not(.sel) > .tr { background: var(--lg-acc-soft); }
