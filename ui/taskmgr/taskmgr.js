@@ -168,7 +168,9 @@
   function adminHtml(r) {
     const e = (P.m && P.m.elevated) || null;
     const why = (r && r.reason) || 'Windows needs administrator rights for this.';
-    const can = !e || !e.installed || e.stale || e.running === false;
+    // the helper starts on demand, so "not running" is normal once installed: the button only when it is
+    // missing or out of date (TM-SPEC tm-elevate)
+    const can = !e || !e.installed || !!e.stale;
     const state = e && e.reason ? ` (${e.reason})` : '';
     return `<span class="adminwhy">${ICON.warn}<span>${esc(why)}${esc(can && e ? state : '')}</span></span>` +
       (can ? '<button type="button" class="btn sm" data-tmact="elevated-setup" title="One Windows prompt, once: Mantle then does admin tasks without asking again">Set up administrator access</button>' : '');
@@ -469,16 +471,38 @@
   const api0 = { busy(el, on) { el.querySelectorAll('.dfoot button').forEach((b) => { if (on) { b._d = b.disabled; b.disabled = true; } else b.disabled = !!b._d; }); el.classList.toggle('busy', on); } };
 
   /* ================================================================ SHARED ROW ACTIONS (Processes, Details, ...) */
+  /* ONE dialog per action: ask main first with dryRun + noConfirm (nothing is done; main checks needsConfirm
+     BEFORE dryRun). needsConfirm => main's words (Windows' stronger warning for a critical / Windows / Mantle
+     process) are the only question: { args: {..., confirmed: true} }, or { res: cancelled }. A dry run that
+     already fails (needs admin, gone, no such command) => { res } to be said without asking. Otherwise
+     { args, plain: true }: the caller may ask its own Windows question first. */
+  async function preflight(cmd, args, okWords) {
+    const pre = await run(cmd, Object.assign({}, args, { dryRun: true }), { noConfirm: true, noDry: true });
+    if (pre.ok === false && pre.needsConfirm && (pre.title || pre.text)) {
+      const c = await confirm({ title: pre.title, body: pre.text, ok: pre.button || okWords || CONFIRM_OK[cmd] || 'OK', check: pre.check || null, width: 460 });
+      return c.ok ? { args: Object.assign({}, args, { confirmed: true }) } : { res: { ok: false, cancelled: true, reason: 'Cancelled.' } };
+    }
+    if (pre.ok === false) return { res: pre };
+    return { args: Object.assign({}, args), plain: true };
+  }
+
   const act = {
-    /* Windows' "Create memory dump file": a progress dialog, then where the file went + Open file location. */
-    async dump(pid, name) {
-      let res = null;
+    preflight,
+    /* Windows' "Create memory dump file": a progress dialog, then where the file went + Open file location.
+       target: a pid, or { pid, created }. A critical process's confirm comes BEFORE the dialog opens (asked
+       inside it, the confirm would wait behind the dialog). */
+    async dump(target, name) {
+      const ids = target && typeof target === 'object' ? target : { pid: target };
+      const pid = ids.pid;
+      const pf = await preflight('dump', ids, 'Create dump file');
+      if (pf.res && pf.res.cancelled) return pf.res;
+      let res = pf.res || null;   // a dry run that already failed: the dialog says why, nothing is tried
       await dialog({
         title: 'Dumping process', width: 440, cls: 'dump',
         body: `<p class="dq"><span class="spin" aria-hidden="true"></span>Dumping ${esc(name || 'the process')} (PID ${esc(pid)})...</p>`,
         buttons: [{ id: 'ok', label: 'OK', primary: true, disabled: true }],
         async init(el, a) {
-          res = await run('dump', { pid });
+          if (!res) res = await run('dump', pf.args, { noConfirm: true });
           if (!document.contains(el)) return;
           if (res.ok && !res.dryRun) {
             a.setTitle('Dump process');
@@ -512,14 +536,24 @@
     },
     /* Efficiency mode, with Windows' question first unless Settings > "Ask me before applying Efficiency mode"
        is off (or the box in the question was ticked). target: { pid } or { key }; name for the words. */
+    /* One dialog only: a critical / Windows process gets main's needsConfirm words (preflight) INSTEAD of
+       Windows' Efficiency question, never both. */
     async efficiency(target, on, name) {
+      const pf = await preflight('efficiency', Object.assign({}, target, { on: !!on }), on ? 'Turn on Efficiency mode' : 'OK');
+      if (pf.res) return pf.res;
       const s = (P.m && P.m.settings) || {};
-      if (on && s.askBeforeEfficiency !== false) {
+      if (pf.plain && on && s.askBeforeEfficiency !== false) {
         const c = await confirm({ title: 'Turn on Efficiency mode?', body: `Efficiency mode lowers the priority of ${name || 'this process'} and improves power efficiency. This might cause instability for some processes.`, ok: 'Turn on Efficiency mode', danger: false, dontAsk: "Don't ask me again" });
         if (!c.ok) return { ok: false, cancelled: true };
         if (c.checked) run('setting', { key: 'askBeforeEfficiency', value: false }, { noDry: true });
       }
-      return run('efficiency', Object.assign({}, target, { on: !!on }));
+      return run('efficiency', pf.args);
+    },
+    /* Services' "Open Services" (command bar + row menu): services.msc */
+    async openServices() {
+      const r = await run('openServices', {});
+      note(r.ok ? (r.dryRun ? r.reason || 'Test Mantle: Services was not opened.' : null) : `Services did not open: ${r.reason}`);
+      return r;
     },
     goToDetails(pid) { goTo('details', { pid }); },
     async windowsTaskManager() {
@@ -534,16 +568,18 @@
      o = {
        id,                      storage key: its columns, widths and sort are remembered per table
        cols: [{ id, label, title, num, w, min, flex, def (shown by default), fixed (cannot be hidden),
-                get(r) (sort value; default r[id]), text(r) (cell words; null/undefined = an em dash),
-                why(r) (the em dash's reason), html(r) (cell html, rebuilt only when it changes),
-                heat(r) -> 0..5, total() -> { v, title, hi } (the number over the header), menu (header
-                menu group label, e.g. 'Resource values') }],
+                get(r) (sort value; default r[id]), text(r, it) (cell words; null/undefined = an em dash;
+                it = the table's row item: depth, pk, k), why(r) (the em dash's reason), html(r, it) (cell
+                html, rebuilt only when it changes), heat(r) -> 0..5, total() -> { v, title, hi } (the number
+                over the header), menu (header menu group label, e.g. 'Resource values'), chooser: false
+                (never listed in the header menu or Select columns; Windows' Name) }],
        sort: { by, dir },       default sort (dir 1 = A-Z / small first, -1 = big first)
        key(r), children(r) (array while expanded, null = loading), count(r) (children it can show; > 0 = chevron),
        onExpand(r, open), sub(r) -> html under the row (its outcome, a question), cls(r) -> classes,
        onAct(act, r, btn, e) (a [data-act] button in a row or its sub line), onEnter(r), onDbl(r),
        onDelete(r, e), menu(r) -> items (right-click, the menu key, Shift+F10), onSelect(r),
-       headMenu() -> extra items for the header's right-click, selectDialog: true (adds "Select columns...")
+       headMenu() -> extra items for the header's right-click, selectDialog: true (adds "Select columns..."),
+       headerMenu(e, col, t) -> the header's whole right-click menu instead (col = the column under the pointer)
        label: the list's aria-label, empty: words when nothing at all, emptyQ(q): words when a search hides all
      }
      t.render({ groups: [{ id, title, rows }] } | { rows }) patches the DOM; t.state(html|null) shows a state
@@ -661,11 +697,11 @@
       for (let i = 0; i < cs.length; i++) {
         const c = cs[i], cell = el._cells[i];
         if (c.flex || c.html) {
-          let h = c.html ? c.html(r, it) : esc(c.text ? c.text(r) : r[c.id]);
+          let h = c.html ? c.html(r, it) : esc(c.text ? c.text(r, it) : r[c.id]);
           if (c.flex) h = `<span class="ind d${Math.min(it.depth, 4)}"></span>` + (n > 0 ? `<button type="button" class="chev" data-act="expand" tabindex="-1" aria-expanded="${open}" aria-label="${open ? 'Collapse' : 'Expand'}" title="${open ? 'Collapse' : 'Expand'} (Enter)">${ICON.chev}</button>` : '<span class="nochev"></span>') + h;
           if (cell._h !== h) { cell.innerHTML = h; cell._h = h; }
         } else {
-          let v = c.text ? c.text(r) : r[c.id];
+          let v = c.text ? c.text(r, it) : r[c.id];
           let why = null;
           if (v == null) { why = (r.why && r.why[c.whyKey || c.id]) || (c.why ? c.why(r) : 'Not reported'); v = '—'; }
           v = String(v);
@@ -760,12 +796,20 @@
       rz.addEventListener('pointermove', mv); rz.addEventListener('pointerup', up);
     });
     head.addEventListener('dblclick', (e) => { const rz = e.target.closest('.rz'); if (rz) { delete t.w[rz.dataset.rz]; save(); layout(); } });
-    head.addEventListener('contextmenu', (e) => { e.preventDefault(); menuOpen(headItems(), { x: e.clientX, y: e.clientY }); });
+    /* o.headerMenu(e, col, t) replaces the whole menu (Details: Windows' Hide column / Select columns); col = the
+       header cell's column, or null between cells. Without it, the column checklist below. */
+    head.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const h = e.target.closest('[data-col]');
+      const items = o.headerMenu ? o.headerMenu(e, (h && byId.get(h.dataset.col)) || null, t) : headItems();
+      if (items && items.length) menuOpen(items, { x: e.clientX, y: e.clientY });
+    });
     function headItems() {
-      const plain = o.cols.filter((c) => !c.menu);
+      // chooser:false = never listed (Windows' Name: always shown, so its menu and Select columns leave it out)
+      const plain = o.cols.filter((c) => !c.menu && c.chooser !== false);
       const items = plain.map((c) => ({ label: c.label, checked: t.vis.includes(c.id), disabled: !!c.fixed, act: () => t.toggleCol(c.id) }));
       const groups = new Map();
-      for (const c of o.cols.filter((x) => x.menu)) { if (!groups.has(c.menu)) groups.set(c.menu, []); groups.get(c.menu).push(c); }
+      for (const c of o.cols.filter((x) => x.menu && x.chooser !== false)) { if (!groups.has(c.menu)) groups.set(c.menu, []); groups.get(c.menu).push(c); }
       for (const [g, cs] of groups) items.push({ label: g, sub: cs.map((c) => ({ label: c.label, checked: t.vis.includes(c.id), act: () => t.toggleCol(c.id) })) });
       const extra = o.headMenu ? o.headMenu() : [];
       if (extra.length) items.push({ sep: true }, ...extra);
@@ -774,10 +818,11 @@
     }
     async function selectColumns() {
       const body = '<p class="dq">Select the columns that will appear in the table.</p><div class="colpick" role="group">' +
-        o.cols.map((c) => `<label class="dchk"><input type="checkbox" data-col="${esc(c.id)}"${t.vis.includes(c.id) ? ' checked' : ''}${c.fixed ? ' disabled' : ''}><span>${esc(c.title || c.label)}</span></label>`).join('') + '</div>';
+        o.cols.filter((c) => c.chooser !== false).map((c) => `<label class="dchk"><input type="checkbox" data-col="${esc(c.id)}"${t.vis.includes(c.id) ? ' checked' : ''}${c.fixed ? ' disabled' : ''}><span>${esc(c.title || c.label)}</span></label>`).join('') + '</div>';
       const r = await dialog({ title: 'Select columns', body, width: 420, cls: 'selcols', buttons: [{ id: 'ok', label: 'OK', primary: true }, { id: 'cancel', label: 'Cancel' }] });
       if (r.button !== 'ok') return;
-      t.setVisible(Array.from(r.el.querySelectorAll('[data-col]:checked')).map((i) => i.dataset.col));
+      const keep = o.cols.filter((c) => c.chooser === false && t.vis.includes(c.id)).map((c) => c.id);   // not listed: stays as it is
+      t.setVisible(Array.from(r.el.querySelectorAll('[data-col]:checked')).map((i) => i.dataset.col).concat(keep));
     }
     t.selectColumns = selectColumns;
     t.headItems = headItems;
