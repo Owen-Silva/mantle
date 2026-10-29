@@ -37,7 +37,7 @@
     gpu: 'GPU use per user was not measured',
     gpuEngine: 'GPU engine per user was not reported',
     session: 'Windows did not report the session ID',
-    // lib's model.users rows carry no sessionName / client / gpu / gpuEngine (Mantle does not read them yet)
+    // lib sends sessionName and client as null with why.sessionName / why.client (Mantle does not read them yet); gpu and gpuEngine are measured
     sessionName: 'Mantle does not read the session name yet',
     client: 'Mantle does not read the client name yet (it is blank for a session on this PC)',
     status: 'Windows did not report this session\'s state',
