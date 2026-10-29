@@ -142,7 +142,16 @@ if (Test-Path -LiteralPath $rl) {
 }
 $un = Uninstall-Cmd
 Check 'Settings > Apps lists Mantle (per-user uninstall key)' ($null -ne $un -and $un.UninstallString -match 'Uninstall Mantle\.exe')
-Check 'installed per user, no admin: %LOCALAPPDATA%\Programs\Mantle' ($null -ne $un -and $un.InstallLocation -and ([System.IO.Path]::GetFullPath($un.InstallLocation).TrimEnd('\') -ieq $inst))
+$uPath = if ($un -and $un.UninstallString -match '^"([^"]+)"') { $Matches[1] } else { '' }
+Check 'installed per user, no admin: %LOCALAPPDATA%\Programs\Mantle (HKCU key, uninstaller there)' ($uPath -and ([System.IO.Path]::GetDirectoryName($uPath) -ieq $inst)) "$($un.UninstallString)"
+# The same registration the box runs (lib/packaged.js autostartCommand), by hand, so its words are in the log.
+if ($Live) {
+  $ErrorActionPreference = 'Continue'   # a native command's stderr must not end the script here
+  $ao = & powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $app 'tools\install-autostart.ps1') -Exe $exe 2>&1
+  Write-Output "install-autostart -Exe (exit $LASTEXITCODE): $((@($ao) | ForEach-Object { "$_" }) -join ' | ')"
+  $null = & schtasks.exe /Delete /TN Mantle /F 2>&1
+  $ErrorActionPreference = 'Stop'
+}
 Check 'a silent install starts nothing' ((From-Install).Count -eq 0)
 Check 'installing registers no logon task' ($null -eq (Tasks))
 Check 'installing records no consent' (-not (Test-Path -LiteralPath $consent))
@@ -189,11 +198,32 @@ if ($Live) {
   $from = Log-Offset
   $g = Start-Gate
   $w = Find-Window $g.Id 60
+  Check 'second start: the warning again (nothing was recorded by Not now)' ($null -ne $w)
   if ($w) {
     (Named $w 'Also start Mantle when I sign in').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
     (Named $w 'Start Mantle').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
   }
-  Check 'Start Mantle: the warning process hands over and exits' ($w -and $g.WaitForExit(90000))
+  # The hand-over: the warning process exits and relaunches itself --live. If start at sign-in could not be
+  # registered it shows a second box first ("will not start when you sign in"): say its words, press OK.
+  $handed = $false
+  $end = (Get-Date).AddSeconds(90)
+  while (-not $handed -and (Get-Date) -lt $end) {
+    if ($g.WaitForExit(2000)) { $handed = $true; break }
+    $w2 = Find-Window $g.Id 1
+    if ($w2) {
+      $t2 = AllText $w2
+      if ($t2 -match 'will not start when you sign in') {
+        Check 'start at sign-in: registered without a warning' $false ($t2 -replace "`n", ' | ')
+        $ok = Named $w2 'OK'
+        if ($ok) { $ok.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+      }
+    }
+  }
+  if (-not $handed) {
+    $all = @(Get-CimInstance Win32_Process -Filter "ProcessId=$($g.Id)")
+    Write-Output "gate still running: $($all.Count); its windows say: $(if ($w2 = Find-Window $g.Id 1) { (AllText $w2) -replace "`n", ' | ' } else { 'none' })"
+  }
+  Check 'Start Mantle: the warning process hands over and exits' $handed
   Check 'Start Mantle: Mantle comes up live' (Wait-LiveUp $from)
   $mains = @(From-Install | Where-Object { $_.Name -ieq 'Mantle.exe' -and $_.CommandLine -match '--live' -and -not ($_.CommandLine -match '--type=') })
   Check 'live: one Mantle.exe --live with its log' ($mains.Count -eq 1 -and $mains[0].CommandLine -match '--log=') "$($mains.Count) main(s)"
@@ -219,8 +249,12 @@ if ($Live) {
 
   Step 'Start menu > Restore Windows taskbar while Mantle is live, under a hostile policy and Mark-of-the-Web'
   $polCU = Get-ExecutionPolicy -Scope CurrentUser; $polLM = Get-ExecutionPolicy -Scope LocalMachine
-  Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Restricted -Force
-  try { Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy AllSigned -Force } catch { Write-Output "note: LocalMachine policy not set ($($_.Exception.Message))" }
+  # Set-ExecutionPolicy reports "overridden by a more specific scope" (this script's own -ExecutionPolicy Bypass)
+  # as an error even though the setting is written: read the scopes back instead of trusting its answer.
+  try { Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Restricted -Force -ErrorAction Stop } catch { }
+  try { Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy AllSigned -Force -ErrorAction Stop } catch { }
+  Write-Output "policy now: CurrentUser=$(Get-ExecutionPolicy -Scope CurrentUser) LocalMachine=$(Get-ExecutionPolicy -Scope LocalMachine)"
+  Check 'hostile policy in place: CurrentUser Restricted' ("$(Get-ExecutionPolicy -Scope CurrentUser)" -eq 'Restricted')
   Get-ChildItem -Path (Join-Path $app 'tools') -File -Include '*.ps1', '*.cmd' -Recurse | ForEach-Object { Set-Content -LiteralPath $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3" }
   $target = $sc.CreateShortcut($rl).TargetPath
   $r = & cmd.exe /d /c "`"$target`" < NUL" 2>&1
@@ -229,8 +263,8 @@ if ($Live) {
   Check 'restore entry: exits 0 and prints verified' ($rc -eq 0 -and ($r -match '^verified')) "exit $rc; $((@($r) | Select-Object -Last 3) -join ' | ')"
   Check 'restore entry: it stopped the installed Mantle.exe (and only from this folder)' (Wait-Gone 20)
   Wait-Baseline 'after the Start menu restore'
-  Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy $polCU -Force
-  try { Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy $polLM -Force } catch { }
+  try { Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy $polCU -Force -ErrorAction Stop } catch { }
+  try { Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy $polLM -Force -ErrorAction Stop } catch { }
 
   Step 'update while live: Mantle-Setup.exe /S over a running Mantle'
   $from = Log-Offset
