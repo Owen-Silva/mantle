@@ -1,1 +1,14 @@
-/* pages/apphistory.css - the apphistory page (its lane owns this file). */
+/* pages/apphistory.css - Windows' App history page in Mantle's island skin (--lg-* tokens only, light and dark). */
+.ahhead { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 2px 22px 10px; }
+.ahsince { margin: 0; color: var(--lg-ink-2); line-height: 1.4; }
+.ahsince .na { color: var(--lg-ink-3); }
+/* Mantle's own record: a plain line, not an alarm (the admin button is the way to Windows' full history) */
+.ahsrc { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.ahsrc .adminwhy { color: var(--lg-ink-2); }
+.ahsrc .adminwhy svg { color: var(--lg-ink-3); }
+.ahout:empty, .ahsrc:empty { display: none; }
+.ahout .st.dadm { flex-wrap: wrap; row-gap: 4px; }
+.ahtbl { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.ahtbl .st.dadm { flex-wrap: wrap; row-gap: 4px; }
+.ahtbl .st.dadm > span:first-child, .ahout .st.dadm > span:first-child { color: var(--lg-ink-2); }
+@container content (max-width: 760px) { .ahhead { padding: 2px 16px 8px; } }
