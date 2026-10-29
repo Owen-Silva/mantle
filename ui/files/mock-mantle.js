@@ -294,6 +294,8 @@
       pins: pinRows(), undo: null, sep: '\\', notice: q.get('notice') || null, names: NAMES };
     // ?cache=1 (lane mantle-files): main's cached first view of the start folder, with one row the live listing does not have
     if (q.get('cache') === '1') b.cache = { path: b.path, count: 1, at: NOW, items: [{ n: 'Only in the cache.txt', d: 0, s: 10, m: NOW - DAY, c: NOW - DAY, a: 32 }] };
+    // ?bootfail=1 (lane mantle-warm): a malformed boot answer, so boot() throws and the page must SAY so
+    if (q.get('bootfail') === '1') b.undo = 1;
     return b;
   };
   let spareWaits = q.get('spare') === '1';
@@ -302,7 +304,10 @@
     boot: () => {
       if (!spareWaits) return bootNow();
       spareWaits = false;
-      setTimeout(() => emit('files.start', bootNow()), Number(q.get('startms')) || 150);
+      // ?prestart=1 (lane mantle-warm): main's hidden first view, sent while the spare waits (with ?cache=1);
+      // ?prestart=newer: the open's start then carries a NEWER saved view, which the page must draw instead
+      if (q.get('prestart')) setTimeout(() => emit('files.prestart', Object.assign(bootNow(), { select: null, notice: null })), 30);
+      setTimeout(() => { const b = bootNow(); if (q.get('prestart') === 'newer' && b.cache) b.cache = Object.assign({}, b.cache, { at: b.cache.at + 1000, items: [{ n: 'Newer saved row.txt', d: 0, s: 1, m: NOW, c: NOW, a: 32 }] }); emit('files.start', b); }, Number(q.get('startms')) || 150);
       return { ok: true, spare: true, w: 1 };
     },
     painted: (a) => { (window.__openStages = window.__openStages || []).push({ stage: a.stage, cached: !!a.cached }); return { ok: true }; },

@@ -188,12 +188,48 @@ async function main() {
     // ...and when the folder is gone by then, its error replaces the cached rows (no stale list left up)
     await page.goto(PAGE + '?cache=1&path=' + encodeURIComponent(HOME + '\\Private'));
     check('cold + cache, folder unreadable: the error replaces the cached rows', await until(() => { const t = MF.app && MF.app.cur(); return !!(t && !t.fromCache && t.error && !t.items.length && !document.getElementById('empty').hidden); }, null, 5000));
+    // 9b. (lane mantle-warm) the cached first view says it is a saved view until the live listing replaces it
+    await page.goto(PAGE + '?cache=1&path=' + encodeURIComponent(HOME + '\\Documents'));
+    check('cache: the status says the rows are a saved view being refreshed', await until(() => { const t = MF.app && MF.app.cur(); const s = document.getElementById('stload'); return !!(t && t.fromCache && !s.hidden && /^Saved view from a few seconds ago · refreshing…$/.test(s.textContent)); }, null, 4000), await q(() => document.getElementById('stload').textContent));
+    check('cache: ...and stops saying it once the live listing replaced them', await until(() => { const t = MF.app.cur(); const s = document.getElementById('stload'); return !t.fromCache && t.items.length > 1 && s.hidden && !/Saved view/.test(s.textContent); }, null, 5000), await q(() => document.getElementById('stload').textContent));
+    // a cached first view WITH a file to select (a "show in folder", or a saved last folder that was a
+    // file): selecting before the list had its tab threw and left the window blank (lane mantle-warm)
+    const errs9 = errors.length;
+    await page.goto(PAGE + '?cache=1&select=' + encodeURIComponent('Only in the cache.txt') + '&path=' + encodeURIComponent(HOME + '\\Documents'));
+    check('cache + select: the cached row is drawn AND selected', await until(() => { const t = MF.app && MF.app.cur(); return !!(t && t.fromCache && t.sel.has(MF.keyOf(t.items.find((x) => x.n === 'Only in the cache.txt') || {})) && document.documentElement.dataset.ready === '1'); }, null, 4000), await q(() => { const t = MF.app && MF.app.cur(); return t && JSON.stringify({ fromCache: t.fromCache, sel: [...t.sel], ready: document.documentElement.dataset.ready }); }));
+    check('cache + select: no page error', errors.length === errs9, errors.slice(errs9).join(' | '));
+    // a boot that throws says so on the page (never a blank window)
+    await page.goto(PAGE + '?bootfail=1');
+    check('boot failed: the window says it could not finish opening', await until(() => document.documentElement.dataset.ready === '1' && /could not finish opening/.test(document.body.innerText), null, 4000), await q(() => document.body.innerText.slice(0, 300)));
     // 10. keepReady's spare: boots, waits, and only draws when an open takes it ('files.start')
     await page.goto(PAGE + '?spare=1&startms=400&path=' + encodeURIComponent(HOME + '\\Documents'));
     await new Promise((r) => setTimeout(r, 200));
     check('spare: waits for its open (no folder yet)', await q(() => document.documentElement.dataset.ready !== '1' && !(window.__mockCalls || []).some((c) => c.name === 'files.list')));
     check('spare: the open that takes it shows the folder', await until(() => document.documentElement.dataset.ready === '1' && MF.app.cur().path.endsWith('Documents') && !MF.app.cur().loading && MF.app.cur().items.length > 0, null, 5000));
     check('spare: no page errors', !errors.length, errors.join(' | '));
+    // 11. (lane mantle-warm) keepReady prestart: the spare draws its start folder's SAVED view while it
+    // waits, tells main nothing until an open takes it, then says it is saved, selects, and refreshes
+    const errs11 = errors.length;
+    await page.goto(PAGE + '?spare=1&prestart=1&cache=1&startms=700&select=' + encodeURIComponent('Only in the cache.txt') + '&path=' + encodeURIComponent(HOME + '\\Documents'));
+    check('prestart: the hidden spare draws the saved view before any open', await until(() => { const t = MF.app && MF.app.cur(); return !!(t && t.fromCache && t.items.some((x) => x.n === 'Only in the cache.txt') && MF.app.list.cells && MF.app.list.cells.size > 0); }, null, 600),
+      await q(() => { const t = MF.app && MF.app.cur(); return t && JSON.stringify({ fromCache: t.fromCache, n: t.items.length }); }));
+    check('prestart: ...and asks main nothing for it (no listing, no "painted", not ready)', await q(() => !(window.__mockCalls || []).some((c) => c.name === 'files.list' || c.name === 'files.tabs') && !(window.__openStages || []).length && document.documentElement.dataset.ready !== '1'),
+      await q(() => JSON.stringify({ calls: (window.__mockCalls || []).map((c) => c.name), stages: window.__openStages || [] })));
+    check('prestart: the open that takes it keeps that view, selects the file, says it is saved', await until(() => { const t = MF.app.cur(); const k = MF.keyOf(t.items.find((x) => x.n === 'Only in the cache.txt') || {}); return document.documentElement.dataset.ready === '1' && t.sel.has(k) && /^Saved view from a few seconds ago/.test(document.getElementById('stload').textContent); }, null, 3000),
+      await q(() => JSON.stringify({ ready: document.documentElement.dataset.ready, status: document.getElementById('stload').textContent })));
+    check('prestart: painted (cached) and interactive told once each, only after the start', await until(() => { const s = window.__openStages || []; return s.length === 2 && s[0].stage === 'painted' && s[0].cached && s[1].stage === 'interactive'; }, null, 3000), await q(() => JSON.stringify(window.__openStages || [])));
+    check('prestart: the live listing replaces the saved view', await until(() => { const t = MF.app.cur(); return !t.fromCache && !t.items.some((x) => x.n === 'Only in the cache.txt') && t.items.length > 1; }, null, 5000));
+    check('prestart: no page errors', errors.length === errs11, errors.slice(errs11).join(' | '));
+    // a NEWER saved view in the open's start is drawn instead of the prestart's
+    await page.goto(PAGE + '?spare=1&prestart=newer&cache=1&startms=500&path=' + encodeURIComponent(HOME + '\\Documents'));
+    check('prestart, newer view at the open: that one is drawn', await until(() => { const t = MF.app && MF.app.cur(); return !!t && document.documentElement.dataset.ready === '1' && t.items.some((x) => x.n === 'Newer saved row.txt') && !t.items.some((x) => x.n === 'Only in the cache.txt'); }, null, 3000));
+    // keepPre's rule, directly
+    check('keepPre: kept only for the same folder, still the saved rows, and no newer view', await q(() => {
+      const K = MF.app.keepPre, t = { fromCache: true, path: 'C:\\a', cacheAt: 10 }, pre = { path: 'C:\\a' };
+      return K(pre, t, 'c:\\A', null) === true && K(pre, t, 'C:\\a', { at: 10 }) === true && K(pre, t, 'C:\\a', { at: 11 }) === false
+        && K(pre, t, 'C:\\b', null) === false && K(null, t, 'C:\\a', null) === false && K({ path: 'C:\\a', failed: new Error('x') }, t, 'C:\\a', null) === false
+        && K(pre, Object.assign({}, t, { fromCache: false }), 'C:\\a', null) === false;
+    }));
   } catch (e) {
     check('ran to the end', false, e.message);
   } finally {

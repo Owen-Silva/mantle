@@ -362,6 +362,7 @@
       wantTypes(tab.items);
       arrange(tab);
       if (tab === cur()) { renderTabs(); showTab(); }
+      if (o.hold) return;          // keepReady prestart: no open has taken this window yet (boot reports + relists)
       reportTabs();
       relist(tab);
       return;
@@ -539,14 +540,22 @@
       list.selectOnly(i);
       list.reveal(i);
     } else if (selGone) list.changed();
-    if (S.select && tab === S.tabs[0] && !tab.loading) {
-      const k = S.select;
-      S.select = null;
-      if (idx.has(k)) list.selectKeys([k]);
-      else { const hit = [...idx.keys()].find((x) => String(x).toLowerCase() === String(k).toLowerCase()); if (hit) list.selectKeys([hit]); }
-    }
+    applySelect(tab);
     renderStatus();
     renderEmpty();
+  }
+
+  /** The open's one-shot "select this name" (a "show in folder" of a file: boot's select), once the first
+      tab's rows are arranged AND the list draws that tab. lane mantle-warm: a CACHED first view is arranged
+      before showTab gives the list its tab, and selecting then threw (the list had no tab: "Cannot set
+      properties of null (setting 'sel')"), which stopped boot and left the window blank. Now it waits for
+      showTab, which calls this again. */
+  function applySelect(tab) {
+    if (!S.select || tab !== S.tabs[0] || tab.loading || list.tab !== tab || !tab.index) return;
+    const k = S.select;
+    S.select = null;
+    if (tab.index.has(k)) list.selectKeys([k]);
+    else { const hit = [...tab.index.keys()].find((x) => String(x).toLowerCase() === String(k).toLowerCase()); if (hit) list.selectKeys([hit]); }
   }
 
   /* ---- refresh (F5 and 'files.changed') --------------------------------------------------------- */
@@ -1644,7 +1653,7 @@
     const place = t.kind === 'place';
     $('scroller').hidden = place;
     $('place').hidden = !place;
-    if (place) { $('colhead').hidden = true; renderPlace(); } else list.setTab(t, false);
+    if (place) { $('colhead').hidden = true; renderPlace(); } else { list.setTab(t, false); applySelect(t); }
     $('search').value = t.search ? t.search.query : '';
     $('search').placeholder = t.kind === 'folder' ? `Search ${labelOf(t.path)}` : 'Search';
     $('searchbox').classList.toggle('on', !!t.search);
@@ -1918,6 +1927,17 @@
     let startNow = null;
     const started = new Promise((res) => { startNow = res; });
     window.mantle.on('files.start', (p) => { startedAt = Date.now(); startNow(p); });
+    // keepReady prestart (lane mantle-warm): while the spare waits, main sends its start folder's SAVED
+    // view ('files.prestart', the boot answer's shape), and the page draws it now, hidden, so the open
+    // that takes it only has to show the window. Measured before this: the page needed 40-95 ms after
+    // files.start to build its first view (most of the warm open). Nothing is asked of main for it (no
+    // open owns this window yet); files.start then says whether that drawn view is still the one to show.
+    let pre = null;
+    window.mantle.on('files.prestart', (p) => {
+      if (pre || startedAt !== null || !p || p.ok === false || !p.cache) return;
+      pre = { path: p.path };
+      try { takeBoot(p); go(t, p.path, { push: false, cached: p.cache, hold: true }); } catch (e) { pre.failed = e; console.error('Mantle Files: the hidden first view was not drawn', e); }
+    });
     let b = await api('files.boot');
     if (b && b.spare) b = await started;
     else startedAt = Date.now();
@@ -1928,6 +1948,30 @@
       document.documentElement.dataset.ready = '1';
       return;
     }
+    takeBoot(b);
+    S.select = b.select || null;
+    if (b.notice) toast(b.notice, { kind: 'info' });
+    wantTypes([{ n: 'x', d: 0 }]);
+    api('files.types', { exts: ['folder'] }).then((r) => { if (r && r.types && r.types.folder) { S.types.folder = r.types.folder; list.repaint(); } });
+    renderTabs();
+    renderNav();
+    api('files.roots').then(applyRoots);
+    const cached = b.cache && Array.isArray(b.cache.items) && M.samePath(b.cache.path, b.path) ? b.cache : null;
+    if (keepPre(pre, t, b.path, cached)) {
+      // the hidden view IS this open's first view: say its age as of NOW, select, save the tab, refresh it
+      wantTypes(t.items);
+      renderStatus();
+      applySelect(t);
+      reportTabs();
+      relist(t);
+    } else await go(t, b.path || 'mantle:home', { push: false, cached });
+    list.sc.focus({ preventScroll: true });
+    S.booted = true;
+    if (!t.loading) { tellOpen('painted'); tellOpen('interactive'); }
+    document.documentElement.dataset.ready = '1';
+  }
+  /** The boot answer's window-wide state (also a prestart's: the same shape). */
+  function takeBoot(b) {
     S.home = b.home || null;
     S.test = !!b.test;
     S.sandbox = b.sandbox || null;
@@ -1936,26 +1980,23 @@
     S.undoLabel = b.undo ? b.undo.label : null;
     if ('redo' in b) { S.redoOk = true; S.redoLabel = b.redo ? b.redo.label || null : null; }        // boot's redo: {label}|null
     else if (b.undo && 'redo' in b.undo) { S.redoOk = true; S.redoLabel = b.undo.redo || null; }
-    S.select = b.select || null;
     if (b.options) S.options = Object.assign({}, S.options, b.options);
     $('testchip').hidden = !S.test;
-    if (b.notice) toast(b.notice, { kind: 'info' });
-    wantTypes([{ n: 'x', d: 0 }]);
-    api('files.types', { exts: ['folder'] }).then((r) => { if (r && r.types && r.types.folder) { S.types.folder = r.types.folder; list.repaint(); } });
-    renderTabs();
-    renderNav();
-    api('files.roots').then(applyRoots);
-    const cached = b.cache && Array.isArray(b.cache.items) && M.samePath(b.cache.path, b.path) ? b.cache : null;
-    await go(t, b.path || 'mantle:home', { push: false, cached });
-    list.sc.focus({ preventScroll: true });
-    S.booted = true;
-    if (!t.loading) { tellOpen('painted'); tellOpen('interactive'); }
-    document.documentElement.dataset.ready = '1';
+  }
+  /** Is keepReady's hidden prestart view still this open's first view? Only when it drew without a
+      throw, the open starts in that same folder, the tab still shows those saved rows, and main has no
+      NEWER saved view of it (then that one is drawn instead). Anything else: the open draws as before. */
+  function keepPre(pre, t, path, cached) {
+    if (!pre || pre.failed || !t || !t.fromCache || !M.samePath(t.path, path) || !M.samePath(pre.path, path)) return false;
+    return !(cached && Number(cached.at) > (t.cacheAt || 0));
   }
   /* R7 (lane mantle-files): tell main when this window's first view is ON SCREEN. Two frames after it was
-     drawn: a hidden window draws no frames, so this cannot fire early. Once per window. */
+     drawn. lane mantle-warm: keepReady's spare is unthrottled, so it DOES make frames while hidden; main
+     sends files.start only once the window is shown, and nothing is told before that start (a prestart's
+     rows drawn while hidden are told by boot, after it). Once per window. */
   const told = {};
   function tellOpen(stage) {
+    if (startedAt === null) return;          // drawn before any open took this window: boot tells it
     if (told[stage]) return;
     told[stage] = true;
     const t = cur();
@@ -1963,6 +2004,18 @@
     requestAnimationFrame(() => requestAnimationFrame(() => { api('files.painted', { stage, cached, startedAt }).catch(() => {}); }));
   }
 
-  MF.app = { S, cur, go, newTab, closeTab, activate, list, arrange, setView, sortBy, startSearch, endSearch, relist, itemMenu, backgroundMenu, runCmd, api, editAddress, selItems, back, up, setFilter, setContents, filterItems };
-  boot();
+  MF.app = { keepPre, S, cur, go, newTab, closeTab, activate, list, arrange, setView, sortBy, startSearch, endSearch, relist, itemMenu, backgroundMenu, runCmd, api, editAddress, selItems, back, up, setFilter, setContents, filterItems };
+  // never a blank window (lane mantle-warm): a throw while the first view is made used to stop boot()
+  // silently, leaving an empty window that never said why. Its reason is on the page instead.
+  boot().catch((e) => bootFailed(e));
+  function bootFailed(e) {
+    console.error('Mantle Files: the window could not finish opening', e);
+    const t = cur();
+    if (t) {
+      if (!t.view) Object.assign(t, { path: 'mantle:home', kind: 'home', view: defaultView('home') });   // it threw before its first go()
+      Object.assign(t, { loading: false, fromCache: false, items: [], shown: [], error: `This window could not finish opening (${(e && e.message) || 'an error'}). Close it and open Mantle Files again.` });
+      try { renderTabs(); showTab(); } catch (_) { /* the reason is still in the console and in main's "did not paint" line */ }
+    }
+    document.documentElement.dataset.ready = '1';
+  }
 }());
