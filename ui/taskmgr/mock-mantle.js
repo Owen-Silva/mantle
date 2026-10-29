@@ -206,6 +206,23 @@
     if (v === 'users') m.users = users();
     if (v === 'details') m.details = S.details();
     if (v === 'services') m.services = S.services();
+    // tm-pg-au: apphistory + users. Query ah=srum|empty (App history's source / no rows), users=1 (only the one
+    // user). Adds a non-app row (shown by Settings > historyAllProcesses), a row with a path, and a second,
+    // disconnected user; alex is the current session. All made up.
+    if (m.apphistory) {
+      const A = m.apphistory;
+      A.rows.forEach((r) => { if (r.name === 'Microsoft Store') r.path = 'C:\\Program Files\\WindowsApps\\MadeUp.Store\\WinStore.App.exe'; });
+      A.rows.push({ name: 'Made-up Background Service', identity: 'made-up-bgsvc', app: false, cpuTimeSec: 905, net: 1.2 * MB, metered: 0, tiles: nn(0), nonMetered: 1.2 * MB, downloads: nn(MB), uploads: nn(0.2 * MB) });
+      if (q.get('ah') === 'srum') A.source = 'srum';
+      if (q.get('ah') === 'empty') A.rows = [];
+      if (NULLS) { A.since = null; A.rows.forEach((r) => { r.net = null; r.metered = null; r.nonMetered = null; }); if (A.rows[0]) A.rows[0].why = { net: 'Made-up reason: this row says why its network is not known' }; }
+    }
+    if (m.users && q.get('users') !== '1') {
+      m.users.rows[0].current = true;
+      m.users.rows.push({ session: 2, user: 'jordan', fullName: nn('Jordan Made-Up'), status: 'Disconnected', cpu: 0, mem: 412 * MB, disk: nn(0), net: nn(0),
+        procs: [{ name: 'Made-up Notes', pid: 5120, created: 6120, cpu: 0, mem: 180 * MB, disk: nn(0), net: nn(0), processName: 'notes.exe' },
+          { name: 'Made-up Sync', pid: 5188, created: 6188, cpu: 0, mem: 232 * MB, disk: nn(0), net: nn(0), processName: 'sync.exe', path: 'C:\\Program Files\\Made Up\\sync.exe' }] });
+    }
     return m;
   }
   const push = () => setTimeout(() => window.mantle.emit('taskmgr.model', model()), 10);
