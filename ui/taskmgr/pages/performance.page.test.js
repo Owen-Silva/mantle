@@ -87,7 +87,11 @@ kit.run('TASKMGR PERFORMANCE PAGE TEST', async (t) => {
       check('Memory composition: In use / Modified / Standby / Free with sizes in the tooltips', /^In use \(10\.4 GB\)/.test(segs[0]) && /^Modified \(205 MB\)/.test(segs[1]) && /^Standby \(4\.7 GB\)/.test(segs[2]) && /^Free \(717 MB\)/.test(segs[3]), segs.join(', '));
       check('Memory composition: widths follow the sizes', Number(segs[0].split('|')[1]) > Number(segs[2].split('|')[1]) && Number(segs[2].split('|')[1]) > Number(segs[3].split('|')[1]), segs.join(', '));
       await pick(p, 'Wi-Fi');
-      check('Wi-Fi: signal strength drawn as bars with words', (await p.$$eval(`${R} .pp-sig rect.on`, (r) => r.length)) === 3 && /3 of 4 bars/.test(await p.$eval(`${R} .pp-sig`, (e) => e.title)));
+      { // signal is percent 0..100 (TM-SPEC 10-28): a bar per quarter, the words say both
+        const on = await p.$$eval(`${R} .pp-sig rect.on`, (r) => r.length), t = await p.$eval(`${R} .pp-sig`, (e) => e.title);
+        const m = /(\d) of 4 bars \((\d+)%\)/.exec(t);
+        check('Wi-Fi: signal strength drawn as bars with words', !!m && +m[1] === on && on === (+m[2] <= 0 ? 0 : Math.min(4, Math.ceil(+m[2] / 25))), t);
+      }
       check('Wi-Fi: the send line is dashed, receive solid (legend matches)', (await p.$eval(`${R} .pf-pane path.l.s`, (e) => getComputedStyle(e).strokeDasharray)) !== 'none' && (await p.$eval(`${R} .pf-pane path.l.m`, (e) => getComputedStyle(e).strokeDasharray)) === 'none');
 
       /* ---- keys on the list ---- */

@@ -11,7 +11,28 @@ module.exports = [
   { name: 'details-select-columns', q: 'view=details&test=1', run: async (p) => { await p.click('#pg-details .thead .h[data-col="name"]', { button: 'right' }); await pick(p, 'Select columns'); await p.waitForSelector('#dlg .selcols'); } },
   { name: 'details-head-menu', q: 'view=details&test=1', run: async (p) => { await p.click('#pg-details .thead .h[data-col="desc"]', { button: 'right' }); await p.waitForSelector('#menus .menu'); } },
   { name: 'details-affinity', q: 'view=details&test=1', run: async (p) => { await rmenu(p, 1012); await pick(p, 'Set affinity'); await p.waitForSelector('#dlg .daff [data-cpu]'); await p.click('#dlg [data-cpu="3"]'); } },
-  { name: 'details-wait-chain', q: 'view=details&test=1', run: async (p) => { await rmenu(p, 1012); await pick(p, 'Analyze wait chain'); await p.waitForSelector('#dlg .wtree'); } },
+  // the sidecar's WCT shape as lib passes it (TM-SPEC decision 10-28): a made-up waited-on process in the list, a
+  // thread reaching it through ALPC, one waiting on something WCT does not follow, one Windows did not answer for
+  { name: 'details-wait-chain', q: 'view=details&test=1', run: async (p) => {
+    await p.waitForSelector(ROW(1012));
+    await p.evaluate(() => {
+      const od = window.__mock.S.details;
+      window.__mock.S.details = () => { const dd = od(); dd.rows.push(Object.assign({}, dd.rows[0], { pid: 2244, created: 3244, name: 'made-up.exe' })); return dd; };
+      window.__mock.push();
+      const o = window.mantle.call.bind(window.mantle);
+      window.mantle.call = async (n, a) => {
+        const r = await o(n, a);
+        if (n !== 'taskmgr.waitChain') return r;
+        return { ok: true, reason: null, needsAdmin: false, threadCount: 3, truncated: false, blocked: 2, deadlocks: 0, threads: [
+          { tid: 4012, deadlock: false, waiting: true, chain: [{ type: 'thread', status: 'blocked', pid: 1012, tid: 4012, waitTime: 120 }, { type: 'alpc', status: 'owned' }, { type: 'thread', status: 'blocked', pid: 2244, tid: 5120, waitTime: 90 }] },
+          { tid: 4013, deadlock: false, waiting: true, chain: [{ type: 'thread', status: 'blocked', pid: 1012, tid: 4013, waitTime: 50 }] },
+          { tid: 4014, deadlock: false, chain: [], error: 'the thread ended' },
+        ] };
+      };
+    });
+    await p.waitForSelector(ROW(2244));
+    await rmenu(p, 1012); await pick(p, 'Analyze wait chain'); await p.waitForSelector('#dlg .wtree');
+  } },
   { name: 'details-confirm-end', q: 'view=details&test=1', run: async (p) => { await p.click(ROW(1012) + ' .tr'); await p.keyboard.press('Delete'); await p.waitForSelector('#dlg .dlg'); } },
   { name: 'details-confirm-critical', q: 'view=details&test=1', run: async (p) => { await p.waitForSelector(ROW(4)); await p.click(ROW(4) + ' .tr'); await p.keyboard.press('Delete'); await p.waitForSelector('#dlg .dlg'); } },
   { name: 'details-outcome-rows', q: 'view=details&test=1&admin=endPid&fail=priority', run: async (p) => {

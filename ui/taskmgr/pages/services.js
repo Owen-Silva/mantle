@@ -114,9 +114,8 @@
     if (r.canStop === false) return { ok: false, why: 'Windows does not let this service be stopped' };
     return { ok: true };
   }
-  function openServices() {
-    TM.run('openServices', {}).then((res) => TM.say(res, 'Services did not open'));
-  }
+  // the shell runs openServices and says the outcome on the window (a dry run's words, or why it did not open)
+  const openServices = () => TM.act.openServices();
   const noPid = (r) => !r.pid;
   const goDetails = (r) => { if (r && r.pid) TM.goTo('details', { pid: r.pid }); };
 

@@ -1,7 +1,7 @@
 /* pages/performance.css - Windows 11's Performance page in Mantle's island skin. Every colour is a --lg-* token
    (ui/shared/glass-light.css): the accent draws the graphs, a quieter form of it (dashed, or the lower-alpha
    accent) draws the second series (kernel, write, send). Nothing animates. */
-.pf-state[hidden], .pf[hidden], .pf-old[hidden] { display: none; }
+.pf-state[hidden], .pf[hidden], .pf-old[hidden], .pf-why[hidden] { display: none; }
 .pf { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; padding: 0 0 0 10px; }
 
 /* ---- the device list ---- */
@@ -19,6 +19,10 @@
 .pf-old { flex: 0 0 auto; padding: 6px 10px 12px 12px; line-height: 1.4; }
 .pf-oldl { display: flex; align-items: flex-start; gap: 6px; color: var(--lg-warn); }
 .pf-oldl > svg { flex: 0 0 12px; margin-top: 2px; }
+/* a list that came back empty: what is missing and Windows' reason (the em dash carries it as its tooltip too) */
+.pf-why { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; padding: 6px 10px 12px 12px; font-size: 12px; line-height: 1.4; color: var(--lg-ink-2); }
+.pf-wl { min-width: 0; overflow-wrap: anywhere; }
+.pf-ww { color: var(--lg-ink-3); }
 
 /* ---- the chosen device ---- */
 .pf-pane { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 0 22px 14px 16px; overflow-x: hidden; overflow-y: auto; outline: none; }

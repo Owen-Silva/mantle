@@ -31,9 +31,12 @@
   };
   const IMPACT_RANK = { high: 4, medium: 3, low: 2, none: 1, 'not measured': 0 };
   const pad = (n) => String(n).padStart(2, '0');
-  // Windows' short date and time: 9/3/2026 6:02 PM
-  const when = (ms) => { if (typeof ms !== 'number' || !isFinite(ms)) return null; const d = new Date(ms); const h = d.getHours(); return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()} ${h % 12 || 12}:${pad(d.getMinutes())} ${h < 12 ? 'AM' : 'PM'}`; };
-  const C = (id, label, o) => Object.assign({ id, label, title: label, def: false, why: (r) => (r.why && r.why[id]) || NOT[id] || NOT._ }, o || {});
+  // Windows' short date and time: 9/3/2026 6:02 PM. lib sends disabledAt as ISO-8601 UTC (sidecar Startup.cs)
+  // or ms; any other value is not a time (em dash).
+  const msOf = (v) => (typeof v === 'number' ? v : typeof v === 'string' && v ? Date.parse(v) : NaN);
+  const when = (v) => { const ms = msOf(v); if (!isFinite(ms)) return null; const d = new Date(ms); const h = d.getHours(); return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()} ${h % 12 || 12}:${pad(d.getMinutes())} ${h < 12 ? 'AM' : 'PM'}`; };
+  // the em dash's reason: the row's own why, else the page's (model.startup.why: impact, biosSec, ...), else ours
+  const C = (id, label, o) => Object.assign({ id, label, title: label, def: false, why: (r) => (r.why && r.why[id]) || (m.startup && m.startup.why && m.startup.why[id]) || NOT[id] || NOT._ }, o || {});
   const COLS = [
     { id: 'name', label: 'Name', fixed: true, flex: true, min: 200, get: (r) => String(r.name || '').toLowerCase(),
       html: (r) => `${TM.iconHtml(r.icon, r.iconWhy)}<span class="n" title="${esc(r.name)}">${esc(r.name)}</span>` },
@@ -45,7 +48,7 @@
     C('cpuMs', 'CPU at startup', { num: true, w: 110, get: (r) => r.cpuMs, text: (r) => (typeof r.cpuMs === 'number' && isFinite(r.cpuMs) ? `${fmt.num(r.cpuMs)} ms` : null) }),
     // Windows leaves both blank when there is nothing to say (not running / never disabled): blank, not unknown
     C('running', 'Running now', { w: 100, get: (r) => (r.running ? 1 : 0), text: (r) => (r.running == null ? null : r.running ? 'Running' : '') }),
-    C('disabledAt', 'Disabled time', { w: 150, get: (r) => r.disabledAt || 0, text: (r) => (r.disabledAt != null ? when(r.disabledAt) : r.enabled === false ? null : '') }),
+    C('disabledAt', 'Disabled time', { w: 150, get: (r) => msOf(r.disabledAt) || 0, text: (r) => (r.disabledAt != null ? when(r.disabledAt) : r.enabled === false ? null : '') }),
     C('cmdline', 'Command line', { w: 280 }),
   ];
 

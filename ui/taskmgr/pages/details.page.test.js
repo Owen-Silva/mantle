@@ -64,6 +64,7 @@ kit.run('TASKMGR DETAILS PAGE TEST', async (t) => {
     const WANT = ['Package name', 'PID', 'Status', 'User name', 'Session ID', 'Job object ID', 'CPU', 'CPU time', 'Cycle', 'Working set (memory)', 'Peak working set (memory)', 'Working set delta (memory)', 'Memory (active private working set)', 'Memory (private working set)', 'Memory (shared working set)', 'Commit size', 'Paged pool', 'NP pool', 'Page faults', 'PF delta', 'Base priority', 'Handles', 'Threads', 'User objects', 'GDI objects', 'I/O reads', 'I/O writes', 'I/O other', 'I/O read bytes', 'I/O write bytes', 'I/O other bytes', 'Image path name', 'Command line', 'Operating system context', 'Platform', 'Architecture', 'Elevated', 'UAC virtualization', 'Description', 'Data Execution Prevention', 'Enterprise Context', 'Power Throttling', 'Hardware-enforced Stack Protection'];
     check(T + 'Select columns: the dialog', sc.title === 'Select columns');
     check(T + 'Select columns: Windows\' full list', WANT.every((w) => labels.includes(w)), WANT.filter((w) => !labels.includes(w)).join(','));
+    check(T + 'Select columns: Name is not listed (always shown, as in Windows)', !labels.includes('Name'), labels.join('|'));
     await p.click('#dlg [data-col="handles"]');
     await p.click('#dlg [data-col="arch"]');
     await p.click('#dlg [data-col="desc"]');
@@ -163,11 +164,28 @@ kit.run('TASKMGR DETAILS PAGE TEST', async (t) => {
     /* Analyze wait chain (a made-up waited-on process added to the list so End process can be checked) */
     await p.evaluate(() => { const o = window.__mock.S.details; window.__mock.S.details = () => { const dd = o(); dd.rows.push(Object.assign({}, dd.rows[0], { pid: 2244, created: 3244, name: 'made-up.exe' })); return dd; }; window.__mock.push(); });
     await p.waitForSelector(ROW(2244));
+    // the sidecar's WCT shape as lib passes it through (TM-SPEC decision 10-28), whatever the mock answers
+    await p.evaluate(() => {
+      if (window.__wcWrapped) return;
+      window.__wcWrapped = true;
+      const o = window.mantle.call.bind(window.mantle);
+      window.mantle.call = async (n, a) => {
+        const r = await o(n, a);
+        if (n !== 'taskmgr.waitChain') return r;
+        return { ok: true, reason: null, needsAdmin: false, threadCount: 3, truncated: false, blocked: 2, deadlocks: 0, threads: [
+          { tid: 4012, deadlock: false, waiting: true, chain: [{ type: 'thread', status: 'blocked', pid: 1012, tid: 4012, waitTime: 120 }, { type: 'alpc', status: 'owned' }, { type: 'thread', status: 'blocked', pid: 2244, tid: 5120, waitTime: 90 }] },
+          { tid: 4013, deadlock: false, waiting: true, chain: [{ type: 'thread', status: 'blocked', pid: 1012, tid: 4013, waitTime: 50 }] },
+          { tid: 4014, deadlock: false, chain: [], error: 'the thread ended' },
+        ] };
+      };
+    });
     await rmenu(p, 1012);
     await pick(p, 'Analyze wait chain');
     await p.waitForSelector('#dlg .wtree');
     d = await dlg(p);
-    check(T + 'Analyze wait chain: Windows\' words and the tree', d.title === 'Analyze wait chain' && /svchost\.exe is waiting for another process/.test(d.body) && /made-up\.exe \(PID 2244\)/.test(d.body), d.body);
+    check(T + 'Analyze wait chain: Windows\' words and the tree', d.title === 'Analyze wait chain' && /svchost\.exe is waiting for another process \(made-up\.exe\)/.test(d.body) && /End processes in the tree below/.test(d.body) && /made-up\.exe \(PID 2244\), thread 5120/.test(d.body) && /Waiting for an ALPC call/.test(d.body), d.body);
+    check(T + 'Analyze wait chain: the untraced wait and the unread thread are said', /One more thread is waiting/.test(d.body) && /Windows answered nothing for one thread: the thread ended/.test(d.body), d.body);
+    check(T + 'Analyze wait chain: no box on the process itself', !(await p.$('#dlg [data-wpid="1012"]')));
     check(T + 'Analyze wait chain: End process off until a process is ticked', await p.$eval('#dlg [data-b="end"]', (b) => b.disabled));
     const wc = await calls(p, 'taskmgr.waitChain');
     check(T + 'Analyze wait chain: waitChain {pid}', wc.length >= 1 && wc[wc.length - 1].args.pid === 1012, JSON.stringify(wc));

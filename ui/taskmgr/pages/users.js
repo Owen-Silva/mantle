@@ -37,11 +37,20 @@
     gpu: 'GPU use per user was not measured',
     gpuEngine: 'GPU engine per user was not reported',
     session: 'Windows did not report the session ID',
-    sessionName: 'Windows did not report the session name',
-    client: 'Not a remote session, or Windows did not report the client name',
+    // lib's model.users rows carry no sessionName / client / gpu / gpuEngine (Mantle does not read them yet)
+    sessionName: 'Mantle does not read the session name yet',
+    client: 'Mantle does not read the client name yet (it is blank for a session on this PC)',
     status: 'Windows did not report this session\'s state',
     fullName: 'Windows did not report a full name for this account',
     path: 'Windows did not let Mantle see where its file is',
+  };
+  /* a user's process row: lib sends pid, created, name, processName, path, cpu, mem, disk, net, gpu, gpuEngine
+     per process but no why of its own, so a null there gets these words */
+  const PNOT = {
+    disk: 'Not measured yet (the first sample has no rate)',
+    net: 'Network use per process needs administrator access to measure (Windows counts it per process only for administrators)',
+    gpu: 'GPU use for this process was not measured',
+    gpuEngine: 'GPU engine for this process was not reported',
   };
   const totWhy = (k) => (m.totals && m.totals.why && m.totals.why[k]) || null;
   const tot = (k, label) => () => {
@@ -50,7 +59,8 @@
     if (v == null) return { v: null, title: `${label}: ${totWhy(k) || 'not measured on this PC'}` };
     return { v: Math.round(v) + '%', title: `${label}: ${Math.round(v)}% in use`, hi: v >= 80 };
   };
-  const C = (id, label, o) => Object.assign({ id, label, title: label, def: false, why: () => NOT[id] || 'Not reported' }, o || {});
+  // the em dash's reason: the row's own (lib sends why.net: e.g. "Set up administrator access"), else ours
+  const C = (id, label, o) => Object.assign({ id, label, title: label, def: false, why: (r) => (r.why && r.why[id]) || (!isUser(r) && PNOT[id]) || NOT[id] || 'Not reported' }, o || {});
   // a process row: blank where Windows leaves the cell blank (ID, Session, Client name are the user's)
   const U = (f) => (r) => (isUser(r) ? f(r) : '');
   const nameOf = (r) => (full() && r.fullName ? r.fullName : r.user);
@@ -66,7 +76,8 @@
     C('session', 'ID', { num: true, w: 56, text: U((r) => (r.session == null ? null : String(r.session))) }),
     C('sessionName', 'Session', { w: 100, text: U((r) => r.sessionName) }),
     C('client', 'Client name', { w: 110, text: U((r) => r.client) }),
-    C('status', 'Status', { def: true, w: 110, text: (r) => (isUser(r) ? r.status : r.status || ''), why: () => NOT.status }),
+    // Windows shows nothing for an active session; the sidecar sends "Disconnected" or null (Users.cs), so blank
+    C('status', 'Status', { def: true, w: 110, text: (r) => r.status || '' }),
     C('cpu', 'CPU', { def: true, num: true, w: 76, get: (r) => r.cpu, text: (r) => fmt.pct(r.cpu), heat: (r) => lv(r.cpu, [0.5, 3, 10, 25, 50]), total: tot('cpu', 'CPU') }),
     C('mem', 'Memory', { def: true, num: true, w: 100, get: (r) => r.mem, text: (r) => fmt.mb(r.mem), heat: (r) => lv(r.mem / MB, isUser(r) ? [500, 1500, 4000, 9000, 16000] : [50, 150, 400, 900, 1600]), total: tot('mem', 'Memory') }),
     C('disk', 'Disk', { def: true, num: true, w: 84, get: (r) => r.disk, text: (r) => fmt.rate(r.disk), heat: (r) => lv((r.disk || 0) / MB, [0.1, 1, 5, 20, 60]), total: tot('disk', 'Disk') }),

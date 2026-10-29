@@ -109,16 +109,23 @@
   const dateWords = (ms) => { const d = new Date(ms); return isNaN(d) ? null : d.toLocaleDateString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric' }); };
   function sinceHtml() {
     const all = !!(m.settings && m.settings.historyAllProcesses);
-    const who = all ? 'for current user and system accounts.' : 'for current user account.';
+    // SRUM scope 'allUsers' = the current user's id was not in Windows' map, so every account is summed (notes say so)
+    const who = ah().scope === 'allUsers' ? 'for all user accounts.' : all ? 'for current user and system accounts.' : 'for current user account.';
     const d = ah().since != null ? dateWords(ah().since) : null;
-    const date = d ? esc(d) : TM.na((ah().why && ah().why.since) || 'Mantle did not say when this record began');
+    const date = d ? esc(d) : TM.na((ah().why && ah().why.since) || (ah().source === 'srum' ? 'Windows did not say when its record began' : 'Mantle did not say when this record began'));
     return `Resource usage since ${date} ${who}`;
   }
   function srcHtml() {
     const a = ah();
+    if (a.source === 'srum') {
+      // Windows' own history (SRUM, through the helper): its notes say what is missing (e.g. a table, so a column is 0)
+      const n = Array.isArray(a.notes) ? a.notes.filter(Boolean) : a.notes ? [String(a.notes)] : [];
+      return n.length ? TM.warnLine('', `Windows' App history: ${n.join('; ')}.`) : '';
+    }
     if (a.source !== 'mantle') return '';
     const d = a.since != null ? dateWords(a.since) : null;
-    const reason = `This is Mantle's own record${d ? `, kept since ${d}` : ''}: Windows' full app history needs administrator access.`;
+    // admin access set up but Windows' read failed: lib's error says why (never "needs administrator access")
+    const reason = a.error || `This is Mantle's own record${d ? `, kept since ${d}` : ''}: Windows' full app history needs administrator access.`;
     return TM.adminHtml({ reason });
   }
   function lines(on) {
@@ -152,7 +159,8 @@
       const a = ah();
       lines(st === 'ok');
       if (st !== 'ok') {
-        t.state(st === 'unsupported' ? TM.stateHtml('unsupported') : st === 'error' ? TM.stateHtml('error', a.error || 'Mantle could not read the app history.') : TM.stateHtml('loading', 'Reading app history...'));
+        // loading: lib's note says what is being read (Windows' own history through the helper)
+        t.state(st === 'unsupported' ? TM.stateHtml('unsupported') : st === 'error' ? TM.stateHtml('error', a.error || 'Mantle could not read the app history.') : TM.stateHtml('loading', (a.loading && a.note) || 'Reading app history...'));
         t.render({ rows: [] });
         return;
       }
@@ -163,7 +171,7 @@
       const rows = rowsAll.filter((r) => TM.match(r.name, r.identity));
       t.state(TM.q && !rows.length ? TM.stateHtml('noq') : !rows.length ? TM.stateHtml('empty', 'No data available') : null);
       t.render({ rows });
-      if (a.error) TM.note(`App history: ${a.error}`);
+      if (a.error && a.source !== 'mantle') TM.note(`App history: ${a.error}`);   // 'mantle': said on the source line
     },
     commands() {
       return [

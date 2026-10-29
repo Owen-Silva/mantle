@@ -44,6 +44,8 @@
   const yesNo = (b) => (b == null ? null : b ? 'Yes' : 'No');
   const date = (s) => { const r = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ''); return r ? `${+r[2]}/${+r[3]}/${r[1]}` : s || null; };
   const rate = (b) => fmt.bps(b);   // Windows' "0 KB/s", "420 KB/s", "1.2 MB/s"
+  // Windows 11's disk type: "SSD (NVMe)" for an NVMe drive, else "SSD" / "HDD" (lib's disks[].bus names the bus)
+  const diskType = (k) => (k.type == null ? null : k.bus === 'NVMe' ? `${k.type} (NVMe)` : String(k.type));
   // bits per second; two numbers can share one unit (Windows' card line "S: 208 R: 3.3 Mbps")
   const BITU = [[1e9, 'Gbps'], [1e6, 'Mbps'], [1e3, 'Kbps']];
   const bitUnit = (b) => BITU.find(([d]) => b >= d) || BITU[2];
@@ -104,7 +106,7 @@
     d.push({ key: 'cpu', kind: 'cpu', o: c, title: 'CPU', lines: [`${W(pct(c.pct), c, 'pct')}${ok(c.speedGHz) ? '&ensp;' + esc(ghz(c.speedGHz)) : ''}`], spark: [{ a: c.hist, max: 100 }] });
     const mp = ok(mm.used) && ok(mm.total) && mm.total > 0 ? ` (${Math.round((mm.used / mm.total) * 100)}%)` : '';
     d.push({ key: 'mem', kind: 'mem', o: mm, title: 'Memory', lines: [ok(mm.used) && ok(mm.total) ? esc(`${(mm.used / GB).toFixed(1)}/${(mm.total / GB).toFixed(1)} GB${mp}`) : TM.na(why(mm, 'used'))], spark: [{ a: mm.hist, max: 100 }] });
-    arr(p.disks).forEach((k, i) => d.push({ key: 'disk:' + (k.id || i), kind: 'disk', o: k, title: k.name || `Disk ${i}`, lines: (k.type ? [esc(k.type)] : []).concat(W(pct(k.activePct), k, 'activePct')), spark: [{ a: k.hist, max: 100 }] }));
+    arr(p.disks).forEach((k, i) => d.push({ key: 'disk:' + (k.id || i), kind: 'disk', o: k, title: k.name || `Disk ${i}`, lines: (k.type ? [esc(diskType(k))] : []).concat(W(pct(k.activePct), k, 'activePct')), spark: [{ a: k.hist, max: 100 }] }));
     arr(p.nets).forEach((n, i) => {
       const sb = ok(n.sendBps) ? n.sendBps * 8 : null, rb = ok(n.recvBps) ? n.recvBps * 8 : null;
       let sr;
@@ -115,9 +117,28 @@
       d.push({ key: 'net:' + (n.id || i), kind: 'net', o: n, title: n.kind || 'Network', lines: [esc(n.name || n.adapter || ''), W(sr, n, 'sendBps')],
         spark: [{ a: n.recvHist, max: mx }, { a: n.sendHist, max: mx, cls: 's', line: true }] });
     });
-    arr(p.gpus).forEach((g, i) => d.push({ key: 'gpu:' + (g.id || i), kind: 'gpu', o: g, n: i, title: `GPU ${i}`, lines: [esc(g.name || ''), W(pct(g.pct), g, 'pct')], spark: [{ a: engineHist(g), max: 100 }] }));
-    arr(p.npus).forEach((g, i) => d.push({ key: 'npu:' + (g.id || i), kind: 'npu', o: g, n: i, title: `NPU ${i}`, lines: [esc(g.name || ''), W(pct(g.pct), g, 'pct')], spark: [{ a: g.hist, max: 100 }] }));
+    // GPUs and NPUs are separate lists (lib splits the sidecar's reply by kind); an older reply that still mixes
+    // them is split here so an NPU never shows as a GPU. "GPU n" / "NPU n" is Windows' own index when sent
+    // (the same n as the Processes page's "GPU 0 - 3D"), else the position in the list.
+    const gl = arr(p.gpus), npus = Array.isArray(p.npus) ? p.npus : gl.filter((g) => g && g.kind === 'npu');
+    const gpus = gl.filter((g) => g && g.kind !== 'npu');
+    const nth = (g, i) => (Number.isInteger(g.index) ? g.index : i);
+    gpus.forEach((g, i) => d.push({ key: 'gpu:' + (g.id || i), kind: 'gpu', o: g, n: nth(g, i), title: `GPU ${nth(g, i)}`, lines: [esc(g.name || ''), W(pct(g.pct), g, 'pct')], spark: [{ a: engineHist(g), max: 100 }] }));
+    npus.forEach((g, i) => d.push({ key: 'npu:' + (g.id || i), kind: 'npu', o: g, n: nth(g, i), title: `NPU ${nth(g, i)}`, lines: [esc(g.name || ''), W(pct(g.pct), g, 'pct')], spark: [{ a: engineHist(g), max: 100 }] }));
     return d;
+  }
+  // a list that came back empty or not at all: the reason, never a silent gap (listWhy, gpuWhy, perf.error)
+  function listNotes(p) {
+    const out = [];
+    const lw = p.listWhy || {};
+    const empty = (a) => !Array.isArray(a) || !a.length;
+    if (empty(p.disks) && lw.disks) out.push(['Disks', lw.disks]);
+    if (empty(p.nets) && lw.nets) out.push(['Network adapters', lw.nets]);
+    const gw = p.gpuWhy, gws = typeof gw === 'string' ? gw : gw && typeof gw === 'object' ? gw.gpus || gw['totals.gpu'] || gw.gpu : null;
+    if (empty(p.gpus) && empty(p.npus) && typeof gws === 'string' && gws) out.push(['GPU', gws]);
+    let h = out.map(([what, w]) => `<span class="pf-wl">${esc(what)}: ${TM.na(w)} <span class="pf-ww">${esc(w)}</span></span>`).join('');
+    if (p.error) h += TM.warnLine('pf-oldl', String(p.error));
+    return h;
   }
   /* ---------------------------------------------------------------- each device's pane: what it shows
      spec = { sig, head: [title html, model html], groups: [{ cls, cols?, cap?: [l, r], G: [graph] }],
@@ -142,8 +163,10 @@
         G: cores.map((a, i) => ({ id: 'c' + i, title: `CPU ${i}`, series: [{ id: 'm', a, max: 100, fill: true }].concat(k && kc.length === n ? [{ id: 'k', a: kc[i], max: 100, cls: 'k', fill: true }] : []) })) }];
     } else {
       const lNote = S.cpuGraph === 'logical' ? quiet('logical processors not reported', c.old ? OLD_WHY : 'Windows did not report each logical processor') : '';
-      const kNote = k && !arr(c.kernelHist).length ? quiet('kernel times not reported', why(c, 'kernelHist')) : '';
-      groups = [{ cls: 'one', G: [G1('u', '% Utilization' + lNote + kNote, '100%', [{ id: 'm', a: c.hist, max: 100, fill: true }].concat(k ? [{ id: 'k', a: c.kernelHist, max: 100, cls: 'k', fill: true }] : []))] }];
+      // kernelHist is null-padded: no number in it at all = not reported (a note, never a drawn zero line)
+      const hasK = arr(c.kernelHist).some(ok);
+      const kNote = k && !hasK ? quiet('kernel times not reported', (c.why && c.why.kernelPct) || why(c, 'kernelHist')) : '';
+      groups = [{ cls: 'one', G: [G1('u', '% Utilization' + lNote + kNote, '100%', [{ id: 'm', a: c.hist, max: 100, fill: true }].concat(k && hasK ? [{ id: 'k', a: c.kernelHist, max: 100, cls: 'k', fill: true }] : []))] }];
     }
     return {
       sig: `cpu|${logical ? 'L' + n : 'O'}|${k}`, head: ['CPU', V(c, 'name')], groups,
@@ -177,19 +200,23 @@
         { cls: 'one mid', G: [G1('t', 'Disk transfer rate', esc(diskLbl(sc)), [{ id: 'r', a: k.readHist, max: sc, fill: true }, { id: 'w', a: k.writeHist, max: sc, cls: 's' }])] }],
       big: [[['Active time', V(k, 'activePct', pct)], ['Average response time', V(k, 'respMs', (x) => x.toFixed(1) + ' ms')]],
         [['Read speed', V(k, 'readBps', rate), 'm'], ['Write speed', V(k, 'writeBps', rate), 's']]],
-      kv: [['Capacity:', V(k, 'capacity', cap)], ['Formatted:', V(k, 'formatted', cap)], ['System disk:', V(k, 'systemDisk', yesNo)], ['Page file:', V(k, 'pageFile', yesNo)], ['Type:', V(k, 'type')]],
+      kv: [['Capacity:', V(k, 'capacity', cap)], ['Formatted:', V(k, 'formatted', cap)], ['System disk:', V(k, 'systemDisk', yesNo)], ['Page file:', V(k, 'pageFile', yesNo)], ['Type:', W(diskType(k), k, 'type')]],
     };
   }
 
   function signal(n) {
     const s = n.signal;
     if (!ok(s)) return TM.na(why(n, 'signal'));
-    const b = Math.max(0, Math.min(4, s > 5 ? Math.ceil(s / 25) : Math.round(s)));
-    const words = s > 5 ? `${Math.round(s)}%` : `${b} of 4 bars`;
+    // lib sends Windows' signal quality in percent (0..100); Windows draws it as 4 bars, a bar per quarter
+    const q = Math.max(0, Math.min(100, s));
+    const b = q <= 0 ? 0 : Math.min(4, Math.ceil(q / 25));
+    const words = `${b} of 4 bars (${Math.round(q)}%)`;
     return `<span class="pp-sig" title="Signal strength: ${esc(words)}"><svg viewBox="0 0 17 12" width="17" height="12" aria-hidden="true">${[0, 1, 2, 3].map((i) => `<rect x="${i * 4.5}" y="${9 - i * 3}" width="3" height="${3 + i * 3}" rx=".6"${i < b ? ' class="on"' : ''}/>`).join('')}</svg><span class="pp-vh">${esc(words)}</span></span>`;
   }
   function netSpec(n) {
-    const sc = pickScale(NET_SCALE, maxOf(n.sendHist, n.recvHist) * 8);
+    // sendHist / recvHist are BITS per second (lib), so the scale and the graphs are in bits as Windows draws them;
+    // sendBps / recvBps (the Send / Receive numbers) are BYTES per second and bits() converts them
+    const sc = pickScale(NET_SCALE, maxOf(n.sendHist, n.recvHist));
     const wifi = /wi-?fi|wireless|802\.11/i.test(n.kind || '');
     const kv = [['Adapter name:', V(n, 'name')]];
     if (wifi) kv.push(['SSID:', V(n, 'ssid')]);
@@ -198,7 +225,7 @@
     return {
       sig: 'net|' + wifi, head: [esc(n.kind || 'Network'), V(n, 'adapter')],
       groups: [{ cls: 'one', G: [G1('t', 'Throughput' + (n.connected === false ? quiet('not connected', 'Windows says this adapter is not connected') : ''), esc(netLbl(sc)),
-        [{ id: 'r', a: n.recvHist, max: sc / 8, fill: true }, { id: 's', a: n.sendHist, max: sc / 8, cls: 's' }])] }],
+        [{ id: 'r', a: n.recvHist, max: sc, fill: true }, { id: 's', a: n.sendHist, max: sc, cls: 's' }])] }],
       big: [[['Send', V(n, 'sendBps', bits), 's'], ['Receive', V(n, 'recvBps', bits), 'm']]], kv,
     };
   }
@@ -237,7 +264,7 @@
   }
   const SPEC = { cpu: cpuSpec, mem: memSpec, disk: diskSpec, net: netSpec, gpu: gpuSpec, npu: npuSpec };
   /* ---------------------------------------------------------------- drawing: built once per shape, then patched */
-  let root = null, listEl = null, paneEl = null, stateEl = null, oldEl = null, wrapEl = null;
+  let root = null, listEl = null, paneEl = null, stateEl = null, oldEl = null, whyEl = null, wrapEl = null;
   let m = {}, visible = false, devs = [], dev = null, sp = null;
   const P = { shape: null, t: new Map(), p: [], comp: null };      // the built pane
   const C = { shape: null, cards: new Map() };                       // the built list
@@ -385,6 +412,9 @@
     patchCards(devs);
     oldEl.hidden = !p.old;
     if (p.old) TM.setHtml(oldEl, TM.warnLine('pf-oldl', "Disks, network and GPU: this Mantle's helper doesn't report them yet (it needs updating)."));
+    const notes = p.old ? '' : listNotes(p);
+    whyEl.hidden = !notes;
+    TM.setHtml(whyEl, notes);
     sp = SPEC[dev.kind](dev.o);
     const shp = shape(sp);
     if (shp !== P.shape) buildPane(sp, shp);
@@ -475,10 +505,10 @@
     init(el) {
       root = el;
       root.innerHTML = '<div class="pf-state" hidden></div><div class="pf"><div class="pf-side">' +
-        '<div class="pf-list" role="listbox" tabindex="-1" aria-label="Devices. Up and down to choose, the menu key for options."></div><div class="pf-old" hidden></div></div>' +
+        '<div class="pf-list" role="listbox" tabindex="-1" aria-label="Devices. Up and down to choose, the menu key for options."></div><div class="pf-old" hidden></div><div class="pf-why" hidden></div></div>' +
         '<div class="pf-pane" tabindex="0" aria-label="The chosen device. The menu key for options; double-click the graph for the graph summary view."></div></div>';
       stateEl = root.querySelector('.pf-state'); wrapEl = root.querySelector('.pf'); listEl = root.querySelector('.pf-list');
-      oldEl = root.querySelector('.pf-old'); paneEl = root.querySelector('.pf-pane');
+      oldEl = root.querySelector('.pf-old'); whyEl = root.querySelector('.pf-why'); paneEl = root.querySelector('.pf-pane');
       listEl.addEventListener('click', (e) => { const c = e.target.closest('.pc'); if (c) select(c.dataset.k, true); });
       listEl.addEventListener('dblclick', (e) => { if (e.target.closest('.pc')) set('sumv', !S.sumv); });
       listEl.addEventListener('contextmenu', (e) => { e.preventDefault(); const c = e.target.closest('.pc'); if (c) select(c.dataset.k, true); TM.menu.open(listMenu, { x: e.clientX, y: e.clientY }); });

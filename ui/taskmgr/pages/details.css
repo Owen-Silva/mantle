@@ -1,14 +1,21 @@
-/* pages/details.css - Windows' Details page in Mantle's island skin (--lg-* tokens only, light and dark). */
-.dtbl { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* pages/details.css - Windows' Details page in Mantle's island skin (--lg-* tokens only, light and dark).
+   Minimum window 560x420: the table scrolls inside its own box (.tlist, the shell's), never the page; a row's
+   outcome line wraps a long path instead of running off the row; the two dialogs let their list shrink (down to a
+   few lines; floors below any real content, so nothing grows) before the dialog body scrolls, so header, words and buttons stay on screen. Desktop sizes unchanged. */
+.dtbl { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .dst { overflow: hidden; text-overflow: ellipsis; color: var(--lg-ink); }
 .dst.bad { color: var(--lg-warn); font-weight: 600; }
 .trow.hung .c.name .n { color: var(--lg-warn); }
 .trow .st .spin { flex: 0 0 auto; }
+.dtbl .st > span:not(.spin) { min-width: 0; overflow-wrap: anywhere; }   /* "created successfully: C:\...\x.DMP" */
 .st.dadm { flex-wrap: wrap; row-gap: 4px; }
 .st.dadm > span:first-child { color: var(--lg-ink-2); }
 
 /* Processor affinity */
-.daff .aff-list { max-height: 260px; overflow: auto; padding: 4px 10px 8px; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl); background: var(--lg-fill-strong); }
+.daff .dbody { display: flex; flex-direction: column; }
+.daff .dbody > * { flex: 0 0 auto; }
+.daff .aff-list { flex: 0 1 auto; min-height: 40px; max-height: 260px; overflow: auto; padding: 4px 10px 8px; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl); background: var(--lg-fill-strong); }
+.daff .aff-list:empty { display: none; }   /* no processors to list: the reason below says why */
 .daff .aff-list .dchk { margin-top: 6px; }
 .daff .aff-all { padding-bottom: 6px; border-bottom: 1px solid var(--lg-divider); }
 .daff .aff-wait { margin: 6px 0; display: flex; gap: 8px; align-items: center; color: var(--lg-ink-2); }
@@ -16,11 +23,18 @@
 .daff .aff-note { display: flex; gap: 6px; align-items: flex-start; color: var(--lg-ink-2); }
 .daff .aff-note svg, .daff .aff-zero svg { flex: 0 0 12px; margin-top: 2px; }
 
-/* Analyze wait chain */
+/* Analyze wait chain: Windows' lines, then the tree (the process > its waiting threads > what each waits on) */
+.dwait .dbody { display: flex; flex-direction: column; }
+.dwait .dbody > * { flex: 0 0 auto; }
 .dwait .dq .spin { margin-right: 8px; vertical-align: -2px; }
-.dwait .wtree { list-style: none; margin: 4px 0 0; padding: 8px 10px; max-height: 240px; overflow: auto; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl); background: var(--lg-fill-strong); }
+/* margin-top 0: in the flex body the paragraph's 10px no longer collapses with it, so the gap stays 10px */
+.dwait .wtree { flex: 0 1 auto; min-height: 56px; list-style: none; margin: 0; padding: 8px 10px; max-height: 240px; overflow: auto; overflow-wrap: anywhere; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl); background: var(--lg-fill-strong); }
 .dwait .wtree ul { list-style: none; margin: 2px 0 0; padding: 0 0 0 18px; border-left: 1px solid var(--lg-divider); }
 .dwait .wtree li { margin: 4px 0; }
 .dwait .wtree .dchk { margin: 0; }
 .dwait .wroot { font-weight: 600; }
+.dwait .wthr { color: var(--lg-ink); }
+.dwait .wthr.bad { color: var(--lg-warn); font-weight: 600; }
 .dwait .wline { color: var(--lg-ink-2); }
+.dwait .wnote { color: var(--lg-ink-2); }
+.dwait .wtree + .wnote { margin-top: 10px; }

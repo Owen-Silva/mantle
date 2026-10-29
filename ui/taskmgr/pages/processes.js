@@ -59,7 +59,8 @@
   };
   const TYPE = { app: 'App', mantle: 'App', background: 'Background process', windows: 'Windows process' };
   const COLS = [
-    { id: 'name', label: 'Name', fixed: true, flex: true, min: 180, get: (r) => r.name || r.file, html: nameHtml },
+    // chooser:false: Windows' header menu never lists Name (it cannot be hidden)
+    { id: 'name', label: 'Name', fixed: true, chooser: false, flex: true, min: 180, get: (r) => r.name || r.file, html: nameHtml },
     { id: 'type', label: 'Type', def: false, w: 140, text: (r) => (isWin(r) || r._child ? '' : TYPE[r.type || r.kind] || null), why: () => 'Mantle did not say which group this row is in' },
     { id: 'status', label: 'Status', w: 110, get: statusOf, html: (r) => {
       const s = statusOf(r);
@@ -110,16 +111,31 @@
   }
 
   /* ---- children: an app's processes (while open), a process's window ---- */
-  // a window row: its title; its owner is the app (the top-level row) whose End task / Switch to it uses
-const winRow = (r) => ({ kind: 'window', key: 'w' + (pidOf(r) != null ? pidOf(r) : r.key), name: r.title, pid: pidOf(r), _owner: r._child ? r._parent : r, _child: true, _parent: r });
-  const hasWin = (r) => !!(r.title && (r.windows > 0 || r.windows === undefined));
-  const countOf = (r) => (isWin(r) ? 0 : r.count > 1 ? r.count : hasWin(r) ? 1 : 0);
+  /* a window row: its title; its owner is the app (the top-level row) whose End task / Switch to it uses.
+     w = one of lib's titles[] ({hwnd, title}: members carry them while their row is open; a one-process app's
+     come as members[0].titles), else the row's one title. Windows lists every window of a process. */
+  const winRow = (r, w) => ({ kind: 'window', key: 'w' + (pidOf(r) != null ? pidOf(r) : r.key) + (w && w.hwnd ? ':' + w.hwnd : ''), name: w ? w.title : r.title, hwnd: w ? w.hwnd : null, pid: pidOf(r), _owner: r._child ? r._parent : r, _child: true, _parent: r });
+  const titlesOf = (r) => {
+    const src = Array.isArray(r.titles) ? r.titles : r.count === 1 && r.members && r.members[0] && Array.isArray(r.members[0].titles) ? r.members[0].titles : null;
+    const ts = src ? src.filter((w) => w && w.title) : [];
+    return ts.length ? ts : null;
+  };
+  const hasWin = (r) => !!(titlesOf(r) || (r.title && (r.windows > 0 || r.windows === undefined)));
+  const countOf = (r) => (isWin(r) ? 0 : r.count > 1 ? r.count : titlesOf(r) ? titlesOf(r).length : hasWin(r) ? 1 : 0);
+  /* lib's members: {pid, created, file, name, path, title, titles?, status, mem, cpu, disk, net, gpu, gpuEngine,
+     why {disk, net, gpu}} (lib's own why wins below). Publisher, command line and power are read for the whole
+     app only, so a child's em dash says that (not "not measured") */
+  const CHILD_WHY = { power: 'Mantle reads power use for the whole app (its row above), not for each of its processes', publisher: 'Mantle reads the publisher for the whole app (its row above), not for each of its processes', cmdline: 'Mantle reads the command line of the app\'s main process only (its row above)' };
+  const sameFile = (x, r) => !!(x.file && r.file && String(x.file).toLowerCase() === String(r.file).toLowerCase());
   function childrenOf(r) {
     if (r.count > 1) {
       if (!r.members) return null;   // main sends them once `expand` reached it: "Loading..."
-      return r.members.map((x) => Object.assign({}, x, { _child: true, _parent: r, icon: x.icon || r.icon, iconWhy: x.iconWhy || r.iconWhy, path: x.path || r.path }));
+      // a child of the same exe shares the app's file (its path, Open file location by the app's key); another exe's is unknown
+      return r.members.map((x) => Object.assign({}, x, { _child: true, _parent: r, icon: x.icon || r.icon, iconWhy: x.iconWhy || r.iconWhy,
+        path: x.path || (sameFile(x, r) ? r.path : null) || null, why: Object.assign({}, CHILD_WHY, x.why) }));
     }
-    return hasWin(r) ? [winRow(r)] : [];
+    const ts = titlesOf(r);
+    return ts ? ts.map((w) => winRow(r, w)) : hasWin(r) ? [winRow(r)] : [];
   }
 
   /* ---- Mantle's outcome on the row: main's state first, else what this page heard back (12 s) ---- */
@@ -200,22 +216,36 @@ const winRow = (r) => ({ kind: 'window', key: 'w' + (pidOf(r) != null ? pidOf(r)
   }
   async function efficiency(r, it) {
     if (!canEff(r)) return null;
-    const res = await TM.act.efficiency(r._child ? { pid: r.pid } : { key: r.key, pid: pidOf(r) }, !r.efficiency, r.name || r.file);
+    // a child process by pid + created (lib checks both); an app row by its key (lib acts on its main process)
+    const res = await TM.act.efficiency(r._child ? (r.created != null ? { pid: r.pid, created: r.created } : { pid: r.pid }) : { key: r.key, pid: pidOf(r) }, !r.efficiency, r.name || r.file);
     return heard(it, res, r.efficiency ? 'Efficiency mode was not turned off' : 'Efficiency mode was not turned on');
   }
   async function switchTo(r, it, op) {
     const o = isWin(r) ? r._owner : r._child ? r._parent : r;
-    const args = { key: o.key, pid: pidOf(r) };
+    /* lib's switchTo {key, pid?, hwnd?, op?}: pid narrows to that process's windows and hwnd to one window, so an
+       app row sends its key only (its window may belong to any of its processes, as Windows switches to it) */
+    const args = { key: o.key };
+    if (isWin(r) || r._child) args.pid = pidOf(r);
+    if (isWin(r) && r.hwnd) args.hwnd = r.hwnd;
     if (op) args.op = op;
+    // Settings > "Minimize on use" is main's: lib's switchTo minimizes this window after a plain Switch to (not after
+    // Bring to front / Minimize / Maximize), so the page does not minimize it a second time
     const res = await TM.run('switchTo', args, { noDry: true });
-    if (res.ok !== false && !res.dryRun && m.settings && m.settings.minimizeOnUse) TM.run('win', { op: 'min' }, { noDry: true });
     return heard(it, res, { front: 'Not brought to front', minimize: 'Not minimized', maximize: 'Not maximized' }[op] || 'Not switched to');
   }
   const canEnd = (r) => !!r && (isWin(r) ? canEnd(r._owner) : !!r._child || isExplorer(r) || isWinProc(r) || !!(r.actions && (r.actions.close || r.actions.force)));
   const endWhy = (r) => (r && isWin(r) ? endWhy(r._owner) : r ? r.protected || (r.actions && r.actions.why) || 'Mantle does not end it' : 'Choose a process first');
   const canEff = (r) => !!r && !isWin(r) && !isWinProc(r) && r.kind !== 'mantle' && !(r._parent && (isWinProc(r._parent) || r._parent.kind === 'mantle'));
   const effWhy = (r) => (!r ? 'Choose a process first' : isWin(r) ? 'A window has no Efficiency mode: choose its process' : r.kind === 'mantle' || (r._parent && r._parent.kind === 'mantle') ? 'Mantle itself: Efficiency mode would slow the task manager you are using' : 'Windows does not allow Efficiency mode for Windows processes');
-  const pathOf = (r) => r.path || (r._parent && r._parent.path) || null;
+  const pathOf = (r) => r.path || (r._parent && sameFile(r, r._parent) && r._parent.path) || null;
+  // Open file location goes by the app's key (main's own path); a child of the same exe uses its app's
+  const revealKey = (r) => (!r._child ? (r.canReveal ? r.key : null) : r._parent && sameFile(r, r._parent) && r._parent.canReveal ? r._parent.key : null);
+  /* why Properties / Open file location cannot open: lib's compact rows carry no path (canReveal says main has
+     one), and members carry none either */
+  const noPathWhy = (r) => (r.canReveal || (r._parent && sameFile(r, r._parent) && r._parent.canReveal)
+    ? 'Mantle does not send this file\'s path to the page, so Properties cannot open it here (Open file location and Details can)'
+    : r._child && !sameFile(r, r._parent || {}) ? 'Mantle does not send the file path of each process of an app (Details has it)'
+      : 'Windows did not let Mantle see where its file is');
 
   /* ---- menus ---- */
   function resMenu() {
@@ -261,13 +291,14 @@ const winRow = (r) => ({ kind: 'window', key: 'w' + (pidOf(r) != null ? pidOf(r)
     items.push({ label: 'End task', key: isExplorer(r) ? undefined : 'Delete', disabled: !canEnd(r), title: canEnd(r) ? undefined : endWhy(r), act: () => endTask(r, it, true) });
     items.push({ sep: true }, { label: 'Resource values', sub: resMenu }, { sep: true });
     items.push({ label: 'Efficiency mode', checked: !!r.efficiency, disabled: !canEff(r), title: canEff(r) ? undefined : effWhy(r), act: () => efficiency(r, it) });
-    items.push({ label: 'Create memory dump file', disabled: pid == null, title: pid == null ? 'No process ID was reported' : undefined, act: () => TM.act.dump(pid, r.name || r.file) });
+    // a child process goes by pid + created (lib refuses a reused pid); an app row by its main process's pid
+    items.push({ label: 'Create memory dump file', disabled: pid == null, title: pid == null ? 'No process ID was reported' : undefined, act: () => TM.act.dump(r.created != null ? { pid, created: r.created } : pid, r.name || r.file) });
     items.push({ sep: true });
     items.push({ label: 'Go to details', disabled: pid == null, act: () => TM.act.goToDetails(pid) });
-    const p = pathOf(r);
-    items.push({ label: 'Open file location', disabled: !(r.canReveal || p), title: r.canReveal || p ? undefined : 'Windows did not let Mantle see where its file is', act: () => TM.act.openLocation(p, child ? null : r.key) });
+    const p = pathOf(r), rk = revealKey(r);
+    items.push({ label: 'Open file location', disabled: !(rk || p), title: rk || p ? undefined : noPathWhy(r), act: () => TM.act.openLocation(p, child && p ? null : rk) });
     items.push({ label: 'Search online', act: () => TM.act.searchOnline(r.processName || r.file || r.name) });
-    items.push({ label: 'Properties', disabled: !p, title: p ? undefined : 'Windows did not let Mantle see where its file is', act: () => TM.act.properties(p) });
+    items.push({ label: 'Properties', disabled: !p, title: p ? undefined : noPathWhy(r), act: () => TM.act.properties(p) });
     if (!child && r.actions && r.actions.trim) items.push({ sep: true }, { label: 'Trim memory', title: 'Hands its unused memory back to Windows; it keeps running (Mantle)', act: () => act('trim', r, it) });
     return items;
   }
@@ -275,7 +306,7 @@ const winRow = (r) => ({ kind: 'window', key: 'w' + (pidOf(r) != null ? pidOf(r)
   /* ---- the rows Windows shows: Mantle's own row leads the apps ---- */
   function lists() {
     const keep = (rows) => (rows || []).filter((r) => TM.match(r.name, r.file, r.processName, r.title, r.publisher, pidOf(r)) ||
-      (r.members && r.members.some((x) => TM.match(x.name, x.file, x.title, x.pid))));
+      (r.members && r.members.some((x) => TM.match(x.name, x.file, x.title, x.pid) || (x.titles || []).some((w) => w && TM.match(w.title)))));
     return { apps: keep(m.mantleRow ? [m.mantleRow].concat(m.apps || []) : m.apps), bg: keep(m.background), win: keep(m.windows) };
   }
 
@@ -291,7 +322,9 @@ const winRow = (r) => ({ kind: 'window', key: 'w' + (pidOf(r) != null ? pidOf(r)
         children: childrenOf,
         onExpand: (r, open) => {
           if (ask && !open) ask = null;
-          if (!(r.count > 1) || r._child) return;   // only an app of several processes needs main to send them
+          // an app of several processes needs main to send them; a one-process app with windows gets its window
+          // titles (members[0].titles) the same way
+          if (r._child || isWin(r) || !(r.count > 1 || (r.count === 1 && r.windows > 0))) return;
           TM.run('expand', { key: r.key, open }, { noDry: true }).then((x) => { if (x.ok === false) TM.note(`Its processes did not load (${x.reason}).`); });
         },
         sub,
@@ -308,13 +341,6 @@ const winRow = (r) => ({ kind: 'window', key: 'w' + (pidOf(r) != null ? pidOf(r)
         menu: rowMenu,
         headMenu: () => [{ label: 'Resource values', sub: resMenu }],
       });
-      /* Windows' header menu lists the columns that can be hidden: Name is not one of them (the shell's
-         chooser lists it greyed out), so this page opens the same items without it. */
-      const head = t.el.querySelector('.thead');
-      head.addEventListener('contextmenu', (e) => {
-        e.preventDefault(); e.stopImmediatePropagation();
-        TM.menu.open(t.headItems().filter((x) => !(x.disabled && x.label === 'Name')), { x: e.clientX, y: e.clientY });
-      }, true);
       /* the row's own question: Esc answers Cancel */
       root.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && ask && e.target.closest('.st.ask')) { e.preventDefault(); e.stopPropagation(); ask = null; TM.refresh(); t.focus(); }
