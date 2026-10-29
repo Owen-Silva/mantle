@@ -222,7 +222,10 @@ function regGet(name) {
     if (cpid) pids.add(cpid);
     const first = await until(() => B.readInfo(childInfo), 1500);
     const born = !!(first && first.cpuRate === 3000);
-    const rc = await until(async () => { const x = await read(cpid); return x.eco === true ? x : null; }, 8000);
+    // Efficiency mode = EcoQoS AND Idle priority; wait for both (the child can show eco before the watcher's next
+    // pass sets its priority, so stopping at the first eco read raced it)
+    const rc = await until(async () => { const x = await read(cpid); return x.eco === true && x.priority === 'low' ? x : null; }, 8000)
+      || await read(cpid);
     const ic = await until(() => { const x = B.readInfo(childInfo); return x && x.cpuRate === 3000 ? x : null; }, 2500);
     t.check('child: Efficiency mode reaches a child started after the rule (the watcher)', rc && rc.eco === true && rc.priority === 'low', JSON.stringify(rc));
     t.check('child: it runs under the app\'s CPU limit (30%)', rc && rc.mantleJob === true && rc.jobCpuRate === 30 && ic && ic.cpuFlags === 5 && ic.cpuRate === 3000, JSON.stringify([rc && rc.jobCpuRate, ic]));
