@@ -13,7 +13,7 @@
 // its working set, how much work its spinning threads got done per second, and how far an
 // allocation got. That is the independent read-back: it never goes through the sidecar's code.
 //
-//   burner <mode> [args] --info <file> [--life <s>] [--nostdin]
+//   burner <mode> [args] --info <file> [--life <s>] [--nostdin] [--inherit]   (--inherit: keep the priority class it was born with)
 //     spin N          N threads spinning (rate = loop blocks per second, all threads)
 //     alloc STEP MAX  on stdin "go": commit STEP MB at a time (never touched) up to MAX MB or the first
 //                     failure; prints "ALLOC <mb>" per step and "STOP <mb> <why>"
@@ -61,7 +61,10 @@ static class B {
     // START AT NORMAL whatever launched it (lane mantle-m1, 2026-10-15): a child takes its parent's Below
     // Normal class, so a suite started at Below Normal (the local heavy-test rule) handed every burner
     // Below Normal, and the boost e2e read them as already eased (25/4). The tests compare against Normal.
-    try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.Normal; } catch (Exception) { }
+    // EXCEPT a child a "parent" burner spawned (--inherit): it stands for an app's own child process, which keeps
+    // the class it was born with. Resetting it raced the App power watcher: when the watcher had already put the
+    // child at Idle, this line set it back to Normal, and the watcher (by design) leaves an app's own change alone.
+    if (Array.IndexOf(a, "--inherit") < 0) { try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.Normal; } catch (Exception) { } }
     string mode = a.Length > 0 ? a[0] : "idle";
     int life = 240; bool readIn = true;
     for (int i = 0; i < a.Length; i++) {
@@ -102,7 +105,7 @@ static class B {
       if (line == "exit") break;
       if (line == "go" && mode == "alloc") Alloc(int.Parse(a[1]), int.Parse(a[2]));
       if (line.StartsWith("spawn ") && mode == "parent") {
-        var psi = new ProcessStartInfo(Process.GetCurrentProcess().MainModule.FileName, line.Substring(6) + " --nostdin");
+        var psi = new ProcessStartInfo(Process.GetCurrentProcess().MainModule.FileName, line.Substring(6) + " --nostdin --inherit");
         psi.UseShellExecute = false; psi.CreateNoWindow = true;
         var c = Process.Start(psi);
         Console.WriteLine("CHILD " + c.Id); Console.Out.Flush();
