@@ -60,6 +60,9 @@ const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
       [{ armed: false, tool: true }, false, 'switched off'],
       [{ passive: true, harness: false, mantle: true }, false, 'a test run only animates its own test windows'],
       [{ mantle: true, fullScreenApp: true }, false, "one of Mantle's own windows"],
+      [{ invisible: true, fullScreenApp: true }, false, 'the window is invisible'],
+      [{ passive: true, harness: true, invisible: true }, true, null],
+      [{ passive: true, harness: false, invisible: true }, false, 'a test run only animates its own test windows'],
       [{ passive: true, harness: true, mantle: true }, true, null],
       [{ fullScreenApp: true, fullScreenWindow: true }, false, 'a full-screen app or game is running'],
       [{ fullScreenWindow: true, tool: true }, false, 'the window is full screen'],
@@ -125,6 +128,11 @@ const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
           during.rect.l === fr[0] && during.rect.t === fr[1] && during.rect.r === fr[2] && during.rect.b === fr[3], `${JSON.stringify(during)} vs frame ${fr}`);
         t.check('maximize: done, full mode, ended sharp, not cancelled', d.action === 'maximize' && d.mode === 'full' && d.endedSharp === true && d.cancelled === false, JSON.stringify(d).slice(0, 300));
         t.check('maximize: holds the converged frame until Windows\' morph is over (total >= holdMs)', d.totalMs >= 295, String(d.totalMs));
+        // the facts read the harness window (layered, alpha 0 unless MAXFOLD_TEST_VISIBLE=1) as invisible: the fact a
+        // live Mantle skips it by ("the window is invisible"), so a live instance never plays over a test run's windows
+        const pl = s.collect('maxfold').find((e) => e.kind === 'play' && e.action === 'maximize');
+        t.check('play: an alpha-0 window is read as invisible (a live Mantle skips it; a test animates its own)',
+          !!pl && pl.invisible === (process.env.MAXFOLD_TEST_VISIBLE !== '1'), JSON.stringify(pl));
         const after = W.parseInfo(await w.cmd(`info ${OV}`));
         t.check('after a play: overlay hidden and parked at 1x1', after && !after.visible && after.rect.r - after.rect.l === 1 && after.rect.b - after.rect.t === 1, JSON.stringify(after));
         const sk = await w.cmd('restore', 'OK');

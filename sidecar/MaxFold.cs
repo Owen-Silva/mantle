@@ -45,7 +45,7 @@
 //
 // Commands (lane Ui): maxfold.config / maxfold.state / maxfold.decide (pure) / maxfold.flag (test only) /
 // maxfold.pose (test only: one frozen frame at a given p, for the frame checks). Events: "maxfold"
-// {kind: play | skip | done | restored-stale}. NEVER a window title, class, exe name or path, ever.
+// {kind: play (+ invisible: the target is alpha 0) | skip | done | restored-stale}. NEVER a window title, class, exe name or path, ever.
 // A passive (test) sidecar animates, flags and poses ONLY windows its harness made (Snap.OursToMove's rule).
 //
 // THREADING: one thread "mantle-maxfold" owns the hooks, the overlay window, the thumbnails and the frame loop
@@ -76,6 +76,7 @@ namespace Mantle {
     public const string R_SMALL = "too small to animate";
     public const string R_CLOAKED = "the window is hidden or on another desktop";
     public const string R_AFFINITY = "the app hides itself from screen capture";
+    public const string R_INVISIBLE = "the window is invisible";
     public const string R_WINANIM = "Windows animates this restore itself";
     public const string R_GONE = "the window changed before the unfold could start";
     public static string R_Thumb(int hr) { return "Windows would not let Mantle draw the window (0x" + hr.ToString("X8") + ")"; }
@@ -135,7 +136,7 @@ namespace Mantle {
 
     /// The facts one decision is made from (gathered on the thread, or given to maxfold.decide).
     public sealed class Facts {
-      public bool Armed, Passive, Harness, Mantle, FullScreenApp, FullScreenWindow, Tool, Child, Dragging, Cloaked;
+      public bool Armed, Passive, Harness, Mantle, FullScreenApp, FullScreenWindow, Tool, Child, Dragging, Cloaked, Invisible;
       public bool Restore, WinAnim, Flagged, Reduced;
       public int W, H; public uint Affinity; public int ThumbHr;
     }
@@ -146,6 +147,9 @@ namespace Mantle {
       if (!f.Armed) { reason = R_OFF; return false; }
       if (f.Passive && !f.Harness) { reason = R_TEST; return false; }
       if (!f.Passive && f.Mantle) { reason = R_MANTLE; return false; }
+      // fully transparent (layered at alpha 0): a fold would draw over nothing the user can see (and a live Mantle
+      // would play over a test run's invisible windows). A test sidecar's own harness windows are alpha 0 on purpose.
+      if (f.Invisible && !f.Harness) { reason = R_INVISIBLE; return false; }
       if (f.FullScreenApp) { reason = R_FULLAPP; return false; }
       if (f.FullScreenWindow) { reason = R_FULLWIN; return false; }
       if (f.Tool || f.Child) { reason = R_TOOL; return false; }
@@ -340,7 +344,7 @@ namespace Mantle {
       f.Armed = Json.GetBool(d, "armed", true); f.Passive = Json.GetBool(d, "passive", false); f.Harness = Json.GetBool(d, "harness", false);
       f.Mantle = Json.GetBool(d, "mantle", false); f.FullScreenApp = Json.GetBool(d, "fullScreenApp", false);
       f.FullScreenWindow = Json.GetBool(d, "fullScreenWindow", false); f.Tool = Json.GetBool(d, "tool", false); f.Child = Json.GetBool(d, "child", false);
-      f.Dragging = Json.GetBool(d, "dragging", false); f.Cloaked = Json.GetBool(d, "cloaked", false);
+      f.Dragging = Json.GetBool(d, "dragging", false); f.Cloaked = Json.GetBool(d, "cloaked", false); f.Invisible = Json.GetBool(d, "invisible", false);
       f.Restore = string.Equals(Json.GetString(d, "action"), "restore", StringComparison.Ordinal);
       f.WinAnim = Json.GetBool(d, "winAnim", false); f.Flagged = Json.GetBool(d, "flagged", false); f.Reduced = Json.GetBool(d, "reduced", false);
       f.W = Json.GetInt(d, "w", 1000); f.H = Json.GetInt(d, "h", 700); f.Affinity = (uint)Math.Max(0, Json.GetInt(d, "affinity", 0));
@@ -718,9 +722,18 @@ namespace Mantle {
       f.W = g.T.R - g.T.L; f.H = g.T.B - g.T.T;
       int cl; f.Cloaked = N.DwmGetWindowAttributeInt(h, 14 /*CLOAKED*/, out cl, 4) == 0 && cl != 0;
       uint aff; f.Affinity = N.GetWindowDisplayAffinity(h, out aff) ? aff : 0;
+      f.Invisible = Transparent(h, g.Ex);
       f.WinAnim = WinAnim(); f.Reduced = !ClientAnim();
       f.Flagged = h == _flagged;
       return f;
+    }
+
+    /// A layered window at alpha 0 (SetLayeredWindowAttributes with LWA_ALPHA): nothing of it is on screen. A window
+    /// drawn with UpdateLayeredWindow answers false to GetLayeredWindowAttributes and counts as visible.
+    static bool Transparent(IntPtr h, int ex) {
+      if ((ex & 0x00080000 /*WS_EX_LAYERED*/) == 0) return false;
+      uint key, flags; byte alpha;
+      return N.GetLayeredWindowAttributes(h, out key, out alpha, out flags) && (flags & 0x2 /*LWA_ALPHA*/) != 0 && alpha == 0;
     }
 
     static bool InMoveSize(uint tid) {
@@ -769,7 +782,7 @@ namespace Mantle {
       _watchFired = false; _watchSeq = p.Seq;
       try { _watchdog.Change(Math.Max(c.Ms, c.HoldMs) + 400, Timeout.Infinite); } catch (Exception) { }
       lock (_gate) { _plays++; _playingPub = true; _overlayVisPub = true; }
-      Features.Event("maxfold", Json.Obj("kind", "play", "action", action, "mode", p.Mode));
+      Features.Event("maxfold", Json.Obj("kind", "play", "action", action, "mode", p.Mode, "invisible", f.Invisible));
       // The flag: a restore's play has started, so Windows' animation may come back; a maximized foreground
       // window gets it so that ITS restore is ours.
       if (action == "restore" && h == _flagged) Unflag();
@@ -1367,6 +1380,7 @@ namespace Mantle {
       if ((style & 0x00C00000) != 0x00C00000) return false; // no caption: full-screen style, never ours to animate
       int cl; if (N.DwmGetWindowAttributeInt(h, 14, out cl, 4) == 0 && cl != 0) return false;
       uint aff; if (N.GetWindowDisplayAffinity(h, out aff) && aff != 0) return false;
+      if (!Program.Passive && Transparent(h, ex)) return false; // never animated (R_INVISIBLE), so never flagged
       return true;
     }
 
@@ -1575,6 +1589,7 @@ namespace Mantle {
       [DllImport("user32.dll")] public static extern bool GetMonitorInfoW(IntPtr mon, ref MONITORINFO mi);
       [DllImport("user32.dll")] public static extern bool SetLayeredWindowAttributes(IntPtr h, uint key, byte alpha, uint flags);
       [DllImport("user32.dll")] public static extern bool GetWindowDisplayAffinity(IntPtr h, out uint affinity);
+      [DllImport("user32.dll")] public static extern bool GetLayeredWindowAttributes(IntPtr h, out uint key, out byte alpha, out uint flags);
       [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO li);
       [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
       [DllImport("user32.dll")] public static extern bool GetGUIThreadInfo(uint tid, ref GUITHREADINFO gi);
