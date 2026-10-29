@@ -9,7 +9,10 @@
 const kit = require('../testkit.js');
 
 const R = (k) => `#pg-processes .trow[data-key="${k}"]`;
-const CHROME = '1040|1', DISCORD = '1080|1', NOTEPAD = '1200|1', ONEDRIVE = '1320|1', VG = '1400|1', EXPLORER = '1480|1', AUDIO = '1520|1', STEAM = '1160|1';
+// a row's key is lib's pid|created (the process' creation FILETIME as a decimal string); the mock's made-up created
+// is computed exactly the way mock-mantle.js computes it
+const K = (pid) => `${pid}|${String(133730000000000000 + pid * 1000)}`;
+const CHROME = K(1040), DISCORD = K(1080), NOTEPAD = K(1200), ONEDRIVE = K(1320), VG = K(1400), EXPLORER = K(1480), AUDIO = K(1520), STEAM = K(1160), CODE = K(1120);
 
 kit.run('TASKMGR PROCESSES PAGE TEST', async (t) => {
   const settle = (p, ms) => p.waitForTimeout(ms || 220);
@@ -47,7 +50,8 @@ kit.run('TASKMGR PROCESSES PAGE TEST', async (t) => {
     return r;
   };
   const rowMenu = async (p, key) => { await p.click(`${R(key)} .c.name .n`, { button: 'right' }); await p.waitForSelector('#menus .menu'); };
-  const view = async (p, ...path) => { await p.click('#cmdbar button[aria-label="View"]'); await p.waitForSelector('#menus .menu'); return pick(p, ...path); };
+  // Esc closes one menu level (as in Windows), and clicking View while its menu is open closes it: start from no menu
+  const view = async (p, ...path) => { for (let i = 0; i < 3 && await p.$('#menus .menu'); i++) await p.keyboard.press('Escape'); await p.click('#cmdbar button[aria-label="View"]'); await p.waitForSelector('#menus .menu'); return pick(p, ...path); };
   const calls = async (p, name) => (await t.calls(p, 'taskmgr.' + name)).map((c) => c.args);
   const subText = (p, key) => p.evaluate((k) => { const s = document.querySelector(`#pg-processes .trow[data-key="${k}"] > .tsub`); return s && !s.hidden ? s.textContent : ''; }, key);
   const selKey = (p) => p.evaluate(() => (document.querySelector('#pg-processes .trow.sel') || {}).dataset?.key || null);
@@ -115,7 +119,7 @@ kit.run('TASKMGR PROCESSES PAGE TEST', async (t) => {
   t.check('expand: its 21 processes under it', (await p.$$(`#pg-processes .trow.child[data-key^="${CHROME}>p"]`)).length >= 21);
   t.check('a process that owns a window expands to it', !!(await p.$(`${R(CHROME + '>p1040')}.exp`)));
   await p.click(`${R(CHROME + '>p1040')} .chev`); await settle(p);
-  t.check('the window row: its title under the process', ((await p.textContent(`${R(CHROME + '>p1040>w1040')} .n`)) || '') === 'Made-up tab - Google Chrome');
+  t.check('the window row: its title under the process', ((await p.textContent(`${R(CHROME + '>p1040>w1040:71040')} .n`)) || '') === 'Made-up tab - Google Chrome');
   await p.click(`${R(CHROME)} .chev`); await settle(p, 300);
   ex = await calls(p, 'expand');
   t.check('collapse: main is told (open:false)', ex.length === 2 && ex[1].open === false, JSON.stringify(ex));
@@ -151,7 +155,8 @@ kit.run('TASKMGR PROCESSES PAGE TEST', async (t) => {
   await p.waitForSelector('.dlg');
   t.check('Efficiency mode: Windows\' question first', /Turn on Efficiency mode/.test(await p.textContent('.dlg')));
   await p.click('.dlg .dfoot [data-b="ok"]'); await settle(p, 300);
-  let e1 = await calls(p, 'efficiency');
+  // preflight asks first with dryRun:true (a needsConfirm comes back before anything is done), then the real call
+  let e1 = (await calls(p, 'efficiency')).filter((x) => !x.dryRun);
   t.check('Efficiency mode: efficiency {key, pid, on:true}', e1.length === 1 && e1[0].key === DISCORD && e1[0].pid === 1080 && e1[0].on === true, JSON.stringify(e1));
   await rowMenu(p, DISCORD); await pick(p, 'Create memory dump file');
   await p.waitForSelector('.dlg.dump .dpath', { timeout: 3000 }).catch(() => {});
@@ -244,6 +249,7 @@ kit.run('TASKMGR PROCESSES PAGE TEST', async (t) => {
   await t.clearCalls(p);
   await press(p, 'Delete');
   t.check('Delete = End task', (await calls(p, 'act')).some((x) => x.action === 'close' && x.key === DISCORD));
+  await settle(p, 300);   // the page sends one request per row at a time: let Delete's answer come back first
   await t.clearCalls(p);
   await press(p, 'Alt+e');
   t.check('Alt+E = End task', (await calls(p, 'act')).some((x) => x.action === 'close' && x.key === DISCORD));
@@ -277,7 +283,7 @@ kit.run('TASKMGR PROCESSES PAGE TEST', async (t) => {
   await t.clearCalls(p);
   await rowMenu(p, AUDIO); await pick(p, 'End task');
   await p.waitForSelector('.dlg.confirm', { timeout: 3000 }).catch(() => {});
-  t.check('needsConfirm: Windows\' warning dialog', /Do you want to end Service Host: Windows Audio\?/.test(await p.textContent('.dlg').catch(() => '')) && (await p.textContent('.dlg .dfoot [data-b="ok"]').catch(() => '')) === 'End process');
+  t.check('needsConfirm: Windows\' warning dialog', /Do you want to end 'svchost\.exe'\?/.test(await p.textContent('.dlg').catch(() => '')) && (await p.textContent('.dlg .dfoot [data-b="ok"]').catch(() => '')) === 'End process');
   t.check('needsConfirm: Cancel holds the focus', (await p.evaluate(() => document.activeElement && document.activeElement.dataset.b)) === 'cancel');
   await p.click('.dlg .dfoot [data-b="ok"]'); await settle(p, 400);
   a = await calls(p, 'act');
@@ -293,8 +299,8 @@ kit.run('TASKMGR PROCESSES PAGE TEST', async (t) => {
   // a single-process app with a window: expands to its window; the window row's menu
   await p.evaluate(() => { window.__mock.S.apps[4].title = 'Untitled - Notepad'; window.__mock.push(); }); await settle(p, 300);
   await p.click(`${R(NOTEPAD)} .chev`); await settle(p);
-  t.check('a one-process app expands to its window', ((await p.textContent(`${R(NOTEPAD + '>w1200')} .n`).catch(() => '')) === 'Untitled - Notepad'));
-  await rowMenu(p, NOTEPAD + '>w1200');
+  t.check('a one-process app expands to its window', ((await p.textContent(`${R(NOTEPAD + '>w1200:71200')} .n`).catch(() => '')) === 'Untitled - Notepad'));
+  await rowMenu(p, NOTEPAD + '>w1200:71200');
   t.check('a window row: Switch to, Bring to front, Minimize, Maximize, End task', (await menuLabels(p)).join(',') === 'Switch to,Bring to front,Minimize,Maximize,|,End task', (await menuLabels(p)).join(','));
   await pick(p, 'Minimize');
   t.check('Minimize: switchTo {key, op}', (await calls(p, 'switchTo')).some((x) => x.key === NOTEPAD && x.op === 'minimize'));
@@ -315,7 +321,7 @@ kit.run('TASKMGR PROCESSES PAGE TEST', async (t) => {
   p = await t.open('view=processes&mock=failed');
   t.check('still running: the reason and Force close on the row', /kept running/.test(await subText(p, DISCORD)) && !!(await p.$(`${R(DISCORD)} .tsub [data-act="force"]`)));
   t.check('failed: the reason on the row', /access denied/.test(await subText(p, STEAM)));
-  t.check('trimmed: before → after on the row', /655 MB → 214 MB/.test(await subText(p, '1120|1')), await subText(p, '1120|1'));
+  t.check('trimmed: before → after on the row', /655 MB → 214 MB/.test(await subText(p, CODE)), await subText(p, CODE));
   t.check('recent: the strip over the list', /Notepad: Closed/.test(await p.textContent('#pg-processes .recent')));
   await p.click(`${R(DISCORD)} .tsub [data-act="force"]`); await settle(p);
   t.check('Force close asks on the row, Cancel focused', /Force close Discord\?/.test(await subText(p, DISCORD)) && (await p.evaluate(() => document.activeElement.dataset.act)) === 'force-no');

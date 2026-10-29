@@ -510,7 +510,8 @@
             a.setButtons([{ id: 'loc', label: 'Open file location' }, { id: 'ok', label: 'OK', primary: true }]);
           } else {
             a.setTitle('Dump process');
-            a.setBody(res.ok ? `<p class="dq">${esc(res.reason || 'Test Mantle: no dump file was written.')}</p>` : `<div class="dq">${res.needsAdmin ? adminHtml(res) : warnLine('bad', `The dump file was not created: ${res.reason}`)}</div>`);
+            // a dry run: nothing was written, said plainly, with where the file would have gone (lib's path)
+            a.setBody(res.ok ? `<p class="dq">${esc(res.reason || 'Test Mantle: no dump file was written.')}${res.path ? ' It would have been:' : ''}</p>${res.path ? `<p class="dpath" title="${esc(res.path)}">${esc(res.path)}</p>` : ''}` : `<div class="dq">${res.needsAdmin ? adminHtml(res) : warnLine('bad', `The dump file was not created: ${res.reason}`)}</div>`);
             a.setButtons([{ id: 'ok', label: 'OK', primary: true }]);
           }
           const b = a.button('ok'); if (b) b.focus();
