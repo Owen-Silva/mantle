@@ -28,3 +28,7 @@ assets/backgrounds/wallpaper.png
 # Machine-local switches, e.g. no-updates.local (turns the in-app updater off for this folder).
 *.local
 *.local.*
+sidecar/elevated/bin/
+
+# task manager headless shots (ui/taskmgr/shoot.js)
+.shots/

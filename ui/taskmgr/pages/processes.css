@@ -1,0 +1,39 @@
+/* pages/processes.css - the Processes page (Mantle's island tokens only: ui/shared/glass-light.css --lg-*). */
+.ptbl { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+/* what Mantle just did, newest first (main's model.recent): quiet lines over the table */
+#pg-processes .recent { flex: 0 0 auto; margin: 0 22px 6px; display: flex; flex-direction: column; gap: 2px; color: var(--lg-ink-2); line-height: 1.4; }
+#pg-processes .recent > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* the name cell: a lock when Mantle never ends it (the reason is its tooltip) */
+#pg-processes .trow .plock { display: grid; color: var(--lg-ink-3); margin-left: 6px; }
+/* a window under its process: the window glyph where the icon goes, the title in the body colour */
+#pg-processes .trow.win .ic.tile { color: var(--lg-ink-3); }
+#pg-processes .trow.win .c.name .n { color: var(--lg-ink-2); }
+
+/* Status: "Not responding" in words; Suspended and Efficiency mode as icons (their words are the tooltip) */
+#pg-processes .pst { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--lg-ink-2); }
+#pg-processes .pst svg { flex: 0 0 auto; width: 14px; height: 14px; }
+#pg-processes .pst.eff { color: var(--lg-ok, #2e7d4f); }   /* --lg-ok is defined only in the dark tokens; light gets a quiet green at 5:1 */
+#pg-processes .pst.sus { color: var(--lg-ink-2); }
+#pg-processes .pst.bad { color: var(--lg-warn); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* the row's outcome line: under the row, lined up with the name's words */
+#pg-processes .tsub { padding-left: 48px; }
+#pg-processes .trow.child .tsub { padding-left: 70px; }
+#pg-processes .st { min-width: 0; }
+#pg-processes .st > span:first-child { min-width: 0; }
+#pg-processes .st .btn.sm { flex: 0 0 auto; }
+#pg-processes .st.adm { flex-wrap: wrap; row-gap: 4px; }
+#pg-processes .st.adm .adminwhy { flex: 1 1 260px; min-width: 0; }
+/* the question on the row (Force close?): the danger button left of Cancel like Windows' own confirm;
+   Cancel holds the focus, so Enter cannot force by accident */
+#pg-processes .st.ask { margin-top: 2px; }
+#pg-processes .st.ask > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+
+/* narrow window (Windows' minimum): the outcome line starts under the name, buttons wrap under the words */
+@container content (max-width: 640px) {
+  #pg-processes .tsub, #pg-processes .trow.child .tsub { padding-left: 22px; }
+  #pg-processes .st { flex-wrap: wrap; row-gap: 4px; }
+  #pg-processes .recent { margin: 0 12px 6px; }
+}
