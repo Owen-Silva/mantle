@@ -1,0 +1,25 @@
+/* pages/settings.css - Task Manager's Settings page: grouped cards of rows, a control on the right (Windows 11's
+   settings-card shape). Tokens only. */
+#pg-settings { overflow: auto; }
+.setwrap { max-width: 860px; padding: 0 22px 22px; }
+.seth { margin: 18px 0 8px; font-size: 13px; font-weight: 600; }
+.setcard { display: flex; flex-direction: column; gap: 3px; }
+.setrow { display: flex; align-items: center; gap: 16px; min-height: 62px; padding: 10px 16px; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl); background: var(--lg-fill-strong); }
+.setl { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sett { color: var(--lg-ink); }
+.sets { color: var(--lg-ink-2); font-size: 11.5px; }
+.setwhy { display: flex; gap: 6px; align-items: flex-start; color: var(--lg-ink-3); font-size: 11.5px; }
+.setwhy.bad { color: var(--lg-warn); }
+.setwhy svg { flex: 0 0 12px; margin-top: 2px; }
+.setrow select { flex: 0 0 auto; min-width: 200px; height: 32px; padding: 0 8px; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl); background: var(--lg-card); color: var(--lg-ink); box-shadow: inset 0 -1px 0 var(--lg-edge-out); }
+.setrow select:disabled, .setrow .sw:disabled { opacity: var(--lg-disabled, .45); }
+/* a toggle switch drawn from a checkbox (Windows 11's): track + knob, the accent when on */
+.sw { -webkit-appearance: none; appearance: none; flex: 0 0 auto; width: 40px; height: 20px; margin: 0; border-radius: 10px; border: 1px solid var(--lg-ink-2); background: transparent; position: relative; transition: background-color var(--lg-dur-ui, 120ms) var(--lg-ease-ui, ease); }
+.sw::after { content: ''; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--lg-ink-2); transition: transform var(--lg-dur-ui, 120ms) var(--lg-ease-ui, ease); }
+.sw:checked { background: var(--lg-acc); border-color: var(--lg-acc); }
+.sw:checked::after { transform: translateX(20px); background: var(--lg-acc-on); }
+.sw:hover:not(:disabled)::after { transform: scale(1.12); }
+.sw:checked:hover:not(:disabled)::after { transform: translateX(20px) scale(1.12); }
+@container content (max-width: 600px) { .setrow select { min-width: 140px; } .setwrap { padding: 0 14px 14px; } }
+:where(:root[data-theme="dark"]) .setrow { background: var(--lg-card); box-shadow: var(--lg-lip-up); }
+:where(:root[data-theme="dark"]) .setrow select { background: var(--lg-field); box-shadow: none; }

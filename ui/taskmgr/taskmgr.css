@@ -1,359 +1,326 @@
-/* taskmgr.css — Mantle's task manager (lib/features/taskmgr.js), in the taskbar island's theme
- * (glass-light.css --lg-* ONLY; one theme for every Mantle surface, the user, 2026-09-21). GLASS (lane
- * taskmgrfx): the window asks Windows for its acrylic system backdrop (lib/features/taskmgr.js), so
- * the page paints NO ground: the whole window is the island's --lg-fill wash over the acrylic, and the
- * panes are the popover glass (--lg-fill-strong, the white lip, one .10 hairline) for readable rows.
- * No CSS backdrop-filter (a large one measured 27% of a core). If the light frame could not be set
- * (data-frame=dark: Windows' dark backdrop under a light page reads grey) the ground comes back. Plain hairlines, dark
- * ink, NO glow: the accent marks the active tab, focus and the one primary button, nothing else.
+/* taskmgr.css - the SHELL of Mantle's task manager: Windows 11 Task Manager's layout (title bar with the
+ * search in the middle, nav rail, a raised content layer with a rounded top-left corner, page title + command
+ * bar, dense tables, menus, dialogs) in the taskbar island's theme. Colours, radii and shadows ONLY from
+ * ui/shared/glass-light.css --lg-* (one theme for every Mantle surface, the user 2026-09-21), light and dark.
  *
- * THE CALM PASS (lane looktask, 2026-09-29; the Settings recipe, commit 377e901): one light window,
- * cards of one hairline and 8 px corners, a grey wash + accent tick for the chosen tab/row, warnings
- * as a warn glyph + one line of --lg-warn words, thin hover-only scrollbars.
- *
- * SYSMON PASS (2026-09-29, "minimalistic ... obvious what to do"): a row shows ONE action (Close) on
- * hover or when chosen, the rest behind its "..." menu; search + More in the header; CPU and memory
- * lines at the top; every control has hover, pressed, focus-visible and disabled states; motion on
- * the nav curve and none under reduced motion. */
+ * GLASS: the window asks Windows for its acrylic (lib/features/taskmgr.js), so the page paints no ground in
+ * light: the base (title + rail) is the island's sunk wash over --lg-fill-strong, the content layer one
+ * --lg-card over it. No CSS backdrop-filter anywhere big (one large one measured 27% of a core) and nothing
+ * animated through one. data-frame="dark" (the light frame was refused) brings the solid ground back.
+ * In DARK each region paints its own ONE tint over the wallpaper picture (wall-bdrop.js): title + rail are
+ * Helm's strip/rail (--lg-fill-bar), the content layer Helm's panel (--lg-fill).
+ * Page modules (pages/<id>.css) style only what is inside their own section. */
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
 body {
   background: transparent;
-  font-family: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
-  font-size: 12.5px; color: var(--lg-ink); cursor: default; user-select: none;
+  font-family: var(--lg-font, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif);
+  font-size: 12px; color: var(--lg-ink); cursor: default; user-select: none;
 }
-button { font: inherit; color: inherit; }
-button:focus-visible, input:focus-visible, .list:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
-.list:focus-visible { outline-offset: -2px; border-radius: var(--lg-r); }
+button, input, select { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: 1px; }
 button:disabled { cursor: default; }
-.grow { flex: 1 1 auto; }
 [hidden] { display: none !important; }
+.grow { flex: 1 1 auto; }
 
 html { background: var(--lg-fill-strong); }
-.app { display: flex; flex-direction: column; height: 100%; background: linear-gradient(var(--lg-sunk), var(--lg-sunk)) var(--lg-fill-strong); }
+.app { position: relative; display: flex; flex-direction: column; height: 100%; background: linear-gradient(var(--lg-sunk), var(--lg-sunk)) var(--lg-fill-strong); }
 :root[data-frame="dark"], :root[data-frame="dark"] .app { background: var(--lg-ground); }
 
-/* ---- header: the drag strip, tabs, search, More, window buttons ---- */
-.head {
-  flex: 0 0 auto; height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 0 0 14px;
-  -webkit-app-region: drag;
+/* ---------------------------------------------------------------- title bar: icon + name | search | window buttons */
+.title {
+  flex: 0 0 auto; height: 44px; display: grid; grid-template-columns: auto auto 1fr auto; align-items: center;
+  -webkit-app-region: drag; position: relative;
 }
-.head button, .head .tabs, .head .search { -webkit-app-region: no-drag; }
-.brand { font-weight: 600; margin-right: 10px; white-space: nowrap; }
-.tabs { display: flex; gap: 2px; flex: 0 0 auto; }
-.tab {
-  position: relative;
-  height: 30px; padding: 0 12px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; color: var(--lg-ink-2); white-space: nowrap;
-}
-.tab:hover { background: var(--lg-sunk); color: var(--lg-ink); }
-.tab:active { background: var(--lg-press); }
-/* the open view: Windows 11's shape, a quiet ink wash and the accent tick, never a coloured block */
-.tab.on { background: var(--lg-hover); color: var(--lg-ink); font-weight: 600; }
-.tab.on::after { content: ''; position: absolute; left: 50%; bottom: 2px; width: 16px; height: 3px; margin-left: -8px; border-radius: 2px; background: var(--lg-acc); }
-
+.title button, .title .search { -webkit-app-region: no-drag; }
+.appic { width: 16px; height: 16px; margin: 0 10px 0 16px; }
+.appname { font-size: 12px; white-space: nowrap; color: var(--lg-ink); }
+/* the search sits in the middle of the WINDOW (Windows' title bar), not of what is left of it */
+.tsearch { position: absolute; left: 50%; top: 6px; transform: translateX(-50%); width: min(460px, calc(100% - 340px)); min-width: 160px; }
 .search {
-  flex: 0 1 200px; min-width: 110px; height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 9px;
+  height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 11px;
   border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl); background: var(--lg-fill-strong); color: var(--lg-ink-3);
+  box-shadow: inset 0 -1px 0 var(--lg-edge-out);
 }
-.search:hover { border-color: var(--lg-tile); }
-.search:focus-within { border-color: var(--lg-acc); box-shadow: inset 0 -1px 0 var(--lg-acc); color: var(--lg-ink-2); }
-.search input { flex: 1 1 auto; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; font: inherit; color: var(--lg-ink); padding: 0; }
+.search:hover { background: var(--lg-card); }
+.search:focus-within { border-color: var(--lg-edge-out); box-shadow: inset 0 -2px 0 var(--lg-acc); background: var(--lg-card); color: var(--lg-ink-2); }
+.search.off { opacity: var(--lg-disabled, .5); }
+.search input { flex: 1 1 auto; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; padding: 0; color: var(--lg-ink); }
 .search input::placeholder { color: var(--lg-ink-3); }
 .search input:focus-visible { outline: 0; }
-.qx { flex: 0 0 auto; width: 22px; height: 22px; border: 0; border-radius: 4px; background: transparent; color: var(--lg-ink-3); display: grid; place-items: center; padding: 0; }
+.qx { flex: 0 0 auto; width: 24px; height: 24px; border: 0; border-radius: 4px; background: transparent; color: var(--lg-ink-3); display: grid; place-items: center; padding: 0; }
 .qx:hover { background: var(--lg-hover); color: var(--lg-ink); }
 .qx:active { background: var(--lg-press); }
-.ibtn { flex: 0 0 auto; width: 32px; height: 30px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; color: var(--lg-ink-2); display: grid; place-items: center; padding: 0; }
-.ibtn:hover, .ibtn[aria-expanded="true"] { background: var(--lg-hover); color: var(--lg-ink); }
-.ibtn:active { background: var(--lg-press); }
-
-.wc { display: flex; flex: 0 0 auto; height: 100%; margin-left: 2px; }
-.wc button { width: 44px; height: 100%; border: 0; background: transparent; color: var(--lg-ink-2); display: grid; place-items: center; }
+.wc { grid-column: 4; display: flex; height: 100%; align-self: start; }
+.wc button { width: 46px; height: 32px; border: 0; background: transparent; color: var(--lg-ink-2); display: grid; place-items: center; }
 .wc button:hover { background: var(--lg-hover); }
 .wc button:active { background: var(--lg-press); }
 .wc .x:hover, .wc .x:active { background: var(--lg-warn); color: var(--lg-acc-on); }
 
-.btn { height: 28px; padding: 0 12px; border-radius: var(--lg-r-ctl); border: 1px solid var(--lg-edge-out); background: var(--lg-fill-strong); white-space: nowrap; }
-.btn:hover { background: var(--lg-hover); }
-.btn:active { background: var(--lg-press); }
-.btn.acc { background: var(--lg-acc); border-color: var(--lg-acc); color: var(--lg-acc-on); box-shadow: none; font-weight: 600; }
-.btn.acc:hover { filter: brightness(1.08); }
-.btn.acc:active { filter: brightness(.94); }
-.btn:disabled, .btn:disabled:hover, .btn:disabled:active { opacity: .45; filter: none; background: var(--lg-fill-strong); color: var(--lg-ink-2); border-color: var(--lg-edge-out); }
+/* ---------------------------------------------------------------- body: the rail + the content layer */
+.body { flex: 1 1 auto; min-height: 0; display: flex; position: relative; }
+.rail { flex: 0 0 auto; width: 216px; display: flex; flex-direction: column; padding: 0 4px 6px; position: relative; z-index: 3; }
+.ham, .nav { height: 36px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; color: var(--lg-ink); display: flex; align-items: center; gap: 14px; padding: 0 12px; position: relative; text-align: left; white-space: nowrap; overflow: hidden; }
+.ham { width: 40px; flex: 0 0 auto; margin: 0 0 4px; color: var(--lg-ink-2); }
+.nav { width: 100%; margin: 1px 0; }
+.nav svg, .ham svg { flex: 0 0 16px; }
+.nav span { overflow: hidden; text-overflow: ellipsis; }
+.ham:hover, .nav:hover { background: var(--lg-hover); }
+.ham:active, .nav:active { background: var(--lg-press); }
+/* the open page: Windows 11's shape, a quiet wash and the accent pill on the left */
+.nav.on { background: var(--lg-hover); font-weight: 600; }
+.nav.on::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 2px; background: var(--lg-acc); }
+.navs { display: flex; flex-direction: column; }
+.navsep { height: 1px; margin: 6px 8px; background: var(--lg-divider); }
+.navfoot { margin-top: auto; }
+/* icons only: narrow windows, or the hamburger closed it */
+.app[data-rail="closed"] .rail { width: 48px; }
+.app[data-rail="closed"] .nav span { display: none; }
+.app[data-rail="closed"] .nav { width: 40px; }
+/* a narrow window opened by the hamburger: the rail lies OVER the page (Windows does the same) */
+.app[data-rail="overlay"] .rail { position: absolute; left: 0; top: 0; bottom: 0; background: var(--lg-fill-strong); border-right: 1px solid var(--lg-edge-out); box-shadow: var(--lg-shadow); border-radius: 0 var(--lg-r) var(--lg-r) 0; }
+.app[data-rail="overlay"] .content { margin-left: 48px; }
 
-/* ---- the PC at a glance: CPU and memory, now and their last minutes ---- */
-.stats { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 4px 14px 10px; }
-.stat { min-width: 0; display: flex; align-items: center; gap: 12px; padding: 9px 12px 9px 14px; background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); }
-.stop { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 8px; align-items: baseline; }
-.stat .lbl { color: var(--lg-ink-2); font-size: 12px; }
-.stat .big { font-size: 20px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; grid-row: 2; grid-column: 1; }
-.stat .sub { grid-row: 2; grid-column: 2; min-width: 0; color: var(--lg-ink-3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-.stat.hi .big { color: var(--lg-warn); }
-.spark { flex: 0 0 38%; max-width: 150px; height: 34px; border-bottom: 1px solid var(--lg-sunk); overflow: visible; }
-.spark .line { fill: none; stroke: var(--lg-ink-2); stroke-width: 1.2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
-.spark .area { fill: var(--lg-sunk); stroke: none; }
-.stat.hi .spark .line { stroke: var(--lg-warn); }
+.content {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; position: relative;
+  background: var(--lg-card); border-top: 1px solid var(--lg-edge-out); border-left: 1px solid var(--lg-edge-out);
+  border-top-left-radius: var(--lg-r); container-type: inline-size; container-name: content;
+}
+.phead { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 12px 6px 22px; }
+.ptitle { margin: 0; font-size: 20px; font-weight: 600; line-height: 28px; white-space: nowrap; letter-spacing: -.1px; }
+.pextra { color: var(--lg-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.pextra:empty { display: none; }
+.cmdbar { margin-left: auto; display: flex; align-items: center; gap: 2px; min-width: 0; }
+.cbtn { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; color: var(--lg-ink); white-space: nowrap; }
+.cbtn svg { flex: 0 0 16px; color: var(--lg-ink-2); }
+.cbtn:hover:not(:disabled), .cbtn[aria-expanded="true"] { background: var(--lg-hover); }
+.cbtn:active:not(:disabled) { background: var(--lg-press); }
+.cbtn:disabled { opacity: var(--lg-disabled, .45); }
+.cbtn.on { background: var(--lg-acc-soft); }
+.cbtn .cdd { display: grid; color: var(--lg-ink-3); margin-left: -2px; }
+.cbtn.more { width: 36px; padding: 0; justify-content: center; }
+.cbtn.primary { background: var(--lg-acc); color: var(--lg-acc-on); font-weight: 600; }
+.cbtn.primary svg { color: var(--lg-acc-on); }
+.cbtn.primary:hover:not(:disabled) { background: var(--lg-acc-strong); }
+.csep { width: 1px; height: 20px; background: var(--lg-divider); margin: 0 6px; }
+/* a narrow page: the command bar keeps its icons, the words go to the tooltips (Windows' compact bar) */
+@container content (max-width: 760px) {
+  .cbtn .cl { display: none; }
+  .cbtn { padding: 0 8px; gap: 4px; }
+  .phead { padding-left: 16px; }
+}
+@container content (max-width: 560px) { .pextra { display: none; } .ptitle { font-size: 18px; } }
 
-/* what the window itself needs said, and the last few outcomes: lines of words on the window, no box.
-   A warning is the warn glyph + its words in --lg-warn; the test-Mantle line and outcomes are quiet ink. */
-.note, .recent { flex: 0 0 auto; margin: -2px 16px 10px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.4; }
-.note .nl, .recent .bad, .lastfree .bad, .st.bad > span:first-child, .pwhy.bad, .lsx.bad { display: flex; align-items: flex-start; gap: 6px; color: var(--lg-warn); }
-.note .nl svg, .recent .bad svg, .lastfree .bad svg, .st.bad svg, .pwhy.bad svg, .lsx.bad svg { flex: 0 0 12px; margin-top: 2px; }
+/* what the window needs said: lines of words, the warn glyph for trouble, quiet ink for states */
+.note { flex: 0 0 auto; margin: -2px 22px 8px; display: flex; flex-direction: column; gap: 3px; line-height: 1.4; }
+.note .nl, .lsx.bad, .adminwhy, .warn, .bad { display: flex; align-items: flex-start; gap: 6px; color: var(--lg-warn); }
+.note .nl svg, .lsx.bad > svg, .adminwhy svg, .warn > svg, .bad > svg { flex: 0 0 12px; margin-top: 2px; }
 .note .nl.quiet { color: var(--lg-ink-3); }
-.recent { color: var(--lg-ink-2); }
+.adminwhy { display: inline-flex; }
 
-/* ---- the list ---- */
-.view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin: 0 14px 14px; background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); }
-.cols { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 84px 58px 150px; gap: 8px; align-items: center; padding: 4px 12px 3px 40px; color: var(--lg-ink-3); font-size: 11.5px; border-bottom: 1px solid var(--lg-sunk); }
-.cols > button { height: 24px; border: 0; background: transparent; color: var(--lg-ink-3); font-size: 11.5px; padding: 0 4px; border-radius: 4px; display: flex; align-items: center; gap: 4px; }
-.cols > button:hover { background: var(--lg-hover); color: var(--lg-ink); }
-.cols > button:active { background: var(--lg-press); }
-.cols > button.on { color: var(--lg-ink); font-weight: 600; }
-.cols > button i { display: inline-grid; width: 8px; }
-.cols .c-name { justify-self: start; margin-left: -4px; }
-.cols .c-mem, .cols .c-cpu { justify-content: flex-end; flex-direction: row-reverse; margin-right: -4px; }
-.cols .c-act { text-align: right; min-width: 0; }
-.mantle-use { color: var(--lg-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; font-variant-numeric: tabular-nums; }
-.list { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: 2px 0 6px; outline: 0; }
-/* a long list scrolls with a thin thumb that shows only while the pointer is over it (no grey gutter) */
-.list::-webkit-scrollbar { width: 6px; }
-.list::-webkit-scrollbar-button { display: none; height: 0; }
-.list::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
-.list:hover::-webkit-scrollbar-thumb { background: var(--lg-tile); }
-.sect { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; padding: 12px 12px 4px 8px; }
-.stog { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 8px 0 6px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; color: var(--lg-ink); font-size: 13.5px; font-weight: 600; }
-.stog:hover { background: var(--lg-hover); }
-.stog:active { background: var(--lg-press); }
-.stog svg { color: var(--lg-ink-3); transition: transform var(--lg-dur) var(--lg-ease); }
-.stog[aria-expanded="true"] svg { transform: rotate(90deg); }
-.stog .cnt { color: var(--lg-ink-3); font-weight: 400; font-size: 12px; font-variant-numeric: tabular-nums; }
-/* the one reason most rows of a section share, said once under its header (taskmgr.js section()) */
-.sect .sect-why { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; padding: 2px 0 1px 28px; color: var(--lg-ink-3); font-size: 11.5px; font-weight: 400; }
-.sect-why svg, .nm .lk { flex: 0 0 auto; color: var(--lg-ink-3); }
-.nm .lk { align-self: center; display: flex; align-items: center; gap: 4px; font-size: 11.5px; white-space: nowrap; }
+.page { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 
-/* the list's own states: reading, could not read, nothing matches the search */
-.liststate { flex: 0 0 auto; }
-.lsx { display: flex; align-items: center; gap: 10px; padding: 22px 18px; color: var(--lg-ink-2); }
-.lsx .btn { height: 26px; }
-.spin { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--lg-tile); border-top-color: var(--lg-ink-2); animation: spin 900ms linear infinite; flex: 0 0 auto; }
+/* ---------------------------------------------------------------- buttons (dialogs, states, pages) */
+.btn { height: 32px; min-width: 80px; padding: 0 14px; border-radius: var(--lg-r-ctl); border: 1px solid var(--lg-edge-out); background: var(--lg-fill-strong); white-space: nowrap; box-shadow: inset 0 -1px 0 var(--lg-edge-out); }
+.btn.sm { height: 28px; min-width: 0; padding: 0 12px; }
+.btn:hover:not(:disabled) { background: var(--lg-hover); }
+.btn:active:not(:disabled) { background: var(--lg-press); }
+.btn.acc { background: var(--lg-acc); border-color: var(--lg-acc); color: var(--lg-acc-on); font-weight: 600; box-shadow: none; }
+.btn.acc:hover:not(:disabled) { background: var(--lg-acc-strong); }
+.btn.dng { background: var(--lg-warn); border-color: var(--lg-warn); color: var(--lg-acc-on); font-weight: 600; box-shadow: none; }
+.btn.dng:hover:not(:disabled) { filter: brightness(1.06); }
+.btn:disabled { opacity: var(--lg-disabled, .45); }
+
+/* ---------------------------------------------------------------- THE TABLE (TM.table) */
+.tbl { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.thead { flex: 0 0 auto; overflow: hidden; border-bottom: 1px solid var(--lg-divider); }
+.tbl .tin { min-width: var(--minw, 0); }
+.thead .tin { display: grid; grid-template-columns: var(--cols); align-items: stretch; padding-right: 10px; }
+.thead .h {
+  position: relative; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; gap: 1px;
+  min-width: 0; height: 30px; padding: 0 8px 5px; border: 0; border-right: 1px solid var(--lg-divider); background: transparent;
+  color: var(--lg-ink-2); text-align: left;
+}
+.thead .h:first-child { padding-left: 22px; }
+.thead.totals .h { height: 50px; }
+.thead .h.num { align-items: flex-end; text-align: right; }
+.thead .h:hover { background: var(--lg-hover); }
+.thead .h:active { background: var(--lg-press); }
+.thead .h.on { color: var(--lg-ink); }
+.thead .hl { display: flex; align-items: center; gap: 4px; max-width: 100%; white-space: nowrap; }
+.thead .hl > span { overflow: hidden; text-overflow: ellipsis; }
+.thead .sarrow { display: grid; color: var(--lg-ink-3); }
+.thead .h.num .sarrow { order: -1; }
+/* Windows' total over the column name: the number big, the name under it */
+.thead .tv { font-size: 15px; font-weight: 400; color: var(--lg-ink); font-variant-numeric: tabular-nums; line-height: 1.15; }
+.thead .tv.hi { color: var(--lg-warn); font-weight: 600; }
+.thead .rz { position: absolute; right: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 1; }
+.tstate { flex: 0 0 auto; }
+.tlist { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; outline: 0; padding-bottom: 6px; scrollbar-gutter: stable; }   /* the gutter always there = the header (padding-right 10px) lines up */
+.tlist:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
+.tlist::-webkit-scrollbar { width: 10px; height: 10px; }
+.tlist::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.tlist::-webkit-scrollbar-thumb { background: transparent; border: 3px solid transparent; background-clip: padding-box; border-radius: 10px; }
+.tlist:hover::-webkit-scrollbar-thumb { background-color: var(--lg-scroll, var(--lg-tile)); }
+.tlist::-webkit-scrollbar-corner { background: transparent; }
+
+/* a group: "Apps (5)" on its own line, like Windows */
+.tgroup { display: flex; align-items: center; gap: 10px; height: 34px; padding: 6px 22px 0; font-weight: 600; font-size: 12.5px; color: var(--lg-ink); content-visibility: auto; contain-intrinsic-size: auto 34px; }
+.tgroup .gx { font-weight: 400; color: var(--lg-ink-3); font-size: 11.5px; display: flex; align-items: center; gap: 5px; }
+/* off-screen rows skip style, layout and paint (a long list was ~40 ms of layout a tick) */
+.trow { position: relative; content-visibility: auto; contain-intrinsic-size: auto 32px; }
+.trow .tr { position: relative; display: grid; grid-template-columns: var(--cols); align-items: stretch; height: 32px; border-radius: 4px; }
+.trow .c { min-width: 0; display: flex; align-items: center; padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.trow .c.num { justify-content: flex-end; text-align: right; }
+.trow .c.nil { color: var(--lg-ink-3); }
+.trow .c.name { padding-left: 0; gap: 0; }
+.trow .c.name > * { flex: 0 0 auto; }
+.trow .c.name .n { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.trow .c.name .k { color: var(--lg-ink-3); margin-left: 4px; }
+.trow .ind { display: inline-block; height: 1px; width: 0; }
+.trow .ind.d1 { width: 22px; } .trow .ind.d2 { width: 44px; } .trow .ind.d3 { width: 66px; } .trow .ind.d4 { width: 88px; }
+.trow .chev, .trow .nochev { width: 22px; height: 22px; margin: 0 0 0 0; }
+.trow .chev { border: 0; background: transparent; border-radius: 4px; color: var(--lg-ink-3); display: grid; place-items: center; padding: 0; }
+.trow .chev:hover { background: var(--lg-press); color: var(--lg-ink); }
+.trow .chev svg { transition: transform var(--lg-dur-ui, 120ms) var(--lg-ease-ui, ease); }
+.trow.open > .tr .chev svg { transform: rotate(90deg); }
+.trow .ic { width: 16px; height: 16px; border-radius: 3px; margin-right: 10px; flex: 0 0 16px; }
+.trow .ic.tile { display: grid; place-items: center; color: var(--lg-ink-3); }
+/* hover and the chosen row: a wash UNDER the cells (the heat tints are translucent, so it shows through them
+   and never dims the words) */
+.trow:hover > .tr { background: var(--lg-hover); }
+.trow.sel > .tr { background: var(--lg-acc-soft); box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
+.tlist:focus .trow.sel > .tr { box-shadow: inset 0 0 0 1px var(--lg-acc); }
+/* heat: Windows shades the numbers by how much; here the accent's own tint in five quiet steps */
+.trow .c.h1 { background: color-mix(in srgb, var(--lg-acc) 5%, transparent); }
+.trow .c.h2 { background: color-mix(in srgb, var(--lg-acc) 9%, transparent); }
+.trow .c.h3 { background: color-mix(in srgb, var(--lg-acc) 14%, transparent); }
+.trow .c.h4 { background: color-mix(in srgb, var(--lg-acc) 20%, transparent); }
+.trow .c.h5 { background: color-mix(in srgb, var(--lg-acc) 28%, transparent); }
+/* a row's outcome or question: one line under it, from the name column on */
+.tsub { padding: 0 12px 6px 52px; }
+.tsub:empty { display: none; }
+.st { min-height: 24px; display: flex; align-items: center; gap: 8px; color: var(--lg-ink-2); line-height: 1.4; }
+.st.bad { color: var(--lg-warn); }
+.st.ask { padding: 6px 8px 6px 12px; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); background: var(--lg-fill-strong); color: var(--lg-ink); }
+.st .grow { flex: 1 1 auto; }
+
+/* the list's own states: reading, could not read, nothing matches */
+.lsx { display: flex; align-items: center; gap: 10px; padding: 20px 22px; color: var(--lg-ink-2); line-height: 1.4; }
+.lsx > span { min-width: 0; }
+.spin { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--lg-tile); border-top-color: var(--lg-ink-2); animation: spin 900ms linear infinite; flex: 0 0 auto; margin-right: 8px; vertical-align: -2px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* off-screen rows skip style, layout and paint (a long list was ~40 ms of layout a tick) */
-.row { border-top: 1px solid var(--lg-sunk); content-visibility: auto; contain-intrinsic-size: auto 35px; }
-.row:first-child { border-top: 0; }
-.rmain { position: relative; display: grid; grid-template-columns: 20px 20px 1fr 84px 58px 150px; gap: 8px; align-items: center; min-height: 34px; padding: 0 12px 0 8px; }
-.row:hover .rmain { background: var(--lg-hover); }
-/* the chosen row: the grey wash + the accent tick (Settings' selection) */
-.row.sel .rmain { background: var(--lg-hover); }
-.row.sel .rmain::before { content: ''; position: absolute; left: 1px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--lg-acc); }
-.chev { width: 20px; height: 20px; border: 0; background: transparent; border-radius: 4px; color: var(--lg-ink-3); display: grid; place-items: center; padding: 0; }
-.chev:hover { background: var(--lg-press); color: var(--lg-ink); }
-.chev svg { transition: transform var(--lg-dur) var(--lg-ease); }
-.row.open .chev svg { transform: rotate(90deg); }
-.ic { width: 18px; height: 18px; border-radius: 4px; }
-.ic.tile { display: grid; place-items: center; color: var(--lg-ink-3); }
-.nm { min-width: 0; display: flex; align-items: baseline; gap: 6px; }
-.nm .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nm .k { color: var(--lg-ink-3); flex: 0 0 auto; }
-.tag { flex: 0 0 auto; font-size: 11px; padding: 0 6px; border-radius: var(--lg-r-pill); background: var(--lg-sunk); color: var(--lg-ink-2); white-space: nowrap; }
-/* "Not responding" is a state, said in the warning's words (no filled pill) */
-.tag.bad { background: transparent; padding: 0; color: var(--lg-warn); font-weight: 600; }
-.mem, .cpu { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.mem { font-weight: 600; }
-.cpu { color: var(--lg-ink-2); }
-/* ONE visible action, only where the pointer or the choice is (a list of 200 rows x 3 buttons was noise) */
-.acts { display: flex; justify-content: flex-end; gap: 4px; opacity: 0; transition: opacity calc(var(--lg-dur-out) / 2) var(--lg-ease);   /* a hover reveal answers at once (130 ms) */ }
-.row:hover .acts, .row.sel .acts, .row:focus-within .acts, .acts.always, .acts:has([aria-expanded="true"]) { opacity: 1; }
-.acts button { white-space: nowrap; height: 26px; padding: 0 10px; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl); background: var(--lg-fill-strong); color: var(--lg-ink); }
-.acts button:hover { background: var(--lg-hover); }
-.acts button:active { background: var(--lg-press); }
-.acts .danger { color: var(--lg-warn); }
-.acts .more { width: 28px; padding: 0; display: grid; place-items: center; border-color: transparent; background: transparent; color: var(--lg-ink-2); }
-.acts .more:hover, .acts .more[aria-expanded="true"] { background: var(--lg-press); color: var(--lg-ink); }
-.why { grid-column: 3 / -1; color: var(--lg-ink-3); font-size: 11.5px; padding: 0 0 7px; margin-top: -3px; display: flex; gap: 6px; align-items: center; }
-.why svg { flex: 0 0 auto; }
-/* a row's outcome: one line of words under it (a warn glyph when it went wrong), no pill. Only the
-   Force close question is a box: a hairline card, since it waits for an answer. */
-.st { margin: -2px 12px 7px 56px; min-height: 24px; font-size: 12px; line-height: 1.4; color: var(--lg-ink-2); display: flex; align-items: center; gap: 8px; }
-.st.ask { margin-top: 2px; padding: 6px 8px 6px 12px; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r); background: var(--lg-fill-strong); color: var(--lg-ink); }
-.st .grow { flex: 1 1 auto; }
-.st button { white-space: nowrap; height: 26px; padding: 0 12px; border-radius: var(--lg-r-ctl); border: 1px solid var(--lg-edge-out); background: var(--lg-fill-strong); }
-.st button:hover { background: var(--lg-hover); }
-.st button:active { background: var(--lg-press); }
-.st button.go { background: var(--lg-warn); border-color: var(--lg-warn); color: var(--lg-acc-on); font-weight: 600; }
-.st button.go:hover { filter: brightness(1.06); }
-.st button.go:active { filter: brightness(.92); }
-.members { margin: 0 12px 6px 56px; border-left: 1px solid var(--lg-tile); }
-.mrow { display: grid; grid-template-columns: 1fr 84px 58px 150px; gap: 8px; padding: 3px 0 3px 12px; color: var(--lg-ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
-.mrow > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mrow .pid { color: var(--lg-ink-3); margin-left: 4px; }
-.mrow.quiet { color: var(--lg-ink-3); }
-.mrow span:nth-child(2), .mrow span:nth-child(3) { text-align: right; }
-.row.mantle:not(.sel):not(:hover) .rmain { background: var(--lg-sunk); }
-
-/* ---- the one menu: a row's "...", a right-click, the header's More ---- */
+/* ---------------------------------------------------------------- menus (context, header, command bar) */
+.menus { position: fixed; inset: 0; pointer-events: none; z-index: 40; }   /* above a dialog: a dialog can open a menu (Run new task's history) */
 .menu {
-  position: fixed; z-index: 10; min-width: 200px; padding: 4px; display: flex; flex-direction: column;
+  position: fixed; pointer-events: auto; min-width: 200px; max-width: 360px; padding: 4px; display: flex; flex-direction: column;
   background: var(--lg-fill-strong); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r);
   box-shadow: var(--lg-shadow);
-  animation: menuin var(--m-dur-xs) var(--m-spring), m-fade calc(var(--m-dur-xs) * .4) var(--m-fade-in) backwards;   /* the shared pop-in (lane mantle-motion) */
+  animation: menuin var(--m-dur-xs, 140ms) var(--m-spring, ease-out);
 }
 @keyframes menuin { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
-.menu button { height: 30px; display: flex; align-items: center; gap: 16px; padding: 0 10px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; text-align: left; white-space: nowrap; }
-.menu button span { flex: 1 1 auto; }
-.menu button:hover, .menu button:focus { background: var(--lg-hover); outline: 0; }
+.menu button { height: 30px; flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 0 10px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; text-align: left; white-space: nowrap; }
+.menu button > span { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.menu button:hover:not(:disabled), .menu button:focus { background: var(--lg-hover); outline: 0; }
 .menu button:focus-visible { outline: 2px solid var(--lg-acc); outline-offset: -2px; }
-.menu button:active { background: var(--lg-press); }
+.menu button:active:not(:disabled) { background: var(--lg-press); }
+.menu button:disabled { opacity: var(--lg-disabled, .45); }
 .menu button.danger { color: var(--lg-warn); }
+.menu .mk { width: 14px; display: grid; place-items: center; color: var(--lg-ink); flex: 0 0 14px; }
+.menu .sa { display: grid; color: var(--lg-ink-3); margin-right: -4px; }
 .menu kbd { font: inherit; font-size: 11.5px; color: var(--lg-ink-3); }
+.msep { height: 1px; margin: 4px 6px; background: var(--lg-divider); flex: 0 0 auto; }
 
-/* ---- get ready to game ---- */
-.gamehead { flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 12px 14px 10px; border-bottom: 1px solid var(--lg-sunk); }
-.gtext { flex: 1 1 auto; min-width: 0; }
-.gt { font-weight: 600; font-size: 14px; }
-.gs { color: var(--lg-ink-2); margin-top: 2px; line-height: 1.4; }
-.gnum { display: flex; flex-direction: column; align-items: flex-end; }
-.gnum span:first-child { white-space: nowrap; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.gsl { color: var(--lg-ink-3); font-size: 11px; }
-.opt { flex: 0 0 auto; display: flex; gap: 9px; align-items: flex-start; padding: 9px 14px; border-bottom: 1px solid var(--lg-sunk); color: var(--lg-ink-2); }
-.opt:hover b { color: var(--lg-ink); }
-.opt input { margin: 2px 0 0; accent-color: var(--lg-acc); }
-.opt b { display: block; color: var(--lg-ink); font-weight: 600; }
-.optsub { display: block; margin-top: 1px; color: var(--lg-ink-3); font-size: 12px; }
-/* the last Free up RAM / game start: a few lines of words under the option, no box */
-.lastfree { flex: 0 0 auto; padding: 9px 14px; border-bottom: 1px solid var(--lg-sunk); color: var(--lg-ink-2); font-size: 12px; line-height: 1.4; display: flex; flex-direction: column; gap: 3px; }
-.lastfree .h { color: var(--lg-ink); font-weight: 600; }
-#v-game .gcols { grid-template-columns: 22px 1fr 84px 150px; padding: 8px 12px 7px 14px; }
-#v-game .gcols .c-mem { text-align: right; }
-/* the Frees numbers and the After the game column need air between them: 8 px read as one phrase */
-#v-game .gcols .c-reopen, .prow .reo { margin-left: 12px; }
-.prow { display: grid; grid-template-columns: 22px 20px 1fr 84px 150px; gap: 8px; align-items: center; min-height: 34px; padding: 0 12px 0 14px; border-top: 1px solid var(--lg-sunk); }
-.prow:hover { background: var(--lg-hover); }
-#prep > :first-child > .prow { border-top: 0; }   /* the column header already draws that line */
-.prow input { margin: 0; accent-color: var(--lg-acc); }
-.prow .n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prow .mem { font-weight: 600; }
-.prow .lock { color: var(--lg-ink-3); display: grid; place-items: center; }
-.prow .reo { display: flex; align-items: center; gap: 6px; color: var(--lg-ink-2); font-size: 12px; }
-.prow .reo:hover { color: var(--lg-ink); }
-.prow .pwhy { grid-column: 3 / -1; color: var(--lg-ink-3); font-size: 11.5px; margin-top: -4px; padding-bottom: 6px; }
-.prow .pwhy.bad { color: var(--lg-warn); }
-.prow.off .n { color: var(--lg-ink-2); }
+/* ---------------------------------------------------------------- dialogs (TM.dialog / TM.confirm) */
+.dlgwrap { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; }
+.dlgwrap .scrim { position: absolute; inset: 0; background: var(--lg-scrim, rgba(0, 0, 0, .2)); }
+.dlg {
+  position: relative; width: 440px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); display: flex; flex-direction: column;
+  background: var(--lg-ground); border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-xl, 12px); box-shadow: var(--lg-shadow);
+  animation: menuin var(--m-dur-xs, 140ms) var(--m-spring, ease-out);
+}
+.dhead { display: flex; align-items: center; gap: 8px; padding: 18px 12px 4px 22px; }
+.dhead h2 { margin: 0; flex: 1 1 auto; font-size: 18px; font-weight: 600; line-height: 24px; }
+.dx { width: 32px; height: 28px; border: 0; border-radius: var(--lg-r-ctl); background: transparent; color: var(--lg-ink-2); display: grid; place-items: center; align-self: flex-start; margin-top: -8px; }
+.dx:hover { background: var(--lg-hover); }
+.dbody { padding: 6px 22px 18px; overflow: auto; line-height: 1.45; color: var(--lg-ink); user-select: text; }
+.dfoot { display: flex; justify-content: flex-end; gap: 8px; padding: 16px 22px; background: var(--lg-sunk); border-top: 1px solid var(--lg-divider); border-radius: 0 0 var(--lg-r-xl, 12px) var(--lg-r-xl, 12px); }
+.dlg .dq { margin: 0 0 10px; }
+.dlg .dq:last-child { margin-bottom: 0; }
+.dchk { display: flex; align-items: flex-start; gap: 9px; margin: 8px 0 0; color: var(--lg-ink); }
+.dchk input, .dlg input[type="checkbox"], .dlg input[type="radio"] { margin: 2px 0 0; accent-color: var(--lg-acc); }
+.dlg input[type="text"], .dlg select {
+  height: 32px; padding: 0 10px; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl); background: var(--lg-fill-strong); color: var(--lg-ink);
+  box-shadow: inset 0 -1px 0 var(--lg-edge-strong, var(--lg-edge-out)); outline: 0;
+}
+.dlg input[type="text"]:focus { box-shadow: inset 0 -2px 0 var(--lg-acc); }
+.dlg.busy .dbody { opacity: .7; }
+.dpath { margin: 0; padding: 8px 10px; border-radius: var(--lg-r-ctl); background: var(--lg-sunk); font-family: var(--lg-mono, Consolas, monospace); font-size: 11.5px; overflow-wrap: anywhere; }
+/* Run new task */
+.runtask .rt-top { display: flex; gap: 12px; align-items: flex-start; }
+.runtask .rt-top svg { flex: 0 0 auto; width: 28px; height: 28px; color: var(--lg-ink-2); margin-top: 2px; }
+.runtask .rt-top p { margin: 0; }
+.runtask .rt-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.runtask .combo { flex: 1 1 auto; display: flex; position: relative; }
+.runtask .combo input { flex: 1 1 auto; min-width: 0; padding-right: 34px; }
+.runtask .combo .cbtn { position: absolute; right: 2px; top: 2px; height: 28px; width: 30px; padding: 0; justify-content: center; }
+.runtask .rt-admin { margin-top: 14px; }
+.runtask .rt-why { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.runtask .dfoot [data-b="browse"] { order: 3; }
+.selcols .colpick { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; max-height: 340px; overflow: auto; }
 
-.empty { display: flex; align-items: center; gap: 10px; padding: 18px 14px; color: var(--lg-ink-3); }
-
+/* ---------------------------------------------------------------- narrow windows */
+@media (max-width: 899px) {
+  .tsearch { width: min(420px, calc(100% - 280px)); }
+}
 @media (max-width: 700px) {
-  .cols, .mrow { grid-template-columns: 1fr 66px 42px 120px; }
-  .rmain { grid-template-columns: 20px 20px 1fr 66px 42px 120px; gap: 6px; }
-  .acts button { padding: 0 7px; }
-  .tab { padding: 0 8px; }
-  .wc button { width: 38px; }
-  .brand { display: none; }
-  .mantle-use { display: none; }
-  .spark { flex-basis: 30%; }
+  .appname { display: none; }
+  .tsearch { left: 44px; transform: none; width: auto; right: 150px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
+  .menu, .dlg { animation: m-fade 120ms linear backwards !important; }
 }
 
-/* ---------------------------------------------------------------- dark: Helm's look (lanes see-apps + same-apps, 2026-10-09)
-   The user: "they should all also have the same style ... if there is a conflict go by what helm looks like",
-   then "Match Helm's real look". Every value is a dark token from shared/glass-light.css (Helm's own,
-   HELM-SPEC.md); this block holds only WHICH token goes where:
-   - ONE tint layer per region, painted on the window itself: the header strip is Helm's rail/strip
-     (--lg-fill-bar), everything under it Helm's content panel (--lg-fill). The stat cards and the list
-     are Helm's cards inside a panel (--lg-card). DWM's acrylic is under the page (lib/features/taskmgr.js);
-     what it adds the page cannot take away (lane report: acrylic vs Helm's blur(5px) picture).
-   - Rows hover --lg-hover; the chosen row or tab is --lg-press + an inset hairline, NO accent tick or
-     underline (Helm: no accent on rows). Icon buttons hover --lg-press; buttons are Helm's .btn.
-   - The menu: one --lg-fill over a --lg-blur of the page under it, Helm's radius/shadow, no open animation.
-   - Every line --lg-divider; focus Helm's ring; scrollbars Helm's; type Helm's scale; disabled --lg-disabled.
-   ":where(...)" keeps these at the light rules' weight where a state rule above must still win. Unchanged:
-   the solid ground when the dark frame was refused (data-frame="dark"). Light does not move. */
-:root[data-theme="dark"]:not([data-frame="dark"]) { background: linear-gradient(var(--lg-fill-bar) 0 44px, var(--lg-fill) 44px); }
-:root[data-theme="dark"]:not([data-frame="dark"]) .app { background: transparent; }
-/* lane helm-wall-apps (2026-10-09): in dark the window is opaque and the page paints the desktop wallpaper
-   (ui/shared/wall-bdrop.js/.css); --wall-tint is its ONE tint layer = the same tint the root carries above. */
-:root[data-theme="dark"] { --wall-tint: linear-gradient(var(--lg-fill-bar) 0 44px, var(--lg-fill) 44px); }
-/* the frame's shade tints no glass in wall mode: .app stays clear over the picture */
-html.wall-on[data-theme="dark"] .app { background: transparent; }
-/* cards inside the panel: Helm surface-2 + the token hairline and lip */
-:where(:root[data-theme="dark"]) :is(.stat, .view, .st.ask) { background: var(--lg-card); border-color: var(--lg-edge-out); box-shadow: var(--lg-lip-up); }
-/* the search field: Helm's input */
-:where(:root[data-theme="dark"]) .search { background: var(--lg-field); border-color: var(--lg-edge-out); }
+/* ================================================================ DARK: Helm's look (lanes see-apps + same-apps)
+   Every value is a dark token from glass-light.css; this block holds only WHICH token goes where. One tint
+   per region: title + rail = Helm's strip/rail (--lg-fill-bar), the content layer = Helm's panel (--lg-fill).
+   Rows hover --lg-hover; chosen = --lg-press + an inset hairline, no accent on rows (Helm). */
+:root[data-theme="dark"]:not([data-frame="dark"]) { background: transparent; }
+:root[data-theme="dark"] { --wall-tint: transparent; }
+:root[data-theme="dark"]:not([data-frame="dark"]) .app, html.wall-on[data-theme="dark"] .app { background: transparent; }
+:root[data-theme="dark"] .title, :root[data-theme="dark"] .rail { background: var(--lg-fill-bar); }
+:root[data-theme="dark"] .content { background: var(--lg-fill); border-color: var(--lg-edge-out); box-shadow: var(--lg-lip-up); }
+:where(:root[data-theme="dark"]) .app[data-rail="overlay"] .rail { background: var(--lg-fill); }
+:where(:root[data-theme="dark"]) .search { background: var(--lg-field); border-color: var(--lg-edge-out); box-shadow: none; }
 :where(:root[data-theme="dark"]) .search:hover { border-color: var(--lg-edge-strong); }
 :where(:root[data-theme="dark"]) .search:focus-within { border-color: var(--lg-acc-line); box-shadow: var(--lg-focus); }
-/* buttons: Helm's .btn (card + hairline + inner lip; hover press + strong edge; pressed back to the card) */
-:where(:root[data-theme="dark"]) .btn,
-:where(:root[data-theme="dark"]) .acts button:not(.more),
-:where(:root[data-theme="dark"]) .st button {
-  border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl);
-  background: var(--lg-card); box-shadow: inset 0 1px 0 var(--lg-edge-inner); font-weight: 500;
-  transition: background-color var(--lg-dur-ui) var(--lg-ease-ui), border-color var(--lg-dur-ui) var(--lg-ease-ui);
-}
-:where(:root[data-theme="dark"]) .btn:not(.acc, :disabled):hover,
-:where(:root[data-theme="dark"]) .acts button:not(.more):hover,
-:where(:root[data-theme="dark"]) .st button:not(.go):hover { background: var(--lg-press); border-color: var(--lg-edge-strong); }
-:where(:root[data-theme="dark"]) .btn:not(.acc, :disabled):active,
-:where(:root[data-theme="dark"]) .acts button:not(.more):active,
-:where(:root[data-theme="dark"]) .st button:not(.go):active { background: var(--lg-card); }
-:where(:root[data-theme="dark"]) :is(.btn:disabled, .btn:disabled:hover, .btn:disabled:active) { background: var(--lg-card); border-color: var(--lg-edge-out); }
+:where(:root[data-theme="dark"]) .nav.on { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); font-weight: 500; }
+:where(:root[data-theme="dark"]) .nav.on::before { background: var(--lg-acc); }
+:where(:root[data-theme="dark"]) :is(.ham, .nav, .cbtn, .qx, .dx, .thead .h):hover:not(:disabled) { background: var(--lg-press); }
+:where(:root[data-theme="dark"]) .trow:hover > .tr { background: var(--lg-hover); }
+:where(:root[data-theme="dark"]) .trow.sel > .tr { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-strong); }
+:where(:root[data-theme="dark"]) .tlist:focus .trow.sel > .tr { box-shadow: inset 0 0 0 1px var(--lg-acc-line); }
+:where(:root[data-theme="dark"]) .trow .c.h1 { background: color-mix(in srgb, var(--lg-acc) 6%, transparent); }
+:where(:root[data-theme="dark"]) .trow .c.h2 { background: color-mix(in srgb, var(--lg-acc) 10%, transparent); }
+:where(:root[data-theme="dark"]) .trow .c.h3 { background: color-mix(in srgb, var(--lg-acc) 15%, transparent); }
+:where(:root[data-theme="dark"]) .trow .c.h4 { background: color-mix(in srgb, var(--lg-acc) 21%, transparent); }
+:where(:root[data-theme="dark"]) .trow .c.h5 { background: color-mix(in srgb, var(--lg-acc) 28%, transparent); }
+:where(:root[data-theme="dark"]) .btn { background: var(--lg-card); border-color: var(--lg-edge-out); box-shadow: inset 0 1px 0 var(--lg-edge-inner); font-weight: 500; }
+:where(:root[data-theme="dark"]) .btn:hover:not(:disabled):not(.acc):not(.dng) { background: var(--lg-press); border-color: var(--lg-edge-strong); }
 :where(:root[data-theme="dark"]) .btn.acc { background: var(--lg-acc); border-color: transparent; color: var(--lg-acc-on); box-shadow: none; }
-:where(:root[data-theme="dark"]) .btn.acc:hover:not(:disabled) { background: var(--lg-acc-strong); filter: none; }
-:where(:root[data-theme="dark"]) .st button.go { border-color: transparent; box-shadow: none; }
-/* icon buttons and bare controls: hover --lg-press (Helm's icon-btn), pressed back to the card */
-:where(:root[data-theme="dark"]) :is(.ibtn, .qx, .chev, .cols > button, .stog, .acts .more, .wc button:not(.x)):hover,
-:where(:root[data-theme="dark"]) :is(.ibtn, .acts .more)[aria-expanded="true"] { background: var(--lg-press); }
-:where(:root[data-theme="dark"]) :is(.ibtn, .qx, .chev, .cols > button, .stog, .acts .more, .wc button:not(.x)):active { background: var(--lg-card); }
-:where(:root[data-theme="dark"]) :is(.qx, .cols > button, .chev) { border-radius: var(--lg-r-ctl); }
-/* rows and tabs: hover --lg-hover; chosen --lg-press + inset hairline; no accent tick or underline */
-:where(:root[data-theme="dark"]) .tab:hover,
-:where(:root[data-theme="dark"]) .row:hover .rmain,
-:where(:root[data-theme="dark"]) .prow:hover { background: var(--lg-hover); }
-:where(:root[data-theme="dark"]) .tab:active { background: var(--lg-press); }
-:where(:root[data-theme="dark"]) .tab.on,
-:where(:root[data-theme="dark"]) .row.sel .rmain { background: var(--lg-press); box-shadow: inset 0 0 0 1px var(--lg-edge-out); }
-:where(:root[data-theme="dark"]) .tab.on { font-weight: 500; }
-:where(:root[data-theme="dark"]) .tab.on::after,
-:where(:root[data-theme="dark"]) .row.sel .rmain::before { content: none; }
-/* chips: Helm's pill */
-:where(:root[data-theme="dark"]) .tag:not(.bad) { border-radius: var(--lg-r-chip); background: var(--lg-card); font-size: 12px; font-weight: 500; padding: 0 9px; }
-/* every line one divider */
-:where(:root[data-theme="dark"]) :is(.row, .prow) { border-top-color: var(--lg-divider); }
-:where(:root[data-theme="dark"]) :is(.gamehead, .opt, .lastfree, .spark) { border-bottom-color: var(--lg-divider); }
-:where(:root[data-theme="dark"]) .members { border-left-color: var(--lg-divider); }
-/* the menu: one --lg-fill over a --lg-blur of the page; Helm's hairline, lip, radius, shadow, metrics; no open animation */
-:where(:root[data-theme="dark"]) .menu {
-  background: var(--lg-fill);
-  -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur);
-  border-color: var(--lg-edge-out); border-radius: var(--lg-r);
-  box-shadow: var(--lg-lip-up), var(--lg-shadow);
-  min-width: 180px; animation: none;
-}
-:where(:root[data-theme="dark"]) .menu button { gap: 10px; padding: 0 10px; }
-:where(:root[data-theme="dark"]) :is(.menu button:hover, .menu button:focus, .menu button:active) { background: var(--lg-press); }
-/* focus: Helm's ring, no outline (the search box carries it on its box, above) */
+:where(:root[data-theme="dark"]) .btn.dng { background: var(--lg-danger); border-color: transparent; color: var(--lg-acc-on); box-shadow: none; }
+:where(:root[data-theme="dark"]) .cbtn.on { background: var(--lg-press); }
+:where(:root[data-theme="dark"]) .st.ask { background: var(--lg-card); }
+:where(:root[data-theme="dark"]) .menu { background: var(--lg-fill); -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur); box-shadow: var(--lg-lip-up), var(--lg-shadow); animation: none; }
+:where(:root[data-theme="dark"]) :is(.menu button:hover:not(:disabled), .menu button:focus, .menu button:active) { background: var(--lg-press); }
+:where(:root[data-theme="dark"]) .dlg { background: var(--lg-ground); box-shadow: var(--lg-lip-up), var(--lg-shadow); }
+:where(:root[data-theme="dark"]) .dfoot { background: var(--lg-card); }
+:where(:root[data-theme="dark"]) .dlg input[type="text"], :where(:root[data-theme="dark"]) .dlg select { background: var(--lg-field); box-shadow: none; }
+:where(:root[data-theme="dark"]) .dlg input[type="text"]:focus { box-shadow: var(--lg-focus); }
 :root[data-theme="dark"] :focus-visible:not(input) { outline: none; box-shadow: var(--lg-focus); }
-/* scrollbars: Helm's, always shown (the global rule in glass-light.css, restated over this file's own) */
-html:root:root[data-theme="dark"] *::-webkit-scrollbar { width: 10px; height: 10px; }
-html:root:root[data-theme="dark"] *::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
-html:root:root[data-theme="dark"] *::-webkit-scrollbar-thumb { background: var(--lg-scroll); border: 3px solid transparent; background-clip: padding-box; border-radius: 10px; }
-html:root:root[data-theme="dark"] *::-webkit-scrollbar-thumb:hover { background-color: var(--lg-scroll-hover); }
-/* type: Helm's scale (12.5 -> 13, 11.5 -> 12, 13.5 -> 14) and the disabled opacity; generated per rule, same specificity as the light rule */
-:where(:root[data-theme="dark"]) body { font-size: 13px; }
-:where(:root[data-theme="dark"]) .stat .sub,
-:where(:root[data-theme="dark"]) .cols,
-:where(:root[data-theme="dark"]) .cols > button,
-:where(:root[data-theme="dark"]) .sect .sect-why,
-:where(:root[data-theme="dark"]) .nm .lk,
-:where(:root[data-theme="dark"]) .why,
-:where(:root[data-theme="dark"]) .menu kbd,
-:where(:root[data-theme="dark"]) .prow .pwhy { font-size: 12px; }
-:where(:root[data-theme="dark"]) .stog { font-size: 14px; }
-:where(:root[data-theme="dark"]) .btn:disabled,
-:where(:root[data-theme="dark"]) .btn:disabled:hover,
-:where(:root[data-theme="dark"]) .btn:disabled:active { opacity: var(--lg-disabled); }
-
-/* reduced motion: the menu still fades, opacity only, 120 ms (the shared rule, lane mantle-motion) */
-@media (prefers-reduced-motion: reduce) { .menu { animation: m-fade 120ms linear backwards !important; } }
+html:root:root[data-theme="dark"] .tlist::-webkit-scrollbar-thumb { background-color: var(--lg-scroll); }
+html:root:root[data-theme="dark"] .tlist::-webkit-scrollbar-thumb:hover { background-color: var(--lg-scroll-hover); }
+:where(:root[data-theme="dark"]) body { font-size: 12.5px; }
+.note .nl.adm { align-items: center; flex-wrap: wrap; gap: 8px; }
