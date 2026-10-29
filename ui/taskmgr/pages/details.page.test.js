@@ -7,6 +7,8 @@
 const kit = require('../testkit.js');
 
 const ROW = (pid) => `#pg-details .trow[data-key="p${pid}"]`;
+// lib's created: the process' creation FILETIME as a decimal string (the mock makes it up this way)
+const C = (pid) => String(133730000000000000 + pid * 1000);
 const DEF = ['Name', 'PID', 'Status', 'User name', 'CPU', 'Memory (active private working set)', 'Architecture', 'Description'];
 const MENU = ['End task', 'End process tree', 'Efficiency mode', 'Set priority', 'Set affinity', 'Analyze wait chain', 'UAC virtualization', 'Create memory dump file', 'Open file location', 'Search online', 'Properties', 'Go to service(s)'];
 
@@ -92,7 +94,7 @@ kit.run('TASKMGR DETAILS PAGE TEST', async (t) => {
     check(T + 'End task: Windows\' question, Cancel focused', d.title === 'Do you want to end svchost.exe?' && d.ok === 'End process' && d.focus === 'cancel' && /lose any unsaved data/.test(d.body), JSON.stringify(d));
     await press(p, 'ok');
     let a = await last(p, 'taskmgr.endPid');
-    check(T + 'End task: endPid {pid, created}, a dry run, not tree, not confirmed', a.pid === 1012 && a.created === 2012 && a.dryRun === true && !a.tree && !a.confirmed, JSON.stringify(a));
+    check(T + 'End task: endPid {pid, created}, a dry run, not tree, not confirmed', a.pid === 1012 && a.created === C(1012) && a.dryRun === true && !a.tree && !a.confirmed, JSON.stringify(a));
     check(T + 'End task: the dry run is said on the row', /Test Mantle/.test(await waitSub(p, 1012, /Test Mantle/)), await subText(p, 1012));
     check(T + 'End task: one dialog only', await noDlg(p));
     await t.clearCalls(p);
@@ -105,7 +107,7 @@ kit.run('TASKMGR DETAILS PAGE TEST', async (t) => {
     await t.clearCalls(p);
     await press(p, 'ok');
     a = await last(p, 'taskmgr.efficiency');
-    check(T + 'Efficiency mode: efficiency {pid, created, on:true}', a.pid === 1012 && a.created === 2012 && a.on === true, JSON.stringify(a));
+    check(T + 'Efficiency mode: efficiency {pid, created, on:true}', a.pid === 1012 && a.created === C(1012) && a.on === true, JSON.stringify(a));
 
     /* ---- the row menu, every item ---- */
     await rmenu(p, 1012);
@@ -117,7 +119,7 @@ kit.run('TASKMGR DETAILS PAGE TEST', async (t) => {
     await t.clearCalls(p);
     await press(p, 'ok');
     a = await last(p, 'taskmgr.endPid');
-    check(T + 'End process tree: endPid tree:true', a.pid === 1012 && a.tree === true && a.created === 2012, JSON.stringify(a));
+    check(T + 'End process tree: endPid tree:true', a.pid === 1012 && a.tree === true && a.created === C(1012), JSON.stringify(a));
     await noDlg(p);
     const PRIO = [['Realtime', 'realtime'], ['High', 'high'], ['Above normal', 'abovenormal'], ['Normal', 'normal'], ['Below normal', 'belownormal'], ['Low', 'low']];
     for (const [label, cls] of PRIO) {
@@ -135,7 +137,8 @@ kit.run('TASKMGR DETAILS PAGE TEST', async (t) => {
       await t.clearCalls(p);
       await press(p, 'ok');
       a = await last(p, 'taskmgr.priority');
-      check(`${T}Set priority > ${label}: priority {pid, created, cls:'${cls}'}`, a.pid === 1012 && a.created === 2012 && a.cls === cls, JSON.stringify(a));
+      check(`${T}Set priority > ${label}: priority {pid, created, cls:'${cls}'}`, a.pid === 1012 && a.created === C(1012) && a.cls === cls, JSON.stringify(a));
+      await t.sleep(200);   // one request per process at a time: let this answer come back before the next class
       await noDlg(p);
     }
     /* Set affinity */
@@ -143,11 +146,12 @@ kit.run('TASKMGR DETAILS PAGE TEST', async (t) => {
     await pick(p, 'Set affinity');
     await p.waitForSelector('#dlg .daff [data-cpu]');
     const ag = await calls(p, 'taskmgr.affinityGet');
-    check(T + 'Set affinity: asked main for the current mask (affinityGet {pid, created})', ag.length >= 1 && ag[ag.length - 1].args.pid === 1012 && ag[ag.length - 1].args.created === 2012, JSON.stringify(ag));
+    check(T + 'Set affinity: asked main for the current mask (affinityGet {pid, created})', ag.length >= 1 && ag[ag.length - 1].args.pid === 1012 && ag[ag.length - 1].args.created === C(1012), JSON.stringify(ag));
     d = await dlg(p);
     const boxes = await p.$$eval('#dlg [data-cpu]', (bs) => bs.map((b) => b.checked));
     check(T + 'Set affinity: Windows\' dialog, a box per logical processor (8)', d.title === 'Processor affinity' && /Which processors are allowed to run svchost\.exe\?/.test(d.body) && boxes.length === 8, `${d.title} ${boxes.length}`);
-    check(T + 'Set affinity: no current mask from main = every box ticked, and said', boxes.every(Boolean) && /could not read its current affinity/.test(d.body), d.body);
+    // lib's affinityGet answers the current mask (the mock: 0xFF of 8): every box ticked from it, no "could not read" words
+    check(T + 'Set affinity: the current mask from main (affinityGet 0xFF) = every box ticked', boxes.every(Boolean) && !/could not read its current affinity/.test(d.body), d.body);
     await p.click('#dlg [data-all]');
     check(T + 'Set affinity: <All processors> unticks all, OK off, the reason shown', (await p.$$eval('#dlg [data-cpu]', (bs) => bs.every((b) => !b.checked))) && (await dlg(p)).okOff && /at least one processor/.test((await dlg(p)).body));
     await p.click('#dlg [data-all]');
@@ -160,7 +164,7 @@ kit.run('TASKMGR DETAILS PAGE TEST', async (t) => {
     await t.clearCalls(p);
     await press(p, 'ok');
     a = await last(p, 'taskmgr.affinity');
-    check(T + 'Set affinity: affinity {pid, created, mask "0x5"}', a.pid === 1012 && a.created === 2012 && a.mask === '0x5', JSON.stringify(a));
+    check(T + 'Set affinity: affinity {pid, created, mask "0x5"}', a.pid === 1012 && a.created === C(1012) && a.mask === '0x5', JSON.stringify(a));
     /* Analyze wait chain (a made-up waited-on process added to the list so End process can be checked) */
     await p.evaluate(() => { const o = window.__mock.S.details; window.__mock.S.details = () => { const dd = o(); dd.rows.push(Object.assign({}, dd.rows[0], { pid: 2244, created: 3244, name: 'made-up.exe' })); return dd; }; window.__mock.push(); });
     await p.waitForSelector(ROW(2244));
@@ -214,7 +218,7 @@ kit.run('TASKMGR DETAILS PAGE TEST', async (t) => {
     await p.waitForSelector('#dlg .dlg.dump [data-b="ok"]:not([disabled])');
     d = await dlg(p);
     a = await last(p, 'taskmgr.dump');
-    check(T + 'Create memory dump file: dump {pid} and the result dialog', a.pid === 1012 && /created successfully/.test(d.body), d.body);
+    check(T + 'Create memory dump file: dump {pid} and the result dialog', a.pid === 1012 && /no dump file was written/.test(d.body) && /made-up-1012\.DMP/.test(d.body), d.body);   // test=1: a dry run says so, and where it would have gone
     await press(p, 'ok');
     await noDlg(p);
     for (const [label, name, test] of [['Open file location', 'taskmgr.openLocation', (x) => /svchost\.exe$/.test(x.path || '')], ['Search online', 'taskmgr.searchOnline', (x) => x.name === 'svchost.exe'], ['Properties', 'taskmgr.properties', (x) => /svchost\.exe$/.test(x.path || '')]]) {
@@ -300,8 +304,8 @@ kit.run('TASKMGR DETAILS PAGE TEST', async (t) => {
     await p.waitForSelector(ROW(1012));
     await p.click(ROW(1012) + ' .tr');
     await p.keyboard.press('Delete');
-    const s = await waitSub(p, 1012, /Access is denied/);
-    check('needsAdmin: the reason on the row', /Not ended: *Access is denied/.test(s.replace(/\s+/g, ' ')) || /Access is denied/.test(s), s);
+    const s = await waitSub(p, 1012, /access is denied/i);
+    check('needsAdmin: the reason on the row', /Not ended: *needs administrator/.test(s.replace(/\s+/g, ' ')) && /access is denied/i.test(s), s);
     check('needsAdmin: no question was asked first', await p.$eval('#dlg', (e) => e.hidden));
     check('needsAdmin: "Set up administrator access" on the row', (await p.$(ROW(1012) + ' [data-tmact="elevated-setup"]')) !== null);
     await p.click(ROW(1012) + ' [data-tmact="elevated-setup"]');
@@ -332,7 +336,7 @@ kit.run('TASKMGR DETAILS PAGE TEST', async (t) => {
     const p = await t.open('view=details&nulls=1');
     await p.waitForSelector(ROW(1012));
     const c = await p.$$eval(ROW(1012) + ' .c', (cs) => cs.map((x) => ({ t: x.textContent, w: x.title })));
-    check('nulls: User name is an em dash with its reason', c[3].t === '—' && /who runs it/.test(c[3].w), JSON.stringify(c[3]));
+    check('nulls: User name is an em dash with its reason', c[3].t === '—' && c[3].w.length >= 12 /* main's own reason (why) when it sends one */, JSON.stringify(c[3]));
     check('nulls: Architecture and Description too', c[6].t === '—' && c[6].w && c[7].t === '—' && c[7].w, JSON.stringify(c.slice(6)));
     await t.close(p);
   }

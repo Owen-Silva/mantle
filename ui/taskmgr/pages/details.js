@@ -126,7 +126,8 @@
   const ids = (r) => ({ pid: r.pid, created: r.created });
   async function guarded(r, cmd, args, ask, busyWords) {
     const key = r.pid + cmd;
-    if (busy.has(key)) return { ok: false, cancelled: true };
+    // one request per process and command at a time (a double click sends one); a second one is said, not dropped quietly
+    if (busy.has(key)) { TM.note(`${r.name || 'That process'}: the last change is still being made. Try again in a moment.`); return { ok: false, cancelled: true }; }
     busy.add(key);
     try {
       const pre = await TM.run(cmd, Object.assign({}, args, { dryRun: true }), { noConfirm: true, noDry: true });

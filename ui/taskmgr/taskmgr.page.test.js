@@ -30,7 +30,8 @@ kit.run('TASKMGR PAGE TEST', async (t) => {
       check(`${T}${id}: Run new task is first in its command bar`, (await p.$eval('#cmdbar [data-ci="0"]', (e) => e.getAttribute('aria-label'))) === 'Run new task');
     }
     const views = (await calls(p, 'taskmgr.view')).map((c) => c.args.view);
-    check(T + 'nav: main is told each page (view command)', PAGES.every((id) => views.includes(id)), views.join(','));
+    // the page it opened on (Processes) is not sent again: clicking the page already open changes nothing
+    check(T + 'nav: main is told each page (view command)', PAGES.filter((id) => id !== 'processes').every((id) => views.includes(id)) && !views.includes('processes'), views.join(','));
     check(T + 'page titles', (await p.textContent('#ptitle')) === 'Settings');
     /* ---- keys ---- */
     await p.click('.nav[data-view="processes"]');
@@ -53,7 +54,8 @@ kit.run('TASKMGR PAGE TEST', async (t) => {
     await t.clearCalls(p);
     await p.keyboard.press('F5');
     await p.waitForTimeout(50);
-    check(T + 'F5: refresh now (sample)', (await calls(p, 'taskmgr.sample')).length === 1);
+    // lib's refresh command (snapshot + the visible page's reads, forced); sample only when main has no refresh
+    check(T + 'F5: refresh now (refresh)', (await calls(p, 'taskmgr.refresh')).length === 1);
     for (const op of ['min', 'max', 'close']) await p.click(`.wc [data-op="${op}"]`);
     check(T + 'window buttons ask main (win)', (await calls(p, 'taskmgr.win')).map((c) => c.args.op).join(',') === 'min,max,close');
     /* ---- Run new task ---- */
@@ -87,7 +89,7 @@ kit.run('TASKMGR PAGE TEST', async (t) => {
   await p.fill('#rt-cmd', 'regedit');
   await p.click('.dfoot [data-b="ok"]');
   await p.waitForSelector('.rt-why:not([hidden])');
-  check('needsAdmin: the reason and "Set up administrator access" in the dialog', /administrator rights/.test(await p.textContent('.rt-why')) && await p.isVisible('.rt-why [data-tmact="elevated-setup"]'));
+  check('needsAdmin: the reason and "Set up administrator access" in the dialog', /needs administrator/.test(await p.textContent('.rt-why')) && await p.isVisible('.rt-why [data-tmact="elevated-setup"]'));
   await p.click('.rt-why [data-tmact="elevated-setup"]');
   await p.waitForTimeout(150);
   check('Set up administrator access: asks main once (elevatedSetup)', (await calls(p, 'taskmgr.elevatedSetup')).length === 1);
@@ -121,7 +123,7 @@ kit.run('TASKMGR PAGE TEST', async (t) => {
   await p.click(`#pg-processes .trow[data-key="${dwm}"] .c.num >> nth=0`);
   await p.keyboard.press('Delete');
   await p.waitForSelector('.dlg.confirm');
-  check('needsConfirm: Windows\' question in Windows\' words', (await p.textContent('#dlgt')) === 'Do you want to end Desktop Window Manager?' && /system instability/.test(await p.textContent('.dlg .dbody')) && (await p.textContent('.dfoot [data-b="ok"]')) === 'End process');
+  check('needsConfirm: Windows\' question in Windows\' words', (await p.textContent('#dlgt')) === "Do you want to end 'dwm.exe'?" && /system instability/.test(await p.textContent('.dlg .dbody')) && (await p.textContent('.dfoot [data-b="ok"]')) === 'End process');
   check('needsConfirm: Cancel has the focus (Enter cannot end it by accident)', await p.evaluate(() => document.activeElement.dataset.b === 'cancel'));
   let acts = await calls(p, 'taskmgr.act');
   check('needsConfirm: the first ask was not confirmed', acts.length === 1 && !acts[0].args.confirmed, JSON.stringify(acts));
@@ -168,7 +170,7 @@ kit.run('TASKMGR PAGE TEST', async (t) => {
   check('tick an app: saved by its identity', (await calls(p, 'taskmgr.tick')).some((c) => c.args.on === true && /steam/.test(c.args.identity)));
   await p.click('#prep .prow:has(.n:text-is("Discord")) [data-act="reopen"]');
   await p.waitForTimeout(80);
-  check('Reopen it: saved', (await calls(p, 'taskmgr.tick')).some((c) => c.args.reopen === false && /Discord/.test(c.args.identity)));
+  check('Reopen it: saved', (await calls(p, 'taskmgr.tick')).some((c) => c.args.reopen === false && /\\discord\.exe$/.test(c.args.identity)));
   await p.click('#auto');
   await p.waitForTimeout(80);
   check('the game-start option: saved', (await calls(p, 'taskmgr.auto')).some((c) => c.args.on === true));

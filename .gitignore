@@ -29,3 +29,6 @@ assets/backgrounds/wallpaper.png
 *.local
 *.local.*
 sidecar/elevated/bin/
+
+# task manager headless shots (ui/taskmgr/shoot.js)
+.shots/

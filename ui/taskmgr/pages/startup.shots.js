@@ -3,7 +3,8 @@
  *   node ui/taskmgr/shoot.js startup
  */
 'use strict';
-const ROW = (item) => `#pg-startup .trow[data-key="s${item}"]`;
+const IT = { discord: 'hkcu-run|Discord', steam: 'hkcu-run|Steam', teams: 'hkcu-run|MadeUpChat' };   // lib's item ids (the sidecar's source|name)
+const ROW = (item) => `#pg-startup .trow[data-key="s${IT[item] || item}"]`;
 const rmenu = async (p, item) => { await p.waitForSelector(ROW(item)); await p.click(ROW(item) + ' .tr', { button: 'right' }); await p.waitForSelector('#menus .menu'); };
 const pick = (p, label) => p.evaluate((l) => { const ms = document.querySelectorAll('#menus .menu'); const m = ms[ms.length - 1]; const b = m && Array.from(m.querySelectorAll('button')).find((x) => x.querySelector('span').textContent === l); if (b) b.click(); }, label);
 
@@ -17,7 +18,7 @@ module.exports = [
   } },
   { name: 'startup-dry-run-row', q: 'view=startup&test=1', run: async (p) => {
     await rmenu(p, 'teams'); await pick(p, 'Enable');
-    await p.waitForFunction(() => /Test Mantle/.test((document.querySelector('#pg-startup .trow[data-key="steams"] .tsub') || {}).textContent || ''));
+    await p.waitForFunction(() => /Test Mantle/.test((document.querySelector('#pg-startup .trow[data-key="shkcu-run|MadeUpChat"] .tsub') || {}).textContent || ''));
   } },
   { name: 'startup-all-columns', q: 'view=startup', w: 1280, h: 800, run: async (p) => {
     await p.evaluate(() => localStorage.setItem('taskmgr.tbl.startup', JSON.stringify({ vis: ['name', 'publisher', 'status', 'impact', 'type', 'diskIO', 'cpuMs', 'running', 'disabledAt', 'cmdline'] })));

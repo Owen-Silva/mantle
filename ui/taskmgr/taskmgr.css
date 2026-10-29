@@ -73,6 +73,12 @@ html { background: var(--lg-fill-strong); }
 .navs { display: flex; flex-direction: column; }
 .navsep { height: 1px; margin: 6px 8px; background: var(--lg-divider); }
 .navfoot { margin-top: auto; }
+/* a short window (the 420 px minimum): the page list scrolls and Settings stays whole at the bottom, as in Windows */
+@media (max-height: 520px) {
+  .rail { min-height: 0; }
+  .navs { flex: 0 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+  .navfoot { flex: 0 0 auto; }
+}
 /* icons only: narrow windows, or the hamburger closed it */
 .app[data-rail="closed"] .rail { width: 48px; }
 .app[data-rail="closed"] .nav span { display: none; }
@@ -106,6 +112,7 @@ html { background: var(--lg-fill-strong); }
 /* a narrow page: the command bar keeps its icons, the words go to the tooltips (Windows' compact bar) */
 @container content (max-width: 760px) {
   .cbtn .cl { display: none; }
+  .cbtn:not(:has(> svg)) .cl { display: inline; }   /* a command with no icon (Free up RAM) keeps its words, never a blank pill */
   .cbtn { padding: 0 8px; gap: 4px; }
   .phead { padding-left: 16px; }
 }

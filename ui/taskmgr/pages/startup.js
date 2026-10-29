@@ -43,7 +43,9 @@
     C('publisher', 'Publisher', { def: true, w: 190 }),
     C('status', 'Status', { def: true, w: 96, get: (r) => (r.enabled ? 1 : 0), text: (r) => (r.enabled == null ? null : r.enabled ? 'Enabled' : 'Disabled') }),
     C('impact', 'Startup impact', { def: true, w: 120, get: (r) => (r.impact == null ? -1 : IMPACT_RANK[String(r.impact).toLowerCase()] ?? 0) }),
-    C('type', 'Startup type', { w: 110 }),
+    // Windows' column says Registry or Folder; lib's label ("Registry, this user") stays in the tooltip
+    C('type', 'Startup type', { w: 110, get: (r) => String(r.type || ''),
+      html: (r) => (r.type == null ? TM.na((r.why && r.why.type) || NOT.type) : `<span title="${esc(r.type)}">${esc(/^registry/i.test(r.type) ? 'Registry' : /folder/i.test(r.type) ? 'Folder' : r.type)}</span>`) }),
     C('diskIO', 'Disk I/O at startup', { num: true, w: 130, get: (r) => r.diskIO, text: (r) => fmt.mb(r.diskIO) }),
     C('cpuMs', 'CPU at startup', { num: true, w: 110, get: (r) => r.cpuMs, text: (r) => (typeof r.cpuMs === 'number' && isFinite(r.cpuMs) ? `${fmt.num(r.cpuMs)} ms` : null) }),
     // Windows leaves both blank when there is nothing to say (not running / never disabled): blank, not unknown
