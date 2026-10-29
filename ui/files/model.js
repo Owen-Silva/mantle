@@ -704,6 +704,23 @@
     const m = Math.round((left - h * 3600) / 60);
     return `About ${h} hour${h === 1 ? '' : 's'}${m ? ` ${m} minute${m === 1 ? '' : 's'}` : ''} left`;
   };
+  /** The status line while a window shows a folder's SAVED first view (the cache main sends at boot,
+      or the keep-ready read-ahead) and its live listing has not replaced it yet (lane mantle-warm).
+      The user must see that what is on screen may be old and is being checked, never take saved rows
+      for the folder as it is now: 'Saved view from 3 minutes ago · refreshing…'. `at` is when that
+      listing was read (ms since 1970, main's clock); 0 / unknown says only 'Saved view'. */
+  M.cacheNote = function (at, now) {
+    const age = at > 0 && now >= at ? (now - at) / 1000 : null;
+    let when = '';
+    if (age !== null) {
+      if (age < 10) when = ' from a few seconds ago';
+      else if (age < 60) when = ` from ${Math.round(age / 10) * 10} seconds ago`;
+      else if (age < 3600) { const m = Math.round(age / 60); when = ` from ${m} minute${m === 1 ? '' : 's'} ago`; }
+      else if (age < 86400) { const h = Math.round(age / 3600); when = ` from ${h} hour${h === 1 ? '' : 's'} ago`; }
+      else { const dd = Math.round(age / 86400); when = ` from ${dd} day${dd === 1 ? '' : 's'} ago`; }
+    }
+    return `Saved view${when} · refreshing…`;
+  };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = M;
   else { root.MF = root.MF || {}; root.MF.model = M; }

@@ -355,7 +355,9 @@
     if (o.cached && tab.kind === 'folder' && Array.isArray(o.cached.items)) {
       // a cold window (lane mantle-files): the last folder's cached first rows NOW, the live listing
       // replaces them (relist); if the folder is gone by then, its error replaces them instead
-      Object.assign(tab, { items: o.cached.items.slice(), fromCache: true, loading: false });
+      // cacheAt: when that listing was read, for the status line's "Saved view from ... · refreshing…"
+      // (M.cacheNote, lane mantle-warm): saved rows never pass for the folder as it is now
+      Object.assign(tab, { items: o.cached.items.slice(), fromCache: true, cacheAt: Number(o.cached.at) || 0, loading: false });
       if (o.cached.view) tab.view = Object.assign(defaultView(tab.kind), o.cached.view);
       wantTypes(tab.items);
       arrange(tab);
@@ -1628,8 +1630,10 @@
     $('stnote').textContent = note;
     $('stnote').title = note;
     const loading = t.loading || (t.search && !t.search.done && !t.search.error);
-    $('stload').hidden = !loading;
-    $('stload').textContent = loading ? 'Loading…' : '';
+    // a saved first view still waiting for its live listing says so until the listing replaces it
+    const stale = !loading && !t.search && t.fromCache;
+    $('stload').hidden = !loading && !stale;
+    $('stload').textContent = loading ? 'Loading…' : stale ? M.cacheNote(t.cacheAt, Date.now()) : '';
     $('vdetails').classList.toggle('on', t.view && t.view.view === 'details');
     $('vgrid').classList.toggle('on', t.view && t.view.view === 'grid');
   }
@@ -1893,6 +1897,9 @@
   }
 
   /* ---- boot --------------------------------------------------------------------------------------- */
+  // when this page had its start (the boot answer, or a keep-ready spare's files.start), main's clock
+  // (the same Windows clock): R7's line says how long the open took to REACH the page (lane mantle-warm)
+  let startedAt = null;
   async function boot() {
     wire();
     const t = tabObj();
@@ -1910,9 +1917,10 @@
     // the open that takes it ('files.start', the same shape as a boot answer). Listened to BEFORE asking.
     let startNow = null;
     const started = new Promise((res) => { startNow = res; });
-    window.mantle.on('files.start', (p) => startNow(p));
+    window.mantle.on('files.start', (p) => { startedAt = Date.now(); startNow(p); });
     let b = await api('files.boot');
     if (b && b.spare) b = await started;
+    else startedAt = Date.now();
     if (!b || b.ok === false) {
       Object.assign(t, { path: 'mantle:home', kind: 'home', view: defaultView('home'), error: plain(b) });
       renderTabs();
@@ -1952,7 +1960,7 @@
     told[stage] = true;
     const t = cur();
     const cached = !!(t && t.fromCache);
-    requestAnimationFrame(() => requestAnimationFrame(() => { api('files.painted', { stage, cached }).catch(() => {}); }));
+    requestAnimationFrame(() => requestAnimationFrame(() => { api('files.painted', { stage, cached, startedAt }).catch(() => {}); }));
   }
 
   MF.app = { S, cur, go, newTab, closeTab, activate, list, arrange, setView, sortBy, startSearch, endSearch, relist, itemMenu, backgroundMenu, runCmd, api, editAddress, selItems, back, up, setFilter, setContents, filterItems };

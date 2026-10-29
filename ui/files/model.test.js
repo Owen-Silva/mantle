@@ -281,6 +281,15 @@ eq('sort by status', names(M.sortItems([it('a', { a: 0x400000 }), it('b', { a: 0
   eq('time left: unknown at first', M.timeLeft(10, 100, 500), '');
   eq('time left: minutes', M.timeLeft(25, 100, 60000), 'About 3 minutes left');
   eq('time left: seconds', M.timeLeft(50, 100, 20000), 'About 20 seconds left');
+  // lane mantle-warm: the saved-view note shown until the live listing replaces the cached rows
+  const T0 = 1800000000000;
+  eq('cache note: a few seconds old', M.cacheNote(T0 - 3000, T0), 'Saved view from a few seconds ago · refreshing…');
+  eq('cache note: seconds', M.cacheNote(T0 - 34000, T0), 'Saved view from 30 seconds ago · refreshing…');
+  eq('cache note: one minute', M.cacheNote(T0 - 61000, T0), 'Saved view from 1 minute ago · refreshing…');
+  eq('cache note: hours', M.cacheNote(T0 - 2 * 3600000, T0), 'Saved view from 2 hours ago · refreshing…');
+  eq('cache note: days', M.cacheNote(T0 - 3 * 86400000, T0), 'Saved view from 3 days ago · refreshing…');
+  eq('cache note: unknown age says only that it is saved', M.cacheNote(0, T0), 'Saved view · refreshing…');
+  eq('cache note: a clock that went back says no age (never "-5 seconds ago")', M.cacheNote(T0 + 5000, T0), 'Saved view · refreshing…');
   eq('time left: done', M.timeLeft(100, 100, 60000), '');
   const its = ['C:\\a\\1.txt', 'C:\\a\\2.txt', 'C:\\a\\3.txt', 'C:\\a\\4.txt'];
   const cf = [{ src: its[0] }, { src: its[1] }, { src: its[2] }];
