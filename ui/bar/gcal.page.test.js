@@ -150,12 +150,20 @@ async function run() {
         await pg.reset();
         await pg.key('Enter', 250);
         t.check(th + ' keys: Enter opens the event', (await pg.calls('gcal.open')).length === 1);
-        // a week down from the last row of the month crosses into the next month
+        // a week down from the last row of the month crosses into the next month: after EVERY step the title
+        // names the month of the selected day (today + 7 days a step). Six weeks always cross at least one
+        // month end, whatever today is (the old check expected "next month" after six weeks, which only holds
+        // early in a month: from the 29th it lands two months on).
         await openCal(pg);
-        for (let i = 0; i < 6; i++) await pg.key('ArrowDown', 60);
-        const title = await pg.text('#pop .caltitle');
-        const next = await pg.eval(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth() + 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); });
-        t.check(th + ' keys: six weeks down moves into next month', title === next, [title, next]);
+        const walk = [];
+        for (let i = 1; i <= 6; i++) {
+          await pg.key('ArrowDown', 60);
+          const got = await pg.text('#pop .caltitle');
+          const want = await pg.eval((w) => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7 * w).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); }, i);
+          walk.push([i, got, want]);
+        }
+        const crossed = new Set(walk.map((w) => w[2])).size > 1;
+        t.check(th + ' keys: six weeks down moves into next month', crossed && walk.every((w) => w[1] === w[2]), walk);
         t.check(th + ' keys: no page errors', pg.errors.length === 0, pg.errors);
         await pg.close();
       }
