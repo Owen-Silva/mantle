@@ -20,8 +20,13 @@
 # (MANTLE_SIDECAR_EXE=... npm run test:sidecar), and swap it in while Mantle
 # is stopped. A relative -Out is resolved from the current directory.
 #
+# -NoUnion ignores the Windows SDK's UnionMetadata\Windows.winmd even when it is installed, so the build
+# takes the split-winmd route (bluetooth AND media in-process) that every machine without the SDK takes.
+# The installer build (.github/workflows/installer.yml) uses it: the hosted runner has the SDK, and the
+# union route has no media, so without it the shipped sidecar would differ from a clone's.
+#
 # Exits non-zero (and prints csc's own errors) when the build fails.
-param([string]$Out = '')
+param([string]$Out = '', [switch]$NoUnion)
 
 $ErrorActionPreference = 'Continue'
 
@@ -113,6 +118,10 @@ foreach ($d in @('C:\Program Files (x86)\Windows Kits\10\UnionMetadata',
   }
 }
 $unionWinmd = if ($union.Count) { $union[0] } else { $null }
+if ($NoUnion -and $unionWinmd) {
+  Write-Output "sidecar build note: -NoUnion, so $unionWinmd is not used"
+  $unionWinmd = $null
+}
 $wrt = Get-ChildItem 'C:\Windows\Microsoft.NET\assembly\GAC_MSIL\System.Runtime.WindowsRuntime' `
         -Recurse -Filter 'System.Runtime.WindowsRuntime.dll' -ErrorAction SilentlyContinue |
        Select-Object -First 1 -ExpandProperty FullName

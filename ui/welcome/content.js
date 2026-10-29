@@ -67,6 +67,8 @@
           { name: 'Quit', text: 'Quit Mantle is in the same menu (it asks for a second click), or press', keys: ['Ctrl', 'Alt', 'Shift', 'Backspace'], after: 'anywhere.' },
           { name: 'For good', text: 'Mantle starts when you sign in, through a task named Mantle in Task Scheduler. Delete that task (or run', code: 'npm run autostart:remove', after: 'in Mantle’s folder), then quit Mantle.' },
         ],
+        // A copy installed by Mantle-Setup.exe (welcome.state says packaged): this replaces 'For good' above.
+        installed: { name: 'For good', text: 'Uninstall Mantle in Windows Settings, under Apps > Installed apps. It puts Windows back before it removes anything, and takes away Mantle’s start at sign-in if you chose it.' },
         restore: { label: 'Restore Windows taskbar now', busy: 'Restoring…', done: 'Windows’ taskbar is back. To get Mantle’s bar back, choose Restart Mantle to resume from Mantle’s tray icon.', failed: 'Could not restore: ' },
       },
     ],

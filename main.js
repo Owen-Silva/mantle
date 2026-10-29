@@ -560,7 +560,15 @@ if (flags.open !== null) {
  */
 function findOtherMantle() {
   const needle = flags.test ? `--profile-name=${flags.profileName}` : ROOT;
-  const ps = [
+  // A copy installed by Mantle-Setup.exe runs as <install>\Mantle.exe, whose command line does not name ROOT
+  // (<install>\resources\app): match its exe path instead. A clone (not packaged) is matched exactly as before.
+  const ps = app.isPackaged && !flags.test ? [
+    '$mine = ' + process.pid + ';',
+    "$exe = '" + process.execPath.replace(/'/g, "''") + "';",   // a PowerShell literal: backslashes stay single
+    `@(Get-CimInstance Win32_Process -Filter "Name='${path.basename(process.execPath).replace(/'/g, '')}'" |`,
+    '  Where-Object { $_.ProcessId -ne $mine -and $_.ExecutablePath -and $_.ExecutablePath.ToLowerInvariant() -eq $exe.ToLowerInvariant() }) |',
+    '  ForEach-Object { $_.ProcessId }',
+  ].join(' ') : [
     '$mine = ' + process.pid + ';',
     '$needle = ' + JSON.stringify(needle) + ';',
     "@(Get-CimInstance Win32_Process -Filter \"Name='electron.exe'\" |",
@@ -9653,7 +9661,7 @@ app.whenReady().then(() => {
   // First start (lib/welcome.js): the flag judged at the top is written now (the lock is ours), and
   // the welcome comes in once the bar's page is up. Settings > About "Show again" uses welcome.show.
   const welcome = require('./lib/welcome').host({
-    verdict: welcomeVerdict, dir: app.getPath('userData'), test: flags.test,
+    verdict: welcomeVerdict, dir: app.getPath('userData'), test: flags.test, packaged: app.isPackaged,
     preload: path.join(ROOT, 'preload.js'), page: path.join(ROOT, 'ui', 'welcome', 'index.html'), BrowserWindow, screen,
     log: (l) => process.stdout.write(`mantle: welcome: ${l}\n`), quitting: () => shuttingDown,
     focusHelp: (w) => sidecar.call('focus', { hwnd: hwndOf(w) }, 2000),

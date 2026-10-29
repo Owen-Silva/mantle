@@ -1,0 +1,65 @@
+# Mantle's Windows installer, Mantle-Setup.exe (lane inst-mantle, 2026-10-29). Built and install-tested by
+# .github/workflows/installer.yml on a throwaway windows-latest runner. To build one by hand on Windows, after
+# `npm ci` and `npm run build:sidecar`:
+#   node installer/make-icon.js installer/icon.ico
+#   npx --yes electron-builder@26.18.0 --win nsis --x64 --config installer/electron-builder.yml --publish never
+#
+# What is inside: Electron, the app folder UNPACKED (asar off) at <install>\resources\app, so the built C# sidecar
+# (sidecar\bin\Mantle.Sidecar.exe) and the PowerShell tools (tools\restore-windows.ps1 and the scripts it calls)
+# are ordinary files that PowerShell and Windows can run, at the same relative paths as in a clone. Not inside:
+# tests, docs, the installer sources, machine-local files (*.local turns the updater off, so never ship one).
+appId: com.owensilva.mantle
+productName: Mantle
+directories:
+  output: dist-installer
+  buildResources: installer
+asar: false
+npmRebuild: false
+nodeGypRebuild: false
+# The installed copy starts at lib/packaged-entry.js: the first-start warning, then main.js unchanged.
+# A clone's package.json keeps "main": "main.js" and never loads that file.
+extraMetadata:
+  main: lib/packaged-entry.js
+files:
+  - "**/*"
+  - "!docs/**"
+  - "!installer/**"
+  - "!dist-installer/**"
+  - "!.github/**"
+  - "!**/*.test.js"
+  - "!sidecar/obj/**"
+  - "!sidecar/bin-next/**"
+  - "!sidecar/bin-int/**"
+  - "!sidecar/elevated/bin/**"
+  - "!shots/**"
+  - "!.shots/**"
+  - "!stills/**"
+  - "!suite-out/**"
+  - "!.cloudtest/**"
+  - "!.cloudtest-job/**"
+  - "!**/*.local"
+  - "!**/*.local.*"
+  - "!.mantle-dev.json"
+  - "!look.json"
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: icon.ico   # installer/icon.ico, drawn by installer/make-icon.js before the build
+  executableName: Mantle
+nsis:
+  # One click, per user, no admin prompt: %LOCALAPPDATA%\Programs\Mantle.
+  oneClick: true
+  perMachine: false
+  allowElevation: false
+  artifactName: Mantle-Setup.exe
+  menuCategory: Mantle
+  shortcutName: Mantle
+  createStartMenuShortcut: true
+  createDesktopShortcut: false
+  # The installer's last step starts Mantle.exe with no flags: the first-start warning, never live by itself.
+  runAfterFinish: true
+  # %APPDATA%\mantle (settings, wallpapers, shell-state.json) stays: the uninstaller never deletes it.
+  deleteAppDataOnUninstall: false
+  uninstallDisplayName: Mantle

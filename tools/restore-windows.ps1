@@ -47,6 +47,17 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $problems = New-Object System.Collections.ArrayList
 
+# A copy installed by Mantle-Setup.exe: this file is <install>\resources\app\tools\restore-windows.ps1,
+# and Mantle runs as <install>\Mantle.exe, whose command line does not name this folder. Only that exact
+# layout (Mantle.exe two folders above the app) turns on the Mantle.exe match in (a); a clone never has
+# it, so a clone is matched exactly as before.
+$installRoot = $null
+$resourcesDir = Split-Path -Parent $repoRoot
+if ((Split-Path -Leaf $repoRoot) -ieq 'app' -and (Split-Path -Leaf $resourcesDir) -ieq 'resources') {
+  $candidate = Split-Path -Parent $resourcesDir
+  if (Test-Path -LiteralPath (Join-Path $candidate 'Mantle.exe') -PathType Leaf) { $installRoot = $candidate }
+}
+
 function Say([string]$text) { Write-Output $text }
 function Problem([string]$text) {
   [void]$problems.Add($text)
@@ -303,6 +314,25 @@ if ($NoKill) {
       $stopped++
     } catch {
       Problem "could not stop Mantle pid $($p.ProcessId): $($_.Exception.Message)"
+    }
+  }
+  # An installed copy (see $installRoot): Mantle.exe processes whose own exe is in that folder, and no other.
+  if ($installRoot) {
+    $prefix = $installRoot.TrimEnd('\').ToLowerInvariant() + '\'
+    try {
+      $installed = @(Get-CimInstance Win32_Process -Filter "Name='Mantle.exe'" -ErrorAction Stop |
+        Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLowerInvariant().StartsWith($prefix) -and $_.ProcessId -ne $SparePid })
+    } catch {
+      $installed = @()
+      Problem "could not list Mantle.exe processes: $($_.Exception.Message)"
+    }
+    foreach ($p in $installed) {
+      try {
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop
+        $stopped++
+      } catch {
+        Problem "could not stop Mantle pid $($p.ProcessId): $($_.Exception.Message)"
+      }
     }
   }
   try {

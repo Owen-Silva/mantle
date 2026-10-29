@@ -1,6 +1,6 @@
 {
   "name": "mantle",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "A shell layer over Windows: own bar, launcher and desktop, Windows kept underneath.",
   "license": "GPL-3.0-only",
@@ -27,7 +27,9 @@
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "1.1.1",
-    "electron": "^44.3.0",
     "koffi": "^3.3.1"
+  },
+  "devDependencies": {
+    "electron": "^44.3.0"
   }
 }

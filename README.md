@@ -10,6 +10,11 @@ crash puts Windows back exactly as it was.
 
 ## Download
 
+**Windows installer:** [Mantle-Setup.exe](https://github.com/Owen-Silva/mantle/releases/latest/download/Mantle-Setup.exe)
+(see [Install](#install) for what it does, the SmartScreen warning and how to uninstall).
+
+**From source:**
+
 ```
 git clone https://github.com/Owen-Silva/mantle.git
 cd mantle
@@ -18,10 +23,10 @@ npm run build:sidecar
 npm test
 ```
 
-There is no installer: Mantle runs from the folder you clone. `npm test` is a safe first run (three
+From source, Mantle runs from the folder you clone. `npm test` is a safe first run (three
 ordinary windows, Windows untouched). You need Windows 11, Git, Node.js 24 and the .NET Framework
 that ships with Windows ([Requirements](#requirements)); going live and starting at sign-in are
-under [Install](#install).
+under [Install from source](#install-from-source).
 
 > **At your own risk.** Mantle takes over parts of the Windows shell (the taskbar, the Win key,
 > Alt+Tab, notification banners, the desktop layer). It has been built and tested on one
@@ -35,7 +40,8 @@ Run this. It needs no Node, no Electron and no Mantle running:
 powershell -NoProfile -ExecutionPolicy Bypass -File "<path to your Mantle checkout>\tools\restore-windows.ps1"
 ```
 
-(or `npm run restore` from the repo). It stops Mantle — and only Mantle, never
+(or `npm run restore` from the repo). With the installer: **Start > All apps > Mantle > Restore Windows
+taskbar** runs the same script (from `%LOCALAPPDATA%ProgramsMantleesourcesapp	ools`). It stops Mantle — and only Mantle, never
 another Electron app — puts the taskbar's auto-hide flag back to whatever it was
 before Mantle started, resets the work area, checks that the taskbar is really
 there, and prints `verified` before exiting 0. If it is still wrong, run it again
@@ -96,6 +102,8 @@ talks to Windows.
 
 ## Requirements
 
+With the installer, only the first line applies. From source, all of them:
+
 - **Windows 11** (developed on 25H2). Windows 10 is not supported.
 - **Git**, to clone the repo.
 - **Node.js 24** and npm. `npm install` brings Electron 44 and koffi.
@@ -107,6 +115,33 @@ talks to Windows.
 
 ## Install
 
+**[Mantle-Setup.exe](https://github.com/Owen-Silva/mantle/releases/latest/download/Mantle-Setup.exe)** installs
+Mantle for your Windows user only, with no admin prompt, into `%LOCALAPPDATA%ProgramsMantle`, and adds
+**Start > All apps > Mantle** with two entries: **Mantle**, and **Restore Windows taskbar** (the restore
+script above, through `toolsestore-windows.cmd`, which passes `-ExecutionPolicy Bypass` so neither the
+execution policy nor a downloaded-file mark can stop it).
+
+1. **SmartScreen.** The installer is not code-signed, so Windows says *Windows protected your PC*. Choose
+   **More info**, then **Run anyway**.
+2. **Nothing goes live by itself.** The installer starts Mantle once at the end, and Mantle's first start
+   is a warning: what it changes, at your own risk, every way to get Windows back. **Start Mantle** goes
+   live; **Not now** changes nothing. **Also start Mantle when I sign in** is off unless you tick it (it
+   registers the same "Mantle" logon task as `npm run autostart`, for the installed `Mantle.exe`). After you
+   accept once, the Start menu entry starts Mantle live directly.
+3. **Updates.** An installed copy checks the same GitHub releases as a clone. When a newer one is out, the
+   banner links its `Mantle-Setup.exe`; run it. Like any install over a running Mantle, it asks Mantle to
+   put Windows back and quit, checks that the taskbar is back, replaces Mantle and starts it again.
+4. **Uninstall** in Settings > Apps > Installed apps > Mantle. Before it removes a file, the uninstaller asks
+   a running Mantle to put Windows back and quit, runs `toolsestore-windows.ps1` (which stops anything that
+   did not quit and reads the taskbar back), and removes the logon task if it starts this copy. If Windows
+   cannot be confirmed back, it says why and removes nothing. Your settings in `%APPDATA%mantle` stay.
+
+The installer holds the built sidecar, Electron and every file Mantle runs; it needs nothing else on the
+machine. It is built and install-tested on GitHub Actions (`.github/workflows/installer.yml`): installed,
+run in test mode, run live on the throwaway runner, quit, restored, updated and uninstalled while live,
+with the taskbar read back after each.
+
+## Install from source
 ```
 git clone https://github.com/Owen-Silva/mantle.git
 cd mantle
@@ -121,6 +156,8 @@ To start Mantle at sign-in, `npm run autostart` registers a "Mantle" logon task
 `npm run quit` (or `npm run restore` if it is not running).
 
 ### Updating
+
+(This is a clone. An installed copy updates by running the new `Mantle-Setup.exe`: see [Install](#install).)
 
 When a new release is published, Mantle shows its own banner, *Mantle vX is out*, with **Update** and
 **Later**. It asks GitHub's releases API (`releases/latest`, no account) two minutes after it starts

@@ -1,0 +1,171 @@
+# Mantle-Setup.exe: build it from a clean checkout, install-test it on this throwaway runner, and put it on a
+# DRAFT release (lane inst-mantle, 2026-10-29). A draft is invisible to the public and to Mantle's updater;
+# a person publishes it. This workflow never publishes a release and never creates or pushes a tag.
+#
+# The install test (installer/ci-install-test.ps1) runs Mantle LIVE on the runner: it changes the runner's
+# taskbar and execution policy, which is why it only ever runs here, on a machine thrown away afterwards.
+name: installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      live:
+        description: 'Also run Mantle live on the runner (quit, restore, update and uninstall while live)'
+        type: boolean
+        default: true
+      draft:
+        description: 'Put Mantle-Setup.exe on the DRAFT release v<package.json version>'
+        type: boolean
+        default: true
+  push:
+    branches: [master]
+    paths:
+      - 'installer/**'
+      - '.github/workflows/installer.yml'
+      - 'lib/packaged*.js'
+      - 'tools/restore-windows.*'
+      - 'tools/install-autostart.ps1'
+      - 'package.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Version
+        id: meta
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "Mantle $v" | Write-Output
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the sidecar (in-box csc.exe, the split-winmd route a machine without the Windows SDK takes)
+        shell: pwsh
+        run: |
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File sidecar/build.ps1 -NoUnion
+          $out | Write-Output
+          if ($LASTEXITCODE -ne 0) { throw "sidecar build failed" }
+          if (-not ($out -match 'bluetooth and media use in-process WinRT through the split winmds')) { throw 'the sidecar did not take the split-winmd route (media would be missing)' }
+          if (-not (Test-Path sidecar/bin/Mantle.Sidecar.exe)) { throw 'no sidecar/bin/Mantle.Sidecar.exe' }
+
+      - name: Unit tests (plain node)
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($t in 'lib/packaged.test.js', 'installer/make-icon.test.js', 'lib/welcome.test.js', 'lib/updater.test.js', 'lib/updater-packaged.test.js', 'lib/features/updates.test.js', 'lib/args.test.js', 'lib/supervisor.test.js') {
+            $o = node $t 2>&1; $c = $LASTEXITCODE
+            ($o | Select-Object -Last 1) | Write-Output
+            if ($c -ne 0) { $bad++; $o | Select-String 'FAIL' | Write-Output }
+          }
+          if ($bad) { throw "$bad unit test file(s) failed" }
+
+      - name: Build Mantle-Setup.exe
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          node installer/make-icon.js installer/icon.ico
+          npx --yes electron-builder@26.18.0 --win nsis --x64 --config installer/electron-builder.yml --publish never
+          if ($LASTEXITCODE -ne 0) { throw "electron-builder failed ($LASTEXITCODE)" }
+          $f = Get-Item dist-installer/Mantle-Setup.exe
+          $sha = (Get-FileHash $f.FullName -Algorithm SHA256).Hash
+          $line = "BUILD: Mantle-Setup.exe $([math]::Round($f.Length / 1MB, 1)) MB ($($f.Length) bytes), sha256 $sha"
+          $line | Write-Output
+          "$line" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Install test (install, test mode, first-start warning, live, quit, restore, update, uninstall)
+        shell: pwsh
+        run: |
+          $live = '${{ github.event_name == 'push' || inputs.live }}' -eq 'true'
+          $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'installer/ci-install-test.ps1', '-Setup', 'dist-installer/Mantle-Setup.exe', '-Out', 'ci-out')
+          if ($live) { $a += '-Live' }
+          powershell @a 2>&1 | Tee-Object -FilePath ci-out-install-test.txt
+          $code = $LASTEXITCODE
+          $sum = Get-Content ci-out-install-test.txt | Where-Object { $_ -match '^INSTALL TEST:' } | Select-Object -Last 1
+          "$sum$(if ($live) { ' (with the live run)' } else { ' (no live run)' })" >> $env:GITHUB_STEP_SUMMARY
+          if ($code -ne 0) { throw "install test failed: $sum" }
+
+      - name: Upload the installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mantle-Setup
+          path: dist-installer/Mantle-Setup.exe
+          if-no-files-found: ignore
+
+      - name: Upload the test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-test
+          path: |
+            ci-out
+            ci-out-install-test.txt
+          if-no-files-found: ignore
+
+  draft-release:
+    needs: build-and-test
+    if: github.event_name == 'push' || inputs.draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: installer
+      - uses: actions/download-artifact@v4
+        with:
+          name: Mantle-Setup
+          path: dist
+      - name: Put Mantle-Setup.exe on the DRAFT release (never published, no tag created)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.build-and-test.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Every release with this tag name, drafts included (a draft is not found by /releases/tags/<tag>).
+          found=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft)\"")
+          if echo "$found" | grep -q ' false$'; then
+            echo "::error::$TAG is already PUBLISHED; this workflow never changes a published release. Bump the version in package.json."
+            exit 1
+          fi
+          id=$(echo "$found" | awk '$2 == "true" { print $1; exit }')
+          if [ -z "$id" ]; then
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases" -X POST -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" \
+              -f name="Mantle $TAG" -F draft=true -F prerelease=false -F body=@installer/release-notes.md --jq .id)
+            echo "created the draft release $TAG (id $id) at $GITHUB_SHA"
+          else
+            gh api "repos/$GITHUB_REPOSITORY/releases/$id" -X PATCH -f target_commitish="$GITHUB_SHA" -F draft=true >/dev/null
+            echo "updating the draft release $TAG (id $id) to $GITHUB_SHA"
+          fi
+          # Replace the asset if it is there (same stable name every time).
+          for a in $(gh api "repos/$GITHUB_REPOSITORY/releases/$id/assets" --jq '.[] | select(.name == "Mantle-Setup.exe") | .id'); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$a"
+          done
+          upload=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id" --jq .upload_url | sed 's/{.*}//')
+          curl -sSf -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" \
+            --data-binary @dist/Mantle-Setup.exe "$upload?name=Mantle-Setup.exe" >/dev/null
+          draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id" --jq .draft)
+          url=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id" --jq .html_url)
+          [ "$draft" = "true" ] || { echo "::error::the release is not a draft"; exit 1; }
+          echo "DRAFT: $url (draft=$draft) holds Mantle-Setup.exe" | tee -a "$GITHUB_STEP_SUMMARY"

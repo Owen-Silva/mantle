@@ -229,7 +229,16 @@
   el.next.focus({ preventScroll: true });   // before data-ready: Enter works from the first frame
   document.documentElement.setAttribute('data-ready', '1');
   requestAnimationFrame(function () { el.card.classList.add('in'); });
-  call('welcome.state').then(function (r) { if (r && r.test) el.chip.hidden = false; }, function () { /* the cards need nothing from it */ });
+  call('welcome.state').then(function (r) {
+    if (r && r.test) el.chip.hidden = false;
+    // an installed copy has no folder to run npm in: its 'For good' is the uninstaller (content.js installed)
+    if (r && r.packaged) {
+      C.cards.forEach(function (c) {
+        if (c.id === 'back' && c.installed) c.ways = c.ways.map(function (w) { return w.name === c.installed.name ? c.installed : w; });
+      });
+      if (C.cards[S.i] && C.cards[S.i].id === 'back') draw(null);
+    }
+  }, function () { /* the cards need nothing from it */ });
   // the corners this PC really has (a changed or switched-off corner shows as it is)
   call('corners.state').then(function (r) {
     if (!r || typeof r !== 'object' || !r.actions) return;
