@@ -115,7 +115,10 @@ const f2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : String(v));
     for (let i = 0; i < 6; i++) {
       // maximize
       const m = await w.cmd('max', 'OK');
-      const during = W.parseInfo(await w.cmd(`info ${OV}`));
+      // the hook reaches the sidecar a few ms after 'max' answers (latency is judged below); under load the first
+      // read can come before the overlay is shown, so read again for up to ~150 ms of a ~300 ms play
+      let during = W.parseInfo(await w.cmd(`info ${OV}`));
+      for (let k = 0; i === 0 && k < 30 && !(during && during.visible); k++) { await T.sleep(5); during = W.parseInfo(await w.cmd(`info ${OV}`)); }
       const rect = await w.cmd('rect');
       const d = await doneN(doneCount++);
       const q = Number(/qpc=(\d+)/.exec(m)[1]);
