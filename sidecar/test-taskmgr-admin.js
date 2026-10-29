@@ -113,6 +113,22 @@ const pick = (snap, pid) => snap.procs.find((p) => p.pid === pid);
       JSON.stringify(a.rows.find((r) => !ST.includes(r.startType))));
     t.check('services: elevated is a boolean (false: Mantle is not elevated)', typeof a.elevated === 'boolean');
     t.check('services: a repeat call is no slower than the first by much (cached config)', b.ms <= a.ms + 50, `${a.ms} -> ${b.ms}`);
+    // lane tm-users: {fresh:true} re-reads every start type (never cached until restart)
+    t0 = Date.now();
+    const fr = await s.call('taskmgr.services', { fresh: true }, 20000);
+    const frWall = Date.now() - t0;
+    const fr2 = await s.call('taskmgr.services', { fresh: true }, 20000);
+    const cached = await s.call('taskmgr.services', {}, 20000);
+    console.log(`  (read-only) fresh start types: ${fr.ms} ms (start types ${fr.freshMs} ms, wall ${frWall}), again ${fr2.ms} ms (${fr2.freshMs}); cached ${cached.ms} ms`);
+    t.check('services fresh: says fresh, with the start-type read time', fr.fresh === true && typeof fr.freshMs === 'number' && cached.fresh === false && !('freshMs' in cached), JSON.stringify({ f: fr.fresh, ms: fr.freshMs }));
+    t.check('services fresh: every row carries a start type word (or null)', fr.rows.length === a.rows.length && fr.rows.every((r) => 'startType' in r && ST.includes(r.startType)),
+      JSON.stringify(fr.rows.find((r) => !ST.includes(r.startType))));
+    const nullsF = fr.rows.filter((r) => r.startType === null).length, nullsA = a.rows.filter((r) => r.startType === null).length;
+    t.check('services fresh: no more unknown start types than the SCM read', nullsF <= nullsA, `${nullsF} vs ${nullsA}`);
+    const byName = new Map(a.rows.map((r) => [r.name, r.startType]));
+    const differ = fr.rows.filter((r) => byName.get(r.name) !== null && byName.get(r.name) !== undefined && byName.get(r.name) !== r.startType).length;
+    t.check('services fresh: agrees with the SCM start type wherever the SCM answered', differ === 0, `${differ} differ`);
+    t.check('services fresh: cheap (start types under 100 ms)', fr2.freshMs < 100, String(fr2.freshMs));
 
     const host = a.rows.find((r) => r.pid > 0 && a.rows.filter((q) => q.pid === r.pid).length >= 2);
     if (host) {
@@ -142,10 +158,29 @@ const pick = (snap, pid) => snap.procs.find((p) => p.pid === pid);
       const v1c = await s.call('taskmgr.service', { name: stopped.name, op: 'start', dryRun: true }, 6000);
       t.check('service dry start (stopped, manual): ok, or needs administrator', v1c.state === 'Stopped' && (v1c.ok === true || (v1c.reason === 'needs administrator: open Services' && v1c.needsAdmin === true)), JSON.stringify(v1c));
     }
+    t.check('service dry: the answer carries the fresh start type', 'startType' in v1 && ST.includes(v1.startType) && v1.startType === (fr.rows.find((r) => r.name === pickSvc.name) || {}).startType, JSON.stringify(v1.startType));
+    // lane tm-users (Owen 10-28): a critical service is confirm-first, never a hard refusal
+    const CONFIRM_TEXT = 'Windows needs this service running. Stopping it can make Windows or other apps stop working until you restart.';
+    const rpc = a.rows.find((r) => r.name === 'RpcSs');
     const v2 = await s.call('taskmgr.service', { name: 'RpcSs', op: 'stop', dryRun: true }, 6000);
-    t.check('service: dry stop of RpcSs refused as critical', v2.ok === false && v2.reason === 'Windows needs it running; Mantle will not stop it', JSON.stringify(v2));
+    t.check('service: dry stop of RpcSs without confirmed -> needsConfirm with Windows-style words', v2.ok === false && v2.needsConfirm === true && v2.dryRun === true
+      && v2.title === `Stop ${rpc ? rpc.display : 'RpcSs'}?` && v2.text === CONFIRM_TEXT && v2.button === 'Stop service', JSON.stringify(v2));
     const v2b = await s.call('taskmgr.service', { name: 'rpcss', op: 'restart', dryRun: true }, 6000);
-    t.check('service: critical check ignores case', v2b.ok === false && /will not stop it/.test(v2b.reason), JSON.stringify(v2b));
+    t.check('service: critical check ignores case; restart says Restart', v2b.ok === false && v2b.needsConfirm === true && v2b.button === 'Restart service' && /^Restart /.test(v2b.title), JSON.stringify(v2b));
+    const v2c = await s.call('taskmgr.service', { name: 'RpcSs', op: 'stop' }, 6000);
+    t.check('service: a real critical stop without confirmed -> needsConfirm (before the passive refusal)', v2c.ok === false && v2c.needsConfirm === true && v2c.dryRun === false, JSON.stringify(v2c));
+    const v2d = await s.call('taskmgr.service', { name: 'RpcSs', op: 'stop', dryRun: true, confirmed: true }, 6000);
+    t.check('service: confirmed+dryRun on RpcSs answers from its state (the SCM own "cannot be stopped")', v2d.dryRun === true && !v2d.needsConfirm && v2d.state === 'Running'
+      && v2d.ok === false && /cannot be stopped/.test(v2d.reason) && !v2d.needsAdmin, JSON.stringify(v2d));
+    const stoppable = a.rows.find((r) => CRIT.test(r.name) && r.status === 'Running' && /^(Dnscache|Schedule|AudioSrv|Winmgmt|BFE)$/i.test(r.name));
+    if (stoppable) {
+      const v2e = await s.call('taskmgr.service', { name: stoppable.name, op: 'restart', dryRun: true, confirmed: true }, 6000);
+      t.check('service: confirmed+dryRun on another critical one goes ahead like any service', v2e.dryRun === true && !v2e.needsConfirm && v2e.state === 'Running'
+        && ((v2e.ok === true && /^dry run: would restart /.test(v2e.reason)) || (v2e.ok === false && (v2e.needsAdmin === true || /cannot be stopped|depend on it/.test(v2e.reason)))), JSON.stringify(v2e));
+      console.log(`  (dry, confirmed) restart ${stoppable.name}: ok ${v2e.ok}, ${v2e.reason}`);
+    }
+    const v2f = await s.send('taskmgr.service', { name: 'RpcSs', op: 'stop', confirmed: true }, 4000);
+    t.check('passive: a confirmed real critical stop is refused before anything', v2f.ok === false && v2f.error === T.PASSIVE_REFUSAL, JSON.stringify(v2f));
     const v3 = await s.send('taskmgr.service', { name: 'NoSuchServiceMantleTest', op: 'stop', dryRun: true }, 6000);
     t.check('service: an unknown name is a plain error', v3.ok === false && /no service named/.test(v3.error), JSON.stringify(v3));
     const v4 = await s.send('taskmgr.service', { name: pickSvc.name, op: 'pause', dryRun: true }, 6000);
