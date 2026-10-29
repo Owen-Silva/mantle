@@ -14,7 +14,7 @@
 /* Status: "Not responding" in words; Suspended and Efficiency mode as icons (their words are the tooltip) */
 #pg-processes .pst { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--lg-ink-2); }
 #pg-processes .pst svg { flex: 0 0 auto; width: 14px; height: 14px; }
-#pg-processes .pst.eff { color: var(--lg-ok); }
+#pg-processes .pst.eff { color: var(--lg-ok, #2e7d4f); }   /* --lg-ok is defined only in the dark tokens; light gets a quiet green at 5:1 */
 #pg-processes .pst.sus { color: var(--lg-ink-2); }
 #pg-processes .pst.bad { color: var(--lg-warn); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

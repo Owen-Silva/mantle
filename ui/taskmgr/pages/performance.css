@@ -27,8 +27,9 @@
 /* ---- the chosen device ---- */
 .pf-pane { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 0 22px 14px 16px; overflow-x: hidden; overflow-y: auto; outline: none; }
 .pp-head { flex: 0 0 auto; display: flex; align-items: baseline; gap: 16px; min-width: 0; margin: 0 0 6px; }
-.pp-title { margin: 0; flex: 0 0 auto; font: 600 24px/32px var(--lg-font-display); letter-spacing: -.2px; color: var(--lg-ink); }
-.pp-model { margin-left: auto; min-width: 0; font: 400 15px/20px var(--lg-font-display); color: var(--lg-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the font tokens are defined only in glass-light.css's dark block: the fallback keeps the light theme's font shorthand valid */
+.pp-title { margin: 0; flex: 0 0 auto; font: 600 24px/32px var(--lg-font-display, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif); letter-spacing: -.2px; color: var(--lg-ink); }
+.pp-model { margin-left: auto; min-width: 0; font: 400 15px/20px var(--lg-font-display, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif); color: var(--lg-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pp-graphs { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; }
 .pp-grp { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .pp-grp.one { flex: 3 1 0; min-height: 96px; }
@@ -81,7 +82,7 @@
 .pp-row { display: flex; flex-wrap: wrap; gap: 6px 28px; }
 .pp-c { display: flex; flex-direction: column; min-width: 70px; }
 .pp-cl { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--lg-ink-2); white-space: nowrap; }
-.pp-cv { font: 400 19px/26px var(--lg-font-display); color: var(--lg-ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pp-cv { font: 400 19px/26px var(--lg-font-display, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif); color: var(--lg-ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pp-kv { margin: 0; display: grid; grid-template-columns: max-content minmax(0, auto); gap: 3px 18px; font-size: 12px; line-height: 18px; min-width: 0; }
 .pp-kr { display: contents; }
 .pp-kv dt { color: var(--lg-ink-2); white-space: nowrap; }

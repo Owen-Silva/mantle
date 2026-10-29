@@ -7,7 +7,7 @@ require('../../tools/dev-env.js').lowcpu();
  *   node ui/taskmgr/shoot.js details dark    only shots whose name contains EVERY word given
  *   TASKMGR_SHOTS=<dir>                      where the PNGs go (default <worktree>/.shots)
  *
- * Every page gets four base shots: light + dark at 1280x800 and at the window's minimum (560x420).
+ * Every page gets six base shots: light + dark at the default window (1000x700), 1280x800 and the minimum (560x420).
  * A page adds its own (menus, dialogs, states) in pages/<id>.shots.js:
  *   module.exports = [{ name: 'details-affinity', q: 'view=details', w: 1280, h: 800, themes: ['light','dark'],
  *                       run: async (page) => { ...open the dialog... } }];
@@ -27,6 +27,7 @@ function shots() {
   for (const id of PAGES) {
     const q = id === 'game' ? 'mock=game&view=game' : `view=${id}`;
     for (const th of ['light', 'dark']) {
+      out.push({ name: `${id}-1000-${th}`, q, w: 1000, h: 700, theme: th });   // the default window
       out.push({ name: `${id}-1280-${th}`, q, w: 1280, h: 800, theme: th });
       out.push({ name: `${id}-min-${th}`, q, w: MIN[0], h: MIN[1], theme: th });
     }
@@ -45,6 +46,12 @@ function shots() {
     { name: 'shell-glass-dark-frame', q: 'glass=dark', themes: ['light'] },
   ];
   for (const s of shell) for (const th of s.themes || ['light', 'dark']) out.push(Object.assign({ w: 1280, h: 800 }, s, { name: `${s.name}-${th}`, theme: th }));
+  // every dialog again at the window's minimum: it must fit 560x420 (name: <shot>-min560-<theme>)
+  const DLG = ['shell-run-new-task', 'details-select-columns', 'details-affinity', 'details-wait-chain', 'details-confirm-critical', 'users-confirm-sign-off', 'services-confirm-critical'];
+  for (const s of out.slice()) {
+    const base = s.name.replace(/-(light|dark)$/, '');
+    if (DLG.includes(base)) out.push(Object.assign({}, s, { name: `${base}-min560-${s.theme}`, w: MIN[0], h: MIN[1] }));
+  }
   return out;
 }
 

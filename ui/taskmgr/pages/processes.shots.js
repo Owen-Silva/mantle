@@ -22,7 +22,7 @@ module.exports = [
   { name: 'processes-headmenu', q: 'view=processes', run: async (p) => { await p.click('#pg-processes .thead .h[data-col="cpu"]', { button: 'right' }); } },
   { name: 'processes-expanded', q: 'view=processes', run: async (p) => {
     await p.click(`${R(K(1040))} .chev`); await p.waitForTimeout(150);
-    await p.click(`${R('1040|1>p1040')} .chev`); await p.waitForTimeout(100);
+    await p.click(`${R(K(1040) + '>p1040')} .chev`); await p.waitForTimeout(100);
     await p.click(`${R(K(1040) + '>p1040>w1040:71040')} .c.name .n`);
   } },
   { name: 'processes-allcols', q: 'view=processes&nulls=1', run: async (p) => {

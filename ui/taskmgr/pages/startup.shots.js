@@ -18,7 +18,7 @@ module.exports = [
   } },
   { name: 'startup-dry-run-row', q: 'view=startup&test=1', run: async (p) => {
     await rmenu(p, 'teams'); await pick(p, 'Enable');
-    await p.waitForFunction(() => /Test Mantle/.test((document.querySelector('#pg-startup .trow[data-key="steams"] .tsub') || {}).textContent || ''));
+    await p.waitForFunction(() => /Test Mantle/.test((document.querySelector('#pg-startup .trow[data-key="shkcu-run|MadeUpChat"] .tsub') || {}).textContent || ''));
   } },
   { name: 'startup-all-columns', q: 'view=startup', w: 1280, h: 800, run: async (p) => {
     await p.evaluate(() => localStorage.setItem('taskmgr.tbl.startup', JSON.stringify({ vis: ['name', 'publisher', 'status', 'impact', 'type', 'diskIO', 'cpuMs', 'running', 'disabledAt', 'cmdline'] })));

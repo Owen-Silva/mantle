@@ -145,7 +145,10 @@
 
   /* ---- arriving from Details' "Go to service(s)" ---- */
   function tryWant() {
-    if (!want || !t) return;
+    // only on a list read for this page (not the last visit's rows), and again if a reload emptied the list
+    // after the choice was made (the marked services are still marked, nothing is chosen)
+    if (!t || TM.dataState('services') !== 'ok') return;
+    if (!want) { if (hit.size && !t.sel) want = Array.from(hit); else return; }
     const keys = t.order.filter((k) => hit.has(k.slice(1)));
     if (keys.length) { selfSel = true; try { t.select(keys[0], true); } finally { selfSel = false; } want = null; wantMiss = 0; return; }
     if (rowsAll.some((r) => hit.has(r.name)) && TM.q) { setTimeout(() => TM.setQuery(''), 0); return; }   // a search hides them: show them
