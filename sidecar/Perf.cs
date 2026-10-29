@@ -745,6 +745,10 @@ namespace Mantle {
           bool up = ni.OperationalStatus == OperationalStatus.Up;
           bool wired = t == NetworkInterfaceType.Ethernet || t == NetworkInterfaceType.GigabitEthernet || t == NetworkInterfaceType.FastEthernetT || t == NetworkInterfaceType.FastEthernetFx || t == NetworkInterfaceType.Ethernet3Megabit;
           if (!up && !(ni.OperationalStatus == OperationalStatus.Down && (wired || t == NetworkInterfaceType.Wireless80211))) continue;
+          // Windows' Wi-Fi Direct (and other) VIRTUAL adapters are Wireless80211/Ethernet too, but Task Manager
+          // shows no "Not connected" card for them: only a real adapter that is down gets one (smoke 10-28).
+          string dsc = ni.Description ?? "";
+          if (!up && (dsc.IndexOf("Wi-Fi Direct", StringComparison.OrdinalIgnoreCase) >= 0 || dsc.IndexOf("Virtual Adapter", StringComparison.OrdinalIgnoreCase) >= 0)) continue;
           var n = new Nic();
           n.Up = up;
           n.Id = ni.Id; n.Ni = ni; n.Name = ni.Name; n.Desc = ni.Description; n.Kind = KindOf(t); n.Wifi = t == NetworkInterfaceType.Wireless80211;
