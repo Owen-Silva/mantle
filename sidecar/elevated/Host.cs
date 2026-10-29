@@ -90,10 +90,11 @@ namespace Mantle {
       "taskmgr.uacvirt",         // UAC virtualization
       "taskmgr.dump",            // Create dump (refuses protected/PPL)
       "taskmgr.service",         // service start/stop/restart
-      "taskmgr.userdisconnect",  // Users: Disconnect
-      "taskmgr.usersignoff",     // Users: Sign off
+      "taskmgr.userop",          // Users: Disconnect / Connect / Sign off ({session, op}; Users.cs, tm-data 10-28)
       // elevated reads
       "taskmgr.details",         // Details fields of other users' / system processes
+      "taskmgr.affinityget",     // Set affinity's dialog reads the current mask of an elevated process (tm-data 10-28)
+      "taskmgr.waitchain",       // Analyze wait chain on an elevated process (read-only; tm-data 10-28)
       "taskmgr.netsample",       // per-process network (ETW Kernel-Network)  [this lane]
       "taskmgr.apphistory",      // SRUM app history                          [this lane]
       "taskmgr.startupimpact",   // Startup impact / CPU / Disk at startup    [this lane]
@@ -143,8 +144,9 @@ namespace Mantle {
       try { err = fn(req, ref result); }
       catch (Exception ex) { return Json.Obj("ok", false, "reason", "the elevated helper hit an error running \"" + cmd + "\" (" + ex.GetType().Name + ")", "error", ex.Message); }
       if (err != null) return Json.Obj("ok", false, "reason", err, "error", err);
-      // A handler may hand back a ready-made object (its own ok/needsAdmin/fields) or just a payload.
-      if (result is System.Collections.IDictionary) return result;
+      // The SAME envelope the main sidecar writes (Program.cs: {ok:true, result}), so the client's answer
+      // has the shape it would have had un-elevated and lib/features/_taskmgr-admin.js shape() reads
+      // both alike. A handler's own {ok:false, needsAdmin, reason} lives inside result, as it does there.
       return Json.Obj("ok", true, "result", result == null ? Json.Obj() : result);
     }
   }

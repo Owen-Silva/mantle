@@ -152,12 +152,12 @@ namespace Mantle {
     static long _fullAt = -1;
     // GetSystemTimes / per-core baselines
     static long _sIdle, _sKernel, _sUser, _sysAt = -1;
-    static long[] _coreIdle, _coreTotal;
+    static long[] _coreIdle, _coreTotal, _coreKern;   // _coreKern: kernel time minus idle, per logical processor
     static long _coresAt = -1;
     static int _baseMhz = -1; static string _baseErr;
     // adapters
     sealed class Nic {
-      public string Id, Name, Desc, Kind, V4, V6, V4Why, V6Why; public bool Wifi; public long Speed;
+      public string Id, Name, Desc, Kind, V4, V6, V4Why, V6Why; public bool Wifi, Up = true; public long Speed;
       public NetworkInterface Ni; public long Sent, Recv, At = -1; public double SendBps = double.NaN, RecvBps = double.NaN;
       public string RateWhy, Ssid, ConnType; public object Signal; public Dictionary<string, string> WifiWhy;
     }
@@ -327,12 +327,12 @@ namespace Mantle {
       }
       if (sWhy != null) why["cpu.speedGHz"] = sWhy;
       if (!cores) why["cpu.perCore"] = "not asked (cores:false)";
-      else { string pw; c["perCore"] = PerCore(now, out pw); if (pw != null) why["cpu.perCore"] = pw; }
+      else { string pw; c["perCore"] = PerCore(now, out pw); c["perCoreKernel"] = _coreKernLast; if (pw != null) why["cpu.perCore"] = pw; }
       return c;
     }
     static string _fullFail, _lightFail, _cpuWhy; static bool _fullBase = true, _lightBase = true;
     static object _cpuPct, _cpuKernel;
-    static List<object> _coreLast; static string _coreLastWhy;
+    static List<object> _coreLast, _coreKernLast; static string _coreLastWhy;
 
     static double Uptime(out string why) {
       why = null;
@@ -370,7 +370,7 @@ namespace Mantle {
       if (_coresAt >= 0 && now - _coresAt < MinMs) { why = _coreLastWhy; return _coreLast; }
       why = null;
       int groups = N.GetActiveProcessorGroupCount();
-      var idle = new List<long>(); var total = new List<long>();
+      var idle = new List<long>(); var total = new List<long>(); var kern = new List<long>();
       for (ushort g = 0; g < Math.Max(1, groups); g++) {
         int n = (int)N.GetActiveProcessorCount(g);
         if (n <= 0) n = Environment.ProcessorCount;
@@ -383,21 +383,24 @@ namespace Mantle {
           int got = ret / 48;
           for (int i = 0; i < got; i++) {
             long id = Marshal.ReadInt64(b, i * 48), k = Marshal.ReadInt64(b, i * 48 + 8), u = Marshal.ReadInt64(b, i * 48 + 16);
-            idle.Add(id); total.Add(k + u);
+            idle.Add(id); total.Add(k + u); kern.Add(k - id);   // KernelTime includes idle
           }
         } finally { Marshal.FreeHGlobal(b); }
       }
       bool fresh = _coresAt >= 0 && now - _coresAt <= GapMs && _coreIdle != null && _coreIdle.Length == idle.Count;
-      List<object> list = null;
+      List<object> list = null, klist = null;
       if (fresh) {
         list = new List<object>(idle.Count);
+        bool haveK = _coreKern != null && _coreKern.Length == kern.Count;
+        if (haveK) klist = new List<object>(idle.Count);
         for (int i = 0; i < idle.Count; i++) {
           long dT = total[i] - _coreTotal[i], dI = idle[i] - _coreIdle[i];
           list.Add(dT > 0 ? R1(Clamp(100.0 * (dT - dI) / dT)) : (object)0.0);
+          if (haveK) klist.Add(dT > 0 ? R1(Clamp(100.0 * (kern[i] - _coreKern[i]) / dT)) : (object)0.0);
         }
       } else why = Baseline;
-      _coreIdle = idle.ToArray(); _coreTotal = total.ToArray(); _coresAt = now;
-      _coreLast = list; _coreLastWhy = why;
+      _coreIdle = idle.ToArray(); _coreTotal = total.ToArray(); _coreKern = kern.ToArray(); _coresAt = now;
+      _coreLast = list; _coreKernLast = klist; _coreLastWhy = why;
       return list;
     }
 
@@ -651,7 +654,7 @@ namespace Mantle {
               n.Sent = s; n.Recv = r; n.At = now;
             }
           }
-          if (n.Speed > 0) {
+          if (n.Up && n.Speed > 0) {
             anyLink = true;
             if (!double.IsNaN(n.SendBps)) busiest = Math.Max(double.IsNaN(busiest) ? 0 : busiest, Clamp((n.SendBps + n.RecvBps) * 8 * 100.0 / n.Speed));
             else anyBase = true;
@@ -660,7 +663,7 @@ namespace Mantle {
       }
       string netWhy = null;
       if (_nics == null) netWhy = _nicErr ?? Baseline;   // the first list is still being read
-      else if (_nics.Count == 0) netWhy = "no network adapter is connected";
+      else if (!_nics.Exists(delegate(Nic x) { return x.Up; })) netWhy = "no network adapter is connected";
       else if (!anyLink) netWhy = "no connected adapter reports a link speed";
       else if (double.IsNaN(busiest)) netWhy = anyBase ? Baseline : "no adapter rates this time";
       totals["net"] = R1(busiest);
@@ -671,11 +674,13 @@ namespace Mantle {
       foreach (Nic n in _nics) {
         var w = new Dictionary<string, object>();
         var d = Obj("id", n.Id, "name", n.Name, "adapter", n.Desc, "kind", n.Kind, "sendBps", RL(n.SendBps), "recvBps", RL(n.RecvBps),
-                    "ssid", null, "connType", null, "ipv4", n.V4, "ipv6", n.V6, "signal", null, "linkBps", n.Speed > 0 ? (object)n.Speed : null, "why", w);
+                    "ssid", null, "connType", null, "ipv4", n.V4, "ipv6", n.V6, "signal", null, "linkBps", n.Up && n.Speed > 0 ? (object)n.Speed : null,
+                    "connected", n.Up, "why", w);
         if (n.RateWhy != null) { w["sendBps"] = n.RateWhy; w["recvBps"] = n.RateWhy; }
         if (n.V4 == null) w["ipv4"] = n.V4Why;
         if (n.V6 == null) w["ipv6"] = n.V6Why;
-        if (n.Speed <= 0) w["linkBps"] = "the adapter reports no link speed";
+        if (!n.Up) w["linkBps"] = "Not connected";
+        else if (n.Speed <= 0) w["linkBps"] = "the adapter reports no link speed";
         if (n.Wifi) {
           d["ssid"] = n.Ssid; d["connType"] = n.ConnType; d["signal"] = n.Signal;
           foreach (string k in WifiKeys) {
@@ -733,10 +738,15 @@ namespace Mantle {
       var list = new List<Nic>();
       foreach (NetworkInterface ni in all) {
         try {
-          if (ni.OperationalStatus != OperationalStatus.Up) continue;
           NetworkInterfaceType t = ni.NetworkInterfaceType;
           if (t == NetworkInterfaceType.Loopback || t == NetworkInterfaceType.Tunnel) continue;
+          // Windows shows a present-but-unplugged Ethernet / Wi-Fi adapter as a "Not connected" card
+          // (tm-data 10-28: nets[].connected); any other adapter that is not up is left out, as there.
+          bool up = ni.OperationalStatus == OperationalStatus.Up;
+          bool wired = t == NetworkInterfaceType.Ethernet || t == NetworkInterfaceType.GigabitEthernet || t == NetworkInterfaceType.FastEthernetT || t == NetworkInterfaceType.FastEthernetFx || t == NetworkInterfaceType.Ethernet3Megabit;
+          if (!up && !(ni.OperationalStatus == OperationalStatus.Down && (wired || t == NetworkInterfaceType.Wireless80211))) continue;
           var n = new Nic();
+          n.Up = up;
           n.Id = ni.Id; n.Ni = ni; n.Name = ni.Name; n.Desc = ni.Description; n.Kind = KindOf(t); n.Wifi = t == NetworkInterfaceType.Wireless80211;
           try { n.Speed = ni.Speed; } catch (Exception) { n.Speed = -1; }
           n.V4Why = "the adapter has no IPv4 address"; n.V6Why = "the adapter has no IPv6 address";

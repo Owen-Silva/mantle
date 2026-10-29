@@ -44,7 +44,7 @@ namespace Mantle {
     // Bumped whenever the helper's behavior or contract changes. The setup writes it next to the
     // installed exe; the client compares to tell "stale" and re-prompt. Source of truth is the file
     // sidecar/elevated/VERSION; keep this in sync (build.ps1 checks they match).
-    public const string Version = "1";
+    public const string Version = "2";   // 2 (tm-data 10-28): the main sidecar envelope + the integrated Task Manager handlers
 
     public const string PipeName = "Mantle.Elevated";   // \\.\pipe\Mantle.Elevated (DACL = this user)
 
