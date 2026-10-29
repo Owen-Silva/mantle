@@ -1,24 +1,34 @@
 // TaskMgrSvc.cs - the Services tab (lane tm-data-admin, 2026-10-28).
 //
-//   taskmgr.services {}            -> { rows: [{name, display, pid|null, desc|null, status, group|null,
-//                                      startType|null, lastOp?}], ms, elevated }
+//   taskmgr.services {fresh?}      -> { rows: [{name, display, pid|null, desc|null, status, group|null,
+//                                      startType|null, lastOp?}], ms, elevated, fresh, freshMs? }
 //   taskmgr.servicesByPid {pid}    -> { pid, names: [...] }   (Details' "Go to service(s)")
-//   taskmgr.service {name, op, dryRun?} -> { ok, op, name, state|null, dryRun, reason|null, needsAdmin? }
+//   taskmgr.service {name, op, dryRun?, confirmed?}
+//                                  -> { ok, op, name, state|null, startType|null, dryRun, reason|null,
+//                                       needsAdmin?, needsConfirm?, title?, text?, button? }
 //
 // THE LIST is one EnumServicesStatusExW(SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_STATE_ALL) with
 // the SCM opened for CONNECT|ENUMERATE_SERVICE only. Status words are Windows Task Manager's. The
-// description, svchost group (the token after "-k" in the image path; the path itself never leaves
-// this file and is never logged) and start type are static: read once per service name with
-// SERVICE_QUERY_CONFIG and cached (pruned to the names the last list saw). A service Windows will
-// not open for that gets nulls; it never fails the list.
+// description and svchost group (the token after "-k" in the image path; the path itself never leaves
+// this file and is never logged) are static: read once per service name with SERVICE_QUERY_CONFIG and
+// cached (pruned to the names the last list saw). The START TYPE is never trusted past a page open
+// (lane tm-users, Owen 10-28): {fresh:true} re-reads every service's start type (the registry's Start +
+// DelayedAutostart, SCM fallback; see RegStartType for the measured cost) and lib sends it every time the Services page
+// opens and after every op; every service op's answer carries that service's fresh startType too.
+// A service Windows will not open for that gets nulls; it never fails the list.
 //
 // THE ACTIONS (start / stop / restart):
-//   - A short CRITICAL list is never stopped or restarted, whatever the rights.
+//   - A short CRITICAL list (Windows needs those running) is confirm-first, as Windows' own warnings are:
+//     stop/restart without confirmed:true answers {ok:false, needsConfirm:true, title, text, button} and
+//     touches nothing, BEFORE the dry run and before the passive refusal. With confirmed:true it is like
+//     any other service, and the SCM's own refusal (it does not accept a stop, other running services
+//     depend on it, ...) comes back as the reason in plain words.
 //   - The service is opened with exactly the rights the op needs. Mantle is not elevated, so for
 //     most services Windows answers access denied: ok:false, needsAdmin:true, 'needs administrator:
 //     open Services'. That is the honest answer, not a failure of this file.
-//   - dryRun opens with those rights (which changes nothing), reads the state and answers what it
-//     would do. A passive (test) sidecar refuses every real op before looking at anything.
+//   - dryRun opens with those rights (which changes nothing), reads the state (and for a stop: whether
+//     the service accepts one and whether running services depend on it) and answers what it would do.
+//     A passive (test) sidecar refuses every real op before looking at anything.
 //   - The slow lane is never held waiting for a service: the reply comes at once with the new
 //     pending state ('Stopping' / 'Starting'). A ThreadPool watcher follows it for up to 30 s
 //     (restart: waits for Stopped, then starts it) and records the outcome per service name as
@@ -26,7 +36,7 @@
 //     A new op that Windows accepts clears the previous lastOp.
 //
 // OUTSIDE DEPENDENCIES (everything this file uses that it does not define):
-//   TaskMgr.DryRun; Json.Obj / GetInt / GetString; MantleFeature, FeatureTable.Add, Lanes.Slow
+//   TaskMgr.DryRun; Json.Obj / GetInt / GetString / GetBool; MantleFeature, FeatureTable.Add, Lanes.Slow
 //   (Register only); Program.Passive, FeatureTable.PassiveRefusal, Program.EmitLog (ONLY via the Host*
 //   accessors). Everything else is advapi32/kernel32 P/Invoke declared below.
 //
@@ -51,6 +61,8 @@ namespace Mantle {
       [DllImport("advapi32.dll", SetLastError = true)] public static extern bool QueryServiceStatusEx(IntPtr svc, int level, IntPtr buf, uint size, out uint needed);
       [DllImport("advapi32.dll", SetLastError = true)] public static extern bool ControlService(IntPtr svc, uint control, IntPtr status);
       [DllImport("advapi32.dll", SetLastError = true)] public static extern bool StartServiceW(IntPtr svc, uint argc, IntPtr argv);
+      [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool GetServiceDisplayNameW(IntPtr scm, string name, System.Text.StringBuilder buf, ref uint size);
+      [DllImport("advapi32.dll", SetLastError = true)] public static extern bool EnumDependentServicesW(IntPtr svc, uint state, IntPtr buf, uint size, out uint needed, out uint returned);
       [DllImport("advapi32.dll", SetLastError = true)] public static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
       [DllImport("advapi32.dll", SetLastError = true)] public static extern bool GetTokenInformation(IntPtr token, int cls, IntPtr buf, int len, out int ret);
       [DllImport("kernel32.dll")] public static extern IntPtr GetCurrentProcess();
@@ -65,13 +77,14 @@ namespace Mantle {
     static void HostLog(string level, string message) { Program.EmitLog(level, message); }
 
     const uint SC_MANAGER_CONNECT = 0x1, SC_MANAGER_ENUMERATE_SERVICE = 0x4;
-    const uint SERVICE_QUERY_CONFIG = 0x1, SERVICE_QUERY_STATUS = 0x4, SERVICE_START = 0x10, SERVICE_STOP = 0x20;
+    const uint SERVICE_QUERY_CONFIG = 0x1, SERVICE_QUERY_STATUS = 0x4, SERVICE_ENUMERATE_DEPENDENTS = 0x8, SERVICE_START = 0x10, SERVICE_STOP = 0x20;
+    const uint SERVICE_ACTIVE = 0x1, SERVICE_ACCEPT_STOP = 0x1;
     const uint SERVICE_WIN32 = 0x30, SERVICE_STATE_ALL = 0x3, SERVICE_CONTROL_STOP = 0x1;
     const int SC_ENUM_PROCESS_INFO = 0, SC_STATUS_PROCESS_INFO = 0;
     const uint STOPPED = 1, START_PENDING = 2, STOP_PENDING = 3, RUNNING = 4;
     const int WAIT_MS = 30000;
     const string NEEDS_ADMIN = "needs administrator: open Services";
-    const string CRITICAL_WHY = "Windows needs it running; Mantle will not stop it";
+    const string CRITICAL_TEXT = "Windows needs this service running. Stopping it can make Windows or other apps stop working until you restart.";
 
     static readonly HashSet<string> Critical = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
       "RpcSs", "RpcEptMapper", "DcomLaunch", "LSM", "BrokerInfrastructure", "Power", "PlugPlay", "SamSs", "EventLog",
@@ -169,15 +182,10 @@ namespace Mantle {
           ok = N.QueryServiceConfigW(h, buf, size, out needed);
         }
         if (ok) {
-          int start = Marshal.ReadInt32(buf, 4);
           int pathOff = IntPtr.Size == 8 ? 16 : 12;
           string path = Marshal.PtrToStringUni(Marshal.ReadIntPtr(buf, pathOff));
           c.Group = SvchostGroup(path);
-          if (start == 2) {
-            bool delayed = false;
-            if (N.QueryServiceConfig2W(h, 3, buf, size, out needed)) delayed = Marshal.ReadInt32(buf, 0) != 0;   // SERVICE_CONFIG_DELAYED_AUTO_START_INFO
-            c.StartType = delayed ? "Automatic (delayed)" : "Automatic";
-          } else c.StartType = start == 3 ? "Manual" : start == 4 ? "Disabled" : null;
+          c.StartType = StartWord(h, Marshal.ReadInt32(buf, 4), buf, size);
         }
         bool dok = N.QueryServiceConfig2W(h, 1, buf, size, out needed);   // SERVICE_CONFIG_DESCRIPTION
         if (!dok && Marshal.GetLastWin32Error() == 122 && needed > size) {
@@ -194,6 +202,28 @@ namespace Mantle {
         N.CloseServiceHandle(h);
       }
       return c;
+    }
+
+    /// QUERY_SERVICE_CONFIG.dwStartType -> Windows' word; Automatic asks for the delayed flag (buf is scratch).
+    static string StartWord(IntPtr h, int start, IntPtr buf, uint size) {
+      if (start == 2) {
+        uint needed;
+        bool delayed = false;
+        if (N.QueryServiceConfig2W(h, 3, buf, size, out needed)) delayed = Marshal.ReadInt32(buf, 0) != 0;   // SERVICE_CONFIG_DELAYED_AUTO_START_INFO
+        return delayed ? "Automatic (delayed)" : "Automatic";
+      }
+      return start == 3 ? "Manual" : start == 4 ? "Disabled" : null;
+    }
+
+    /// One service's start type straight from the SCM (no cache); null when Windows will not open it.
+    static string FreshStartType(IntPtr scm, string name, IntPtr buf, uint size) {
+      IntPtr h = N.OpenServiceW(scm, name, SERVICE_QUERY_CONFIG);
+      if (h == IntPtr.Zero) return null;
+      try {
+        uint needed;
+        if (!N.QueryServiceConfigW(h, buf, size, out needed)) return null;
+        return StartWord(h, Marshal.ReadInt32(buf, 4), buf, size);
+      } finally { N.CloseServiceHandle(h); }
     }
 
     /// "C:\WINDOWS\system32\svchost.exe -k netsvcs -p" -> "netsvcs"; null when not svchost-hosted.
@@ -228,18 +258,34 @@ namespace Mantle {
       string err;
       List<Row> rows = Enumerate(out err);
       if (rows == null) return err;
+      bool fresh = Json.GetBool(req, "fresh", false);
+      long freshTicks = 0;
       var outRows = new List<object>(rows.Count);
       lock (_gate) {
         IntPtr scm = IntPtr.Zero;
+        IntPtr fbuf = IntPtr.Zero;
+        Microsoft.Win32.RegistryKey svcKey = null;
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try {
           foreach (Row r in rows) {
             seen.Add(r.Name);
             Cfg c;
-            if (!_cfg.TryGetValue(r.Name, out c)) {
+            bool got = _cfg.TryGetValue(r.Name, out c);
+            if (!got) {
               if (scm == IntPtr.Zero) { string e2; scm = OpenScm(SC_MANAGER_CONNECT, out e2); }
               c = scm == IntPtr.Zero ? new Cfg() : ReadCfg(scm, r.Name);
               if (scm != IntPtr.Zero) _cfg[r.Name] = c;   // an SCM that would not open is not cached as "no config"
+            } else if (fresh) {
+              long f0 = Stopwatch.GetTimestamp();
+              if (svcKey == null) svcKey = OpenServicesKey();
+              string st = svcKey == null ? null : RegStartType(svcKey, r.Name);
+              if (st == null) {   // no registry answer: ask the SCM for this one
+                if (scm == IntPtr.Zero) { string e3; scm = OpenScm(SC_MANAGER_CONNECT, out e3); }
+                if (fbuf == IntPtr.Zero) fbuf = Marshal.AllocHGlobal((int)FRESH_BUF);
+                if (scm != IntPtr.Zero) st = FreshStartType(scm, r.Name, fbuf, FRESH_BUF);
+              }
+              c.StartType = st;
+              freshTicks += Stopwatch.GetTimestamp() - f0;
             }
             var d = new Dictionary<string, object>();
             d["name"] = r.Name; d["display"] = r.Display;
@@ -249,15 +295,66 @@ namespace Mantle {
             if (_lastOp.TryGetValue(r.Name, out lo)) d["lastOp"] = lo;
             outRows.Add(d);
           }
-        } finally { if (scm != IntPtr.Zero) N.CloseServiceHandle(scm); }
+        } finally {
+          if (scm != IntPtr.Zero) N.CloseServiceHandle(scm);
+          if (fbuf != IntPtr.Zero) Marshal.FreeHGlobal(fbuf);
+          if (svcKey != null) svcKey.Close();
+        }
         if (_cfg.Count > seen.Count + 64) {
           var gone = new List<string>();
           foreach (string k in _cfg.Keys) if (!seen.Contains(k)) gone.Add(k);
           foreach (string k in gone) _cfg.Remove(k);
         }
       }
-      result = Json.Obj("rows", outRows, "ms", (int)sw.ElapsedMilliseconds, "elevated", Elevated());
+      var res = new Dictionary<string, object>();
+      res["rows"] = outRows; res["ms"] = (int)sw.ElapsedMilliseconds; res["elevated"] = Elevated(); res["fresh"] = fresh;
+      if (fresh) res["freshMs"] = Math.Round(freshTicks * 1000.0 / Stopwatch.Frequency, 1);
+      result = res;
       return null;
+    }
+
+    const uint FRESH_BUF = 8192;   // QueryServiceConfigW refuses a buffer over 8 KB (ERROR_INVALID_PARAMETER)
+
+    // FRESH START TYPE (measured 10-28 on Owen's PC, 290 services): the registry's Start + DelayedAutostart
+    // under HKLM\SYSTEM\CurrentControlSet\Services ~4 ms for all of them, vs ~42 ms for one OpenService +
+    // QueryServiceConfigW (+ the delayed flag) each. The SCM writes those values whenever the start type is
+    // changed (ChangeServiceConfig: Services, sc config, Settings). They agreed on every service except a
+    // per-user instance (name_luid), whose delayed flag lives on its template key (the SCM inherits it, so
+    // this does too), and one the SCM would not open for a standard user (the registry still answers). A
+    // service with no readable registry key falls back to the SCM.
+    static Microsoft.Win32.RegistryKey OpenServicesKey() {
+      try { return Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services"); }
+      catch (Exception) { return null; }
+    }
+
+    static string RegStartType(Microsoft.Win32.RegistryKey services, string name) {
+      try {
+        using (Microsoft.Win32.RegistryKey k = services.OpenSubKey(name)) {
+          if (k == null) return null;
+          object st = k.GetValue("Start");
+          if (!(st is int)) return null;
+          int v = (int)st;
+          if (v == 2) {
+            object d = k.GetValue("DelayedAutostart");
+            int us = name.LastIndexOf('_');
+            if (d == null && us > 0) {   // per-user instance: the template carries the flag
+              using (Microsoft.Win32.RegistryKey tk = services.OpenSubKey(name.Substring(0, us))) { if (tk != null) d = tk.GetValue("DelayedAutostart"); }
+            }
+            return d is int && (int)d != 0 ? "Automatic (delayed)" : "Automatic";
+          }
+          return v == 3 ? "Manual" : v == 4 ? "Disabled" : null;
+        }
+      } catch (Exception) { return null; }
+    }
+
+    /// One service's start type right now: the registry, else the SCM.
+    static string StartTypeNow(IntPtr scm, string name) {
+      string st = null;
+      Microsoft.Win32.RegistryKey k = OpenServicesKey();
+      if (k != null) { try { st = RegStartType(k, name); } finally { k.Close(); } }
+      if (st != null || scm == IntPtr.Zero) return st;
+      IntPtr buf = Marshal.AllocHGlobal((int)FRESH_BUF);
+      try { return FreshStartType(scm, name, buf, FRESH_BUF); } finally { Marshal.FreeHGlobal(buf); }
     }
 
     static string ServicesByPid(Dictionary<string, object> req, ref object result) {
@@ -274,13 +371,15 @@ namespace Mantle {
 
     // ------------------------------------------------------------------ start / stop / restart
 
-    static uint QueryState(IntPtr svc, out uint exitCode) {
-      exitCode = 0;
+    static uint QueryState(IntPtr svc, out uint exitCode) { uint a; return QueryState(svc, out exitCode, out a); }
+    static uint QueryState(IntPtr svc, out uint exitCode, out uint accepts) {
+      exitCode = 0; accepts = 0;
       IntPtr b = Marshal.AllocHGlobal(64);
       try {
         uint needed;
         if (!N.QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, b, 64, out needed)) return 0;
         exitCode = (uint)Marshal.ReadInt32(b, 12);   // dwWin32ExitCode
+        accepts = (uint)Marshal.ReadInt32(b, 8);     // dwControlsAccepted
         return (uint)Marshal.ReadInt32(b, 4);        // dwCurrentState
       } finally { Marshal.FreeHGlobal(b); }
     }
@@ -294,10 +393,10 @@ namespace Mantle {
 
     static string StopWords(int e) {
       if (e == 5) return NEEDS_ADMIN;
-      if (e == 1051) return "other running services depend on it";
+      if (e == 1051) return "other running services depend on it; Windows will not stop it while they run";
       if (e == 1062) return "it is not running";
       if (e == 1061) return "it cannot take that request right now (it is starting or stopping)";
-      if (e == 1052) return "it does not accept a stop request";
+      if (e == 1052) return "Windows says this service cannot be stopped (it does not accept a stop request)";
       return "Windows answered error " + e;
     }
 
@@ -317,17 +416,70 @@ namespace Mantle {
       HostLog(ok ? "info" : "warn", "taskmgr.service: " + op + " " + name + (ok ? " done" : ": " + reason));
     }
 
+    /// The op, then the service's start type read fresh from the SCM onto the answer (and into the cache).
     static string Service(Dictionary<string, object> req, ref object result) {
+      string err = ServiceOp(req, ref result);
+      var d = result as Dictionary<string, object>;
+      if (err == null && d != null) {
+        string name = d["name"] as string, st = null;
+        string e2;
+        IntPtr scm = OpenScm(SC_MANAGER_CONNECT, out e2);
+        try { st = StartTypeNow(scm, name); } finally { if (scm != IntPtr.Zero) N.CloseServiceHandle(scm); }
+        Cfg c;
+        lock (_gate) if (st != null && _cfg.TryGetValue(name, out c)) c.StartType = st;
+        d["startType"] = st;
+      }
+      return err;
+    }
+
+    static string DisplayName(IntPtr scm, string name) {
+      var sb = new System.Text.StringBuilder(260);
+      uint size = (uint)sb.Capacity;
+      return N.GetServiceDisplayNameW(scm, name, sb, ref size) && sb.Length > 0 ? sb.ToString() : name;
+    }
+
+    /// Running services that depend on `name` (0 when Windows will not say; the real stop then reports it).
+    static int ActiveDependents(IntPtr scm, string name) {
+      IntPtr h = N.OpenServiceW(scm, name, SERVICE_ENUMERATE_DEPENDENTS);
+      if (h == IntPtr.Zero) return 0;
+      IntPtr buf = IntPtr.Zero;
+      try {
+        uint needed, count;
+        if (N.EnumDependentServicesW(h, SERVICE_ACTIVE, IntPtr.Zero, 0, out needed, out count)) return (int)count;
+        if (Marshal.GetLastWin32Error() != 234 || needed == 0 || needed > 1 << 20) return 0;   // ERROR_MORE_DATA
+        buf = Marshal.AllocHGlobal((int)needed);
+        return N.EnumDependentServicesW(h, SERVICE_ACTIVE, buf, needed, out needed, out count) ? (int)count : 0;
+      } finally {
+        if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf);
+        N.CloseServiceHandle(h);
+      }
+    }
+
+    static string ServiceOp(Dictionary<string, object> req, ref object result) {
       bool dry = TaskMgr.DryRun(req);
-      if (!dry && HostPassive()) return HostPassiveRefusal();
       string name = Json.GetString(req, "name"), op = Json.GetString(req, "op");
       if (op != "start" && op != "stop" && op != "restart") return "op must be start, stop or restart";
       if (string.IsNullOrEmpty(name)) return "needs name (a service's key name from taskmgr.services)";
       if (name.Length > 256) return "a service name is at most 256 characters";
-      if (op != "start" && Critical.Contains(name)) { result = Answer(false, op, name, null, dry, CRITICAL_WHY, false); return null; }
 
       string err;
-      IntPtr scm = OpenScm(SC_MANAGER_CONNECT, out err);
+      IntPtr scm;
+      // Windows needs the Critical services running: confirm first, before the dry run and the passive refusal.
+      if (op != "start" && Critical.Contains(name) && !Json.GetBool(req, "confirmed", false)) {
+        scm = OpenScm(SC_MANAGER_CONNECT, out err);
+        string display = name;
+        if (scm != IntPtr.Zero) { display = DisplayName(scm, name); N.CloseServiceHandle(scm); }
+        var c = Answer(false, op, name, null, dry, "needs confirmation: Windows needs this service running", false);
+        c["needsConfirm"] = true;
+        c["title"] = (op == "stop" ? "Stop " : "Restart ") + display + "?";
+        c["text"] = CRITICAL_TEXT;
+        c["button"] = op == "stop" ? "Stop service" : "Restart service";
+        result = c;
+        return null;
+      }
+      if (!dry && HostPassive()) return HostPassiveRefusal();
+
+      scm = OpenScm(SC_MANAGER_CONNECT, out err);
       if (scm == IntPtr.Zero) return err;
       IntPtr svc = IntPtr.Zero;
       bool handedOff = false;
@@ -338,27 +490,35 @@ namespace Mantle {
           int e = Marshal.GetLastWin32Error();
           if (e == 1060 || e == 123) return "there is no service named " + name;
           string st = null;
+          uint qs = 0, qa = 0;
           IntPtr q = N.OpenServiceW(scm, name, SERVICE_QUERY_STATUS);
-          if (q != IntPtr.Zero) { uint x; st = Word(QueryState(q, out x)); N.CloseServiceHandle(q); }
+          if (q != IntPtr.Zero) { uint x; qs = QueryState(q, out x, out qa); st = Word(qs); N.CloseServiceHandle(q); }
+          // Not even an administrator can stop a running service that does not accept a stop: say that, not "needs admin".
+          if (e == 5 && op != "start" && qs == RUNNING && (qa & SERVICE_ACCEPT_STOP) == 0) {
+            result = Answer(false, op, name, st, dry, StopWords(1052), false); return null;
+          }
           result = e == 5 ? Answer(false, op, name, st, dry, NEEDS_ADMIN, true)
             : Answer(false, op, name, st, dry, "Windows would not open it (error " + e + ")", false);
           return null;
         }
-        uint xc;
-        uint state = QueryState(svc, out xc);
+        uint xc, accepts;
+        uint state = QueryState(svc, out xc, out accepts);
         string word = Word(state);
         bool busy;
         lock (_gate) busy = _busy.Contains(name);
         if (busy) { result = Answer(false, op, name, word, dry, "a restart of it is still in progress", false); return null; }
         Cfg cfg;
         lock (_gate) _cfg.TryGetValue(name, out cfg);
-        bool disabled = cfg != null && cfg.StartType == "Disabled";
+        string startNow = StartTypeNow(scm, name);
+        bool disabled = startNow != null ? startNow == "Disabled" : cfg != null && cfg.StartType == "Disabled";
 
         if (dry) {
           string why; bool ok = true;
           if (op == "stop" && state == STOPPED) { ok = false; why = "it is not running"; }
           else if (op == "start" && state == RUNNING) { ok = false; why = "it is already running"; }
           else if (op != "stop" && disabled && (op == "start" || state == STOPPED)) { ok = false; why = "it is disabled"; }
+          else if (op != "start" && state == RUNNING && (accepts & SERVICE_ACCEPT_STOP) == 0) { ok = false; why = StopWords(1052); }
+          else if (op != "start" && state == RUNNING && ActiveDependents(scm, name) > 0) { ok = false; why = StopWords(1051); }
           else if (op == "restart" && state == STOPPED) why = "dry run: would start " + name + " (it is not running)";
           else why = "dry run: would " + op + " " + name;
           result = Answer(ok, op, name, word, true, why, false);
