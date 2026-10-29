@@ -18,6 +18,8 @@
 # force (tools/restore-windows.ps1 puts it back).
 param([switch]$Uninstall, [switch]$Run, [string]$TaskName = 'Mantle', [string]$Exe = '', [string]$OnlyIfExe = '')
 $ErrorActionPreference = 'Stop'
+# Taken now: PowerShell names ignore case, so the $exe below is this same variable and would overwrite it.
+$installedExe = $Exe
 
 function Say([string]$text) { Write-Output $text }
 function Fail([string]$text) { Write-Output "install-autostart: $text"; exit 1 }
@@ -71,10 +73,10 @@ $root = Split-Path -Parent $PSScriptRoot
 $template = Join-Path $PSScriptRoot 'mantle-logon-task.xml'
 $exe = Join-Path $root 'node_modules\electron\dist\electron.exe'
 $log = Join-Path $env:APPDATA 'mantle\mantle.log'
-$installed = [bool]$Exe
+$installed = [bool]$installedExe
 if ($installed) {
   # An installed copy: Mantle.exe runs from its own folder and takes no app folder argument.
-  $exe = [System.IO.Path]::GetFullPath($Exe)
+  $exe = [System.IO.Path]::GetFullPath($installedExe)
   $root = Split-Path -Parent $exe
 }
 if (-not (Test-Path -LiteralPath $template)) { Fail "template missing: $template" }

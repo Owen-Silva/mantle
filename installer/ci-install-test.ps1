@@ -228,7 +228,11 @@ if ($Live) {
   $mains = @(From-Install | Where-Object { $_.Name -ieq 'Mantle.exe' -and $_.CommandLine -match '--live' -and -not ($_.CommandLine -match '--type=') })
   Check 'live: one Mantle.exe --live with its log' ($mains.Count -eq 1 -and $mains[0].CommandLine -match '--log=') "$($mains.Count) main(s)"
   Check 'live: the installed sidecar runs' (@(From-Install | Where-Object { $_.Name -ieq 'Mantle.Sidecar.exe' }).Count -ge 1)
-  Check 'live: Mantle put the taskbar on auto-hide (it really went live)' (([MantleCi]::AbmState() -band 1) -eq 1) ([MantleCi]::State())
+  # Live only: the sidecar records the original shell state, marked restored:false, before it changes anything.
+  $sl = Get-Content -LiteralPath (Join-Path $profileDir 'shell-state.json') -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+  Check 'live: shell-state.json holds the original state, restored:false (it really went live)' ($sl -and $sl.restored -eq $false)
+  Write-Output "taskbar while live: $([MantleCi]::State())"
+  Write-Output "Mantle's taskbar lines: $((@(Select-String -LiteralPath $log -Pattern 'taskbar|autohide|auto-hide|edgeclip' -ErrorAction SilentlyContinue) | Select-Object -Last 6 | ForEach-Object { $_.Line.Trim() }) -join ' || ')"
   Check 'live: the consent is recorded' ((Test-Path -LiteralPath $consent) -and ((Get-Content -LiteralPath $consent -Raw | ConvertFrom-Json).accepted -eq $true))
   $t = Tasks
   $acts = if ($t) { @($t.Definition.Actions | ForEach-Object { "$($_.Path) $($_.Arguments)" }) -join '; ' } else { '' }
