@@ -7,7 +7,9 @@
 const kit = require('../testkit.js');
 
 const PG = '#pg-apphistory';
-const ROW = (id) => `${PG} .trow[data-key="a:${id}"]`;
+// a row's key is 'a:' + lib's identity (a lower-cased path, a package name, or file:<exe>): find rows by their name
+const NAMES = { 'google chrome': 'Google Chrome', discord: 'Discord', 'microsoft store': 'Microsoft Store', 'made-up-bgsvc': 'made-up-tool' };
+const ROW = (id) => `${PG} .trow:has(.n:text-is("${NAMES[id] || id}"))`;
 const DEF = ['Name', 'CPU time', 'Network', 'Metered network', 'Tile updates'];
 
 kit.run('TASKMGR APP HISTORY PAGE TEST', async (t) => {
@@ -22,7 +24,7 @@ kit.run('TASKMGR APP HISTORY PAGE TEST', async (t) => {
   const text = (p, sel) => p.$eval(sel, (e) => e.textContent).catch(() => '');
   const waitText = async (p, sel, re) => { for (let i = 0; i < 60; i++) { const s = await text(p, sel); if (re.test(s)) return s; await t.sleep(50); } return text(p, sel); };
   const clearBtn = `#cmdbar button[aria-label="Delete usage history"]`;
-  const settle = (p) => p.waitForSelector(ROW('google chrome'));
+  const settle = (p) => p.waitForSelector(`${PG} .trow`);   // any row: the default list is the Store apps
   const ink = {};
 
   for (const theme of ['light', 'dark']) {
@@ -37,19 +39,20 @@ kit.run('TASKMGR APP HISTORY PAGE TEST', async (t) => {
     check(T + "the line: Windows' words with the date", /^Resource usage since \d{1,2}\/\d{1,2}\/2026 for current user account\.$/.test(since), since);
     const src = await p.$eval(`${PG} .ahsrc`, (e) => ({ hidden: e.hidden, t: e.textContent, btn: !!e.querySelector('[data-tmact="elevated-setup"]') }));
     check(T + "source 'mantle': one plain line saying so, with Set up administrator access", !src.hidden && /Mantle's own record/.test(src.t) && /administrator access/.test(src.t) && src.btn, JSON.stringify(src));
-    const cells = await p.$$eval(ROW('google chrome') + ' .c', (cs) => cs.map((c) => c.textContent));
-    check(T + 'a row: name, CPU time h:mm:ss, network in MB', cells[0] === 'Google Chrome' && cells[1] === '11:32:00' && cells[2] === '2,150.4 MB' && cells[3] === '0 MB', cells.join('|'));
-    check(T + 'numbers right-aligned', await p.$eval(ROW('google chrome') + ' .c.num', (c) => getComputedStyle(c).justifyContent === 'flex-end'));
-    check(T + 'column tooltips are Windows\'', (await p.$eval(`${PG} .thead .h[data-col="cpuTimeSec"]`, (h) => h.title)) === 'Amount of time spent by the CPU executing instructions');
-    check(T + 'a non-app process is hidden while "Show history for all processes" is off', !(await p.$(ROW('made-up-bgsvc'))));
+    // like Windows, the default list is the Store apps (lib's app:true); desktop apps and the rest need the setting
+    check(T + 'a desktop app or non-app process is hidden while "Show history for all processes" is off', !(await p.$(ROW('google chrome'))) && !(await p.$(ROW('made-up-bgsvc'))) && !!(await p.$(ROW('microsoft store'))));
     check(T + 'no sideways scroll on the page at 1280', await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
-    /* ---- Settings > Show history for all processes ---- */
+    /* ---- Settings > Show history for all processes (left on for the rest of this theme: the rows below are desktop apps) ---- */
     await p.evaluate(() => { window.__mock.S.settings.historyAllProcesses = true; window.__mock.push(); });
     await p.waitForSelector(ROW('made-up-bgsvc'), { timeout: 3000 }).catch(() => {});
-    check(T + 'historyAllProcesses: the non-app row shows', !!(await p.$(ROW('made-up-bgsvc'))));
+    check(T + 'historyAllProcesses: the desktop apps and the non-app row show', !!(await p.$(ROW('made-up-bgsvc'))) && !!(await p.$(ROW('google chrome'))));
     check(T + "historyAllProcesses: Windows' other line", /for current user and system accounts\.$/.test(await waitText(p, `${PG} .ahsince`, /system accounts/)));
-    await p.evaluate(() => { window.__mock.S.settings.historyAllProcesses = false; window.__mock.push(); });
+    const cells = await p.$$eval(ROW('google chrome') + ' .c', (cs) => cs.map((c) => ({ t: c.textContent, w: c.title })));
+    // Mantle's own record is CPU time only: Network is an em dash carrying the row's own why (lib's why.net)
+    check(T + "a row: name, CPU time h:mm:ss, Network an em dash with the row's own why", cells[0].t === 'Google Chrome' && cells[1].t === '11:32:00' && cells[2].t === '—' && /event tracing as administrator/.test(cells[2].w), JSON.stringify(cells.slice(0, 3)));
+    check(T + 'numbers right-aligned', await p.$eval(ROW('google chrome') + ' .c.num', (c) => getComputedStyle(c).justifyContent === 'flex-end'));
+    check(T + 'column tooltips are Windows\'', (await p.$eval(`${PG} .thead .h[data-col="cpuTimeSec"]`, (h) => h.title)) === 'Amount of time spent by the CPU executing instructions');
 
     /* ---- header right-click: the columns, Windows' extra three ---- */
     await p.click(`${PG} .thead .h[data-col="net"]`, { button: 'right' });
@@ -69,10 +72,14 @@ kit.run('TASKMGR APP HISTORY PAGE TEST', async (t) => {
     await rmenu(p, 'google chrome');
     let mi = await menuItems(p);
     check(T + 'row menu: Switch to, Search online, Properties', mi.map((x) => x.l).join('|') === 'Switch to|Search online|Properties', mi.map((x) => x.l).join('|'));
-    check(T + 'Properties off with its reason when no file path came', mi[2] && mi[2].off && /Properties cannot open/.test(mi[2].tip), JSON.stringify(mi[2]));
     await pick(p, 'Switch to');
     const sw = (await waitCall(p, 'taskmgr.switchTo')).pop();
-    check(T + 'Switch to: asked of Mantle as a dry run', sw && sw.args.identity === 'google chrome' && sw.args.dryRun === true, JSON.stringify(sw));
+    check(T + 'Switch to: asked of Mantle as a dry run, by its identity', sw && /\\chrome\.exe$/.test(sw.args.identity) && sw.args.dryRun === true, JSON.stringify(sw));
+    await p.keyboard.press('Escape');
+    await rmenu(p, 'made-up-bgsvc');
+    mi = await menuItems(p);
+    check(T + 'Properties off with its reason when no file path came (the row\'s why.path)', mi[2] && mi[2].off && /where this app's file is/.test(mi[2].tip), JSON.stringify(mi[2]));
+    await p.keyboard.press('Escape');
     check(T + 'Switch to: the outcome on the row', /Test Mantle/.test(await waitText(p, ROW('google chrome') + ' .tsub', /Test Mantle/)));
     await rmenu(p, 'microsoft store');
     mi = await menuItems(p);
@@ -156,14 +163,15 @@ kit.run('TASKMGR APP HISTORY PAGE TEST', async (t) => {
   }
   /* ---- nulls: em dashes with their reasons ---- */
   {
-    const p = await t.open('view=apphistory&nulls=1');
+    // Windows' own history (srum) with nothing reported: no row why, so the page's words; all processes on for Discord
+    const p = await t.open('view=apphistory&ah=srum&nulls=1');
     await settle(p);
+    await p.evaluate(() => { window.__mock.S.settings.historyAllProcesses = true; window.__mock.push(); });
+    await p.waitForSelector(ROW('discord'), { timeout: 3000 }).catch(() => {});
     const c = await p.$$eval(ROW('discord') + ' .c', (cs) => cs.map((x) => ({ t: x.textContent, w: x.title })));
-    check('nulls: Network is an em dash with why', c[2].t === '—' && /Mantle's own record/.test(c[2].w), JSON.stringify(c[2]));
+    check('nulls: Network is an em dash with why', c[2].t === '—' && /did not record network use/.test(c[2].w), JSON.stringify(c[2]));
     check('nulls: Metered network too', c[3].t === '—' && !!c[3].w, JSON.stringify(c[3]));
-    const c0 = await p.$$eval(ROW('google chrome') + ' .c', (cs) => cs.map((x) => ({ t: x.textContent, w: x.title })));
-    check("nulls: a row's own why wins", c0[2].t === '—' && /Made-up reason/.test(c0[2].w), JSON.stringify(c0[2]));
-    const s = await p.$eval(`${PG} .ahsince .na`, (e) => ({ t: e.textContent, w: e.title })).catch(() => null);
+    const s =await p.$eval(`${PG} .ahsince .na`, (e) => ({ t: e.textContent, w: e.title })).catch(() => null);
     check('nulls: no start date = em dash with why', s && s.t === '—' && !!s.w, JSON.stringify(s));
     await t.close(p);
   }
@@ -175,7 +183,8 @@ kit.run('TASKMGR APP HISTORY PAGE TEST', async (t) => {
     await t.close(p);
   }
   {
-    const p = await t.open('view=apphistory&old=1');
+    const p = await t.open('view=processes&old=1');   // an old main opens on Processes; the page is chosen in the rail
+    await p.click('.nav[data-view="apphistory"]');
     await t.sleep(300);
     check('an old main: says this Mantle does not read the page yet', /doesn't read this page yet/.test(await text(p, `${PG} .tstate`)));
     check('an old main: the since line is hidden', await p.$eval(`${PG} .ahsince`, (e) => e.hidden));
@@ -186,7 +195,7 @@ kit.run('TASKMGR APP HISTORY PAGE TEST', async (t) => {
     const p = await t.open('view=apphistory', { theme, w: 560, h: 420 });
     await settle(p);
     const s = await p.evaluate(() => ({ page: document.documentElement.scrollWidth <= innerWidth, rows: document.querySelectorAll('#pg-apphistory .trow').length }));
-    check(`[${theme}] 560x420: no page-level sideways scroll, rows drawn`, s.page && s.rows > 4, JSON.stringify(s));
+    check(`[${theme}] 560x420: no page-level sideways scroll, rows drawn`, s.page && s.rows >= 3, JSON.stringify(s));
     await t.close(p);
   }
 });

@@ -3,7 +3,8 @@
  *   node ui/taskmgr/shoot.js startup
  */
 'use strict';
-const ROW = (item) => `#pg-startup .trow[data-key="s${item}"]`;
+const IT = { discord: 'hkcu-run|Discord', steam: 'hkcu-run|Steam', teams: 'hkcu-run|MadeUpChat' };   // lib's item ids (the sidecar's source|name)
+const ROW = (item) => `#pg-startup .trow[data-key="s${IT[item] || item}"]`;
 const rmenu = async (p, item) => { await p.waitForSelector(ROW(item)); await p.click(ROW(item) + ' .tr', { button: 'right' }); await p.waitForSelector('#menus .menu'); };
 const pick = (p, label) => p.evaluate((l) => { const ms = document.querySelectorAll('#menus .menu'); const m = ms[ms.length - 1]; const b = m && Array.from(m.querySelectorAll('button')).find((x) => x.querySelector('span').textContent === l); if (b) b.click(); }, label);
 

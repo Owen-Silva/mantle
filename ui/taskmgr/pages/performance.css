@@ -118,7 +118,7 @@
   .pp-title { font-size: 20px; line-height: 26px; }
   .pp-model { font-size: 13px; line-height: 18px; }
   .pp-graphs { gap: 8px; }
-  .pp-grp.quad { min-height: 120px; gap: 6px 10px; }
+  .pp-grp.quad { min-height: 132px; gap: 6px 10px; }   /* each engine graph keeps >= 40 px at the 560x420 minimum */
   .pp-cv { font-size: 16px; line-height: 22px; }
   .pp-stats { gap: 12px 28px; margin-top: 10px; }
   .pp-row { gap: 4px 18px; }

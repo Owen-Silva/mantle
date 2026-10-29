@@ -3,7 +3,8 @@
  * shoot.js already takes the four base shots (light + dark at 1280x800 and at 560x420).
  */
 'use strict';
-const ROW = (id) => `#pg-apphistory .trow[data-key="a:${id}"]`;
+const NAMES = { 'google chrome': 'Google Chrome', discord: 'Discord', 'made-up-bgsvc': 'made-up-tool' };   // keys are lib's identities: find rows by name
+const ROW = (id) => `#pg-apphistory .trow:has(.n:text-is("${NAMES[id] || id}"))`;
 const pick = (p, label) => p.evaluate((l) => { const ms = document.querySelectorAll('#menus .menu'); const m = ms[ms.length - 1]; const b = m && Array.from(m.querySelectorAll('button')).find((x) => x.querySelector('span').textContent === l); if (b && !b.disabled) b.click(); }, label);
 
 module.exports = [

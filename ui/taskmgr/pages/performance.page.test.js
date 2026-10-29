@@ -24,12 +24,14 @@ const PANES = {
     'Utilization 4%', 'Dedicated GPU memory 0/128 MB', 'GPU Memory 0.6/6.0 GB', 'Shared GPU memory 0.6/5.9 GB', 'Driver version: 31.0.101.5592', 'Driver date: 6/12/2026',
     'DirectX version: DirectX 12 (FL 12.1)', 'Physical location: PCI bus 0, device 2, function 0', 'Hardware reserved memory: 0 MB'] },
 };
-const CARDS = ['CPU 23% 2.83 GHz', 'Memory 10.6/16.0 GB (66%)', 'Disk 0 (C:) SSD 3%', 'Disk 1 (D:) HDD 0%', 'Wi-Fi Wi-Fi S: 0.2 R: 3.3 Mbps', 'Ethernet Ethernet S: 0 R: 0 Kbps', 'GPU 0 Intel(R) UHD Graphics 4%'];
+// lib's disk type is Windows' own words ("SSD (NVMe)"); an unplugged adapter is Windows' "Not connected" card
+const CARDS = ['CPU 23% 2.83 GHz', 'Memory 10.6/16.0 GB (66%)', 'Disk 0 (C:) SSD (NVMe) 3%', 'Disk 1 (D:) HDD 0%', 'Wi-Fi Wi-Fi S: 0.2 R: 3.3 Mbps', 'Ethernet Ethernet Not connected', 'GPU 0 Intel(R) UHD Graphics 4%'];
 
 kit.run('TASKMGR PERFORMANCE PAGE TEST', async (t) => {
   const { check, calls } = t;
   const flat = (s) => String(s).replace(/\s+/g, ' ').trim();
-  const cards = (p) => p.$$eval(`${R} .pc`, (es) => es.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+  // innerText: each line of the card as drawn (its lines are separate blocks with no spaces between them)
+  const cards = (p) => p.$$eval(`${R} .pc`, (es) => es.map((e) => e.innerText.replace(/\s+/g, ' ').trim()));
   const paneText = async (p) => flat(await p.$eval(`${R} .pf-pane`, (e) => Array.from(e.querySelectorAll('.pp-title, .pp-model, .pg-gl, .pp-c, .pp-kr, .pp-compw')).map((x) => x.textContent.replace(/\s+/g, ' ')).join(' | ').replace(/:\s*/g, ': ').replace(/ \| /g, ' | ')));
   const cellText = (p) => p.$eval(`${R} .pf-pane`, (e) => Array.from(e.querySelectorAll('.pp-c, .pp-kr')).map((x) => Array.from(x.children).map((c) => c.textContent.replace(/\s+/g, ' ').trim()).join(' ')));
   const pick = (p, title) => p.evaluate((tt) => { const c = Array.from(document.querySelectorAll('#pg-performance .pc')).find((x) => x.querySelector('.pc-t').textContent === tt); if (c) c.click(); return !!c; }, title);
@@ -149,7 +151,9 @@ kit.run('TASKMGR PERFORMANCE PAGE TEST', async (t) => {
       check('Logical processors is remembered', (await store(p, 'cpuGraph')) === '"logical"');
       await graphMenu(p);
       await choose(p, 'Show kernel times');
-      check('Show kernel times with logical processors: says kernel time is whole-CPU only (not faked per core)', /kernel times: whole CPU only/.test(await p.$eval(`${R} .pp-grp.cores > .pg-gl`, (e) => e.textContent)) && (await p.$$eval(`${R} .pp-cores path.l.k`, (e) => e.length)) === 0);
+      // lib sends cpu.perCoreKernel (one 60-sample kernel history per logical processor): a kernel line in each
+      // core's graph, and no "whole CPU only" note (that note is for a main without perCoreKernel)
+      check('Show kernel times with logical processors: a kernel line in every core graph (perCoreKernel)', !/kernel times: whole CPU only/.test(await p.$eval(`${R} .pp-grp.cores > .pg-gl`, (e) => e.textContent)) && (await p.$$eval(`${R} .pp-cores path.l.k`, (e) => e.length)) === 8);
       await graphMenu(p);
       await choose(p, 'Change graph to', 'Overall utilization');
       check('Show kernel times: the kernel share is shaded under the total', (await drawn(p, 'path.l.k')) === 1 && (await p.$$eval(`${R} .pf-pane path.a.k`, (e) => e.length)) === 1);
@@ -296,7 +300,8 @@ kit.run('TASKMGR PERFORMANCE PAGE TEST', async (t) => {
       check(`nulls: ${card}: no NaN / undefined / null words`, !/NaN|undefined|null/.test(await p.$eval(R, (e) => e.textContent)));
     }
     await pick(p, 'Memory');
-    check('nulls: Memory composition says it was not reported', await p.$eval(`${R} .pp-compna .na`, (e) => /how memory is split/.test(e.title)).catch(() => false) && (await p.$$eval(`${R} .pp-comp .seg:not([hidden])`, (e) => e.length)) === 0);
+    // the em dash carries main's own reason (why.composition) when it sends one, else the page's words
+    check('nulls: Memory composition says it was not reported', await p.$eval(`${R} .pp-compna .na`, (e) => e.textContent === '—' && e.title.length >= 12).catch(() => false) &&(await p.$$eval(`${R} .pp-comp .seg:not([hidden])`, (e) => e.length)) === 0);
     console.log(`  nulls: ${total} em dashes, each with a reason`);
     check('nulls: no page threw while drawing', !(await t.shellErrors(p)).length);
     await t.close(p);

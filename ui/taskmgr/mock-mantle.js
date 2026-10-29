@@ -445,7 +445,10 @@
           if (TEST) return OK({ dryRun: true, reason: 'Test Mantle: Windows was not asked for administrator access.', elevated: Object.assign({}, S.elevated) });
           S.elevated = { installed: true, stale: false, running: false, reason: null, version: '1.0.0' }; push();
           return OK({ elevated: Object.assign({}, S.elevated) });
-        case 'taskmgr.clearHistory': push(); return OK();
+        // lib (wk/tm-fix-data 62ea1fa): dryOf(a) first; a dry run never clears
+        case 'taskmgr.clearHistory':
+          if (dry) return OK({ dryRun: true, reason: TEST ? 'Test Mantle: usage history was not deleted.' : 'Dry run: usage history was not deleted.' });
+          push(); return OK();
         case 'taskmgr.refresh': push(); return OK();
         case 'taskmgr.sample': push(); return OK({ groups: allRows().length });
         case 'settings.open': return Promise.reject(new Error('no command "settings.open" (mock)'));

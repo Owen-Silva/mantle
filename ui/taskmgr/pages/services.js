@@ -57,7 +57,8 @@
     const w = OPW[op];
     if (!res || res.cancelled) { setOut(r, null); return res; }
     if (res.ok === false) setOut(r, res.needsAdmin ? { kind: 'admin', res, head: w.head } : { kind: 'bad', text: `${w.head}: ${res.reason || 'Mantle gave no reason.'}` });
-    else if (res.dryRun) setOut(r, { kind: 'dry', text: res.reason || `Test Mantle: ${r.name} was not ${op === 'stop' ? 'stopped' : op + 'ed'}.` });
+    // a dry run always says so first; lib's reason (what it found, e.g. "it is not running") follows in brackets
+    else if (res.dryRun) setOut(r, { kind: 'dry', text: `Test Mantle: ${r.name} was not ${op === 'stop' ? 'stopped' : op + 'ed'}${res.reason ? ` (${String(res.reason).replace(/[.\s]+$/, '')})` : ''}.` });
     else setOut(r, { kind: 'ok', text: w.done });
     return res;
   }

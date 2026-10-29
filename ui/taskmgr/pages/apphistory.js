@@ -101,7 +101,7 @@
     return [
       { label: 'Switch to', act: () => switchTo(r) },
       { label: 'Search online', act: () => TM.act.searchOnline(r.name) },
-      { label: 'Properties', disabled: !r.path, title: r.path ? undefined : NOT.path, act: () => TM.act.properties(r.path) },
+      { label: 'Properties', disabled: !r.path, title: r.path ? undefined : (r.why && r.why.path) || NOT.path, act: () => TM.act.properties(r.path) },
     ];
   }
 

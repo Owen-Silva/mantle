@@ -6,7 +6,9 @@
 'use strict';
 const kit = require('../testkit.js');
 
-const ROW = (item) => `#pg-startup .trow[data-key="s${item}"]`;
+// lib's item ids are the sidecar's "<source>|<value name>"; short names for the mock's rows
+const IT = { discord: 'hkcu-run|Discord', steam: 'hkcu-run|Steam', teams: 'hkcu-run|MadeUpChat', lively: 'user-folder|Lively.lnk', secui: 'hklm-run|SecurityHealth' };
+const ROW = (item) => `#pg-startup .trow[data-key="s${IT[item] || item}"]`;
 const DEF = ['Name', 'Publisher', 'Status', 'Startup impact'];
 const ALL = ['Name', 'Publisher', 'Status', 'Startup impact', 'Startup type', 'Disk I/O at startup', 'CPU at startup', 'Running now', 'Disabled time', 'Command line'];
 
@@ -28,7 +30,7 @@ kit.run('TASKMGR STARTUP PAGE TEST', async (t) => {
 
   for (const theme of ['light', 'dark']) {
     const T = `[${theme}] `;
-    const p = await t.open('view=startup&test=1', { theme });
+    const p = await t.open('view=startup&test=1&elev=ok', { theme });   // elev=ok: Windows' impact numbers need administrator access
     await p.waitForSelector(ROW('discord'));
     inkOf[theme] = await p.$eval('#pg-startup .tlist', (e) => getComputedStyle(e).color);
 
@@ -66,7 +68,7 @@ kit.run('TASKMGR STARTUP PAGE TEST', async (t) => {
     c = await cells(p, 'discord');
     check(T + 'extra cells: type, Disk I/O in MB, CPU in ms, Running, blank disabled time, command line', c[4] === 'Registry' && c[5] === '38.0 MB' && c[6] === '2,100 ms' && c[7] === 'Running' && c[8] === '' && c[9] === 'Update.exe --processStart Discord.exe', c.join('|'));
     c = await cells(p, 'teams');
-    check(T + 'a disabled entry: Windows\' short disabled time, blank Running now', /^9\/3\/2026 6:02 PM$/.test(c[8]) && c[7] === '', c.join('|'));
+    check(T + 'a disabled entry: Windows\' short disabled time, blank Running now', /^9\/3\/2026 \d{1,2}:02 [AP]M$/.test(c[8]) /* local time, as Windows shows it */ && c[7] === '', c.join('|'));
     await p.reload(); await p.waitForFunction(() => document.documentElement.dataset.shot === '1'); await p.waitForSelector(ROW('discord'));
     check(T + 'the column choice is remembered after a reload', (await heads(p)).length === 10);
     await p.evaluate(() => localStorage.removeItem('taskmgr.tbl.startup'));
@@ -83,14 +85,14 @@ kit.run('TASKMGR STARTUP PAGE TEST', async (t) => {
     await t.clearCalls(p);
     await p.click('#cmdbar [aria-label="Enable"]');
     let all = await waitCall(p, 'taskmgr.startupSet', 2);
-    check(T + 'Enable: a dry-run preflight, then startupSet {item, enabled:true}', all.length === 2 && all[0].args.dryRun === true && all[1].args.item === 'teams' && all[1].args.enabled === true && all[1].args.dryRun === true, JSON.stringify(all));
+    check(T + 'Enable: a dry-run preflight, then startupSet {item, enabled:true}', all.length === 2 && all[0].args.dryRun === true && all[1].args.item === IT.teams && all[1].args.enabled === true && all[1].args.dryRun === true, JSON.stringify(all));
     check(T + 'Enable: no dialog (Windows asks nothing)', await noDlg(p));
     check(T + 'Enable: the dry run is said on the row', /Test Mantle/.test(await waitSub(p, 'teams', /Test Mantle/)), await subText(p, 'teams'));
     await p.click(ROW('discord') + ' .tr');
     await t.clearCalls(p);
     await p.click('#cmdbar [aria-label="Disable"]');
     let a = await last(p, 'taskmgr.startupSet', 2);
-    check(T + 'Disable: startupSet {item:discord, enabled:false}', a.item === 'discord' && a.enabled === false, JSON.stringify(a));
+    check(T + 'Disable: startupSet {item:discord, enabled:false}', a.item === IT.discord && a.enabled === false, JSON.stringify(a));
     await t.clearCalls(p);
     await p.click('#cmdbar [aria-label="Properties"]');
     a = await last(p, 'taskmgr.properties');
@@ -102,34 +104,34 @@ kit.run('TASKMGR STARTUP PAGE TEST', async (t) => {
     await t.clearCalls(p);
     await pick(p, 'Disable');
     a = await last(p, 'taskmgr.startupSet', 2);
-    check(T + 'menu Disable: startupSet enabled:false', a.item === 'discord' && a.enabled === false);
+    check(T + 'menu Disable: startupSet enabled:false', a.item === IT.discord && a.enabled === false);
     await rmenu(p, 'teams');
     check(T + 'row menu (disabled): Enable first', (await menuLabels(p))[0] === 'Enable');
     await t.clearCalls(p);
     await pick(p, 'Open file location');
     a = await last(p, 'taskmgr.openLocation');
-    check(T + 'Open file location: its path', /ms-teams\.exe$/.test(a.path || ''), JSON.stringify(a));
+    check(T + 'Open file location: its path', /madeupchat\.exe$/.test(a.path || ''), JSON.stringify(a));
     await rmenu(p, 'teams');
     await t.clearCalls(p);
     await pick(p, 'Search online');
     a = await last(p, 'taskmgr.searchOnline');
-    check(T + 'Search online: its name', a.name === 'Microsoft Teams', JSON.stringify(a));
+    check(T + 'Search online: its name', a.name === 'Made-up Chat', JSON.stringify(a));
     await rmenu(p, 'teams');
     await t.clearCalls(p);
     await pick(p, 'Properties');
     a = await last(p, 'taskmgr.properties');
-    check(T + 'menu Properties: its path', /ms-teams\.exe$/.test(a.path || ''), JSON.stringify(a));
+    check(T + 'menu Properties: its path', /madeupchat\.exe$/.test(a.path || ''), JSON.stringify(a));
 
     /* ---- keyboard ---- */
     await p.keyboard.press('Escape');
     await p.click(ROW('discord') + ' .tr');
     await p.keyboard.press('ArrowDown');
     const sel = () => p.$eval('#pg-startup .trow.sel', (e) => e.dataset.key).catch(() => null);
-    check(T + 'Down arrow chooses the next row', (await sel()) === 'slively', await sel());
+    check(T + 'Down arrow chooses the next row', (await sel()) === 's' + IT.lively, await sel());
     await p.keyboard.press('End');
-    check(T + 'End chooses the last row', (await sel()) === 'ssecui', await sel());
+    check(T + 'End chooses the last row', (await sel()) === 's' + IT.secui, await sel());
     await p.keyboard.type('sp');
-    check(T + 'type-ahead finds Spotify', (await sel()) === 'sspotify', await sel());
+    check(T + 'type-ahead finds Spotify', (await sel()) === 'shkcu-run|Spotify', await sel());
     await p.keyboard.press('Shift+F10');
     await p.waitForSelector('#menus .menu');
     check(T + 'Shift+F10 opens the row menu', (await menuLabels(p))[0] === 'Disable');
@@ -138,10 +140,10 @@ kit.run('TASKMGR STARTUP PAGE TEST', async (t) => {
     /* ---- search: name or publisher ---- */
     await p.fill('#q', 'valve');
     let shown = await p.$$eval('#pg-startup .trow', (rs) => rs.map((r) => r.dataset.key));
-    check(T + 'search by publisher (Valve) finds Steam', shown.join(',') === 'ssteam', shown.join(','));
+    check(T + 'search by publisher (Valve) finds Steam', shown.join(',') === 's' + IT.steam, shown.join(','));
     await p.fill('#q', 'micro');
     shown = await p.$$eval('#pg-startup .trow', (rs) => rs.map((r) => r.dataset.key));
-    check(T + 'search "micro": the Microsoft entries', shown.length === 3, shown.join(','));
+    check(T + 'search "micro": the Microsoft entries', shown.length === 2, shown.join(','));
     await p.fill('#q', 'zzz-nothing');
     check(T + 'a search that hides everything says so', /No results/.test(await p.$eval('#pg-startup .tstate', (e) => e.textContent).catch(() => '')));
     await p.fill('#q', '');
@@ -149,7 +151,7 @@ kit.run('TASKMGR STARTUP PAGE TEST', async (t) => {
     /* ---- needsConfirm (main's words, one dialog), then confirmed:true ---- */
     await p.evaluate(() => {
       const call = window.mantle.call.bind(window.mantle);
-      window.mantle.call = (name, args) => (name === 'taskmgr.startupSet' && args.item === 'secui' && !args.confirmed
+      window.mantle.call = (name, args) => (name === 'taskmgr.startupSet' && args.item === 'hklm-run|SecurityHealth' && !args.confirmed
         ? (window.__mockCalls.push({ name, args }), Promise.resolve({ ok: false, needsConfirm: true, title: 'Do you want to disable Windows Security notification icon?', text: 'Windows needs it (made-up words).', button: 'Disable' }))
         : call(name, args));
     });
@@ -167,7 +169,7 @@ kit.run('TASKMGR STARTUP PAGE TEST', async (t) => {
     await t.clearCalls(p);
     await p.click('#dlg .dfoot [data-b="ok"]');
     a = await last(p, 'taskmgr.startupSet');
-    check(T + 'needsConfirm, OK: startupSet goes with confirmed:true', a.item === 'secui' && a.confirmed === true && a.enabled === false, JSON.stringify(a));
+    check(T + 'needsConfirm, OK: startupSet goes with confirmed:true', a.item === IT.secui && a.confirmed === true && a.enabled === false, JSON.stringify(a));
     check(T + 'needsConfirm, OK: only that one dialog', await noDlg(p));
     check(T + 'no page errors drawn by the shell', !(await t.shellErrors(p)).length, (await t.shellErrors(p)).join(' '));
     await t.close(p);
@@ -196,7 +198,7 @@ kit.run('TASKMGR STARTUP PAGE TEST', async (t) => {
   await t.close(p);
 
   /* ---- nulls: an em dash with the reason ---- */
-  p = await t.open('view=startup&nulls=1');
+  p = await t.open('view=startup&nulls=1&elev=ok');
   await p.waitForSelector(ROW('lively'));
   const nil = await p.$$eval(ROW('lively') + ' .c', (cs) => cs.map((x) => ({ t: x.textContent, w: x.title })));
   check('nulls: no publisher = em dash + why', nil[1].t === '—' && /publisher/.test(nil[1].w), JSON.stringify(nil[1]));

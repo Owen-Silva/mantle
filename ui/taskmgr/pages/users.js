@@ -111,7 +111,7 @@
   /* ---- one dialog per action (see the header) ---- */
   async function guarded(k, cmd, args, ask, busyWords) {
     const bk = k + cmd;
-    if (busy.has(bk)) return { ok: false, cancelled: true };
+    if (busy.has(bk)) { TM.note('The last change to this user is still being made. Try again in a moment.'); return { ok: false, cancelled: true }; }   // said, not dropped quietly
     busy.add(bk);
     try {
       const pre = await TM.run(cmd, Object.assign({}, args, { dryRun: true }), { noConfirm: true, noDry: true });
@@ -154,7 +154,7 @@
   async function endTask(p) {
     if (!p || isUser(p)) return;
     const k = keyOf(p);
-    if (busy.has(k + 'end')) return;
+    if (busy.has(k + 'end')) { TM.note(`${p.name || 'That process'}: still ending it. Try again in a moment.`); return; }   // one request at a time, said
     busy.add(k + 'end');
     setOut(k, { kind: 'busy', text: 'Ending...' });
     try { said(k, await TM.run('endPid', { pid: p.pid, created: p.created }), 'Not ended', 'Ended'); } finally { busy.delete(k + 'end'); }
