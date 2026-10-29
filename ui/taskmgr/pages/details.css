@@ -1,1 +1,26 @@
-/* pages/details.css - the details page (its lane owns this file). */
+/* pages/details.css - Windows' Details page in Mantle's island skin (--lg-* tokens only, light and dark). */
+.dtbl { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.dst { overflow: hidden; text-overflow: ellipsis; color: var(--lg-ink); }
+.dst.bad { color: var(--lg-warn); font-weight: 600; }
+.trow.hung .c.name .n { color: var(--lg-warn); }
+.trow .st .spin { flex: 0 0 auto; }
+.st.dadm { flex-wrap: wrap; row-gap: 4px; }
+.st.dadm > span:first-child { color: var(--lg-ink-2); }
+
+/* Processor affinity */
+.daff .aff-list { max-height: 260px; overflow: auto; padding: 4px 10px 8px; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl); background: var(--lg-fill-strong); }
+.daff .aff-list .dchk { margin-top: 6px; }
+.daff .aff-all { padding-bottom: 6px; border-bottom: 1px solid var(--lg-divider); }
+.daff .aff-wait { margin: 6px 0; display: flex; gap: 8px; align-items: center; color: var(--lg-ink-2); }
+.daff .aff-why { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.daff .aff-note { display: flex; gap: 6px; align-items: flex-start; color: var(--lg-ink-2); }
+.daff .aff-note svg, .daff .aff-zero svg { flex: 0 0 12px; margin-top: 2px; }
+
+/* Analyze wait chain */
+.dwait .dq .spin { margin-right: 8px; vertical-align: -2px; }
+.dwait .wtree { list-style: none; margin: 4px 0 0; padding: 8px 10px; max-height: 240px; overflow: auto; border: 1px solid var(--lg-edge-out); border-radius: var(--lg-r-ctl); background: var(--lg-fill-strong); }
+.dwait .wtree ul { list-style: none; margin: 2px 0 0; padding: 0 0 0 18px; border-left: 1px solid var(--lg-divider); }
+.dwait .wtree li { margin: 4px 0; }
+.dwait .wtree .dchk { margin: 0; }
+.dwait .wroot { font-weight: 600; }
+.dwait .wline { color: var(--lg-ink-2); }
