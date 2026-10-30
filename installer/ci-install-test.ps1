@@ -142,6 +142,16 @@ if (Test-Path -LiteralPath $rl) {
 }
 $un = Uninstall-Cmd
 Check 'Settings > Apps lists Mantle (per-user uninstall key)' ($null -ne $un -and $un.UninstallString -match 'Uninstall Mantle\.exe')
+# The name a person sees: the Apps entry's publisher and the file properties of Mantle.exe and Mantle-Setup.exe.
+Write-Output "Apps entry 'Mantle' $($un.DisplayVersion) by '$($un.Publisher)'"
+Check 'Settings > Apps: publisher Atlas Studio' ($un -and $un.Publisher -eq 'Atlas Studio') "$($un.Publisher)"
+foreach ($f in @($exe, $Setup)) {
+  $vi = (Get-Item -LiteralPath $f).VersionInfo
+  $leaf = Split-Path -Leaf $f
+  Write-Output "$leaf properties: company '$($vi.CompanyName)', copyright '$($vi.LegalCopyright)'"
+  Check "$leaf properties: company Atlas Studio" ($vi.CompanyName -eq 'Atlas Studio') "$($vi.CompanyName)"
+  Check "$leaf properties: Copyright (C) 2026 Atlas Studio" ($vi.LegalCopyright -eq 'Copyright (C) 2026 Atlas Studio') "$($vi.LegalCopyright)"
+}
 $uPath = if ($un -and $un.UninstallString -match '^"([^"]+)"') { $Matches[1] } else { '' }
 Check 'installed per user, no admin: %LOCALAPPDATA%\Programs\Mantle (HKCU key, uninstaller there)' ($uPath -and ([System.IO.Path]::GetDirectoryName($uPath) -ieq $inst)) "$($un.UninstallString)"
 # The same registration the box runs (lib/packaged.js autostartCommand), by hand, so its words are in the log.

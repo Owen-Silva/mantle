@@ -10,6 +10,9 @@
 # tests, docs, the installer sources, machine-local files (*.local turns the updater off, so never ship one).
 appId: com.owensilva.mantle
 productName: Mantle
+# The publisher in Settings > Apps, the installer and Mantle.exe's CompanyName all come from package.json "author"
+# (Atlas Studio). The copyright stamped into the exe properties is set here so it reads the same every year.
+copyright: "Copyright (C) 2026 Atlas Studio"
 directories:
   output: dist-installer
   buildResources: installer

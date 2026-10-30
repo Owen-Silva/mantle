@@ -4,7 +4,7 @@
   "private": true,
   "description": "A shell layer over Windows: own bar, launcher and desktop, Windows kept underneath.",
   "license": "GPL-3.0-only",
-  "author": "Owen Silva",
+  "author": "Atlas Studio",
   "repository": {
     "type": "git",
     "url": "https://github.com/Owen-Silva/mantle.git"
